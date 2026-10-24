@@ -239,8 +239,8 @@ export async function resolveAppeal(
       return { ok: true, action: "post_restored" };
     }
 
-    case "memory": {
-      const { data, error } = await sc
+    case "memory": { // census-highlights-memories §CC (3912): MODERATION_RESTORE_MEMORY through the §17 kernel; this direct update is ONLY the kernel-off legacy arm and the pre-3912 compat arm
+      return restoreMemoryThroughKernel(sc, appeal, async (): Promise<ReversalResult> => { const { data, error } = await sc
         .from("memories")
         .update({ state: "published", updated_at: new Date().toISOString() })
         .eq("id", target_id)
@@ -248,7 +248,7 @@ export async function resolveAppeal(
         .select("id");
       if (error) return { ok: false, action: "noop", reason: `memory restore failed: ${error.message}` };
       if (affectedRows(data) === 0) return matchedNothing(appeal, "memory restore");
-      return { ok: true, action: "memory_restored" };
+      return { ok: true, action: "memory_restored" }; });
     }
 
     case "highlight": {
@@ -692,4 +692,53 @@ function crewFullPending(appeal: Appeal): ReversalDeferred {
       retry,
     },
   };
+}
+
+// ── census-highlights-memories §CC (3912): the Memory restore through the §17 kernel ──
+// Appended at the foot so no cited line above moves. Before, an upheld appeal
+// set `state='published'` directly on ANY of the appellant's Memories —
+// including one its owner had DELETED, after §21 had purged it — with no
+// event, receipt or audit row. It now dispatches MODERATION_RESTORE_MEMORY:
+// the actor is the approving moderator (the SQL re-checks the admin role), the
+// command names the owner, and it reverses a moderation removal
+// (`removed` -> `published`) and NOTHING ELSE. Any other state is a restoration a
+// moderator must decide by hand (restore_requires_policy), never a resurrection.
+// The same principle as OD-TRIP-1's "restore exactly what was removed"
+// (RESTORE_SEMANTICS_DECISION above), which governs trip membership.
+// Kernel OFF: the legacy update, unaudited, byte-identical. A kernel without the
+// command (2711 / 3911) answers MEMORY_COMMAND_UNKNOWN_TYPE, and the legacy update
+// runs exactly as before 3912 — the compat arm.
+import { dispatchMemoryCommand } from "../memory/MemoryDomainService.js";
+
+async function restoreMemoryThroughKernel(
+  sc: any,
+  appeal: Appeal,
+  legacyRestore: () => Promise<ReversalResult>,
+): Promise<ReversalResult> {
+  const outcome = await dispatchMemoryCommand<ReversalResult>({
+    sc,
+    commandType: "MODERATION_RESTORE_MEMORY",
+    memoryId: appeal.target_id,
+    actorUserId: appeal.moderator_id ?? "",
+    idempotencyKey: `appeal-restore:${appeal.id}`,
+    legacyUnaudited: true,
+    payload: { owner_id: appeal.appellant_id, appeal_id: appeal.id },
+    fromKernelResult: () => ({ ok: true, action: "memory_restored" }),
+    legacy: async () => ({ ok: true, body: await legacyRestore() }),
+  });
+  if (outcome.ok) {
+    return outcome.duplicate ? { ok: true, action: "memory_restored", restored: true, replayed: true } : outcome.body;
+  }
+  if ("http" in outcome) return { ok: false, action: "noop", reason: `memory restore failed: ${outcome.http.message}` };
+  const r = outcome.rejection;
+  switch (r.reason) {
+    case "MEMORY_COMMAND_UNKNOWN_TYPE": return legacyRestore(); // pre-3912 kernel: the pre-3912 update
+    case "MEMORY_NOT_FOUND": return matchedNothing(appeal, "memory restore");
+    case "MEMORY_LIFECYCLE_INVALID_TRANSITION":
+      return deferRestoration(appeal,
+        `the Memory is '${r.from ?? "unknown"}', not a moderation removal: MODERATION_RESTORE_MEMORY reverses only state 'removed', ` +
+        "and an owner's deletion is never brought back by an appeal");
+    default:
+      return { ok: false, action: "noop", reason: `memory restore refused: ${r.reason}${r.detail ? ` (${r.detail})` : ""}` };
+  }
 }

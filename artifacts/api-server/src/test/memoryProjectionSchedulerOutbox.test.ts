@@ -287,3 +287,42 @@ describe("the drain does not disturb the projection pass", () => {
     assert.equal(claim.args.p_enforce_flag, undefined);
   });
 });
+
+// ── census-highlights-memories §CC (H161): the scheduler's pass is OBSERVABLE ──
+// The drain used to leave no trace (/healthz/schedulers: unobservable). The
+// scheduler now runs runMemoryOutboxDrainTick, which records the pass for
+// /healthz/schedulers and writes the `memoryOutboxDrain` job_health row. A
+// scheduler that went back to the bare pass would drain and stay invisible, and
+// every case above would still pass — this one would not.
+import { getMemoryOutboxDrainStatus, _resetMemoryOutboxDrainStatus } from "../services/memoryProjections/outboxDrainRunner.js";
+
+describe("the outbox scheduler records each pass (job_health + /healthz/schedulers)", () => {
+  beforeEach(() => { mock.timers.enable({ apis: ["setTimeout"] }); _resetMemoryOutboxDrainStatus(); });
+  afterEach(() => {
+    stopMemoryOutboxScheduler();
+    mock.timers.reset();
+    _setTestServiceClient(null as any);
+  });
+
+  it("a scheduled pass sets the status and upserts the memoryOutboxDrain job_health row", async () => {
+    const upserts: Array<{ table: string; row: any; onConflict: string | undefined }> = [];
+    const c = stubClient() as any;
+    const baseFrom = c.from.bind(c);
+    c.from = (t: string) => {
+      const b = baseFrom(t);
+      b.upsert = (row: any, o?: { onConflict?: string }) => { upserts.push({ table: t, row, onConflict: o?.onConflict }); return Promise.resolve({ data: null, error: null }); };
+      return b;
+    };
+    _setTestServiceClient(c);
+    startMemoryOutboxScheduler();
+    mock.timers.tick(OUTBOX_STARTUP_DELAY_MS);
+    for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    await new Promise((r) => setImmediate(r));
+    assert.ok(getMemoryOutboxDrainStatus().lastAttemptAt, "the pass is recorded for /healthz/schedulers");
+    assert.ok(getMemoryOutboxDrainStatus().lastSuccessAt, "an empty outbox is a successful pass");
+    const health = upserts.filter((u) => u.table === "job_health");
+    assert.equal(health.length, 1);
+    assert.equal(health[0]!.row.job, "memoryOutboxDrain");
+    assert.equal(health[0]!.onConflict, "job");
+  });
+});

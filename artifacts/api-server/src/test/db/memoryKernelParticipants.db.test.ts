@@ -140,7 +140,7 @@ function applyFile(path: string): void {
 }
 /** memory_kernel_execute as production and portava-ci run it today (2711), read-only 2026-10-23. */
 const PRODUCTION_2711_MD5 = "542cc3a256e7452a5629cc5d87e7a45f";
-const kernelDefMd5 = (): string | null => scalar(`SELECT md5(pg_get_functiondef('public.memory_kernel_execute(jsonb)'::regprocedure))`);
+const kernelDefMd5 = (): string | null => scalar(`SELECT md5(pg_get_functiondef('public.memory_kernel_execute(jsonb)'::regprocedure))`); /** The tree's kernel as installed (3911, or a later migration that replaces it, e.g. 3912): saved before a swap and put back EXACTLY, so this suite never leaves a different definition for the suites after it. */ const kernelDef = (): string => { const r = psql(`SELECT pg_get_functiondef('public.memory_kernel_execute(jsonb)'::regprocedure);`); assert.equal(r.status, 0, r.stderr); return r.stdout.replace(/\n$/, ""); }; /* raw psql output: exec() drops blank lines, which would change the body */ const restoreKernel = (def: string): void => { const r = psql(`${def};\nREVOKE ALL ON FUNCTION public.memory_kernel_execute(jsonb) FROM PUBLIC, anon, authenticated;\nGRANT EXECUTE ON FUNCTION public.memory_kernel_execute(jsonb) TO service_role;`); assert.equal(r.status, 0, `the saved kernel did not re-apply:\n${r.stderr}`); };
 
 describe("§17: a Memory's participants, type, occurrence text and source post are written by the kernel's own transaction (3911)", { skip: !HAVE_DB }, () => {
   before(async () => {
@@ -406,7 +406,7 @@ describe("§17: a Memory's participants, type, occurrence text and source post a
   });
 
   test("P11 against 2711 (the definition before 3911) the routes still tag and type through their compat arms; 3911 is then restored byte for byte", async () => {
-    const with3911 = kernelDefMd5();
+    const with3911 = kernelDefMd5(); const savedDef = kernelDef(); // the tree's kernel, restored exactly below
     applyFile(ROLLBACK_3911);
     try {
       assert.notEqual(kernelDefMd5(), with3911, "2711 is installed");
@@ -422,16 +422,16 @@ describe("§17: a Memory's participants, type, occurrence text and source post a
       assert.equal(w.filter((s) => /^WITH w AS \(INSERT INTO public\.memory_tags /.test(s)).length, 1, "the route's own tag insert ran (2711 tagged nobody)");
       assert.equal(w.filter((s) => /^WITH w AS \(UPDATE public\.memories SET memory_type = /.test(s)).length, 1, "the reconcile wrote the type (2711's INSERT took the DEFAULT)");
     } finally {
-      applyFile(MIGRATION_3911);
+      restoreKernel(savedDef);
     }
-    assert.equal(kernelDefMd5(), with3911, "3911 restored exactly");
+    assert.equal(kernelDefMd5(), with3911, "the tree's kernel restored exactly");
   });
   // ── Q: every other §17 Memory command, through its own route, on 3911 ──────
   // Run TWICE: on production's kernel today (2711, installed from the rollback file) and on 3911.
-  for (const kernel of ["2711", "3911"] as const) describe(`Q (${kernel}) — CONFIRM, CHANGE_VISIBILITY, CHANGE_PLACE, ADD_MEDIA, REMOVE_MEDIA, ADD_PERSON, REMOVE_PERSON, ARCHIVE, MERGE and SPLIT each cross a kernel with their event`, () => {
-    let with3911: string | null = null;
-    before(() => { with3911 = kernelDefMd5(); if (kernel === "2711") { applyFile(ROLLBACK_3911); assert.equal(kernelDefMd5(), PRODUCTION_2711_MD5, "production's definition is installed"); } });
-    after(() => { if (kernel === "2711") { applyFile(MIGRATION_3911); assert.equal(kernelDefMd5(), with3911, "3911 restored exactly"); } });
+  for (const kernel of ["2711", "tree"] as const) describe(`Q (${kernel}) — CONFIRM, CHANGE_VISIBILITY, CHANGE_PLACE, ADD_MEDIA, REMOVE_MEDIA, ADD_PERSON, REMOVE_PERSON, ARCHIVE, MERGE and SPLIT each cross a kernel with their event`, () => {
+    let with3911: string | null = null; let savedDef = ""; // "tree": the kernel the chain installs (3911 here; 3912 once it lands)
+    before(() => { with3911 = kernelDefMd5(); savedDef = kernelDef(); if (kernel === "2711") { applyFile(ROLLBACK_3911); assert.equal(kernelDefMd5(), PRODUCTION_2711_MD5, "production's definition is installed"); } });
+    after(() => { if (kernel === "2711") { restoreKernel(savedDef); assert.equal(kernelDefMd5(), with3911, "the tree's kernel restored exactly"); } });
     let m = "";
     let item = "";
     const evAt = (memoryId: string, seq: number) => rows<{ type: string; command_type: string; xmin: string }>(
@@ -472,7 +472,7 @@ describe("§17: a Memory's participants, type, occurrence text and source post a
       assert.deepEqual([ev.type, ev.command_type], ["memory.corrected", "CHANGE_PLACE"]);
       assert.deepEqual(rows(`SELECT place_id, place_display_name_at_occurrence FROM public.memories WHERE id = '${m}'`),
         [{ place_id: `prov:${TAG}-q3`, place_display_name_at_occurrence: "Q Place Three" }], "a changed place never keeps the old place's text");
-      if (kernel === "3911") {
+      if (kernel === "tree") {
         assert.equal(xminOf("memories", `id = '${m}'`), ev.xmin);
         assertOnlyTheKernelWroteTheMemory("Q3");
       } else {

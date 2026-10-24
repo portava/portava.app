@@ -105,7 +105,7 @@ export const STARTED_SCHEDULERS: readonly SchedulerRow[] = [
   { start: "startLocationSnapshotPurgeScheduler" },
   { start: "startMediaDedupWorker" },
   { start: "startMediaProcessingWorker" },
-  { start: "startMemoryOutboxScheduler" }, { start: "startMemoryDeletionRedriveScheduler", reportedAs: ["memoryDeletionRedrive"], persists: ["memoryDeletionRedrive"] }, // census-highlights-memories §AF (H193) + §AV: reports and writes job_health, so the 45 holds; line-neutral
+  { start: "startMemoryOutboxScheduler", reportedAs: ["memoryOutboxDrain"], persists: ["memoryOutboxDrain"] }, { start: "startMemoryDeletionRedriveScheduler", reportedAs: ["memoryDeletionRedrive"], persists: ["memoryDeletionRedrive"] }, // census-highlights-memories §AF (H193) + §AV: reports and writes job_health, so the 45 holds; line-neutral
   { start: "startMemoryProjectionScheduler" },
   { start: "startNotificationMaintenanceScheduler", reportedAs: ["notificationMaintenanceScheduler"] },
   { start: "startPendingUploadSweepScheduler" }, { start: "startMessageMediaPartsSweepScheduler", reportedAs: ["messageMediaPartsSweep"] }, // census-telegraph T223 (3656): raw message-media parts past their cutoff; line-neutral

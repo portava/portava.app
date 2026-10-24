@@ -65,8 +65,8 @@ export async function hiddenItemKeys(sc: any, memoryIds: readonly string[]): Pro
   return { ok: true, keys };
 }
 
-/** Set or clear a photo's own audience. Owner-checked by the caller. */
-export async function setItemVisibility(
+/** The pre-3912 direct write: the kernel-off legacy arm and the pre-3912 compat arm of `setItemVisibility` (below). Owner-checked by the caller. */
+export async function writeItemVisibilityDirect(
   sc: any,
   input: { memoryId: string; itemId: string; visibility: typeof HIDDEN_ITEM_VISIBILITY | null },
 ): Promise<{ ok: true } | { ok: false; reason: "not_deployed" | "not_found" | "unavailable"; detail: string }> {
@@ -82,4 +82,56 @@ export async function setItemVisibility(
   }
   if (!Array.isArray(data) || data.length !== 1) return { ok: false, reason: "not_found", detail: "no such photo on this Memory" };
   return { ok: true };
+}
+
+// ── census-highlights-memories §CC (3912): the switch through the §17 kernel ──
+// Appended at the foot so no cited line above moves. Before, the owner's switch
+// was the direct UPDATE above, with no event: a photo hidden after a public
+// derivative was built was never re-derived. It now dispatches
+// CHANGE_ITEM_VISIBILITY, whose write and `memory.visibility_changed` are one
+// transaction (3912). Kernel OFF: the direct write, unaudited, byte-identical.
+// A kernel without the command (2711 / 3911) answers MEMORY_COMMAND_UNKNOWN_TYPE,
+// and the direct write runs exactly as before 3912 — the compat arm.
+import { dispatchMemoryCommand } from "./MemoryDomainService.js";
+
+export type ItemVisibilityWrite =
+  | { ok: true }
+  | { ok: false; reason: "not_deployed" | "not_found" | "unavailable" | "invalid_payload"; detail: string };
+
+export async function setItemVisibility(
+  sc: any,
+  input: {
+    memoryId: string; itemId: string; visibility: typeof HIDDEN_ITEM_VISIBILITY | null;
+    actorUserId: string; idempotencyKey: string; kernelEnvelopeError?: string | null;
+  },
+): Promise<ItemVisibilityWrite> {
+  const direct = () => writeItemVisibilityDirect(sc, input);
+  const outcome = await dispatchMemoryCommand<{ ok: true }>({
+    sc,
+    commandType: "CHANGE_ITEM_VISIBILITY",
+    memoryId: input.memoryId,
+    actorUserId: input.actorUserId,
+    idempotencyKey: input.idempotencyKey,
+    kernelEnvelopeError: input.kernelEnvelopeError ?? null,
+    legacyUnaudited: true,
+    payload: { item_id: input.itemId, item_visibility: input.visibility },
+    fromKernelResult: () => ({ ok: true }),
+    legacy: async () => {
+      const r = await direct();
+      return r.ok ? { ok: true, body: { ok: true } } : { ok: false, http: { code: r.reason, message: r.detail } };
+    },
+  });
+  if (outcome.ok) return { ok: true };
+  if ("http" in outcome) {
+    const code = outcome.http.code;
+    const reason = code === "not_deployed" || code === "not_found" || code === "invalid_payload" ? code : "unavailable";
+    return { ok: false, reason, detail: outcome.http.message };
+  }
+  switch (outcome.rejection.reason) {
+    case "MEMORY_COMMAND_UNKNOWN_TYPE": return direct(); // pre-3912 kernel: the pre-3912 write
+    case "MEMORY_ITEM_NOT_FOUND":
+    case "MEMORY_NOT_FOUND":
+    case "MEMORY_AUTH_NOT_OWNER": return { ok: false, reason: "not_found", detail: outcome.rejection.reason };
+    default: return { ok: false, reason: "unavailable", detail: `${outcome.rejection.reason}${outcome.rejection.detail ? `: ${outcome.rejection.detail}` : ""}` };
+  }
 }

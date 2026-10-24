@@ -10057,4 +10057,125 @@ Account erasure (`AccountDeletionService`) is the third direct writer, and it is
 
 **16 moves, all W → C.** 266 = 109 C / 152 W / 3 N / 2 X. CONSTRUCTED% is unchanged at (109 + 152) / 266 = 98.1 %.
 CORRECT% is 109 / 266 = 41.0 %.
-- NOT-GRADED: artifacts/api-server/src/services/appeals/resolveAppeal.ts — §CB.5 names its moderation restore as a canonical write outside the kernel, a finding for a later batch; no row rests on it.
+
+## §CC — 2026-10-24 (census drive, lane HIGHLIGHTS & MEMORIES, batch 3): the last two kernel bypasses closed (migration 3912, written and NOT applied), the outbox drain made observable, and the episode spine's producer held on a ruling
+
+*Measured on branch `claude/census-hm-b3-20261023`, cut from batch 2 (`aba0ffc48`, PR #784). `head_commit` is not
+re-declared. This section changes product code and adds one migration, **written and NOT applied anywhere**. It
+moves no row: nothing it builds is deployed, so every row it bears on is restated below with what still stops it.*
+
+### §CC.1 What changed
+
+| write or gap | before | now |
+| --- | --- | --- |
+| a photo's own audience (PUT /memories/:id/items/:itemId/visibility) | a direct `memory_items` UPDATE, with no event, so a photo hidden after a public derivative was built was never re-derived | CHANGE_ITEM_VISIBILITY through the kernel (`artifacts/api-server/src/services/memory/memoryItemVisibility.ts:111#commandType: "CHANGE_ITEM_VISIBILITY",`). The owner-checked write (`artifacts/api-server/src/migrations/3912_memory_kernel_item_visibility_and_moderation_restore.sql:458#UPDATE public.memory_items SET visibility = v_payload->>'item_visibility'`) and `memory.visibility_changed` are one transaction. A hidden photo's event states `only_me` (`artifacts/api-server/src/migrations/3912_memory_kernel_item_visibility_and_moderation_restore.sql:525#WHEN v_type = 'CHANGE_ITEM_VISIBILITY' THEN v_payload->>'item_visibility'`), which is what makes a §18 consumer re-derive |
+| an upheld appeal's Memory restore | a direct `state='published'` on ANY of the appellant's Memories, including one its owner had DELETED (after §21 had purged it), with no event, receipt or audit row | MODERATION_RESTORE_MEMORY through the kernel (`artifacts/api-server/src/services/appeals/resolveAppeal.ts:720#commandType: "MODERATION_RESTORE_MEMORY",`). The actor is the moderator and must hold the `admin` role (`artifacts/api-server/src/migrations/3912_memory_kernel_item_visibility_and_moderation_restore.sql:202#IF NOT EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = v_actor AND p.role = 'admin') THEN`). The command reverses a moderation removal and nothing else (`artifacts/api-server/src/migrations/3912_memory_kernel_item_visibility_and_moderation_restore.sql:232#IF v_type = 'MODERATION_RESTORE_MEMORY' AND v_state IS DISTINCT FROM 'removed' THEN`). Any other state is left for a moderator to decide by hand (`restore_requires_policy`); an owner-deleted Memory matches nothing |
+| the §18 outbox drain | ran at boot and left no trace (`/healthz/schedulers` listed it unobservable; §CB.2) | each tick records its status for `/healthz/schedulers` (job `memoryOutboxDrain`) and upserts a `job_health` row, at most once a minute while it succeeds and on every failed pass (`artifacts/api-server/src/services/memoryProjections/outboxDrainRunner.ts:262#const { error } = await db.from("job_health").upsert(row, { onConflict: "job" });`), and the scheduler runs that tick (`artifacts/api-server/src/services/memoryProjections/outboxDrainRunner.ts:176#void runMemoryOutboxDrainTick()`). No migration |
+
+**Both kernel changes are order-independent with the API.** A 2711 or 3911 kernel answers the new commands
+`MEMORY_COMMAND_UNKNOWN_TYPE`, and the routes then run their pre-3912 writes exactly as today: the compat arms
+(`artifacts/api-server/src/services/memory/memoryItemVisibility.ts:131#case "MEMORY_COMMAND_UNKNOWN_TYPE": return direct();`). With
+this branch, the tree has no canonical Memory write outside the kernel except account erasure, which is outside the
+command set by design (§CB.5). The batch-2 suite now restores whichever kernel it found, byte for byte, rather than
+re-applying 3911's file, so it holds once 3912 is in the chain. Its second Q run is the tree's kernel: 3912 here.
+
+### §CC.2 Production state, measured (read-only, 2026-10-23/24)
+
+Production and portava-ci run 2711 (md5 `542cc3a2…`), and 3911 and 3912 are applied nowhere. **Release state (lead ruling, 2026-10-24).** rumazi.com runs main at `4fb0fe5f5` (06:05Z). That includes §CA, but neither §CB's API nor this section's. Client code counts as on production only when it is in an installed device build; today that is the owner's build from 2026-10-22's main. Every row below that needs this section's code is therefore labelled **waiting on release (server deploy)**.
+3672 and 3814 are applied (§CA.1). **A production defect this section closes in the tree:** with the current code,
+an admin upholding a Memory appeal sets the appellant's Memory to `published` whatever its state, including after
+the owner deleted it and §21 purged its derivatives. Nothing in the API writes `removed` (lib/memoryCommandBus.ts), so
+every Memory appeal today targets an owner state, and in the tree every such appeal is refused or deferred. On
+production, 0 of 11 `media_assets` rows have a capture time (§CA.4), and that has not changed.
+
+### §CC.3 The new evidence
+
+`artifacts/api-server/src/test/db/memoryKernelItemVisibilityRestore.db.test.ts`, 13/13 on the full chain:
+
+- **V1–V5:** the photo switch, over HTTP on the real router.
+- **R1–R6:** `resolveAppeal`, called as the appeals route calls it.
+- **H1–H2:** the drain tick.
+
+Each case asserts that the change and its event row are one transaction (equal `xmin`), and that nothing but the
+kernel RPC wrote the Memory aggregate. V5 and R6 install 3911's kernel from 3912's rollback file and show the compat
+arms, then put the tree's kernel back byte for byte. `memoryProjectionSchedulerOutbox.test.ts` adds the case that
+pins the scheduler to the observable tick (`artifacts/api-server/src/test/memoryProjectionSchedulerOutbox.test.ts:307#a scheduled pass sets the status and upserts the memoryOutboxDrain job_health row`).
+
+| mutant | result |
+| --- | --- |
+| the photo switch writes directly · loses its compat arm · drops the actor | V1–V3, V5 · V5 · V1–V3 red |
+| the restore writes directly · loses its compat arm · answers a non-removed Memory as matched-nothing · does not mark a replay · names the owner as actor | R1–R4 · R6 · R3 · R2 · R1–R4 red |
+| SQL: the item write ignores its Memory · the event states no item audience · no item-value check · the item command emits `memory.corrected` | V3 · V1 · V3 · V1 red |
+| SQL: no admin check · no owner check · restores any state · records no DELETED → ACTIVE transition | R4 · R4 · R3 · R1 red |
+| the drain never persists · counts a failed pass as a success · throttles a failed pass · the scheduler runs the bare pass | H1, H2 · H2 · H2 · the scheduler case red |
+
+12 TypeScript and 8 SQL mutants, all killed. Run with this section: the batch-1 and batch-2 suites (21/21 and
+33/33, on the 3912 chain), `appeal*` (11 suites, 151/151), `memoryItemVisibility` 32/32, `memoryCommandBus` 60/60,
+`schedulerCoverage` 10/10, `healthSchedulers` 14/14, `memoryProjectionSchedulerOutbox` 18/18.
+
+### §CC.4 Rows read, reason restated, NOT moved
+
+This table restates no verdict. The `standing` column is spelled out.
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H80 | BUILT-BUT-WRONG | Its stated blockers are gone: 3672 and 3814 are applied (§CA.1). The switch now crosses the kernel in the tree, so hiding a photo emits the event that re-derives what served it (V1). Waiting on release (server deploy): 3912 plus this API. §AN's media-counts note is not re-measured here and still stands |
+| H50 | BUILT-BUT-WRONG | The machine now holds on every command in the tree. On production it does not: an upheld appeal brings back an owner-deleted Memory (§CC.2). Waiting on release (server deploy) for that half (R3). Its other reason stands: the stored vocabulary has no CANDIDATE, CONFIRMED, MERGED or REJECTED (H38) |
+| H160 | BUILT-BUT-WRONG | In the tree, every canonical Memory write except account erasure crosses the kernel (§CB.1 plus §CC.1). Waiting on release (server deploy): 3911, 3912 and the API |
+| H161 | BUILT-BUT-WRONG | The drain is now observable in the tree (H1, H2, and the scheduler case). Waiting on release (server deploy): once deployed, production's `/healthz/schedulers` and `job_health` show whether it runs. That reading, not this code, is what moves it |
+| H162 | BUILT-BUT-WRONG | As H161 |
+| H203 | BUILT-BUT-WRONG | As H161 |
+| H244 | BUILT-BUT-WRONG | As H161 |
+
+**Rows whose reason still named `memory_kernel_enabled` as OFF, re-read.** The Layover lane's capability refresh
+re-pins `memory_kernel_enabled` to ON. Five rows still gave the kernel flag, or flags seeded FALSE that need it, as a
+reason, and each is re-read here.
+
+Their storage is on production as the tree's own files: the ledger checksums for 2320, 3320, 3673, 3674, 3990, 3991
+and 3992 equal the sha256 of this tree's copies. Every object 3990, 3991 and 3992 create is identical between
+production and the local chain: 21 functions (definition md5, SECURITY DEFINER, ACL) and 5 tables (columns,
+defaults, constraints, triggers, policies, RLS, ACL), 26 of 26, read-only on 2026-10-24.
+
+The flags are TRUE: `memory_snapshots_enabled`, `memory_video_segments_enabled`, `memory_import_batches_enabled` and
+`memory_kernel_enabled`. Unauthenticated GETs answer 401 on the snapshot replay, the video-segment list and the
+import-batch read. **None moves**, because each row's own stated reasons include one that is still true:
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H35 | BUILT-BUT-WRONG | `memory_snapshots`: the storage, both flags and the kernel are discharged (above), and the routes are mounted. Its other stated reason stands: a replay's signals are the media captures only and its detector context is empty. Production never produces a timed capture (Q-HM-CAPTURE-1), so a replay has no evidence to re-run |
+| H37 | BUILT-BUT-WRONG | `memory_import_batches`: storage (3992, 3673, 3674), flag and kernel discharged; routes mounted. Its other stated reason stands: the only source is the owner's own legacy Memories, and nothing imports history from outside Portava. Production holds 0 batches. The 26 legacy edges came from 3675's backfill, not from a batch |
+| H184 | BUILT-BUT-WRONG | Video segments: 3991, 3320, flag and kernel discharged; route mounted. Its other stated reasons stand: segments are owner-asserted and no scene detection exists, and a legacy video with no verified canonical duration cannot be segmented. The client screen it cites is not re-checked against the 2026-10-22 device build here |
+| H178 | BUILT-BUT-WRONG | Half (2) is gone. With the kernel ON, the kernel path serves every PATCH, and it judges the transition in the same transaction, under `FOR UPDATE` (§CB Q1/Q8). So the guard is no longer split between paths. Half (1) stands: two concurrent edits of the same non-lifecycle field resolve last-write-wins, and that is owner decision D-C1. Blocked on that ruling alone |
+| H29 | BUILT-BUT-WRONG | The kernel half is gone: receipts are written by the kernel, which is ON (§CA K1, §CB P2). What remains is only the naming question (`memory_command_receipts` against §3's `memory_commands`), a lead ruling. Blocked on that ruling alone |
+
+**BLOCKED, and no switch built: the episode spine's capture-time producer (H7, H8, H9, H18, H19, H23, H24, H54, H55,
+H56, H57, H58, H59, H60, H61, H63, H179, H238, and H256's candidate half).** Since 2026-10-22 the app re-encodes every
+photo on the device, which strips all EXIF, GPS included (§CA.4). A producer has two doors, and choosing one is a
+data-minimisation and trust ruling that no register records:
+
+- **(a) Send in-envelope JPEG, PNG and WebP bytes without re-encoding them.** This is how the app worked before
+  2026-10-22, and it is what census-media MD320 decided for the postcard composer. The original EXIF reaches the
+  server, GPS included. The server reads the capture time and strips the rest before storage (MD217). GPS leaves the
+  device again.
+- **(b) Read the picker's DateTimeOriginal and OffsetTimeOriginal on the device, and send only that timestamp as a
+  declared field.** No GPS leaves the device. But the server would store a client-declared time, and today
+  `captured_at` feeds evidence eligibility (`initProvenance` / `computeIntelligenceEligibility` in
+  lib/mediaAssets.ts) as if it had been read from the file.
+
+Building either door would presume the answer, so neither is built (the lead's rule). **Exact dependency:** an
+owner/lead ruling on Q-HM-CAPTURE-1. It needs three answers:
+- which door, (a) or (b);
+- under (b), whether a declared time may count as capture evidence;
+- whether either change needs consent copy.
+
+After the ruling, the producer is client code plus, for (b), one server field. The rows then wait on release (next
+device build, plus a server deploy for (b)) before production can feed the detector.
+
+**Not reached in this batch:** the rest of the triage's C-reachable BUILDABLE list. The triage file names the next
+candidates. One is H169/H243: `lib/inputAssistance/memoryContext.ts` now reads `CompassMemoryProjection`, so these may
+be evidence rows rather than build rows. That needs measuring.
+
+### §CC.5 Headline
+
+No row moves. 266 = 109 C / 152 W / 3 N / 2 X, unchanged from §CB.7.
+- NOT-GRADED: artifacts/api-server/src/lib/inputAssistance/memoryContext.ts — §CC.4 names it as a lead to measure for H169/H243 in a later batch; no row rests on it.

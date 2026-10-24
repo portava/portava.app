@@ -7170,3 +7170,48 @@ and type. It then re-applies 3911 and checks the definition's md5 is restored ex
 **Rollback.** `db/rollback/2026-10-23-3911-memory-kernel-create-participants-rollback.sql` re-creates 2711's definition
 verbatim (the md5 above) with its grants, then delete 3911's ledger row. The routes keep their pre-3911 arms, so
 nothing breaks.
+
+## 2026-10-24 — `3912_memory_kernel_item_visibility_and_moderation_restore.sql`, written and NOT applied anywhere (census drive, Highlights & Memories batch 3)
+
+**What it is.** A `CREATE OR REPLACE` of `public.memory_kernel_execute(jsonb)`. It is 3911's function byte for byte,
+plus two commands, so the last two canonical Memory writes outside the kernel now cross it (census-highlights-memories
+§CC):
+
+1. **`CHANGE_ITEM_VISIBILITY`.** A photo's own audience (§10, 3672): `memory_items.visibility` is NULL (it inherits
+   the Memory's audience) or `only_me`. The owner-checked write and `memory.visibility_changed` happen in one
+   transaction. A hidden photo's event states `visibility: only_me`, which is what tells a §18 consumer to re-derive.
+   A photo that is not on the Memory is `MEMORY_ITEM_NOT_FOUND`. Any value other than `only_me` or null is
+   `MEMORY_COMMAND_MALFORMED`.
+2. **`MODERATION_RESTORE_MEMORY`.** The restore an upheld appeal performs. The actor is the moderator, and must hold
+   `profiles.role = 'admin'` (otherwise the new reason `MEMORY_AUTH_NOT_MODERATOR`). The command must name the
+   Memory's owner (otherwise `MEMORY_NOT_FOUND`). It reverses a moderation removal (`removed` → `published`) and
+   nothing else. Every other state is `MEMORY_LIFECYCLE_INVALID_TRANSITION`, so an owner's deletion stays terminal.
+   It emits `memory.corrected`, DELETED → ACTIVE.
+
+The signature, SECURITY INVOKER, the pinned `search_path`, the grants and every other branch are 3911's. No table,
+column, row or flag is touched.
+
+**Order.** It requires 3911. The `$pre$` block refuses a kernel without 3911's writes, so 3912 can never discard them.
+It also requires 3672's `memory_items.visibility` and `profiles.role`, both of which sort before it.
+
+**Order-independent with the API.** If the API ships first, a 2711 or 3911 kernel answers the new commands with
+`MEMORY_COMMAND_UNKNOWN_TYPE`, and both routes then run their pre-3912 writes exactly as today (their compat arms). If
+3912 is applied first, nothing calls the new commands until the API ships.
+
+**A behaviour change, stated.** Before this, an upheld Memory appeal set `state='published'` on any of the
+appellant's Memories, including one its owner had deleted. That broke §5's terminal DELETED state and undid a §21
+purge. After 3912 plus this API, a Memory that is not `removed` is a restoration a moderator must decide by hand
+(`restore_requires_policy`), and an owner-deleted one matches nothing. Nothing in the API writes `removed` today
+(lib/memoryCommandBus.ts), so no current restore is lost.
+
+**Proofs.** `src/test/db/memoryKernelItemVisibilityRestore.db.test.ts`, V1–V5, R1–R6, H1–H2:
+
+- **V1–V5:** the photo switch over HTTP, the kernel off, and the compat arm on 3911.
+- **R1–R6:** the appeal restore as the appeals route calls it, including replay, refusal, the kernel off and the compat arm.
+- **H1–H2:** the outbox heartbeat, which needs no migration.
+
+Each case asserts equal `xmin` between the change and its event, and that the route wrote nothing to the Memory
+aggregate itself. 8 TypeScript and 8 SQL mutants of this change, all killed (census §CC).
+
+**Rollback.** `db/rollback/2026-10-24-3912-memory-kernel-item-visibility-and-moderation-restore-rollback.sql`
+re-creates 3911's definition verbatim with its grants, then delete 3912's ledger row. The routes' compat arms take over.

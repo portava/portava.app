@@ -141,7 +141,7 @@ const LEGACY_SIDE = new Set([
 
 /** Files that touch the COMMAND kernel's log. */
 const KERNEL_SIDE = new Set([ "test/memoryFromOwnMedia.pglite.test.ts" /* builds the command kernel log, memory_domain_events, as its fixture */, "migrations/3990_memory_snapshots.sql", "migrations/3992_memory_import_batches.sql", "migrations/3993_owner_resurfacing_policy.sql", "test/MemorySnapshot.pglite.test.ts", "test/memoryImportBatches.pglite.test.ts", "test/memoryImportBatches.postgres.test.ts", "test/resurfacingPolicyCommand.test.ts", "test/resurfacingPolicy.native.test.ts", "test/memoryTimeCorrection.test.ts",
-  "migrations/2711_memory_kernel_execute.sql", "migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql" /* 2711's function re-created with the create's participants and canonical fields (census-highlights-memories §CB) */,
+  "migrations/2711_memory_kernel_execute.sql", "migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql" /* 2711's function re-created with the create's participants and canonical fields (census-highlights-memories §CB) */, "migrations/3912_memory_kernel_item_visibility_and_moderation_restore.sql" /* 3911's function plus CHANGE_ITEM_VISIBILITY and MODERATION_RESTORE_MEMORY (§CC) */,
   "lib/memoryOutbox.ts",
   "test/memoryCommandKernelFake.ts",
   "test/memoryCommandRoutes.test.ts",
@@ -253,7 +253,7 @@ const BOTH_ALLOWED = new Set([ "test/MemorySnapshotLockFixture.ts",
 /** The migrations that belong to the kernel; no object in them may say memory_events_*. */
 const KERNEL_MIGRATIONS = [
   "migrations/2710_memory_command_kernel_tables.sql",
-  "migrations/2711_memory_kernel_execute.sql", "migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql",
+  "migrations/2711_memory_kernel_execute.sql", "migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql", "migrations/3912_memory_kernel_item_visibility_and_moderation_restore.sql",
 ];
 
 function walk(dir: string): string[] {

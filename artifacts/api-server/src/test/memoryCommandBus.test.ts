@@ -148,7 +148,7 @@ describe("§17 the seventeen commands are all accounted for — declared or expl
     for (const n of notDeclared) assert.ok(SPEC_17.includes(n), `${n} is not a §17 command name`);
     // Both pinned BY NAME (§17/§21 reasoning: lib/memoryCommandBus.ts header).
     const extensions = [...declared].filter((d) => !SPEC_17.includes(d));
-    assert.deepEqual(extensions, ["UPDATE_MEMORY", "UNHIDE_HIGHLIGHT", "CREATE_HIGHLIGHT", "BACKFILL_LEGACY_MEMORY"]);
+    assert.deepEqual(extensions, ["UPDATE_MEMORY", "UNHIDE_HIGHLIGHT", "CREATE_HIGHLIGHT", "BACKFILL_LEGACY_MEMORY", "CHANGE_ITEM_VISIBILITY", "MODERATION_RESTORE_MEMORY"]); // 3912 (census-highlights-memories §CC): a photo's own audience and the moderation restore, both EXT
   });
 
   /**
