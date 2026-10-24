@@ -2524,7 +2524,7 @@
     },
     {
       "file": "src/services/airport/LayoverMetricsReturns.ts",
-      "line": 23,
+      "line": 17,
       "via": null,
       "kind": "table",
       "method": "from",
@@ -2533,7 +2533,7 @@
     },
     {
       "file": "src/services/airport/LayoverMetricsReturns.ts",
-      "line": 23,
+      "line": 17,
       "via": null,
       "kind": "select",
       "method": "select",
@@ -2542,7 +2542,7 @@
     },
     {
       "file": "src/services/airport/LayoverMetricsReturns.ts",
-      "line": 23,
+      "line": 17,
       "via": null,
       "kind": "select",
       "method": "select",
@@ -2551,7 +2551,7 @@
     },
     {
       "file": "src/services/airport/LayoverMetricsReturns.ts",
-      "line": 33,
+      "line": 27,
       "via": null,
       "kind": "table",
       "method": "from",
@@ -2560,7 +2560,7 @@
     },
     {
       "file": "src/services/airport/LayoverMetricsReturns.ts",
-      "line": 33,
+      "line": 27,
       "via": null,
       "kind": "select",
       "method": "select",
@@ -2569,7 +2569,7 @@
     },
     {
       "file": "src/services/airport/LayoverMetricsReturns.ts",
-      "line": 33,
+      "line": 27,
       "via": null,
       "kind": "select",
       "method": "select",
@@ -2578,7 +2578,7 @@
     },
     {
       "file": "src/services/airport/LayoverMetricsReturns.ts",
-      "line": 33,
+      "line": 27,
       "via": null,
       "kind": "select",
       "method": "select",
@@ -12820,7 +12820,7 @@
     },
     {
       "file": "src/services/airport/LayoverMetricsReturns.ts",
-      "line": 23,
+      "line": 17,
       "via": null,
       "kind": "filter",
       "method": "order",
@@ -12829,7 +12829,7 @@
     },
     {
       "file": "src/services/airport/LayoverMetricsReturns.ts",
-      "line": 33,
+      "line": 27,
       "via": null,
       "kind": "filter",
       "method": "in",
@@ -19923,7 +19923,7 @@
     },
     {
       "file": "src/services/airport/LayoverMetricsReturns.ts",
-      "line": 23,
+      "line": 17,
       "via": null,
       "table": "layover_safe_return_links",
       "variants": [
@@ -19932,7 +19932,7 @@
     },
     {
       "file": "src/services/airport/LayoverMetricsReturns.ts",
-      "line": 33,
+      "line": 27,
       "via": null,
       "table": "layover_outcomes",
       "variants": [
