@@ -18,11 +18,13 @@
  * exactly as their migrations wrote them.
  *
  * LOUD BY DESIGN (the creatorLedgerPsqlClient / discoverySearchPsqlClient
- * precedent): it models plain-column `select` (with `{ count: "exact" }`),
+ * precedent): it models plain-column `select` (with `{ count: "exact" }`, and
+ * one level of FK-hinted embedding, as creatorLedgerPsqlClient does), `auth.getUser`
+ * over a `tokens` map,
  * `eq` `neq` `gt` `gte` `lt` `lte` `in` `is` `not(col, "is", null)`
  * `contains` `order` `limit` `range` `single` `maybeSingle`, `insert` `update`
  * `upsert` (`onConflict`, `ignoreDuplicates`) and `delete` each with an optional
- * `.select(…)` for RETURNING, and `rpc`. Anything else THROWS, so a new call
+ * `.select(…)` for RETURNING, and `rpc` (a set-returning function answers its rows as an array). Anything else THROWS, so a new call
  * shape cannot pass unproven. A value is formatted for its column's REAL type
  * (read from information_schema): an array column takes an array literal, a
  * json/jsonb column takes JSON, everything else a quoted literal.
@@ -35,6 +37,7 @@
  */
 import { psql } from "./localDb.js";
 import { lit, pgError, type PgError } from "./creatorLedgerPsqlClient.js";
+import { PostgrestEmbedError, selectListWithEmbeds } from "./postgrestEmbed.js";
 
 export interface MemoryBridgeOptions {
   /** In-memory answers for `feature_flags` reads. The table is never read or written. */
@@ -43,6 +46,8 @@ export interface MemoryBridgeOptions {
   failOn?: (table: string, op: "select" | "insert" | "update" | "upsert" | "delete" | "rpc") => boolean;
   /** Every statement issued, in order. */
   log?: string[];
+  /** Bearer token → user id, for `auth.getUser` (what `requireUser` calls); the creatorLedgerPsqlClient shim. */
+  tokens?: Record<string, string>;
 }
 
 function ident(s: string): string {
@@ -107,7 +112,16 @@ export function memoryBridge(opts: MemoryBridgeOptions = {}): any {
   const flags = opts.flags ?? {};
   const log = opts.log ?? [];
   const failOn = opts.failOn ?? (() => false);
+  const tokens = opts.tokens ?? {};
   return {
+    auth: {
+      async getUser(token: string) {
+        const id = tokens[token];
+        return id
+          ? { data: { user: { id, app_metadata: {} } }, error: null }
+          : { data: { user: null }, error: { message: "invalid token", status: 401 } };
+      },
+    },
     from(table: string) {
       ident(table);
       let op: "select" | "insert" | "update" | "upsert" | "delete" = "select";
@@ -188,7 +202,21 @@ export function memoryBridge(opts: MemoryBridgeOptions = {}): any {
       const b: any = {
         select(c?: string, o?: { count?: string; head?: boolean }) {
           if (o?.head) throw new Error("memoryBridge: head selects are not modelled");
-          const list = !c || c.trim() === "*" ? "*" : listOf(c);
+          // One level of FK-hinted embedding (`relation!constraint(cols)`), resolved against the
+          // REAL foreign key by ./postgrestEmbed.ts — the form requireUser's account-state read uses.
+          let embedded: string | null = null;
+          if (op === "select" && c && c.includes("(")) {
+            try {
+              embedded = selectListWithEmbeds(table, c, (x) => ident(x.trim()), (sql) => {
+                const r = psql(sql);
+                return r.status === 0 ? r.stdout.split("\n").filter((l) => l.length > 0) : null;
+              });
+            } catch (err) {
+              if (!(err instanceof PostgrestEmbedError)) throw err;
+              throw new Error(`memoryBridge: an embed PostgREST would refuse: ${err.message}`);
+            }
+          }
+          const list = embedded ?? (!c || c.trim() === "*" ? "*" : listOf(c));
           if (op === "select") { cols = list; countExact = o?.count === "exact"; } else returning = list;
           return b;
         },
@@ -242,12 +270,26 @@ export function memoryBridge(opts: MemoryBridgeOptions = {}): any {
     async rpc(fn: string, args: Record<string, unknown> = {}) {
       ident(fn);
       if (failOn(fn, "rpc")) return { data: null, error: unavailable() };
+      // Each argument formatted for its parameter's REAL type, as PostgREST coerces JSON: an array
+      // parameter takes an array literal of its element type, anything else object-shaped is jsonb.
+      const paramTypes = new Map<string, string>();
+      const pt = psql(`SELECT p.parameter_name || '|' || p.udt_name FROM information_schema.parameters p JOIN information_schema.routines r ON r.specific_name = p.specific_name WHERE r.routine_schema = 'public' AND r.routine_name = ${lit(fn)} AND p.parameter_mode IN ('IN', 'INOUT') AND p.parameter_name IS NOT NULL;`);
+      if (pt.status === 0) for (const line of pt.stdout.split("\n").filter(Boolean)) { const [n, t] = line.split("|"); paramTypes.set(n!, t!); }
       const named = Object.entries(args).map(([k, v]) => {
+        const udt = paramTypes.get(k);
         const value = v === null || v === undefined ? "NULL"
+          : Array.isArray(v) && udt?.startsWith("_") ? `${arrayLiteral(v)}::${ident(udt.slice(1))}[]`
           : typeof v === "object" ? `${lit(JSON.stringify(v))}::jsonb`
           : lit(v);
         return `${ident(k)} => ${value}`;
       }).join(", ");
+      // A set-returning function answers an ARRAY of rows, as PostgREST serves it; a scalar one, its value.
+      const retset = psql(`SELECT bool_or(proretset) FROM pg_proc WHERE pronamespace = 'public'::regnamespace AND proname = ${lit(fn)};`);
+      if (retset.status === 0 && retset.stdout.trim() === "t") {
+        const r = run(`SELECT COALESCE(json_agg(t.*), '[]'::json)::text FROM public.${fn}(${named}) t;`, log);
+        if (r.error) return { data: null, error: r.error };
+        return { data: r.data, error: null };
+      }
       const r = run(`SELECT json_build_array(public.${fn}(${named}))::text;`, log);
       if (r.error) return { data: null, error: r.error };
       return { data: (r.data as unknown[])[0] ?? null, error: null };

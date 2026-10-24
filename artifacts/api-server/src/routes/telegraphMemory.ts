@@ -142,12 +142,12 @@ router.post(
       source,
     });
 
-    const { data: created, error: createErr } = await client
+    const drafted = await createDraftThroughKernel(req, client, user.id, row, async () => await client // census-highlights-memories §CB (H130/H147/H160): CREATE_MEMORY through the §17 kernel, so the draft's event, receipt, outbox row and audit row are written in its own transaction; this direct insert is ONLY the legacy arm (memory_kernel_enabled off), moved verbatim
       .from("memories")
       .insert(row)
       .select("id, owner_id, state, visibility, title, starts_at")
-      .single();
-    if (createErr || !created) {
+      .single()); const { data: created, error: createErr } = drafted;
+    if (createErr || !created) { if (drafted.refused) { sendDraftRefusal(req, res, drafted.refused); return; } // a kernel refusal keeps its §24 reason code; the legacy arm's failure answers exactly as before
       log.error({ err: createErr, messageId: m.id }, "memory draft insert failed");
       sendError(res, "db_error", createErr?.message ?? "Could not create the draft");
       return;
@@ -304,3 +304,62 @@ router.get(
 );
 
 export default router;
+
+// ── census-highlights-memories §CB (3911): the §10.2 draft through the §17 kernel ──
+// Appended at the foot so no cited line above moves. Before this, POST
+// /me/memory-drafts was the one Memory create outside the command boundary: a
+// direct insert with no memory.created event, no idempotency receipt and no
+// outbox row (census-highlights-memories §CA.4). It now dispatches CREATE_MEMORY
+// exactly as POST /memories does. The draft is still `state='draft'` and
+// `visibility='only_me'` as literals (memoryDraftRow), and the kernel names the
+// actor as the owner whatever the row says. Kernel OFF: the original insert, with
+// no audit line (`legacyUnaudited`), so the flag-off answer is byte-identical.
+import { dispatchMemoryCommand, type CommandOutcome } from "../services/memory/MemoryDomainService.js";
+import { lifecycleStateOf, readMemoryCommandEnvelope, sendMemoryCommandRejection } from "../lib/memoryCommandBus.js";
+
+type DraftRefusal = Extract<CommandOutcome<unknown>, { ok: false }>;
+
+/** The draft, written by the kernel (flag on) or by `legacyInsert` (flag off). */
+export async function createDraftThroughKernel(
+  req: any,
+  sc: any,
+  actorUserId: string,
+  row: Record<string, unknown>,
+  legacyInsert: () => Promise<{ data: any; error: any }>,
+): Promise<{ data: any; error: any; refused?: DraftRefusal }> {
+  const envelope = readMemoryCommandEnvelope(req); // judged only on the kernel path, as routes/stories.ts does (verifier F2)
+  const legacy: { ran: { data: any; error: any } | null } = { ran: null }; // set only if the legacy arm ran
+  const outcome = await dispatchMemoryCommand<any>({
+    sc,
+    commandType: "CREATE_MEMORY",
+    memoryId: null,
+    actorUserId,
+    idempotencyKey: envelope.ok ? envelope.idempotencyKey : "",
+    kernelEnvelopeError: envelope.ok ? null : envelope.message,
+    legacyUnaudited: true,
+    payload: {
+      to_state: lifecycleStateOf("draft"),
+      visibility: "only_me",
+      write: row,
+      select: "id, owner_id, state, visibility, title, starts_at",
+    },
+    legacy: async () => {
+      const ran = await legacyInsert();
+      legacy.ran = ran;
+      if (ran.error || !ran.data) return { ok: false, http: { code: "db_error", message: ran.error?.message ?? "Could not create the draft" } };
+      return { ok: true, body: ran.data };
+    },
+  });
+  if (outcome.ok) return { data: outcome.body, error: null };
+  // The legacy arm failed: hand back ITS error, so the caller answers as it always did.
+  if (legacy.ran !== null) return { data: null, error: legacy.ran.error };
+  return { data: null, error: { message: "the Memory command was refused" }, refused: outcome };
+}
+
+function sendDraftRefusal(req: any, res: any, refused: DraftRefusal): void {
+  if ("rejection" in refused) {
+    sendMemoryCommandRejection(res, refused.rejection, req.log);
+    return;
+  }
+  sendError(res, refused.http.code as any, refused.http.message);
+}
