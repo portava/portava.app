@@ -17482,6 +17482,15 @@
     },
     {
       "file": "src/services/layover/LayoverDecisionStore.ts",
+      "line": 453,
+      "via": null,
+      "kind": "write",
+      "method": "insert",
+      "table": "layover_certified_computations",
+      "name": "safe_envelope_ref"
+    },
+    {
+      "file": "src/services/layover/LayoverDecisionStore.ts",
       "line": 480,
       "via": null,
       "kind": "table",
