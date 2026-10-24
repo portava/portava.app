@@ -13183,10 +13183,10 @@ owner's check on production, and nothing else. No row moves to `C` on that proof
   suite starts from it (`artifacts/api-server/src/test/db/pressedLayoverApp.ts:171#export const PRESSED_BASE`), and
   a session is declared the way the app declares it, because with `layover_constraints_enabled` ON an undeclared airport
   change closes landside (designed fail-closed; L49 below).
-- **Every layover db suite, both bases.** All 57 (§82's 55, the retest-row suite and 3951's forward/rollback suite), on local PostgreSQL 17: default base **473 / 473**; production base **471 / 471**. Two cases are not defined under the production base because production's flags make them inapplicable: `layoverPressedSnapshot`'s legacy-ordering case and `layoverFlightConnections`' flag-absent arm. The first full run found one harness gap (3951 was missing from the replay's omission closure, so a replay without 2700 failed at 3951) and one setup error in the 3951 suite; both were fixed and the full run repeated.
+- **Every layover db suite, both bases.** All 57 (§82's 55, the retest-row suite and 3951's forward/rollback suite), on local PostgreSQL 17: default base **474 / 474**; production base **472 / 472** (re-run 2026-10-24 after the verifier corrections of §83.7; first run 473 / 473 and 471 / 471). Two cases are not defined under the production base because production's flags make them inapplicable: `layoverPressedSnapshot`'s legacy-ordering case and `layoverFlightConnections`' flag-absent arm. The first full run found one harness gap (3951 was missing from the replay's omission closure, so a replay without 2700 failed at 3951) and one setup error in the 3951 suite; both were fixed and the full run repeated.
 - **The 21 rows no suite drove before.** `artifacts/api-server/src/test/db/layoverRetestRows20261023.db.test.ts` runs a
   traveller's own calls under the fixture's flags for L43, L49, L64, L95, L124, L132, L153, L158, L166, L173, L190, L222,
-  L224, L229, L230, L279, L283, L284 and L294 (14 / 14 with L24 and L25). L169 is driven by `layoverFlightConnections`
+  L224, L229, L230, L279, L283, L284 and L294 (15 / 15 with L24, L25 and the 2026-10-24 distinguishing L230 case). L169 is driven by `layoverFlightConnections`
   P3/P4, which runs in both bases. L94 rides L95's PATCH; its `W` is §60's whole-record re-derivation, a design limit
   rather than the retest, so the triage moves it to a ruling and 83 retest rows remain. Mutants R1–R6 (exact without the
   control, recheck not charged, airport change not closing, the undeclared-change unknown removed, re-entry not
@@ -13235,7 +13235,7 @@ check, or the dependency named in the row.
 
 ### 83.5 Tests and mutation proofs, run on 2026-10-23
 
-- **PostgreSQL 17** (local, port 54354): the 57 layover suites, 473 / 473 (default base) and 471 / 471 (production base). The new suites: retest rows **14 / 14**; 3951 forward and
+- **PostgreSQL 17** (local, port 54354): the 57 layover suites, 474 / 474 (default base) and 472 / 472 (production base), re-run 2026-10-24 after §83.7. The new suites: retest rows **15 / 15**; 3951 forward and
   rollback **4 / 4** (the rollback refuses while the flag is ON and while a stored snapshot holds a ref, then removes the
   flag, CHECK, column and ledger row, is idempotent, and 3951 re-applies).
 - **Unit:** `artifacts/api-server/src/test/layoverSnapshotMembers.test.ts` **15 / 15**.
