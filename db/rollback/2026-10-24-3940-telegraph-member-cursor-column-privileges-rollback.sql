@@ -3,13 +3,15 @@
 -- NOT applied to portava-ci (hwokxgbmezheskbzskfr) at the time of writing.
 -- NOT applied to production (ajrurzioarfkagpuxfnb).
 --
--- WHAT 3940 DID (one transaction, privileges only): replaced anon's and authenticated's TABLE-level SELECT on
--- public.message_thread_members with a COLUMN-level SELECT on every column except delivered_sequence and
--- seen_sequence. No data, policy, function, trigger or flag changed. service_role was not touched.
+-- WHAT 3940 DID (one transaction, privileges only): replaced anon's and authenticated's SELECT on
+-- public.message_thread_members with a COLUMN-level SELECT on the columns each could read before, minus
+-- delivered_sequence and seen_sequence. No data, policy, function, trigger or flag changed. service_role was not
+-- touched.
 --
--- WHAT THIS DOES: revokes the column-level grants (a table-level REVOKE also revokes every column privilege of the
--- table) and restores the table-level SELECT both roles held before 3940, then deletes 3940's ledger row so the runner
--- re-applies it later. RLS is unchanged throughout: rows stay exactly as visible as they were.
+-- WHAT THIS DOES: grants the two cursor columns back to both roles at COLUMN level, then deletes 3940's ledger row so
+-- the runner re-applies it later. It does NOT restore a table-level SELECT: that would also hand back any column
+-- another migration has withheld since (3941's private member columns), so every other column keeps whatever
+-- privilege it has now. RLS is unchanged throughout: rows stay exactly as visible as they were.
 --
 -- WHAT IT REOPENS (say it before running it): every active member of a thread can again read every co-member's
 -- delivered_sequence and seen_sequence through PostgREST. Once the server release that WRITES delivered_sequence is
@@ -29,16 +31,16 @@ BEGIN
   END IF;
 END $pre$;
 
-REVOKE SELECT ON public.message_thread_members FROM anon, authenticated;
-GRANT SELECT ON public.message_thread_members TO anon, authenticated;
+GRANT SELECT (delivered_sequence, seen_sequence) ON public.message_thread_members TO anon, authenticated;
 
 DO $post$
 DECLARE
   r text;
 BEGIN
   FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
-    IF NOT has_table_privilege(r, 'public.message_thread_members', 'SELECT') THEN
-      RAISE EXCEPTION 'POSTCONDITION FAILED (3940 rollback): % has no table-level SELECT on message_thread_members.', r;
+    IF NOT (has_column_privilege(r, 'public.message_thread_members', 'delivered_sequence', 'SELECT')
+            AND has_column_privilege(r, 'public.message_thread_members', 'seen_sequence', 'SELECT')) THEN
+      RAISE EXCEPTION 'POSTCONDITION FAILED (3940 rollback): % cannot read the cursor columns again.', r;
     END IF;
   END LOOP;
   IF NOT (has_column_privilege('service_role', 'public.message_thread_members', 'delivered_sequence', 'SELECT')
