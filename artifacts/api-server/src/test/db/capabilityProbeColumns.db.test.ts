@@ -32,6 +32,9 @@ const MODULES: Record<string, () => Promise<Record<string, unknown>>> = {
   "lib/media/trailReviewSchemaCapability.ts": () => import("../../lib/media/trailReviewSchemaCapability.js"),
   "lib/moderationReportSnapshots.ts": () => import("../../lib/moderationReportSnapshots.js"),
   "services/airport/airportCurationSchema.ts": () => import("../../services/airport/airportCurationSchema.js"),
+  "services/airport/LayoverMetricsReturns.ts": () => import("../../services/airport/LayoverMetricsReturns.js"),
+  "services/airport/LayoverRouteSubjects.ts": () => import("../../services/airport/LayoverRouteSubjects.js"),
+  "services/airport/LayoverTravelProvenanceSchema.ts": () => import("../../services/airport/LayoverTravelProvenanceSchema.js"),
   "services/compass/CompassConversationService.ts": () => import("../../services/compass/CompassConversationService.js"),
 };
 
@@ -58,7 +61,42 @@ const isDefinition = (v: unknown): v is CapabilityDefinition =>
 const ident = (s: string) => { assert.match(s, /^[a-z_][a-z0-9_]*$/, `not a plain identifier: ${s}`); return `"${s}"`; };
 const lit = (s: string) => `'${s.replace(/'/g, "''")}'`;
 
+/**
+ * `[path, line, argument]` for every `probeSchemaReadiness(<client>, <definition>` call under src (tests excluded).
+ * The follow-up hotfix (2026-10-24) found three definitions written INLINE at the call, which the declaration scan
+ * above cannot see; this scan finds the call itself, so a definition is covered however it is written.
+ */
+function probeCallSites(): Array<[string, number, string]> {
+  const out: Array<[string, number, string]> = [];
+  for (const p of walk(SRC)) {
+    const text = readFileSync(p, "utf8");
+    for (const m of text.matchAll(/probeSchemaReadiness\(\s*[A-Za-z_][A-Za-z0-9_.]*\s*,\s*([^\s,)]+)/g)) {
+      const line = text.slice(0, m.index).split("\n").length;
+      out.push([relative(SRC, p), line, m[1]!]);
+    }
+  }
+  return out;
+}
+/** The one call site that passes a definition through: readCapability's own `def` parameter (its callers pass registry definitions). */
+const PASS_THROUGH: Record<string, string> = { "lib/capability/schemaCapability.ts": "def" };
+
 describe("every capability's readiness probe runs cleanly on the replayed chain", { skip: SKIP }, () => {
+  it("completeness: every probeSchemaReadiness call passes a NAMED definition that a module this suite imports exports", async () => {
+    const sites = probeCallSites();
+    assert.ok(sites.length >= 15, `only ${sites.length} call sites found — the scan broke`);
+    const exported = new Map<string, string[]>();
+    for (const [path, load] of Object.entries(MODULES)) {
+      for (const [name, v] of Object.entries(await load())) if (isDefinition(v)) exported.set(name, [...(exported.get(name) ?? []), path]);
+    }
+    const problems: string[] = [];
+    for (const [path, line, arg] of sites) {
+      if (PASS_THROUGH[path] === arg) continue;
+      if (arg.startsWith("{")) { problems.push(`${path}:${line} passes an INLINE definition: export it as a CapabilityDefinition and add its module to MODULES`); continue; }
+      if (!exported.has(arg)) problems.push(`${path}:${line} passes ${arg}, which no module in MODULES exports as a CapabilityDefinition`);
+    }
+    assert.deepEqual(problems, [], problems.join("\n"));
+  });
+
   it("completeness: every CapabilityDefinition declared under src is EXPORTED from a module this suite imports", async () => {
     const decl = declarations();
     assert.ok(decl.length >= 10, `only ${decl.length} declarations found — the scan broke`);

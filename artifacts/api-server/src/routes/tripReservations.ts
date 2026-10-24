@@ -703,7 +703,7 @@ router.delete("/trips/:tripId/reservations/:id", asyncHandler(async (req, res) =
     res.json({ reservation: cancelled });
     return;
   }
-
+  if (history.reason !== "flag_off") { sendTripRefusal(res, "degraded_unavailable", "TRIP_PROJECTION_UNAVAILABLE", "The reservation could not be cancelled just now, and it is never deleted instead. Please try again."); return; } // follow-up hotfix 2026-10-24: the legacy hard delete is the FLAG-OFF behaviour only; a closed gate with the flag ON (schema absent or unverifiable, a transient probe error included) refuses, retryably, and destroys nothing
   const { error } = await sc
     .from("trip_reservations")
     .delete()

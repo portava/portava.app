@@ -89,7 +89,7 @@ function tripRows(over: Record<string, any[]> = {}): Record<string, any[]> {
       { trip_id: TRIP, user_id: CREW_B, role: "member" },
     ],
     message_thread_members: [
-      { thread_id: THREAD, user_id: OWNER, role: "owner", left_at: null },
+      { thread_id: THREAD, user_id: OWNER, role: "admin", left_at: null },
       { thread_id: THREAD, user_id: CREW_A, role: "member", left_at: null },
       { thread_id: THREAD, user_id: CREW_B, role: "member", left_at: null },
     ],
@@ -106,7 +106,7 @@ function circleRows(over: Record<string, any[]> = {}): Record<string, any[]> {
       { user_id: OWNER, other_id: CREW_B },
     ],
     message_thread_members: [
-      { thread_id: THREAD, user_id: OWNER, role: "owner", left_at: null },
+      { thread_id: THREAD, user_id: OWNER, role: "admin", left_at: null },
       { thread_id: THREAD, user_id: CREW_A, role: "member", left_at: null },
       { thread_id: THREAD, user_id: CREW_B, role: "member", left_at: null },
     ],
@@ -129,7 +129,7 @@ describe("lib/chatSync trip sync — an unreadable trip_members is not an empty 
     const sc = makeFailClosedClient({
       rows: tripRows({
         message_thread_members: [
-          { thread_id: THREAD, user_id: OWNER, role: "owner", left_at: null },
+          { thread_id: THREAD, user_id: OWNER, role: "admin", left_at: null },
           { thread_id: THREAD, user_id: CREW_A, role: "member", left_at: null },
           { thread_id: THREAD, user_id: CREW_B, role: "member", left_at: null },
           { thread_id: THREAD, user_id: DEPARTED, role: "member", left_at: null },
@@ -202,7 +202,7 @@ describe("lib/chatSync trip sync — an unreadable trip_members is not an empty 
     const sc = makeFailClosedClient({
       rows: tripRows({
         message_thread_members: [
-          { thread_id: THREAD, user_id: OWNER, role: "owner", left_at: "2026-01-01T00:00:00.000Z" },
+          { thread_id: THREAD, user_id: OWNER, role: "admin", left_at: "2026-01-01T00:00:00.000Z" },
           { thread_id: THREAD, user_id: CREW_A, role: "member", left_at: "2026-01-01T00:00:00.000Z" },
           { thread_id: THREAD, user_id: CREW_B, role: "member", left_at: "2026-01-01T00:00:00.000Z" },
         ],

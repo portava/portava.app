@@ -124,7 +124,7 @@ export async function syncTripChatMembers(
   // supports: we do not know who belongs in this thread, so we change nothing.
   const { data: acceptedRows, error: acceptedErr } = await sc
     .from('trip_members')
-    .select('user_id, role')
+    .select('user_id, role, status')
     .eq('trip_id', tripId)
     .in('role', ['owner', 'member']);
 
@@ -136,7 +136,7 @@ export async function syncTripChatMembers(
     return null;
   }
 
-  const accepted = (acceptedRows ?? []) as Array<{ user_id: string; role: string }>;
+  const accepted = ((acceptedRows ?? []) as Array<{ user_id: string; role: string; status?: string | null }>).filter(isAcceptedTripRow).map((r) => ({ user_id: r.user_id, role: tripChatThreadRole(r.role) })); // follow-up hotfix 2026-10-24: an invited, declined, removed or left row is not crew, and the owner is the thread's admin (the CHECK allows member | admin)
   const acceptedIds = new Set(accepted.map((r) => r.user_id));
 
   // 3. Read current thread members (including those who already left).
@@ -387,4 +387,25 @@ export async function syncCircleChatMembers(
   }
 
   return threadId;
+}
+
+/**
+ * Follow-up hotfix (2026-10-24, verifier finding on #797). `message_thread_members.role` is CHECKed to member | admin
+ * (production carries the same constraint), and this sync inserted the TRIP role, so a trip's owner ('owner') was
+ * refused by the database and every new trip's chat was created without its owner. Telegraph's own rule for a
+ * thread's host is `admin` (services/telegraph/groupFormation.ts: "The actor is the group's first admin (its host);
+ * everyone else a member"), so a trip owner is the trip thread's admin and every other crew member a member. No new
+ * role is invented.
+ */
+export function tripChatThreadRole(tripRole: string): "admin" | "member" {
+  return tripRole === "owner" ? "admin" : "member";
+}
+
+/**
+ * The same acceptance rule as lib/http.ts requireTripMember: a row with an explicit status other than 'accepted'
+ * (invited, declined, removed, left) is not crew. This sync used to select by ROLE alone, so a pending invitee (role
+ * 'member', status 'invited') was put into the crew chat before accepting, and a member who left kept access.
+ */
+export function isAcceptedTripRow(row: { status?: string | null }): boolean {
+  return row.status == null || row.status === "accepted";
 }
