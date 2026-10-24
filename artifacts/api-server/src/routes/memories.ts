@@ -522,7 +522,7 @@ router.post("/memories", async (req, res) => {
     payload: {
       to_state: createState,
       visibility: d.visibility,
-      write: insertRow,
+      write: insertRow, tagged_user_ids: d.taggedUserIds, // 3911: the participants, tagged as PENDING in the kernel's own transaction (2711 ignores the key; the route then tags below, as before)
       select: precisionEnabled ? MEMORY_CREATE_SELECT_WITH_PRECISION : MEMORY_CREATE_SELECT,
     },
     legacy: async () => {
@@ -545,7 +545,7 @@ router.post("/memories", async (req, res) => {
   // Tag users if provided. §17 ADD_PERSON — the participant set is part of the
   // Memory, and a replay of CREATE_MEMORY must not tag anyone twice, which is
   // why this is skipped on a duplicate: the original command already did it.
-  if (d.taggedUserIds.length > 0 && !created.duplicate) {
+  const kernelTagged = created.taggedUserIds ?? null; if (kernelTagged !== null) { for (const uid of kernelTagged) notifyTagged(sc, memory, uid); } else if (d.taggedUserIds.length > 0 && !created.duplicate) { // 3911: an array is the kernel's answer — it tagged exactly these, in the create's transaction, and nothing is written here; null (2711, kernel off) keeps the pre-3911 insert below, and a replay is skipped as before
     const tagRows = d.taggedUserIds
       .filter((uid) => uid !== user.id)
       .map((uid) => ({
@@ -2805,7 +2805,7 @@ router.post("/trips/:tripId/memory", async (req, res) => {
     payload: {
       to_state: lifecycleStateOf("draft"),
       visibility: "trip_crew",
-      write: tripInsertRow,
+      write: tripInsertRow, ...(crewIds.length <= KERNEL_TAG_LIMIT ? { tagged_user_ids: crewIds } : {}), // 3911: the crew, tagged in the kernel's transaction; a crew past the kernel's bound keeps the route's own insert below
       select: TRIP_MEMORY_SELECT,
     },
     legacy: async () => {
@@ -2831,7 +2831,7 @@ router.post("/trips/:tripId/memory", async (req, res) => {
   // `!created.duplicate` for the same reason POST /memories skips it: a replayed
   // command must not tag the crew a second time — the original command already
   // did, and the receipt is what says so.
-  if (crewIds.length > 0 && !created.duplicate) {
+  const crewKernelTagged = created.taggedUserIds ?? null; if (crewKernelTagged !== null) { taggedCount = crewKernelTagged.length; for (const uid of crewKernelTagged) notifyTagged(sc, memory, uid); } else if (crewIds.length > 0 && !created.duplicate) { // 3911: the count is what the kernel tagged; null keeps the pre-3911 insert below
     const tagRows = crewIds.map((uid) => ({ memory_id: memoryId, tagged_user_id: uid, status: "pending" }));
     // Same defect as the create route: `.then(undefined, cb)` is a REJECTION
     // handler and supabase-js RESOLVES on a database error, so a failed insert
@@ -3907,7 +3907,7 @@ router.post("/memories/:id/items/from-post", async (req, res) => {
     payload: {
       media_type: mediaType,
       position: parsed.data.position,
-      write: { memory_id: id, media_url: mediaUrl, media_type: mediaType, caption: parsed.data.caption ?? null, position: parsed.data.position },
+      write: { memory_id: id, media_url: mediaUrl, media_type: mediaType, caption: parsed.data.caption ?? null, position: parsed.data.position, source_post_id: postId }, // 3911: the source link in the kernel's own INSERT, judged there by 3999's guard
     },
     legacy: async () => {
       const { data, error } = await sc
@@ -3931,9 +3931,9 @@ router.post("/memories/:id/items/from-post", async (req, res) => {
   });
   if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
 
-  // The kernel's ADD_MEDIA (2711) writes the five columns it knows. Its item
-  // carries no source link, so the link is written here, and if it cannot be
-  // the item is taken back out: an unlinked copy is never left behind.
+  // 2711's ADD_MEDIA wrote the five columns it knew and no source link; 3911's
+  // writes the link in the same INSERT, so this follow-up runs only against 2711:
+  // the link is written here, and if it cannot be the item is taken back out.
   let row = outcome.body as any;
   if (row?.source_post_id !== postId) {
     const linked = await sc.from("memory_items").update({ source_post_id: postId })
@@ -3958,3 +3958,11 @@ router.post("/memories/:id/items/from-post", async (req, res) => {
   recordMemoryCreatedFromMediaSignal(sc, { userId: user.id, postId }); void enqueueMemoryItemRenditions(sc, { mediaUrl, mediaType, ownerId: user.id }, { log: req.log }); // H182 (wave 5): the copied photo gets its ladder too
   res.status(201).json({ item: { ...mapItem(row), sourcePostId: postId } });
 });
+
+/**
+ * 3911's bound on one CREATE_MEMORY's participants (memory_kernel_execute
+ * refuses a longer `tagged_user_ids` as MEMORY_COMMAND_MALFORMED). POST /memories
+ * is bounded at 50 by its schema; a trip crew larger than this is not sent to the
+ * kernel, so the route's own insert tags it, exactly as before 3911.
+ */
+const KERNEL_TAG_LIMIT = 1000;
