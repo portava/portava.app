@@ -275,3 +275,31 @@ describe("resolveAppeal — untouched contracts", () => {
     assert.match(String((r as any).reason), /unknown target_type/);
   });
 });
+
+// census-highlights-memories §CC verifier fix (2026-10-24): with the kernel ON, the
+// restore is MODERATION_RESTORE_MEMORY, and the kernel stores its `result` in the
+// receipt keyed to the MODERATOR. The payload must carry `select: "id,state"` (the
+// kernel's existing projection trims the receipt to those keys) and no `patch`
+// (3912 refuses one as MEMORY_COMMAND_MALFORMED). Red without the select.
+describe("resolveAppeal memory — the kernel restore's payload", () => {
+  it("sends owner, appeal and select 'id,state' (no patch) as the moderator, and writes nothing itself", async () => {
+    const MOD = "cccccccc-0000-0000-0000-000000000003";
+    const s = makeClient({ feature_flags: [{ flag: "memory_kernel_enabled", enabled: true }], memories: [{ id: TARGET, owner_id: OWNER, state: "removed" }] });
+    const calls: Array<{ fn: string; args: any }> = [];
+    s.client.rpc = async (fn: string, args: any) => {
+      calls.push({ fn, args });
+      return { data: { ok: true, duplicate: false, memory_id: TARGET, event_id: "eeeeeeee-0000-0000-0000-00000000000e", event_type: "memory.corrected", sequence: 1, result: { id: TARGET, state: "published" }, contract_version: 1 }, error: null };
+    };
+    const r = await resolveAppeal(s.client, { ...appealOf("memory"), moderator_id: MOD } as any);
+    assert.deepEqual(r, { ok: true, action: "memory_restored" });
+    const kernel = calls.filter((c) => c.fn === "memory_kernel_execute");
+    assert.equal(kernel.length, 1, JSON.stringify(calls));
+    const cmd = kernel[0]!.args.p_command;
+    assert.equal(cmd.type, "MODERATION_RESTORE_MEMORY");
+    assert.equal(cmd.memory_id, TARGET);
+    assert.equal(cmd.actor_user_id, MOD, "the moderator is the actor");
+    assert.equal(cmd.idempotency_key, `appeal-restore:${APPEAL}`);
+    assert.deepEqual(cmd.payload, { owner_id: OWNER, appeal_id: APPEAL, select: "id,state" }, "the receipt is trimmed to id and state; no patch is sent");
+    assert.equal(s.writes.filter((w) => w.table === "memories").length, 0, "the kernel wrote the Memory, not the route");
+  });
+});

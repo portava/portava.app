@@ -722,7 +722,11 @@ async function restoreMemoryThroughKernel(
     actorUserId: appeal.moderator_id ?? "",
     idempotencyKey: `appeal-restore:${appeal.id}`,
     legacyUnaudited: true,
-    payload: { owner_id: appeal.appellant_id, appeal_id: appeal.id },
+    // `select` trims the receipt the kernel stores (memory_command_receipts.result_json)
+    // to the id and state. The restore is the one receipt whose actor is not the
+    // owner, so it must not keep the owner's whole row (title, caption, coordinates,
+    // allow/hide lists) under the moderator's name; fromKernelResult reads none of it.
+    payload: { owner_id: appeal.appellant_id, appeal_id: appeal.id, select: "id,state" },
     fromKernelResult: () => ({ ok: true, action: "memory_restored" }),
     legacy: async () => ({ ok: true, body: await legacyRestore() }),
   });

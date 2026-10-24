@@ -10089,7 +10089,7 @@ Account erasure (`AccountDeletionService`) is the third direct writer, and it is
 **16 moves, all W → C.** 266 = 109 C / 152 W / 3 N / 2 X. CONSTRUCTED% is unchanged at (109 + 152) / 266 = 98.1 %.
 CORRECT% is 109 / 266 = 41.0 %.
 
-- NOT-GRADED: artifacts/api-server/src/services/appeals/resolveAppeal.ts — §CB.5 names its moderation restore as a canonical write outside the kernel, a finding for a later batch; no row rests on it.
+- Watched: artifacts/api-server/src/services/appeals/resolveAppeal.ts — §CB.5 named its moderation restore as a canonical write outside the kernel, a finding for a later batch, and declared it NOT-GRADED. §CC closes that finding and CENSUS_SCOPE now watches the file, so the declaration was redundant and is withdrawn (check:census-scope-coverage, at the merge of main into §CC's branch, 2026-10-24).
 
 ## §CC — 2026-10-24 (census drive, lane HIGHLIGHTS & MEMORIES, batch 3): the last two kernel bypasses closed (migration 3912, written and NOT applied), the outbox drain made observable, and the episode spine's producer held on a ruling
 
@@ -10101,8 +10101,8 @@ moves no row: nothing it builds is deployed, so every row it bears on is restate
 
 | write or gap | before | now |
 | --- | --- | --- |
-| a photo's own audience (PUT /memories/:id/items/:itemId/visibility) | a direct `memory_items` UPDATE, with no event, so a photo hidden after a public derivative was built was never re-derived | CHANGE_ITEM_VISIBILITY through the kernel (`artifacts/api-server/src/services/memory/memoryItemVisibility.ts:111#commandType: "CHANGE_ITEM_VISIBILITY",`). The owner-checked write (`artifacts/api-server/src/migrations/3912_memory_kernel_item_visibility_and_moderation_restore.sql:458#UPDATE public.memory_items SET visibility = v_payload->>'item_visibility'`) and `memory.visibility_changed` are one transaction. A hidden photo's event states `only_me` (`artifacts/api-server/src/migrations/3912_memory_kernel_item_visibility_and_moderation_restore.sql:525#WHEN v_type = 'CHANGE_ITEM_VISIBILITY' THEN v_payload->>'item_visibility'`), which is what makes a §18 consumer re-derive |
-| an upheld appeal's Memory restore | a direct `state='published'` on ANY of the appellant's Memories, including one its owner had DELETED (after §21 had purged it), with no event, receipt or audit row | MODERATION_RESTORE_MEMORY through the kernel (`artifacts/api-server/src/services/appeals/resolveAppeal.ts:720#commandType: "MODERATION_RESTORE_MEMORY",`). The actor is the moderator and must hold the `admin` role (`artifacts/api-server/src/migrations/3912_memory_kernel_item_visibility_and_moderation_restore.sql:202#IF NOT EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = v_actor AND p.role = 'admin') THEN`). The command reverses a moderation removal and nothing else (`artifacts/api-server/src/migrations/3912_memory_kernel_item_visibility_and_moderation_restore.sql:232#IF v_type = 'MODERATION_RESTORE_MEMORY' AND v_state IS DISTINCT FROM 'removed' THEN`). Any other state is left for a moderator to decide by hand (`restore_requires_policy`); an owner-deleted Memory matches nothing |
+| a photo's own audience (PUT /memories/:id/items/:itemId/visibility) | a direct `memory_items` UPDATE, with no event, so a photo hidden after a public derivative was built was never re-derived | CHANGE_ITEM_VISIBILITY through the kernel (`artifacts/api-server/src/services/memory/memoryItemVisibility.ts:111#commandType: "CHANGE_ITEM_VISIBILITY",`). The owner-checked write (`artifacts/api-server/src/migrations/3912_memory_kernel_item_visibility_and_moderation_restore.sql:471#UPDATE public.memory_items SET visibility = v_payload->>'item_visibility'`) and `memory.visibility_changed` are one transaction. A hidden photo's event states `only_me` (`artifacts/api-server/src/migrations/3912_memory_kernel_item_visibility_and_moderation_restore.sql:538#WHEN v_type = 'CHANGE_ITEM_VISIBILITY' THEN v_payload->>'item_visibility'`), which is what makes a §18 consumer re-derive |
+| an upheld appeal's Memory restore | a direct `state='published'` on ANY of the appellant's Memories, including one its owner had DELETED (after §21 had purged it), with no event, receipt or audit row | MODERATION_RESTORE_MEMORY through the kernel (`artifacts/api-server/src/services/appeals/resolveAppeal.ts:720#commandType: "MODERATION_RESTORE_MEMORY",`). The actor is the moderator and must hold the `admin` role (`artifacts/api-server/src/migrations/3912_memory_kernel_item_visibility_and_moderation_restore.sql:215#IF NOT EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = v_actor AND p.role = 'admin') THEN`). The command reverses a moderation removal and nothing else (`artifacts/api-server/src/migrations/3912_memory_kernel_item_visibility_and_moderation_restore.sql:245#IF v_type = 'MODERATION_RESTORE_MEMORY' AND v_state IS DISTINCT FROM 'removed' THEN`). Any other state is left for a moderator to decide by hand (`restore_requires_policy`); an owner-deleted Memory matches nothing |
 | the §18 outbox drain | ran at boot and left no trace (`/healthz/schedulers` listed it unobservable; §CB.2) | each tick records its status for `/healthz/schedulers` (job `memoryOutboxDrain`) and upserts a `job_health` row, at most once a minute while it succeeds and on every failed pass (`artifacts/api-server/src/services/memoryProjections/outboxDrainRunner.ts:262#const { error } = await db.from("job_health").upsert(row, { onConflict: "job" });`), and the scheduler runs that tick (`artifacts/api-server/src/services/memoryProjections/outboxDrainRunner.ts:176#void runMemoryOutboxDrainTick()`). No migration |
 
 **Both kernel changes are order-independent with the API.** A 2711 or 3911 kernel answers the new commands
@@ -10123,10 +10123,11 @@ production, 0 of 11 `media_assets` rows have a capture time (§CA.4), and that h
 
 ### §CC.3 The new evidence
 
-`artifacts/api-server/src/test/db/memoryKernelItemVisibilityRestore.db.test.ts`, 13/13 on the full chain:
+`artifacts/api-server/src/test/db/memoryKernelItemVisibilityRestore.db.test.ts`, 14/14 on the full chain:
 
 - **V1–V5:** the photo switch, over HTTP on the real router.
-- **R1–R6:** `resolveAppeal`, called as the appeals route calls it.
+- **R1–R6:** `resolveAppeal`, called as the appeals route calls it. R1 also asserts the moderator's receipt holds only `id` and `state`.
+- **R7** (verifier fix, 2026-10-24): a restore carrying a `patch`, sent straight to the function, is `MEMORY_COMMAND_MALFORMED` and writes nothing.
 - **H1–H2:** the drain tick.
 
 Each case asserts that the change and its event row are one transaction (equal `xmin`), and that nothing but the
@@ -10142,7 +10143,7 @@ pins the scheduler to the observable tick (`artifacts/api-server/src/test/memory
 | SQL: no admin check · no owner check · restores any state · records no DELETED → ACTIVE transition | R4 · R4 · R3 · R1 red |
 | the drain never persists · counts a failed pass as a success · throttles a failed pass · the scheduler runs the bare pass | H1, H2 · H2 · H2 · the scheduler case red |
 
-12 TypeScript and 8 SQL mutants, all killed. Run with this section: the batch-1 and batch-2 suites (21/21 and 38/38, the latter with #784's K1–K3, on the 3912 chain), `appeal*` (11 suites, 151/151), `memoryItemVisibility` 32/32, `memoryCommandBus` 60/60,
+12 TypeScript and 8 SQL mutants, all killed. The verifier fixes (2026-10-24) add two more, both killed: `resolveAppeal` without `select: "id,state"` (the payload case in `appealReversalAffectedRows.test.ts`, and R1, red) and 3912 without the patch guard (R7 red). Run with this section: the batch-1 and batch-2 suites (21/21 and 38/38, the latter with #784's K1–K3, on the 3912 chain), `appeal*` (11 suites, 151/151), `memoryItemVisibility` 32/32, `memoryCommandBus` 60/60,
 `schedulerCoverage` 10/10, `healthSchedulers` 14/14, `memoryProjectionSchedulerOutbox` 18/18.
 
 ### §CC.4 Rows read, reason restated, NOT moved
@@ -10211,3 +10212,4 @@ be evidence rows rather than build rows. That needs measuring.
 
 No row moves. 266 = 109 C / 152 W / 3 N / 2 X, unchanged from §CB.7.
 - NOT-GRADED: artifacts/api-server/src/lib/inputAssistance/memoryContext.ts — §CC.4 names it as a lead to measure for H169/H243 in a later batch; no row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/appealReversalAffectedRows.test.ts — §CC.3 names the payload case the 2026-10-24 verifier fix appends (the restore sends `select: "id,state"`); controlled evidence for a stated fix, and no row rests on it.

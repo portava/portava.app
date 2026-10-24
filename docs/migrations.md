@@ -7187,6 +7187,9 @@ plus two commands, so the last two canonical Memory writes outside the kernel no
    `profiles.role = 'admin'` (otherwise the new reason `MEMORY_AUTH_NOT_MODERATOR`). The command must name the
    Memory's owner (otherwise `MEMORY_NOT_FOUND`). It reverses a moderation removal (`removed` → `published`) and
    nothing else. Every other state is `MEMORY_LIFECYCLE_INVALID_TRANSITION`, so an owner's deletion stays terminal.
+   A restore that carries a `patch` is `MEMORY_COMMAND_MALFORMED` and writes nothing: it shares the UPDATE arm, so a
+   patch would otherwise change the owner's title, caption, audience or place in the moderator's name. The caller
+   (`resolveAppeal`) sends `select: "id,state"`, so the receipt kept under the moderator's id holds only those two keys.
    It emits `memory.corrected`, DELETED → ACTIVE.
 
 The signature, SECURITY INVOKER, the pinned `search_path`, the grants and every other branch are 3911's. No table,
@@ -7205,14 +7208,19 @@ purge. After 3912 plus this API, a Memory that is not `removed` is a restoration
 (`restore_requires_policy`), and an owner-deleted one matches nothing. Nothing in the API writes `removed` today
 (lib/memoryCommandBus.ts), so no current restore is lost.
 
-**Proofs.** `src/test/db/memoryKernelItemVisibilityRestore.db.test.ts`, V1–V5, R1–R6, H1–H2:
+**Proofs.** `src/test/db/memoryKernelItemVisibilityRestore.db.test.ts`, V1–V5, R1–R7, H1–H2:
 
 - **V1–V5:** the photo switch over HTTP, the kernel off, and the compat arm on 3911.
 - **R1–R6:** the appeal restore as the appeals route calls it, including replay, refusal, the kernel off and the compat arm.
+  R1 also asserts the moderator's receipt holds only `id` and `state`.
+- **R7:** a restore that carries a `patch`, sent straight to the function, is `MEMORY_COMMAND_MALFORMED` and writes
+  nothing; the same command without it changes the state and nothing else.
 - **H1–H2:** the outbox heartbeat, which needs no migration.
 
 Each case asserts equal `xmin` between the change and its event, and that the route wrote nothing to the Memory
-aggregate itself. 8 TypeScript and 8 SQL mutants of this change, all killed (census §CC).
+aggregate itself. 12 TypeScript and 8 SQL mutants of this change, all killed (census §CC.3). The verifier fixes of
+2026-10-24 add one of each, both killed: the restore without `select` (`appealReversalAffectedRows.test.ts` and R1
+red) and 3912 without the patch guard (R7 red).
 
 **Rollback.** `db/rollback/2026-10-24-3912-memory-kernel-item-visibility-and-moderation-restore-rollback.sql`
 re-creates 3911's definition verbatim with its grants, then delete 3912's ledger row. The routes' compat arms take over.
