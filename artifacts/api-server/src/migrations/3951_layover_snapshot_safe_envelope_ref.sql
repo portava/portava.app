@@ -7,7 +7,7 @@
 -- ── WHAT THIS FILE IS ──────────────────────────────────────────────────────
 -- One NULLABLE column, public.layover_certified_computations.safe_envelope_ref TEXT (2992's header: this table IS the
 -- spec's layover_snapshots), one CHECK naming its exact vocabulary, and one feature-flag row,
--- `layover_snapshot_envelope_ref_enabled`, seeded FALSE. No table, index, function, trigger, policy or grant.
+-- `layover_snapshot_envelope_ref_enabled`, seeded FALSE. No table, index, function, trigger, policy or grant is added. READ ACCESS, stated rather than implied: `authenticated` already holds table-level SELECT on this table under the owner-read RLS policy `layover_certcomp_owner_read` (USING user_id = auth.uid()), read on production 2026-10-24, so a signed-in traveller can read the new column on their OWN snapshots and only those. What they read is the content hash of the envelope GET /overview already served them, or a withheld reason: not a leak.
 --
 --   env:<64 hex>                        sha256 of the canonical JSON of the safeEnvelope GET /overview published for
 --                                       this snapshot (services/layover/LayoverSnapshotEnvelopeRef.ts)

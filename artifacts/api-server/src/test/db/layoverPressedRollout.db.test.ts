@@ -158,9 +158,9 @@ describe("B1-P rollout switches (P10, P14, L254 test-only, P18)", { skip: PRESSE
       const sid = (await startSession(app, u, { iata: "SIN" }, { departsInH: 10 })).id;
       const r = await app.call("GET", `/api/airport/sessions/${sid}/recommendations`, u);
       assert.equal(r.status, 200, r.raw);
-      const titles = r.body.recommendations.filter((c: any) => c.available !== false).map((c: any) => c.title); // §83: with layover_recommendation_status_enabled ON a refused card is served BLOCKED (available: false), never offered
-      assert.ok(r.body.recommendations.some((c: any) => c.title === "Calm Garden"), `control: the place without a reading is served (${titles.join(", ")})`);
-      assert.ok(!titles.includes("Crowded Market") && r.body.recommendations.filter((c: any) => c.title === "Crowded Market").every((c: any) => c.status === "BLOCKED" && typeof c.statusExplanation === "string"), "a card was served into a live unsafe-density reading");
+      const cards = r.body.recommendations as any[]; const titles = cards.filter((c: any) => c.available !== false).map((c: any) => c.title); const prod = PRESSED_BASE === "production-20261023"; const card = (t: string) => cards.find((c: any) => c.title === t); // §83: with layover_recommendation_status_enabled ON a refused card is served BLOCKED (available: false), never offered
+      if (!prod) assert.ok(titles.includes("Calm Garden"), `control: the place without a reading is OFFERED (${titles.join(", ")})`); else { assert.ok(cards.some((c: any) => c.insideAirport && c.available === true && c.status === "ELIGIBLE"), `control (production base, where every unrouted landside card is BLOCKED journey_not_measured): an airside card is OFFERED (${JSON.stringify(cards.map((c: any) => [c.title, c.available]))})`); assert.equal(card("Calm Garden")?.statusReason, "journey_not_measured"); assert.ok(!card("Calm Garden").contract.failureModes.includes("live_access_refused"), "the reading reached the place that has none"); } // verifier M8 (every served card unavailable) is red here
+      assert.ok(!titles.includes("Crowded Market") && cards.filter((c: any) => c.title === "Crowded Market").every((c: any) => c.status === "BLOCKED" && typeof c.statusExplanation === "string" && c.contract.failureModes.includes("live_access_refused")), "a card was offered into a live unsafe-density reading, or served without the reading named in its contract");
     });
   });
 
@@ -196,3 +196,4 @@ describe("B1-P rollout switches (P10, P14, L254 test-only, P18)", { skip: PRESSE
     it("A3 the bridge saw no unmodelled request shape", () => { assert.deepEqual(db.bridge.unmodelled, []); });
   });
 });
+import { PRESSED_BASE } from "./pressedLayoverApp.js"; // census-layover §83 (verifier M8): the control is base-aware — production's flags make no unrouted landside card available

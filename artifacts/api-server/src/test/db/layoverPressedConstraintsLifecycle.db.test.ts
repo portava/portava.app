@@ -112,7 +112,7 @@ describe("B1-P constraints / lifecycle / checkpoints / outcomes (P2, P3)", { ski
       assert.deepEqual(lc.guardFailures, []);
       assert.deepEqual(lc.intents, ["CREATE_SNAPSHOT", "CREATE_SAFE_ENVELOPE", "CREATE_CANDIDATE_SET"]);
       // the side effects, really there:
-      assert.ok(["recorded", "active_snapshot"].includes(open.body.persisted.state), "CREATE_SNAPSHOT: the snapshot is stored"); // §83: under production's canonical door the declaration's stored decision may already be the active one
+      assert.equal(open.body.persisted.state, PRESSED_BASE === "production-20261023" ? "active_snapshot" : "recorded", "CREATE_SNAPSHOT: the snapshot is stored"); // §83: only under production's canonical door (PRESSED_BASE=production-20261023) is the stored decision already the active one; the default base keeps the strict value
       const snap = await db.query<any>(`SELECT snapshot_id FROM public.layover_certified_computations WHERE snapshot_id = '${open.body.snapshotId}'`);
       assert.equal(snap.length, 1);
       assert.ok(open.body.safeEnvelope, "CREATE_SAFE_ENVELOPE");
@@ -197,3 +197,4 @@ describe("B1-P constraints / lifecycle / checkpoints / outcomes (P2, P3)", { ski
 });
 
 import { keepConstraintsUndeclared } from "./pressedLayoverApp.js"; // census-layover §83: this suite owns its constraint declarations under PRESSED_BASE
+import { PRESSED_BASE } from "./pressedLayoverApp.js"; // census-layover §83: the base decides which stored state is correct
