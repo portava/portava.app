@@ -28,8 +28,14 @@
  *   G0  every client read of post_media succeeds: no 3925 policy names a posts column anon/authenticated lack
  *       (a draft that named p.post_status failed every such read with "permission denied for table posts").
  *   S1  service_role (BYPASSRLS — every server path) reads every row.
- * Client roles hold no INSERT/UPDATE/DELETE grant on either table (column SELECT only), so no client write path exists
- * for 3925 to change.
+ * Client writes, stated exactly: on posts anon and authenticated hold no INSERT/UPDATE/DELETE grant (3801's
+ * postcondition). On post_media anon holds none, but authenticated holds column INSERT (14 columns) and UPDATE
+ * (12 columns) grants (authorization-contract.json, re-granted by 3363), gated by 3909's post_media_owner_insert /
+ * _update (user_id = auth.uid() and the parent post's author_id = auth.uid()); no client role holds DELETE, so
+ * post_media_owner_delete is inert for clients. 3925 adds no write policy and widens no write: its RESTRICTIVE
+ * SELECT policy also bounds the rows an UPDATE/DELETE reads and INSERT ... RETURNING returns, and its owner arm
+ * (user_id = auth.uid()) is already required by those owner policies, so no owner write is broken and no
+ * cross-user write becomes possible.
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -110,7 +116,8 @@ describe("3925 — an unreleased post and its post_media are the author's alone 
           DELETE FROM public.post_media WHERE post_id IN (SELECT id FROM public.posts WHERE author_id IN (${ids})) OR user_id IN (${ids});
           DELETE FROM public.posts WHERE author_id IN (${ids});
           DELETE FROM public.user_follows WHERE follower_id IN (${ids}) OR following_id IN (${ids});
-          DELETE FROM public.trip_members WHERE trip_id = '${TRIP}';`, { single: true });
+          DELETE FROM public.trip_members WHERE trip_id = '${TRIP}';
+          DELETE FROM public.trips WHERE id = '${TRIP}';`, { single: true });
     for (const u of Object.values(U)) if (u) deleteUser(u);
   });
 
