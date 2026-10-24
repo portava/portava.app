@@ -13370,3 +13370,128 @@ authorised. So:
 ### Headline
 
 No row moves in this section. 296 = 91 C / 191 W / 14 N / 0 X, as §83.
+
+## §85 — 2026-10-24 (census drive, lane LAYOVER, lifecycle audit): DISCOVER → … → ARCHIVE, transition by transition; five cross-user and fail-open defects fixed; NO ROW MOVES BUCKET
+
+*Branch `claude/census-lay-audit-20261024`, cut from #789 (`claude/census-lay-b3-20261024`, which carries #785) because
+#785 is still in the queue. `head_commit` is not re-declared. This pass reads production read-only; it applies, flips
+and deploys nothing. Every fix below is server code, so its rows stay `W` "waiting on release (server deploy)", and
+each row a traveller must see work also waits on the signed-in check (§85.5).*
+
+The owner asked that Layover not become a collection of disconnected partial capabilities. This audit follows one
+traveller from DISCOVER to ARCHIVE and asks the same six questions at every transition: who may make it (and which ONE
+authority decides), whether another traveller can read or change it, whether a block or a deleted, deactivated or
+banned account stops it, what it does when a flag, policy or state is unreadable, what it stores and when that is
+deleted, and which census rows it carries. The cross-user claims are proved on PostgreSQL through the real routers in
+production's 2026-10-23 flag state (`artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts`), each by ATTEMPTING the access.
+
+### 85.1 Facts every row of the table rests on
+
+- **Every Layover route runs on the service client** (`requireUser` returns it), so RLS never protects a Layover route:
+  the route check is the only authorization, and RLS and grants govern only a traveller's direct PostgREST access.
+- **Session ownership has ONE authority:** `getSession(db, id, userId)` filters `id` AND `user_id`, and every `:id` door
+  goes through it (or a wrapper of it). Proved by attempt: another signed-in traveller naming a session id gets 404 on
+  23 doors and changes nothing (`artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts:71#I1 B names A's session id on every Layover door`); removing the `user_id`
+  filter turns that red (mutant I1).
+- **The client door is shut.** As `authenticated` with their own `sub`, neither a crewmate nor a stranger reads any of
+  nine Layover tables of another traveller, and neither can write sessions, check-ins or location grants
+  (`artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts:99#I2 as the client, B reads none of A's layover rows and changes none`).
+
+### 85.2 The transition table
+
+| transition | who may make it (the one authority) | cross-user isolation (proof) | blocked / deleted / banned | unreadable state | stored, readable by, deleted when | rows (release state) |
+| --- | --- | --- | --- | --- | --- | --- |
+| DISCOVER | the owner of the session (I1). People shown: `publishableUserIds` (consent, then standing, §85.3 A5); crews offered: `crewMeetGateFor` + `openCrewsVisibleTo`; buddies: `layoverBuddyDecision`; counts: `presenceCountForViewer` (k-snapshot) | counts and consented cards only; I1 | blocks either way hide cards, crews, buddies and (fixed, A4) Airport Pulse authors; deactivated / pending deletion / banned no longer published (fixed, A5). Presence COUNTS ignore blocks and standing by design (k-anonymity, D-PRESENCE-K) | blocks, preferences or standing unreadable → nobody published; pulse refuses (A4) | nothing stored for the viewer | L117, L122, L124, L125, L127, L128, L130, L204, L269, L276 (W; signed-in check, and server deploy for A4/A5) |
+| REQUEST / JOIN | session: the caller, as themself; trip link: an accepted member only (fixed, A2); crew join: `joinCrew` + `blockAdmission` | I1; A2 | a block refuses admission (`blockAdmission`); **a block AFTER joining does not evict** (§85.4 B1) | admission unknown → `read_failed` | `layover_sessions` (owner RLS; cascades on account deletion) | L11, L131 (N), L134, L169 (W) |
+| ELIGIBILITY | `gateLandside` inside the certified record, read through `landsideStatusOf`; entry: `resolveLayoverEntry` (the owner's own passport only) | owner-only routes (I1) | — | constraints, entry or timing unreadable → landside closed | `layover_certified_computations` (owner-read RLS), `layover_constraints` (service only) | L4, L48, L49, L77, L222, L224, L229, L230, L279, L283, L284 (W; signed-in check) |
+| ACCESS | route checks (service client) | I1, I2 | — | — | RLS: owner-only or service-only on every Layover table | L200, L201 (C), L203 (C), L205, L236, L295 (W) |
+| PRESENCE | the owner (`PATCH /share`, intents); counts: `cityCountsSnapshot` | owner-only writes (I1); readers see counts or consented people | standing (A5) for named people; counts by design not | ladder flag unreadable → count withheld | `layover_presence` (no coordinate; service only); deleted at `expires_at` (3952 TRUE) | L127, L128, L187, L196, L202 (W) |
+| CREW | membership: `activeCrewForUser`, read for THIS live session only (fixed, A1, the same rule the share, the plan and the abort notice already used) | A1; I2 (no client access to crews, members, grants) | cards withheld across a block; banned / deactivated crewmates withheld (A5); **blocked member still in the crew minimum and can withdraw the plan** (B1) | every crew read fails closed (503) | `layover_crews` / members (service only; deleted at `expires_at`, 3952 TRUE; cascade) | L131 (N), L132, L133 (C), L134, L135, L137, L203 (C) |
+| CHECKPOINT | the owner, live session only | I1 (a stranger's check-in is 404 and writes nothing) | — | **unreadable re-entry now withholds landside (fixed, A6)**, as the crew-location door did | `layover_checkpoints` (service only); **never deleted on production** (3950 FALSE; B4) | L43, L44, L95, L159 (W) |
+| COMMUNICATION | the owner; trip thread only for an accepted trip member; abort notices `tellCrewOfAbortAuthorized` | owner-only (I1) | abort notice: blocks always win; trip chat follows trip-thread rules | — | `layover_events` (pseudonymised after 30 days only where the flag is ON — it is OFF, held; B5) | L100, L102, L271 (C) (W; signed-in check) |
+| LOCATION / SAFETY | the sharer, from the crew's own live session; viewing: live members of the crew, through the session they joined from (A1) | A1, I2 | shares withheld across a block and for a banned / deactivated sharer (A5) | sharer prefs or re-entry unknown → withheld | `layover_crew_location_grants` (lat/lng; service only; purged on leave, disband, expiry) | L132, L137, L153, L272 (W) |
+| EXIT | the owner (`DELETE /:id`, live only) | I1 | — | — | ending does not leave the crew; since A1 an ended session reads no crew and no share | L275 (C), L44 (W) |
+| ARCHIVE / RETENTION | the sweeps (presence and crew: 3952 TRUE, only the owner's OFF stops them; check-ins: 3950 FALSE) and account deletion | — | moderation does not delete; A5 stops publication | presence/crew: unknown flag deletes (retention not expanded); check-ins: unknown never deletes | `layover_sessions` have **no retention sweep** (B4) | L159, L196, L24, L261 (N) (W; OD-1012-LAY-3) |
+
+### 85.3 Defects fixed here (server; each with a negative PostgreSQL case and a mutant)
+
+- **A1, ended or foreign session reads the crew.** A member whose layover had ended (or who read through another of
+  their sessions) still received crewmates' live location shares and crew cards, because the crew was found per USER
+  while the write path already required the joined, live session. The read, the crew card and the precise control now
+  apply the write path's one rule (`artifacts/api-server/src/routes/layoverCrewLocation.ts:213#crewmates' shares reach only the LIVE session the crew was joined from`,
+  `artifacts/api-server/src/routes/airport.ts:3340#the crew is read only through the LIVE session it was joined from`,
+  `artifacts/api-server/src/routes/layoverCrewLocation.ts:296#the same one rule as the share and the read`). Proved:
+  `artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts:125#A1 a member whose layover ended gets no crewmate`. Mutants A1-location, A1-crew, A1-precise: red.
+- **A2, a session linked to someone else's trip.** `tripId` was stored as sent on create and edit, and reached the
+  passport stamp, the ghost-mode lookup and the presence roster rule. Now only an accepted member's trip is accepted;
+  unreadable membership refuses 503 (`artifacts/api-server/src/routes/airport.ts:575#a session names only a trip its owner is an accepted member of`,
+  `artifacts/api-server/src/routes/airport.ts:811#a session names only a trip its owner is an accepted member of`,
+  `artifacts/api-server/src/routes/airport.ts:6000#async function foreignTripRefusal(`). Proved: `artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts:154#A2 a session may name only a trip`.
+  Mutant A2: red.
+- **A4, Airport Pulse ignored blocks** (ON in production). An author either side of a block is now left out, and an
+  unreadable block list refuses (`artifacts/api-server/src/routes/airport.ts:3850#a block either way removes the author`).
+  Proved: `artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts:172#A4 Airport Pulse leaves out an author either side of a block`. Mutants A4-filter, A4-unreadable: red.
+- **A5, deactivated, pending-deletion, deleted and banned travellers stayed published.** Layover read no other user's
+  account state, so a traveller in the 30-day deletion hold, or banned, kept appearing on crew cards, offered crews, the
+  mutual roster, crew location and abort recipients. `publishableUserIds`, the one gate all of them pass, now also
+  requires good standing: `profiles.account_status = 'active'` and no in-force `user_account_states` restriction,
+  unreadable standing withholding everyone (`artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts:417#consent is not enough; the account must also be in good standing`,
+  `artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts:571#async function withAccountStanding(`). Proved:
+  `artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts:193#A5 a deactivated, pending-deletion or banned crewmate`. Mutants A5 and A5-ban: red.
+- **A6, an unreadable re-entry served landside cards.** Recommendations treated an unread check-in record as "not
+  re-entered" while the crew-location door treated it as re-entered: two authorities, opposite answers. Unknown now
+  withholds landside on every reader of `applyLandsideSuppression` and says why
+  (`artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:250#unknown withholds landside, as the crew-location door does`).
+  Proved: `artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts:216#A6 an unreadable re-entry record withholds landside cards`. Mutant A6: red.
+
+### 85.4 Found, and BLOCKED — OWNER DECISION (nothing built for them)
+
+- **B1, a block after joining a crew.** The blocked member stays in the crew: hidden card, but still in the crew's
+  shared-return minimum and member count, and still able to withdraw the crew plan the blocker proposed (any member
+  may withdraw, as any member may supersede). Evicting, re-scoping or leaving it as is: **BLOCKED — OWNER DECISION**.
+- **B2, crew join and crew offer disagree.** Offered crews are shown only behind `crewMeetGateFor`, but a known crew id
+  can be joined without it ("joining a crew is not leaving the airport"). On production the offer gate is closed for
+  everyone (no curated airport), so no crew of two can be formed through the app. Whether a crew is a landside meeting
+  (gate both) or may be airside (offer airside crews to everyone): **BLOCKED — OWNER DECISION**.
+- **B3, ghost mode is not read for other travellers** (`publishableUserIds` reads `location_preferences` only). Whether
+  a trip's ghost mode must hide a traveller from Layover's crew, roster and location surfaces: **BLOCKED — PRIVACY
+  DECISION** (owner).
+- **B4, retention.** `layover_sessions` have no retention sweep (deleted only with the account), and check-ins are
+  never deleted on production (3950 FALSE). The periods are **OD-1012-LAY-3 (BLOCKED — OWNER DECISION)**; the L261
+  proposal's "live data deleted at its own expiry" is the recommended default on the owner page. Nothing here expands
+  retention.
+- **B5, post-session pseudonymisation of `layover_events`** is built and held OFF by the lead's rule
+  (`layover_events_post_session_pseudonymisation_enabled`); its schedule is OD-1012-LAY-3.
+- **B6, a hand-made landside stop while landside is closed.** `POST /:id/stops` and `POST /:id/plan` add a landside
+  stop with no landside admission, while `from-recommendation` applies it. Whether a traveller may plan their own
+  landside stop on a closed gate: **BLOCKED — OWNER DECISION**.
+- **Recorded, not defects:** presence counts ignore blocks and standing by the k-anonymity design (D-PRESENCE-K); the
+  legacy `tellCrewOfAbort` and `cityPresence` have no production caller (stale, left in place so no cited line moves).
+
+### 85.5 Rows re-derived (no bucket moves)
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L137 | W | W | Crew location sharing now also ends for a member whose layover ENDED, or who reads through another session: the read, the crew card and the precise control apply the share's rule (§85.3 A1; `artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts:125#A1 a member whose layover ended gets no crewmate`). W: waiting on release (server deploy), then the signed-in check. |
+| L202 | W | W | Presence and every named-person surface now also require the person's good standing (§85.3 A5; `artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts:193#A5 a deactivated, pending-deletion or banned crewmate`). Counts stay k-anonymous and ignore blocks by design. W: waiting on release (server deploy), and the owner's decision on k (§52.1). |
+| L43 | W | W | Re-entry suppression now fails closed when the check-in record cannot be read (§85.3 A6; `artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts:216#A6 an unreadable re-entry record withholds landside cards`). W: waiting on release (server deploy), then the signed-in check. |
+
+### 85.6 The signed-in retest, as ONE layover
+
+The 83 rows whose remaining dependency is the owner's signed-in check are ordered as one real layover in
+`docs/ops/layover-retest-walkthrough-20261024.md`: 17 steps, each naming the rows it settles and the exact observation
+(on screen, or the read-only production row the lead checks afterwards) that settles each. A step that a production
+fact makes impossible says so instead of inventing a screen (for example, no crew of two can be formed while no
+airport is curated, B2).
+
+
+### 85.7 Tests and mutation proofs, run on 2026-10-24
+
+- PostgreSQL 17 (local, port 54354): `artifacts/api-server/src/test/db/layoverLifecycleAudit.db.test.ts` 8 / 8, production's 2026-10-23 flags.
+- Mutants, each restored by sha256 and each red: I1 (getSession without `user_id`), A1-location, A1-crew, A1-precise,
+  A2, A4-filter, A4-unreadable, A5, A5-ban, A6.
+
+### Headline
+
+No row moves bucket. 296 = 91 C / 191 W / 14 N / 0 X, as §84.
+

@@ -222,9 +222,9 @@ export async function readTravellerCheckpoints(
 // THREE ANSWERS, never collapsed:
 //   suppressed  the newest report is AIRPORT_REENTRY: serve airport-side only.
 //   open        no report, the newest is LANDSIDE_EXIT, or the store is OFF.
-//   unknown     the reports could not be read. Landside is NOT suppressed for
-//               everyone on an outage — re-entry is the trigger, and an outage
-//               is not one — but the answer says it could not check.
+//   unknown     the reports could not be read. Landside IS withheld (census-layover
+//               §85, audit A6, 2026-10-24): an unread re-entry is an unknown that decides,
+//               the crew-location door already reads it so, and the answer says why.
 // "refresh gate/security" is not built: there is no gate or security data.
 
 export type LandsideSuppression =
@@ -247,7 +247,7 @@ export async function landsideSuppressionFor(db: SupabaseClient, sessionId: stri
 
 /** Airport-side candidates only, when suppressed. A candidate with no `insideAirport` flag is treated as landside. */
 export function applyLandsideSuppression<T extends { insideAirport?: unknown }>(recs: readonly T[], s: LandsideSuppression): T[] {
-  return s.state === "suppressed" ? recs.filter((r) => r.insideAirport === true) : [...recs];
+  return s.state === "suppressed" || s.state === "unknown" ? recs.filter((r) => r.insideAirport === true) : [...recs]; // census-layover §85 (audit A6): unknown withholds landside, as the crew-location door does
 }
 
 /** The wire form beside a recommendation list. `null` when nothing was withheld and nothing went wrong. */
