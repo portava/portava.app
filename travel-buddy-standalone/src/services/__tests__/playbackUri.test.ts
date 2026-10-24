@@ -59,10 +59,10 @@ test('P4 GUARD: every expo-av Video mount decides through the playback rule', ()
     }
   };
   walk(join(root, 'src')); walk(join(root, 'app'));
-  const mounts = files.filter((f) => {
-    const t = readFileSync(f, 'utf8');
+  const mounts = files.map((f) => relative(root, f)).filter((rel) => {
+    const t = readFileSync(join(root, rel), 'utf8');
     return /import\s*\{[^}]*\bVideo\b[^}]*\}\s*from\s*'expo-av'/.test(t) && /<Video\b/.test(t);
-  }).map((f) => relative(root, f)).sort();
+  }).sort();
   assert.ok(mounts.length >= 9, `expected the app's Video mounts, found ${mounts.length}: ${mounts.join(', ')}`);
   // USED, not merely imported: import lines and comments are stripped before looking (mutant RM8 removed the only
   // call in WatchVideoCell and the import alone kept an earlier version of this guard green).
