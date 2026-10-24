@@ -74,6 +74,7 @@
         { "name": "posts_insert", "cmd": "INSERT", "permissive": true, "roles": ["authenticated"] },
         { "name": "posts_select", "cmd": "SELECT", "permissive": true, "roles": ["public"] },
         { "name": "posts_select_policy", "cmd": "SELECT", "permissive": true, "roles": ["authenticated"] },
+        { "name": "posts_select_released_or_author", "cmd": "SELECT", "permissive": false, "roles": ["anon","authenticated"] },
         { "name": "posts_update", "cmd": "UPDATE", "permissive": true, "roles": ["authenticated"] }
       ]
     },
@@ -190,6 +191,7 @@
         { "name": "post_media_owner_update", "cmd": "UPDATE", "permissive": true, "roles": ["authenticated"] },
         { "name": "post_media_owner_delete", "cmd": "DELETE", "permissive": true, "roles": ["authenticated"] },
         { "name": "post_media_public_select", "cmd": "SELECT", "permissive": true, "roles": ["public"] },
+        { "name": "post_media_select_post_readable_or_owner", "cmd": "SELECT", "permissive": false, "roles": ["anon","authenticated"] },
         { "name": "post_media_service_role_all", "cmd": "ALL", "permissive": true, "roles": ["service_role"] }
       ]
     },

@@ -21,7 +21,7 @@
  * variables to the scanner), naming no schema of its own. A builder that
  * calls it first is a gate boundary, and its reads belong here.
  */
-import { isFlagEnabled } from "../../../lib/featureFlags.js";
+import { isFlagEnabled, readFlagState } from "../../../lib/featureFlags.js";
 import { probeSchemaReadiness } from "../../../lib/capability/schemaCapability.js";
 import type { CapabilityDefinition, SchemaReadiness } from "../../../lib/capability/schemaRequirement.js";
 import { logger } from "../../../lib/logger.js";
@@ -44,25 +44,25 @@ export const TRIP_OPERATIONAL_PROJECTIONS: CapabilityDefinition = {
   ],
   requires: {
     tables: {
-      trips: { columns: ["id", "version", "timezone"] },
-      trip_commitments: { columns: ["id", "trip_id", "type", "starts_at", "required_arrival_at", "place_id", "lateness_tolerance", "prep_duration", "flexibility", "at_risk_reason", "at_risk_at"] },
-      trip_risks: { columns: ["id", "trip_id", "likelihood", "impact", "status"] },
-      trip_stages: { columns: ["id", "trip_id", "starts_at", "ends_at", "sequence", "state"] },
+      trips: { columns: ["id", "version", "timezone"], probe: { column: "id", value: SCHEMA_PROBE_SENTINEL_ID } },
+      trip_commitments: { columns: ["id", "trip_id", "type", "starts_at", "required_arrival_at", "place_id", "lateness_tolerance", "prep_duration", "flexibility", "at_risk_reason", "at_risk_at"], probe: { column: "id", value: SCHEMA_PROBE_SENTINEL_ID } },
+      trip_risks: { columns: ["id", "trip_id", "likelihood", "impact", "status"], probe: { column: "id", value: SCHEMA_PROBE_SENTINEL_ID } },
+      trip_stages: { columns: ["id", "trip_id", "starts_at", "ends_at", "sequence", "state"], probe: { column: "id", value: SCHEMA_PROBE_SENTINEL_ID } },
       // 2780 — read by the closeout (dissolve step) and the crew map (subgroup-scoped live shares).
-      trip_subgroups: { columns: ["id", "trip_id", "state"] },
-      trip_subgroup_members: { columns: ["subgroup_id", "user_id", "left_at"] },
+      trip_subgroups: { columns: ["id", "trip_id", "state"], probe: { column: "id", value: SCHEMA_PROBE_SENTINEL_ID } },
+      trip_subgroup_members: { columns: ["subgroup_id", "user_id", "left_at"], probe: { column: "subgroup_id", value: SCHEMA_PROBE_SENTINEL_ID } },
       // 2794 — §10.4 meeting checkpoints; read by health, Today, the map and the offline bundle.
-      trip_meeting_checkpoints: { columns: ["id", "trip_id", "subgroup_id", "label", "lat", "lng", "meet_at", "purpose", "status"] },
-      trip_meeting_checkpoint_participants: { columns: ["checkpoint_id", "user_id", "arrival_state", "arrived_at"] },
-      trip_crew_location_sessions: { columns: ["id", "trip_id", "status", "subgroup_id"] },
+      trip_meeting_checkpoints: { columns: ["id", "trip_id", "subgroup_id", "label", "lat", "lng", "meet_at", "purpose", "status"], probe: { column: "id", value: SCHEMA_PROBE_SENTINEL_ID } },
+      trip_meeting_checkpoint_participants: { columns: ["checkpoint_id", "user_id", "arrival_state", "arrived_at"], probe: { column: "checkpoint_id", value: SCHEMA_PROBE_SENTINEL_ID } },
+      trip_crew_location_sessions: { columns: ["id", "trip_id", "status", "subgroup_id"], probe: { column: "id", value: SCHEMA_PROBE_SENTINEL_ID } },
       // 2781 — the persisted decision ledger.
-      trip_decisions: { columns: ["decision_id", "trip_id", "decision_type", "calculated_at", "retain_until"] },
+      trip_decisions: { columns: ["decision_id", "trip_id", "decision_type", "calculated_at", "retain_until"], probe: { column: "decision_id", value: SCHEMA_PROBE_SENTINEL_ID } },
       // 2785 — the disruption switch TripHealth consults.
-      trip_disruptions: { columns: ["id", "trip_id", "kind", "severity", "state"] },
+      trip_disruptions: { columns: ["id", "trip_id", "kind", "severity", "state"], probe: { column: "id", value: SCHEMA_PROBE_SENTINEL_ID } },
       // 2784 — §15.4 append-only booking history; routes/tripReservations.ts
       // consults domain/trips/events/tripReservationHistory.ts, which is this gate.
-      trip_reservations: { columns: ["id", "trip_id", "status", "version", "cancelled_at"] },
-      trip_reservation_events: { columns: ["id", "reservation_id", "trip_id", "event_type", "version"] },
+      trip_reservations: { columns: ["id", "trip_id", "status", "version", "cancelled_at"], probe: { column: "id", value: SCHEMA_PROBE_SENTINEL_ID } },
+      trip_reservation_events: { columns: ["id", "reservation_id", "trip_id", "event_type", "version"], probe: { column: "id", value: "-1" } }, // a BIGINT key (2784): the uuid sentinel is 22P02 here
     },
   },
   // This module IS the consumer: it consults the capability (flag + schema
@@ -82,7 +82,7 @@ export const TRIP_OPERATIONAL_PROJECTIONS: CapabilityDefinition = {
 
 export type TripOperationalGate =
   | { enabled: true }
-  | { enabled: false; reason: "flag_off" | "schema_missing" | "schema_unknown"; schema: SchemaReadiness | null };
+  | { enabled: false; reason: "flag_off" | "flag_unknown" | "schema_missing" | "schema_unknown"; schema: SchemaReadiness | null };
 
 const log = logger.child({ mod: "tripOperationalProjections" });
 const TTL_MS = 30_000;
@@ -94,8 +94,19 @@ export function invalidateTripOperationalProjectionsGate(): void { _cache = null
 export async function tripOperationalProjectionsGate(sc: any): Promise<TripOperationalGate> {
   if (_cache && _cache.sc === sc && Date.now() - _cache.at < TTL_MS) return _cache.gate;
   let gate: TripOperationalGate;
-  if (!(await isFlagEnabled(sc, TRIP_OPERATIONAL_PROJECTIONS_FLAG))) {
-    gate = { enabled: false, reason: "flag_off", schema: null };
+  // The flag is read TRI-STATE (fix to #803, verifier finding 1): "off" and
+  // "could not be read" are different answers. A caller that falls back to a
+  // destructive legacy path when the flag is off (DELETE
+  // /trips/:tripId/reservations/:id hard-deletes) must not take that path
+  // because the feature_flags read failed. An unreadable flag is `flag_unknown` — closed, retryable, NOT cached. "off" needs
+  // isFlagEnabled's false AND readFlagState's "off" (isFlagEnabled stays the read site check:flag-schema-prerequisites counts).
+  const flagState: "on" | "off" | "unknown" = (await isFlagEnabled(sc, TRIP_OPERATIONAL_PROJECTIONS_FLAG)) ? "on" : (await readFlagState(sc, TRIP_OPERATIONAL_PROJECTIONS_FLAG)) === "off" ? "off" : "unknown";
+  if (flagState === "unknown") {
+    log.error({ capability: TRIP_OPERATIONAL_PROJECTIONS_FLAG }, `capability ${TRIP_OPERATIONAL_PROJECTIONS_FLAG} could not be read — the operational projections are refused (retryably)`);
+    return { enabled: false, reason: "flag_unknown", schema: null };
+  }
+  if (flagState === "off") {
+    return { enabled: false, reason: "flag_off", schema: null }; // NOT cached (fix to #803, re-verification): `flag_off` authorises DELETE's hard delete, so it is re-read every time (one PK lookup) — a cached OFF must not survive an OFF→ON toggle into a destroyed row
   } else {
     const schema = await probeSchemaReadiness(sc, TRIP_OPERATIONAL_PROJECTIONS);
     if (schema.state === "ready") gate = { enabled: true };
@@ -118,16 +129,26 @@ export async function tripOperationalProjectionsGate(sc: any): Promise<TripOpera
  * that could not answer — a read that failed — and is
  * TRIP_PROJECTION_UNAVAILABLE, retryable, exactly as a failed read inside the
  * builder would be. Conflating the two would tell a client to stop asking
- * when the truth is "ask again".
+ * when the truth is "ask again". `flag_unknown` (the flag itself could not be
+ * read) is the same kind of answer as `schema_unknown`: retryable.
  */
 export function refusalForGate(gate: Exclude<TripOperationalGate, { enabled: true }>): { ok: false; reason: "FEATURE_DISABLED" | "TRIP_PROJECTION_UNAVAILABLE"; message: string } {
-  return { ok: false, reason: gate.reason === "schema_unknown" ? "TRIP_PROJECTION_UNAVAILABLE" : "FEATURE_DISABLED", message: describeOperationalGate(gate) };
+  return { ok: false, reason: gate.reason === "schema_unknown" || gate.reason === "flag_unknown" ? "TRIP_PROJECTION_UNAVAILABLE" : "FEATURE_DISABLED", message: describeOperationalGate(gate) };
 }
 
 /** The message a refusal carries; names the migrations when the schema is what is missing. */
 export function describeOperationalGate(gate: Exclude<TripOperationalGate, { enabled: true }>): string {
   if (gate.reason === "flag_off") return `${TRIP_OPERATIONAL_PROJECTIONS_FLAG} is off`;
+  if (gate.reason === "flag_unknown") return `${TRIP_OPERATIONAL_PROJECTIONS_FLAG} could not be read just now; try again`;
   return `${TRIP_OPERATIONAL_PROJECTIONS_FLAG} is on but its schema is ${gate.reason === "schema_missing" ? "absent" : "unverifiable"}` +
     (gate.schema?.missing?.length ? ` (${gate.schema.missing.join(", ")})` : "") +
     `; apply ${TRIP_OPERATIONAL_PROJECTIONS.providedBy.join(", ")} or turn the flag off`;
 }
+
+// census-trips (hotfix 2026-10-24): every table above DECLARES the key column its readiness probe filters on. The
+// default (`id`) is absent from trip_decisions (keyed decision_id), trip_subgroup_members (subgroup_id, user_id) and
+// trip_meeting_checkpoint_participants (checkpoint_id, user_id), so PostgREST answered 42703 to `.eq("id", …)`; and
+// trip_reservation_events' `id` is a BIGINT, so the uuid sentinel answered 22P02. Either way the gate could never open: with trip_operational_projections_enabled ON in production since 2026-10-23, every operational
+// read still refused. test/db/capabilityProbeColumns.db.test.ts runs every capability's probe filter on the replayed chain
+// and fails on any answer but "no row" (a missing column, a type the probe value cannot take, a missing table).
+import { SCHEMA_PROBE_SENTINEL_ID } from "../../../lib/capability/schemaRequirement.js";

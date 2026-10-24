@@ -30,7 +30,7 @@ export const TRIP_KERNEL_FLAG = "trip_kernel_enabled";
 
 export interface DerivedEventsReport {
   /** Why nothing was issued, when nothing was. */
-  skipped: "trip_kernel_enabled is false" | null;
+  skipped: "trip_kernel_enabled is false" | typeof READ_PATH_NOT_ISSUED | null;
   issued: number;
   duplicates: number;
   failed: number;
@@ -84,4 +84,22 @@ export async function recordDerivedEvents(
     });
   }
   return report;
+}
+
+/**
+ * Follow-up hotfix (2026-10-24, verifier finding on #797): A READ MUST NOT MOVE THE VERSION A CLIENT EDITS AGAINST.
+ * Every derived event is a kernel command, and every kernel command appends at the next `trips.version`. Issued from a
+ * projection build, the first GET /today on a trip with commitments therefore moved the version DURING the request
+ * (its own sub-projections then read a version ahead of the one it started from: 503 TRIP_PROJECTION_VERSION_AHEAD,
+ * and a 200 on the retry), and merely viewing Today, the freedom windows, health, the offline bundle, the map or a
+ * Compass answer made a crewmate's If-Match stale. So no projection build issues one: the facts (windows, conflicts,
+ * at-risk commitments) are computed and SERVED, and this report says by name that they were not recorded.
+ * `recordDerivedEvents` above is kept, unchanged and unit-tested, for an engine that runs outside a read; nothing in
+ * the tree calls it today, which is recorded in census-trips (TR61, TR62).
+ */
+export const READ_PATH_NOT_ISSUED = "not issued from a read: a GET must not move trips.version, the version a client edits against" as const;
+
+/** The report a projection build carries now: nothing issued, and why. */
+export function derivedEventsNotIssuedFromARead(): DerivedEventsReport {
+  return { skipped: READ_PATH_NOT_ISSUED, issued: 0, duplicates: 0, failed: 0, failures: [] };
 }

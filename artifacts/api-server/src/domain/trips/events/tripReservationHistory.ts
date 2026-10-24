@@ -15,7 +15,7 @@
  */
 import { tripOperationalProjectionsGate } from "../policies/tripOperationalProjections.js";
 
-export type ReservationHistoryGate = { enabled: true } | { enabled: false; reason: "flag_off" | "schema_missing" | "schema_unknown" };
+export type ReservationHistoryGate = { enabled: true } | { enabled: false; reason: "flag_off" | "flag_unknown" | "schema_missing" | "schema_unknown" };
 
 export async function reservationHistoryGate(sc: any): Promise<ReservationHistoryGate> {
   const gate = await tripOperationalProjectionsGate(sc);
