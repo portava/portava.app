@@ -259,7 +259,7 @@ router.post("/trips/:tripId/operations", asyncHandler(async (req, res) => {
       type: op.type as TripCommandType,
       payload: op.payload,
       clientObservedAt: op.clientOccurredAt,
-      correlationId: op.operationId,
+      correlationId: asTripCorrelationId(op.operationId), // the queue's operationId is schema-checked as a uuid
     });
     if (result.ok) {
       version = Math.max(version, result.version);
@@ -315,3 +315,4 @@ async function applySetOperation(
 }
 
 export default router;
+import { asTripCorrelationId } from "../domain/trips/commands/tripKernel.js"; // census-trips hotfix 2026-10-24; at the foot so no cited line moves

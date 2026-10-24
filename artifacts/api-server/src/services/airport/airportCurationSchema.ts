@@ -7,7 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { probeSchemaReadiness } from "../../lib/capability/schemaCapability.js";
 import { SCHEMA_PROBE_SENTINEL_ID, type CapabilityDefinition } from "../../lib/capability/schemaRequirement.js";
 
-const CURATION_SCHEMA: CapabilityDefinition = {
+export const CURATION_SCHEMA: CapabilityDefinition = {
   flag: "schema:airport-curation:3874-3881:v2",
   providedBy: ["3874_airport_curation_provenance_ttl.sql", "3881_airport_sourced_timing.sql"],
   consumers: ["services/airport/airportCuration.ts"],
@@ -20,7 +20,7 @@ const CURATION_SCHEMA: CapabilityDefinition = {
     functions: ["airport_curation_publish", "airport_curation_retract"],
   },
 };
-const CALIBRATION_SCHEMA: CapabilityDefinition = {
+export const CALIBRATION_SCHEMA: CapabilityDefinition = {
   flag: "schema:airport-calibration:3880:v1",
   providedBy: ["3880_airport_time_band_calibration.sql"],
   consumers: ["services/airport/layoverCalibration.ts"],
@@ -33,7 +33,7 @@ const CALIBRATION_SCHEMA: CapabilityDefinition = {
     functions: ["airport_calibration_apply"],
   },
 };
-const OUTCOME_SCHEMA: CapabilityDefinition = {
+export const OUTCOME_SCHEMA: CapabilityDefinition = {
   flag: "schema:airport-calibration-outcomes:2992:v1",
   providedBy: ["2700_layover_certified_feasibility.sql", "2992_layover_decision_record_and_operational_tables.sql"],
   consumers: ["services/airport/layoverCalibration.ts"],
