@@ -3316,3 +3316,127 @@ pass did not edit the checker. Age acknowledgement alone was not the remedy.
 ### Correction (2026-10-17, wave 5) — the circle need-help host push now reaches a host in quiet hours (census-telegraph T254)
 
 The one push the circle need-help route sends to the host (`circle.need_help_host_alert`) now pierces quiet hours where the host's own safety_override is on; it had been held by the Compass gate as activity_social. With the override off it is still held. No Map verdict rests on it (MAP-F08 §46.3; routes/circle.ts is NOT-GRADED here).
+
+## §54 — 2026-10-24 (lane MAP, batch 1): 30 rows W → C on production facts; the open rows re-classified against production as it is now
+
+*Branch `claude/census-map-b1-20261024`, cut from `origin/main` `96d20f10d`. Production was read with SELECT,
+catalog and log queries only, and `https://rumazi.com` with unauthenticated GETs only, on 2026-10-24. Nothing was
+written to production or `portava-ci`, and no flag was changed. `head_commit` is not re-declared.*
+
+**The release rule applied (lead ruling, 2026-10-24).**
+- Server code counts once it is deployed. rumazi.com runs main `4fb0fe5f5`, deployed 2026-10-24 06:05Z.
+- Client code counts only in a build installed against production. Today that is the owner's device build,
+  installed 2026-10-22 from that day's main.
+- Anything else is `W`, "waiting on release".
+
+### 54.1 Production as it is now
+
+Most of §43–§53's blockers were production state, and that state changed on 2026-10-21 (migrations) and 2026-10-23
+(flags). Read 2026-10-24:
+
+| # | fact | read |
+|---|---|---|
+| P1 | flags | `locate_friends_enabled`, `map_projection_enabled`, `map_telemetry_enabled`, `memory_projection`, `map_crowd_flow_enabled`, `map_world_intelligence_enabled`, `map_world_moments_enabled`, `map_experience_state_enabled`, `map_display_resolver_enabled` and `map_contributions_enabled` are all TRUE, each `updated_at` 2026-10-23 10:02:06Z (the flag audit). `map_telemetry_retention_enabled` has been TRUE since 2026-09-16. `map_trip_projection_read_enabled` is FALSE. The unauthenticated `GET /api/feature-flags` on rumazi.com serves the same values. |
+| P2 | ledger | `schema_migration_ledger` rows exist for 2201 (2026-10-21), 2202 (09-16), 2217 (09-21), 2218 (10-21), 2219 (09-15, backfill), 2224 (10-21), 2295 (10-21), 2350 (10-21), 2960 (09-16), 2964 (09-21) and 3701 (10-21). |
+| P3 | Locate Friends catalog | All four `locate_friends_*` tables are present. Their columns, defaults, nullability and CHECK constraints are md5-equal to `portava-ci`'s (constraints `68d23006…`, columns `4651a3a8…`), and `portava-ci` matches the tree (`audit:schema` green on main). Specifically: `members.opted_in_at` and `consent_source` are NOT NULL; `sessions.expires_at` is NOT NULL with no default, under `CHECK (expires_at > started_at AND expires_at <= started_at + '12:00:00')`; `positions.rung` is CHECK-bound to the six rungs; and a position decays within one hour. |
+| P4 | row counts | `locate_friends_*` 0 each; `map_telemetry_events` 0; `map_telemetry_drops` 0; `geo_zones` 0; `protected_zones` 0 (0 active); `route_flow_contribution_consent` 0; `intel_live_promoted_scopes` 0; `memory_projections` 73 (1 with `subject_type = 'place'`). |
+| P5 | traces | Over 2026-10-23 10:00Z – 10-24 10:00Z, the edge logs show `protected_zones` read 1,188 times and `blocks` 329 times, every read answering 200; `locate_friends_sessions`/`_members` read at 10:56Z on 10-23, `geo_zones` read once, and no insert into `map_telemetry_events`. `map_telemetry_disabled_discards` holds one bucket: 2026-10-22 16:00Z, 1 batch, 2 events. That batch was the installed build sending map telemetry while the flag was still OFF, counted by the route's discard path. |
+| P6 | code on production | Every anchor cited by the 30 moved rows is present, by text, in the deployed server tree (`4fb0fe5f5`) for server files. For client files it is present in `9d3dc5d0d`, main at the START of 2026-10-22, so whichever 2026-10-22 commit the device build was cut from carries it. The gateway's `enabled: true` path needs exactly three things: the flag, a readable `blocks` set and a readable `protected_zones` (`routes/mapProjection.ts` at `4fb0fe5f5`). All three hold (P1, P5). |
+
+**No viewer's traffic is claimed.** Every move below rests on P1–P3 and P6: flags, ledger, catalog and deployed code. That
+is what each row's own "turns red when" names. The rows are the census's rule 2 (§2) working in reverse: the sink or
+source that made each one `W` now exists in production, and each row's remaining blocker was a flag that is now TRUE.
+P4 is stated so the empty tables are not mistaken for use. No Locate Friends session and no Map telemetry event exists
+yet, so the first owner session is the confirmation, not the evidence.
+
+### 54.2 Row moves
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| M7 | W | **C** | §44 moved the blocker from the four tables to `locate_friends_enabled`. Both are now met: the tables are present with 2219's constraints (P3), and the flag is TRUE (P1). The server (`lib/locateFriendsSession.ts`) is in the deployed tree, and the client (`src/components/map/LocateFriendsPanel.tsx`, `src/services/locateFriends.ts`) is in the installed build (P6). |
+| M83 | W | **C** | "Storage absent from production — see M7". The storage is present, and the flag is TRUE (P1, P3). |
+| M85 | W | **C** | `locate_friends_positions` is present, its `precision` CHECK admits the approximate/checkpoint values, and the rung policy is in the installed build (P3, P6). |
+| M86 | W | **C** | As M85, for `network_location`. The rung CHECK admits it (P3). |
+| M87 | W | **C** | As M85, for `event_cached_location` (P3). |
+| M90 | W | **C** | As M85, for `last_known` (P3). |
+| M91 | W | **C** | As M85, for `manual_checkpoint` (P3). |
+| M92 | W | **C** | Opt-in is structural in production: `opted_in_at` and `consent_source` are NOT NULL, and `consent_source` is CHECK-bound to `creator`/`invite_accept`/`group_join` (P3). A membership without a recorded consent act cannot be stored. |
+| M93 | W | **C** | Group scope is structural: `group_scope_kind` is CHECK-bound to trip/circle/event/plan (P3). The client refuses the mode without a scope (`src/stores/mapStore.tsx:101#LOCATE_FRIENDS:`, in the installed build, P6). |
+| M94 | W | **C** | `expires_at` is NOT NULL with no default and CHECK-bounded to 12 h after `started_at`, and positions decay within an hour (P3). The client's `MAX_SESSION_MS` is in the installed build (P6). |
+| M222 | W | **C** | The mode's blocker was M7's storage and flag, both met. |
+| M133 | W | **C** | The row's condition, verbatim: "2217 then 2201 are applied and `map_projection_enabled` is TRUE in production, so `usedGateway` is true on a real device". 2217 was applied 2026-09-21, before 2201 on 2026-10-21, so the order holds (P2), and the flag has been TRUE since 2026-10-23 (P1). The gateway answers `enabled: true` when the flag is on and `blocks` and `protected_zones` read (P5, P6). The installed build's `useMapEntities` keeps the gateway's objects on `res.data.enabled` (`src/hooks/useMapEntities.ts:786#res.data.enabled`, present at `9d3dc5d0d`), so `usedGateway` is true for any signed-in device. **Not observed on a device:** the release rule counts the installed build's code, and no session log exists. |
+| M139 | W | **C** | "Turns red when M133 turns red." The bypass guard holds unchanged. |
+| M123 | W | **C** | §47.3 left it `W` only on `memory_projection` being off. The flag is TRUE (P1), and `memory_projections` holds 73 rows, one a place subject (P4). |
+| M259 | W | **C** | §51.2's two blockers are cleared: `map_telemetry_enabled` is TRUE (P1) and 3701 is applied (P2). The sink is present, and the route is deployed. The emitter is in the installed build (P6), which reached the route on 2026-10-22, counted as a discard while the flag was off (P5). **0 events are stored**: no map session has sent a batch since the flag turned on. |
+| M260 | W | **C** | As M259, for `zone_selected` (three emitters, P6). |
+| M261 | W | **C** | As M259, for `place_opened`. |
+| M262 | W | **C** | As M259, for `live_state_viewed`. |
+| M263 | W | **C** | §47.2 closed the payload defect. §47 left it `W` only on "the same production table and flag that hold M259–M274", both now met (P1, P2). |
+| M264 | W | **C** | As M259, for `compass_requested`. |
+| M265 | W | **C** | As M259, for `compass_option_selected`. |
+| M266 | W | **C** | As M259, for `route_started` (two emitters). |
+| M267 | W | **C** | As M259, for `trip_stop_added`. |
+| M268 | W | **C** | As M259, for `plan_joined`. |
+| M269 | W | **C** | As M259, for `meet_here_created`. |
+| M270 | W | **C** | As M259, for `crew_locate_started`. |
+| M271 | W | **C** | As M259, for `contribution_submitted`. |
+| M272 | W | **C** | As M259, for `alternative_requested`. |
+| M273 | W | **C** | As M259, for `recommendation_accepted`. |
+| M274 | W | **C** | As M259, for `recommendation_declined`. |
+
+**How "in force, never exercised" is graded here.** These rows grade a shape: storage and constraints, a mode, a
+gateway path, an emitter with a sink. Each was `W` only because production lacked that shape's table or flag, and
+production now has both. They move on catalog and deployment. A row whose criterion is an EFFECT that only input could
+show does not move:
+- **M275** (evaluate real-world outcomes) needs outcome events to evaluate, and there are 0.
+- **M10** needs a forecast in a response.
+- **M282** needs a world object in a response.
+- **M179** needs a zone that actually coarsens or withholds.
+
+That is the line the Discovery census draws between DC-13 and A01 (census-discovery §132.2).
+
+### 54.3 Rows restated — the open rows against production as it is now
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| M5 | W | **W** | Its schema blocker is gone: 2218 and 2224 are applied, `map_crowd_flow_enabled` is TRUE, and `route_flow_contribution_consent` is present (P1, P2). **BLOCKED: ops, a curated `geo_zones` set.** It holds 0 rows (P4), so the gateway still refuses at `no_zone_model`. After that, it awaits one production flow. |
+| M67 | W | **W** | The consent table is present (2224), and it holds 0 rows (P4). **BLOCKED: opted-in contributors**, plus M5's zones. |
+| M119 | W | **W** | As M5. |
+| M221 | W | **W** | As M5. |
+| M279 | W | **W** | As M5, M67 and M65. |
+| M65 | W | **W** | **BUILDABLE**, not built in this batch: D-81a's `navigation_start` hop needs a capture, its consent scope under OD-MAP-1/2, a producer and a flag seeded FALSE. A number is now free (wave-5 correction). Once built it waits on release (server deploy plus the next device build), then on opted-in captures and M5's zones. |
+| M10 | W | **W** | 2217 is applied and the flag is TRUE (P1, P2). **EVIDENCE-ONLY:** a signed-in `GET /api/map/projection/temporal?offset=+60m` answering `enabled: true` with a non-null `forecast`. That needs credentials this lane does not hold. |
+| M223 | W | **W** | As M10. |
+| M280 | W | **W** | As M10. |
+| M282 | W | **W** | The flags are TRUE and 2295 and 2350 are applied (P1, P2). **EVIDENCE-ONLY:** a signed-in projection response carrying a `world_pulse`/`traveler_flow`/`city_model` object. The Experience half also waits on `intel_live_promoted_scopes`, an empty human allowlist by design (P4). |
+| M275 | W | **W** | The sink is present and the flag is TRUE. **EVIDENCE-ONLY:** the decision-id loop can only be evaluated once outcome events land, and 0 have (P4). That is the owner's first device session. |
+| M179 | W | **W** | 2217 is applied and `protected_zones` reads (P2, P5), so the gate runs on every projection. **BLOCKED: ops, zones to protect.** With 0 zones (P4), `applyProtection` is the identity pass the row warns of. The response no longer carries protection counts (§50); the evidence is now the server's protection telemetry for a pass that coarsens or withholds. |
+| M278 | W | **W** | Its storage half is met (M7 above). **BLOCKED: the owner's reading of §12's ladder**: whether Phase 3 can close while the BLE rungs (M88, M89) are absent. |
+| M88 | N | **N** | **BLOCKED: a BLE-capable native module and a device run**, under OD-MAP-5's rule (opt-in, per trip, short-lived, no background relay). |
+| M89 | N | **N** | As M88. |
+| M129 | W | **W** | **BLOCKED: owner scope** (D-36b NOT RULED). |
+| M130 | N | **N** | **BLOCKED: owner scope** (D-36c NOT RULED), plus a venue-interior data source. |
+| M281 | N | **N** | **BLOCKED: owner scope**, descoped (Phase 6). |
+
+The five CANNOT-VERIFY rows (M254, M255, M256, M258, M292) are device measurements and are unchanged. M256's live arm
+needs a disposable PostgreSQL, and this lane now has one; its device half is still needed, so it stays `?`.
+
+### 54.4 What would turn this red
+
+- A production catalog diff on any `locate_friends_*` constraint (P3): M92, M93 or M94 reopens.
+- `locate_friends_enabled`, `map_projection_enabled`, `map_telemetry_enabled` or `memory_projection` turned off: the
+  rows that rest on that flag return to `W`.
+- The first owner session with Map telemetry on storing no event, or the gateway answering `enabled: false` to a
+  signed-in viewer: M259–M274 or M133/M139 reopen. Those are the first observations, not new criteria.
+
+### 54.5 Headline, restated from the rows
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **270** |
+| BUILT-BUT-WRONG | **14** |
+| NOT-BUILT | **4** |
+| CANNOT-VERIFY | **5** |
+
+270 + 14 + 4 + 5 = 293. CONSTRUCTED 96.9 % (284 / 293, unchanged: every move is W → C) · CORRECT 92.2 % (270 / 293).
+These are local records on an unmerged branch.
