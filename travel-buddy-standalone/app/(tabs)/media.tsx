@@ -62,7 +62,7 @@ const ALL_MODES: ModeItem[] = [{ key: 'world', label: 'World', flagKey: 'MEDIA_T
 function MediaScreenInner() {
   const insets = useSafeAreaInsets();
   const bottomInset = useLayoverAwareBottomInset();
-  const { isEnabled } = useFeatureFlags();
+  const { isEnabled, loading: flagsLoading } = useFeatureFlags(); // census-media MD286/MD419/MD427 (2026-10-24): nothing autoplays before the flags say which surface opens
   const { selectedMode, setMode } = useMediaStore();
 
   const [quickSheetOpen, setQuickSheetOpen] = useState(false);
@@ -106,7 +106,7 @@ function MediaScreenInner() {
     <View style={[styles.screen, { backgroundColor: screenBg }]}>
       {/* ── Mode content (fills remaining space) ────────────────────── */}
       <View style={styles.content}>
-        {selectedMode === 'watch' && <WatchFeed />}{selectedMode === 'world' && <MediaWorldTabSurface modeSwitcher={enabledModes.length > 1 ? <MediaModeSelector modes={enabledModes} selectedMode={selectedMode} onSelect={setMode} /> : null} />}
+        {selectedMode === 'watch' && !flagsLoading && <WatchFeed />}{selectedMode === 'world' && <MediaWorldTabSurface modeSwitcher={enabledModes.length > 1 ? <MediaModeSelector modes={enabledModes} selectedMode={selectedMode} onSelect={setMode} /> : null} />}
         {selectedMode === 'grid'  && (
           <View style={{ flex: 1, paddingTop: insets.top + GRID_SELECTOR_CLEARANCE }}>
             <GridFeed />
