@@ -44,25 +44,25 @@ export const TRIP_OPERATIONAL_PROJECTIONS: CapabilityDefinition = {
   ],
   requires: {
     tables: {
-      trips: { columns: ["id", "version", "timezone"] },
-      trip_commitments: { columns: ["id", "trip_id", "type", "starts_at", "required_arrival_at", "place_id", "lateness_tolerance", "prep_duration", "flexibility", "at_risk_reason", "at_risk_at"] },
-      trip_risks: { columns: ["id", "trip_id", "likelihood", "impact", "status"] },
-      trip_stages: { columns: ["id", "trip_id", "starts_at", "ends_at", "sequence", "state"] },
+      trips: { columns: ["id", "version", "timezone"], probe: { column: "id", value: SCHEMA_PROBE_SENTINEL_ID } },
+      trip_commitments: { columns: ["id", "trip_id", "type", "starts_at", "required_arrival_at", "place_id", "lateness_tolerance", "prep_duration", "flexibility", "at_risk_reason", "at_risk_at"], probe: { column: "id", value: SCHEMA_PROBE_SENTINEL_ID } },
+      trip_risks: { columns: ["id", "trip_id", "likelihood", "impact", "status"], probe: { column: "id", value: SCHEMA_PROBE_SENTINEL_ID } },
+      trip_stages: { columns: ["id", "trip_id", "starts_at", "ends_at", "sequence", "state"], probe: { column: "id", value: SCHEMA_PROBE_SENTINEL_ID } },
       // 2780 — read by the closeout (dissolve step) and the crew map (subgroup-scoped live shares).
-      trip_subgroups: { columns: ["id", "trip_id", "state"] },
-      trip_subgroup_members: { columns: ["subgroup_id", "user_id", "left_at"] },
+      trip_subgroups: { columns: ["id", "trip_id", "state"], probe: { column: "id", value: SCHEMA_PROBE_SENTINEL_ID } },
+      trip_subgroup_members: { columns: ["subgroup_id", "user_id", "left_at"], probe: { column: "subgroup_id", value: SCHEMA_PROBE_SENTINEL_ID } },
       // 2794 — §10.4 meeting checkpoints; read by health, Today, the map and the offline bundle.
-      trip_meeting_checkpoints: { columns: ["id", "trip_id", "subgroup_id", "label", "lat", "lng", "meet_at", "purpose", "status"] },
-      trip_meeting_checkpoint_participants: { columns: ["checkpoint_id", "user_id", "arrival_state", "arrived_at"] },
-      trip_crew_location_sessions: { columns: ["id", "trip_id", "status", "subgroup_id"] },
+      trip_meeting_checkpoints: { columns: ["id", "trip_id", "subgroup_id", "label", "lat", "lng", "meet_at", "purpose", "status"], probe: { column: "id", value: SCHEMA_PROBE_SENTINEL_ID } },
+      trip_meeting_checkpoint_participants: { columns: ["checkpoint_id", "user_id", "arrival_state", "arrived_at"], probe: { column: "checkpoint_id", value: SCHEMA_PROBE_SENTINEL_ID } },
+      trip_crew_location_sessions: { columns: ["id", "trip_id", "status", "subgroup_id"], probe: { column: "id", value: SCHEMA_PROBE_SENTINEL_ID } },
       // 2781 — the persisted decision ledger.
-      trip_decisions: { columns: ["decision_id", "trip_id", "decision_type", "calculated_at", "retain_until"] },
+      trip_decisions: { columns: ["decision_id", "trip_id", "decision_type", "calculated_at", "retain_until"], probe: { column: "decision_id", value: SCHEMA_PROBE_SENTINEL_ID } },
       // 2785 — the disruption switch TripHealth consults.
-      trip_disruptions: { columns: ["id", "trip_id", "kind", "severity", "state"] },
+      trip_disruptions: { columns: ["id", "trip_id", "kind", "severity", "state"], probe: { column: "id", value: SCHEMA_PROBE_SENTINEL_ID } },
       // 2784 — §15.4 append-only booking history; routes/tripReservations.ts
       // consults domain/trips/events/tripReservationHistory.ts, which is this gate.
-      trip_reservations: { columns: ["id", "trip_id", "status", "version", "cancelled_at"] },
-      trip_reservation_events: { columns: ["id", "reservation_id", "trip_id", "event_type", "version"] },
+      trip_reservations: { columns: ["id", "trip_id", "status", "version", "cancelled_at"], probe: { column: "id", value: SCHEMA_PROBE_SENTINEL_ID } },
+      trip_reservation_events: { columns: ["id", "reservation_id", "trip_id", "event_type", "version"], probe: { column: "id", value: "-1" } }, // a BIGINT key (2784): the uuid sentinel is 22P02 here
     },
   },
   // This module IS the consumer: it consults the capability (flag + schema
@@ -131,3 +131,11 @@ export function describeOperationalGate(gate: Exclude<TripOperationalGate, { ena
     (gate.schema?.missing?.length ? ` (${gate.schema.missing.join(", ")})` : "") +
     `; apply ${TRIP_OPERATIONAL_PROJECTIONS.providedBy.join(", ")} or turn the flag off`;
 }
+
+// census-trips (hotfix 2026-10-24): every table above DECLARES the key column its readiness probe filters on. The
+// default (`id`) is absent from trip_decisions (keyed decision_id), trip_subgroup_members (subgroup_id, user_id) and
+// trip_meeting_checkpoint_participants (checkpoint_id, user_id), so PostgREST answered 42703 to `.eq("id", …)`; and
+// trip_reservation_events' `id` is a BIGINT, so the uuid sentinel answered 22P02. Either way the gate could never open: with trip_operational_projections_enabled ON in production since 2026-10-23, every operational
+// read still refused. test/db/capabilityProbeColumns.db.test.ts runs every capability's probe filter on the replayed chain
+// and fails on any answer but "no row" (a missing column, a type the probe value cannot take, a missing table).
+import { SCHEMA_PROBE_SENTINEL_ID } from "../../../lib/capability/schemaRequirement.js";
