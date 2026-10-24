@@ -143,7 +143,7 @@ describe("§13 buildTripOpportunityProjection — the eight inputs from the trip
     assert.equal(cmd.payload.significance, "medium"); assert.equal(cmd.payload.window_id, "fw:A:B"); assert.equal(cmd.payload.added.length, 1);
     // the same diff recorded again is a duplicate at the receipt, not a second event
     const w2 = await recordOpportunityChange(c, TRIP_ID, r1.projection.event!, NOW.toISOString());
-    assert.deepEqual([w2.issued, w2.duplicate], [false, true]); assert.equal(opp().length, 2);
+    assert.deepEqual([w2.issued, w2.duplicate], [false, true]); assert.equal(opp().length, 2); const r2 = await buildTripOpportunityProjection(c as any, TRIP_ID, OWNER_ID, { now: NOW }); assert.ok(r2.ok); assert.equal(r2.projection.recorded.skipped, "no change", "a second build on an unchanged portfolio reports no change (restored, fix to #803)"); assert.equal(calls.length, 2, "and issues nothing");
     _resetOpportunityPortfolios(); _resetTripDecisionLedger();
     const refusing = withRpc(makeClient(withStages(tables)), async () => ({ data: { ok: false, reason: "TRIP_COMMAND_UNKNOWN_TYPE", contract_version: 2 }, error: null }));
     const w3 = await recordOpportunityChange(refusing, TRIP_ID, r1.projection.event!, NOW.toISOString());

@@ -377,3 +377,114 @@ describe("services/groupChatSync — the same two reads, the same rule", () => {
     assert.deepEqual(evictions(updated), []);
   });
 });
+
+// ── fix to #803 (verifier finding 4): the owner is crew by trips.owner_id ─────
+//
+// lib/http.ts requireTripMember admits a trip's owner by `trips.owner_id`, and migration 2337 found owners with NO
+// trip_members row. Both syncs used to build the roster from trip_members alone, so such an owner was never put into
+// their own trip chat — and an owner already in it was EVICTED by the next sync. Mutant: drop `withTripOwner` from
+// either sync; the "owner with no row" cases below go red.
+/** Which user ids an eviction (`update({ left_at: <timestamp> })`) targeted, read off its eq/in user_id filter. */
+function spyEvicted(sc: any): Set<string> {
+  const evicted = new Set<string>();
+  const from = sc.from.bind(sc);
+  sc.from = (table: string) => {
+    const b = from(table);
+    if (table !== "message_thread_members") return b;
+    const update = b.update.bind(b);
+    b.update = (payload: any, ...rest: any[]) => {
+      const out = update(payload, ...rest);
+      if (!(payload && typeof payload.left_at === "string")) return out;
+      const eq = b.eq.bind(b); const inn = b.in.bind(b);
+      b.eq = (c: string, v: any) => { if (c === "user_id") evicted.add(String(v)); return eq(c, v); };
+      b.in = (c: string, v: any[]) => { if (c === "user_id") for (const x of v) evicted.add(String(x)); return inn(c, v); };
+      return out;
+    };
+    return b;
+  };
+  return evicted;
+}
+
+describe("both trip syncs take the owner from trips.owner_id, with or without a trip_members row", () => {
+  const ownerless = (over: Record<string, any[]> = {}) => tripRows({
+    trips: [{ id: TRIP, title: "Da Nang", destination_city: "Da Nang", owner_id: OWNER }],
+    trip_members: [
+      { trip_id: TRIP, user_id: CREW_A, role: "member" },
+      { trip_id: TRIP, user_id: CREW_B, role: "member" },
+    ],
+    ...over,
+  });
+
+  for (const [label, run] of [
+    ["lib/chatSync", (sc: any) => syncTripV1(TRIP, sc)],
+    ["services/groupChatSync", (sc: any) => syncTripV2(sc, TRIP)],
+  ] as const) {
+    it(`${label}: an owner with no trip_members row who is in the chat is NOT evicted`, async () => {
+      const updated: Record<string, any[]> = {};
+      const sc = makeFailClosedClient({ rows: ownerless(), updated });
+      const evicted = spyEvicted(sc);
+      assert.equal(await run(sc), THREAD);
+      assert.deepEqual([...evicted], [], "the owner was evicted from their own trip chat");
+      assert.deepEqual(evictions(updated), []);
+    });
+
+    it(`${label}: an owner with no trip_members row is ADDED to the chat as its admin`, async () => {
+      const inserted: Record<string, any[]> = {}; const updated: Record<string, any[]> = {};
+      const sc = makeFailClosedClient({
+        rows: ownerless({ message_thread_members: [
+          { thread_id: THREAD, user_id: CREW_A, role: "member", left_at: null },
+          { thread_id: THREAD, user_id: CREW_B, role: "member", left_at: null },
+        ] }),
+        inserted, updated,
+      });
+      assert.equal(await run(sc), THREAD);
+      const rows = (inserted["message_thread_members"] ?? []).flat().filter((r: any) => r && r.user_id === OWNER);
+      assert.equal(rows.length, 1, `the owner was not put into the chat: ${JSON.stringify(inserted)}`);
+      assert.equal(rows[0].role, "admin");
+      assert.deepEqual(evictions(updated), []);
+    });
+
+    it(`${label}: CONTROL — a member the trip removed is still evicted, owner rule or not`, async () => {
+      const updated: Record<string, any[]> = {};
+      const sc = makeFailClosedClient({
+        rows: ownerless({ message_thread_members: [
+          { thread_id: THREAD, user_id: OWNER, role: "admin", left_at: null },
+          { thread_id: THREAD, user_id: CREW_A, role: "member", left_at: null },
+          { thread_id: THREAD, user_id: CREW_B, role: "member", left_at: null },
+          { thread_id: THREAD, user_id: DEPARTED, role: "member", left_at: null },
+        ] }),
+        updated,
+      });
+      const evicted = spyEvicted(sc);
+      assert.equal(await run(sc), THREAD);
+      assert.deepEqual([...evicted], [DEPARTED], "exactly the departed member");
+    });
+  }
+
+  it("lib/chatSync: an unreadable trips.owner_id refuses the sync and evicts nobody", async () => {
+    const updated: Record<string, any[]> = {};
+    const sc = makeFailClosedClient({
+      rows: ownerless(), updated,
+      failOn: (c: FakeReadContext) => (c.table === "trips" ? { message: "trips unavailable", code: "57P01" } : null),
+    });
+    assert.equal(await syncTripV1(TRIP, sc), null);
+    assert.deepEqual(evictions(updated), []);
+  });
+
+  it("services/groupChatSync: an unreadable trips.owner_id still syncs an existing chat, but never evicts its admin (the possible owner)", async () => {
+    const updated: Record<string, any[]> = {};
+    const sc = makeFailClosedClient({
+      rows: ownerless({ message_thread_members: [
+        { thread_id: THREAD, user_id: OWNER, role: "admin", left_at: null },
+        { thread_id: THREAD, user_id: CREW_A, role: "member", left_at: null },
+        { thread_id: THREAD, user_id: CREW_B, role: "member", left_at: null },
+        { thread_id: THREAD, user_id: DEPARTED, role: "member", left_at: null },
+      ] }),
+      updated,
+      failOn: (c: FakeReadContext) => (c.table === "trips" ? { message: "trips unavailable", code: "57P01" } : null),
+    });
+    const evicted = spyEvicted(sc);
+    assert.equal(await syncTripV2(sc, TRIP), THREAD);
+    assert.deepEqual([...evicted], [DEPARTED], "exactly the departed member, never the admin (the possible owner)");
+  });
+});

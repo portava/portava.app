@@ -20,7 +20,8 @@
  *   F1  the FIRST /today on a trip WITH commitments is a 200, not 503 TRIP_PROJECTION_VERSION_AHEAD, and viewing it
  *       leaves a plan edit's If-Match valid (a GET must not move the version a client edits against).
  *   F2  a reservation DELETE while the gate is closed with the flag ON (here a transient probe error) is a retryable
- *       503 and destroys nothing; it never falls back to the flag-off hard delete.
+ *       503 and destroys nothing; it never falls back to the flag-off hard delete. The same holds when the FLAG READ
+ *       itself fails (fix to #803, verifier finding 1): an unreadable flag is `flag_unknown`, never `flag_off`.
  *   F3  the trip chat takes its owner, under the production CHECK (role member | admin): the owner is the thread's
  *       admin, an accepted member a member, and a pending invitee is not in the chat until they accept.
  *
@@ -229,6 +230,25 @@ describe("the Trips doors #797 opened, in production's flag state: authorization
     } finally { db.bridge.faults.splice(db.bridge.faults.indexOf(fault as any), 1); await resetProbes(); }
     assert.deepEqual(await resRow(id), before, "the reservation was destroyed or changed");
     assert.equal(await resEvents(id), evBefore);
+    // The FLAG READ failing (only the read of this gate's flag: the route's other flags still read) is not "flag off".
+    // Mutant: read the flag through isFlagEnabled (false on error) — the gate says flag_off and the DELETE is a 204
+    // hard delete with the flag ON in production.
+    const flagFault = (q: { target: string; method: string; params: URLSearchParams }) =>
+      (q.target === "feature_flags" && q.method === "GET" && q.params.get("flag") === "eq.trip_operational_projections_enabled"
+        ? { status: 503, body: { code: "XX000", message: "test: transient flag read failure" } } : null);
+    db.bridge.faults.push(flagFault as any);
+    try {
+      await resetProbes();
+      const { tripOperationalProjectionsGate } = await import("../../domain/trips/policies/tripOperationalProjections.js");
+      const gate: any = await tripOperationalProjectionsGate(db.client);
+      assert.deepEqual([gate.enabled, gate.reason], [false, "flag_unknown"], JSON.stringify(gate));
+      await resetProbes();
+      const d = await app.call("DELETE", `/api/trips/${tripA}/reservations/${id}`, owner);
+      assert.equal(d.status, 503, `an unreadable flag answered ${d.status}: ${d.raw.slice(0, 200)}`);
+      assert.match(d.raw, /TRIP_PROJECTION_UNAVAILABLE/);
+    } finally { db.bridge.faults.splice(db.bridge.faults.indexOf(flagFault as any), 1); await resetProbes(); }
+    assert.deepEqual(await resRow(id), before, "an unreadable flag destroyed or changed the reservation");
+    assert.equal(await resEvents(id), evBefore);
     const ok = await app.call("DELETE", `/api/trips/${tripA}/reservations/${id}`, owner);
     assert.equal(ok.status, 200, `control: with the gate open the same DELETE cancels: ${ok.raw.slice(0, 200)}`);
     assert.equal((await resRow(id))!.status, "cancelled");
@@ -266,6 +286,24 @@ describe("the Trips doors #797 opened, in production's flag state: authorization
     await db.exec(`UPDATE public.trip_members SET status = 'accepted' WHERE trip_id = '${trip}' AND user_id = '${invitee.id}'`); // accepted, as ACCEPT_INVITE leaves it
     await (await import("../../lib/chatSync.js")).syncTripChatMembers(trip, db.client as any);
     assert.equal((await roster()).find((m) => m.user_id === invitee.id)?.role, "member", "accepted, the invitee joins the chat");
+    // fix to #803 (verifier finding 4): an owner with NO trip_members row (2337 found 5 such trips in production) is
+    // still the chat's admin — requireTripMember admits them by trips.owner_id. Production's shape is an owner who never
+    // had a row and so was never put into the chat: the row is deleted (its trigger ends the owner's thread membership)
+    // and the owner's thread row removed, then each sync must ADD the owner as admin, and a second sync keep them.
+    await db.exec(`DELETE FROM public.trip_members WHERE trip_id = '${trip}' AND user_id = '${host.id}'`);
+    assert.equal((await db.query(`SELECT 1 FROM public.trip_members WHERE trip_id = '${trip}' AND user_id = '${host.id}'`)).length, 0, "the owner's membership row is still there");
+    for (const [label, sync] of [
+      ["lib/chatSync", async () => (await import("../../lib/chatSync.js")).syncTripChatMembers(trip, db.client as any)],
+      ["services/groupChatSync", async () => (await import("../../services/groupChatSync.js")).syncTripChatMembers(db.client as any, trip)],
+    ] as const) {
+      await db.exec(`DELETE FROM public.message_thread_members m USING public.message_threads t WHERE t.id = m.thread_id AND t.trip_id = '${trip}' AND t.thread_type = 'trip' AND m.user_id = '${host.id}'`);
+      assert.equal((await roster()).some((m) => m.user_id === host.id), false);
+      assert.match(String(await sync()), UUID, `${label}: the sync refused`);
+      assert.equal((await roster()).find((m) => m.user_id === host.id)?.role, "admin", `${label}: an owner with no trip_members row is not in their own chat`);
+      assert.match(String(await sync()), UUID, `${label}: the second sync refused`);
+      assert.equal((await roster()).find((m) => m.user_id === host.id)?.role, "admin", `${label}: a second sync evicted the owner`);
+      assert.equal((await roster()).find((m) => m.user_id === crew.id)?.role, "member", `${label}: the crew member was lost`);
+    }
   });
 
   it("V7 the gate REFUSES when a required table is truly absent (dropped on this isolated chain): /today is not served", async () => {
@@ -281,8 +319,13 @@ describe("the Trips doors #797 opened, in production's flag state: authorization
     const r = await app.call("POST", `/api/trips/${tripA}/reservations`, owner, { type: "stay", title: "after-drop", startsAt: `${isoDate(1)}T15:00:00.000Z` });
     if (r.status === 201) {
       await resetProbes();
+      const closed: any = await tripOperationalProjectionsGate(db.client);
+      await resetProbes();
       const d = await app.call("DELETE", `/api/trips/${tripA}/reservations/${r.body?.reservation?.id}`, owner);
-      assert.equal(d.status, 503, `an absent schema with the flag ON must refuse the DELETE, not hard-delete: ${d.status}`);
+      // schema_missing is a STABLE state: feature_disabled (404), as refusalForGate answers it; schema_unknown is the
+      // retryable 503. Either way it is a refusal and never the 204 hard delete.
+      const want = closed.reason === "schema_missing" ? 404 : 503;
+      assert.equal(d.status, want, `an absent schema with the flag ON (${closed.reason}) must refuse the DELETE, not hard-delete: ${d.status} ${d.raw.slice(0, 200)}`);
       assert.equal((await db.query(`SELECT 1 FROM public.trip_reservations WHERE id = '${r.body?.reservation?.id}'`)).length, 1, "the row was destroyed");
     }
   });

@@ -21,7 +21,7 @@
  * variables to the scanner), naming no schema of its own. A builder that
  * calls it first is a gate boundary, and its reads belong here.
  */
-import { isFlagEnabled } from "../../../lib/featureFlags.js";
+import { readFlagState } from "../../../lib/featureFlags.js";
 import { probeSchemaReadiness } from "../../../lib/capability/schemaCapability.js";
 import type { CapabilityDefinition, SchemaReadiness } from "../../../lib/capability/schemaRequirement.js";
 import { logger } from "../../../lib/logger.js";
@@ -82,7 +82,7 @@ export const TRIP_OPERATIONAL_PROJECTIONS: CapabilityDefinition = {
 
 export type TripOperationalGate =
   | { enabled: true }
-  | { enabled: false; reason: "flag_off" | "schema_missing" | "schema_unknown"; schema: SchemaReadiness | null };
+  | { enabled: false; reason: "flag_off" | "flag_unknown" | "schema_missing" | "schema_unknown"; schema: SchemaReadiness | null };
 
 const log = logger.child({ mod: "tripOperationalProjections" });
 const TTL_MS = 30_000;
@@ -94,7 +94,18 @@ export function invalidateTripOperationalProjectionsGate(): void { _cache = null
 export async function tripOperationalProjectionsGate(sc: any): Promise<TripOperationalGate> {
   if (_cache && _cache.sc === sc && Date.now() - _cache.at < TTL_MS) return _cache.gate;
   let gate: TripOperationalGate;
-  if (!(await isFlagEnabled(sc, TRIP_OPERATIONAL_PROJECTIONS_FLAG))) {
+  // The flag is read TRI-STATE (fix to #803, verifier finding 1): "off" and
+  // "could not be read" are different answers. A caller that falls back to a
+  // destructive legacy path when the flag is off (DELETE
+  // /trips/:tripId/reservations/:id hard-deletes) must not take that path
+  // because the feature_flags read failed. An unreadable flag is `flag_unknown`
+  // — closed, retryable, and NOT cached, so the next request reads again.
+  const flagState = await readFlagState(sc, TRIP_OPERATIONAL_PROJECTIONS_FLAG);
+  if (flagState === "unknown") {
+    log.error({ capability: TRIP_OPERATIONAL_PROJECTIONS_FLAG }, `capability ${TRIP_OPERATIONAL_PROJECTIONS_FLAG} could not be read — the operational projections are refused (retryably)`);
+    return { enabled: false, reason: "flag_unknown", schema: null };
+  }
+  if (flagState === "off") {
     gate = { enabled: false, reason: "flag_off", schema: null };
   } else {
     const schema = await probeSchemaReadiness(sc, TRIP_OPERATIONAL_PROJECTIONS);
@@ -118,15 +129,17 @@ export async function tripOperationalProjectionsGate(sc: any): Promise<TripOpera
  * that could not answer — a read that failed — and is
  * TRIP_PROJECTION_UNAVAILABLE, retryable, exactly as a failed read inside the
  * builder would be. Conflating the two would tell a client to stop asking
- * when the truth is "ask again".
+ * when the truth is "ask again". `flag_unknown` (the flag itself could not be
+ * read) is the same kind of answer as `schema_unknown`: retryable.
  */
 export function refusalForGate(gate: Exclude<TripOperationalGate, { enabled: true }>): { ok: false; reason: "FEATURE_DISABLED" | "TRIP_PROJECTION_UNAVAILABLE"; message: string } {
-  return { ok: false, reason: gate.reason === "schema_unknown" ? "TRIP_PROJECTION_UNAVAILABLE" : "FEATURE_DISABLED", message: describeOperationalGate(gate) };
+  return { ok: false, reason: gate.reason === "schema_unknown" || gate.reason === "flag_unknown" ? "TRIP_PROJECTION_UNAVAILABLE" : "FEATURE_DISABLED", message: describeOperationalGate(gate) };
 }
 
 /** The message a refusal carries; names the migrations when the schema is what is missing. */
 export function describeOperationalGate(gate: Exclude<TripOperationalGate, { enabled: true }>): string {
   if (gate.reason === "flag_off") return `${TRIP_OPERATIONAL_PROJECTIONS_FLAG} is off`;
+  if (gate.reason === "flag_unknown") return `${TRIP_OPERATIONAL_PROJECTIONS_FLAG} could not be read just now; try again`;
   return `${TRIP_OPERATIONAL_PROJECTIONS_FLAG} is on but its schema is ${gate.reason === "schema_missing" ? "absent" : "unverifiable"}` +
     (gate.schema?.missing?.length ? ` (${gate.schema.missing.join(", ")})` : "") +
     `; apply ${TRIP_OPERATIONAL_PROJECTIONS.providedBy.join(", ")} or turn the flag off`;

@@ -136,7 +136,7 @@ export async function syncTripChatMembers(
     return null;
   }
 
-  const accepted = ((acceptedRows ?? []) as Array<{ user_id: string; role: string; status?: string | null }>).filter(isAcceptedTripRow).map((r) => ({ user_id: r.user_id, role: tripChatThreadRole(r.role) })); // follow-up hotfix 2026-10-24: an invited, declined, removed or left row is not crew, and the owner is the thread's admin (the CHECK allows member | admin)
+  const { data: ownerRow, error: ownerErr } = await sc.from('trips').select('owner_id').eq('id', tripId).maybeSingle(); if (ownerErr) { console.error(`syncTripChatMembers: trip owner read failed for trip ${tripId}: ${ownerErr.message} — refusing to reconcile without the owner`); return null; } /* fix to #803 (verifier finding 4): the OWNER is crew with or without a trip_members row (see withTripOwner at the foot); an unreadable owner is refused like an unreadable roster, since reconciling without it could evict the owner from their own chat */ const accepted = withTripOwner(((acceptedRows ?? []) as Array<{ user_id: string; role: string; status?: string | null }>).filter(isAcceptedTripRow).map((r) => ({ user_id: r.user_id, role: tripChatThreadRole(r.role) })), (ownerRow as any)?.owner_id ?? null); // follow-up hotfix 2026-10-24: an invited, declined, removed or left row is not crew, and the owner is the thread's admin (the CHECK allows member | admin)
   const acceptedIds = new Set(accepted.map((r) => r.user_id));
 
   // 3. Read current thread members (including those who already left).
@@ -408,4 +408,16 @@ export function tripChatThreadRole(tripRole: string): "admin" | "member" {
  */
 export function isAcceptedTripRow(row: { status?: string | null }): boolean {
   return row.status == null || row.status === "accepted";
+}
+
+/**
+ * fix to #803 (verifier finding 4): the accepted roster with the trip's owner (trips.owner_id) in it as the thread's
+ * admin, whether or not the owner has a trip_members row — the same rule as lib/http.ts requireTripMember, which admits
+ * the owner by trips.owner_id. Migration 2337 found owners with no membership row; without this they were left out of
+ * (or, on a later sync, evicted from) their own trip's chat.
+ */
+export function withTripOwner<T extends { user_id: string; role: "admin" | "member" }>(accepted: T[], ownerId: string | null): Array<T | { user_id: string; role: "admin" }> {
+  if (!ownerId) return accepted;
+  const rest = accepted.filter((r) => r.user_id !== ownerId);
+  return [{ user_id: ownerId, role: "admin" as const }, ...rest];
 }
