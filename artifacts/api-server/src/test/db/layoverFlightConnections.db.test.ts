@@ -476,7 +476,7 @@ describe("B1-F — the flags OFF: nothing new answers, nothing new is written, t
   });
 });
 
-describe("B1-F — the migrations ABSENT (the chain without 3826-3828): the old surfaces work unchanged", { skip: PRESSED_SKIP_REASON }, () => {
+describe("B1-F — the migrations ABSENT (the chain without 3826-3828): the old surfaces work unchanged", { skip: PRESSED_SKIP_REASON || (process.env["PRESSED_BASE"] ? "§83: production has 3826-3828 and both flags ON, so the absent-and-unflagged arm is not a production state" : false) }, () => {
   let db: PressedDb; let app: App; let ana: PressedUser;
   before(async () => {
     db = await openPressedLayoverDb({ without: ["3826", "3827", "3828"] });
