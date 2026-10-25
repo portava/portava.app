@@ -145,6 +145,16 @@ BEGIN
       -- Memory's owner (the appellant): a wrong owner is the old route's
       -- zero-row answer, MEMORY_NOT_FOUND. The event and the audit row name the
       -- moderator, never the owner, because the moderator did it.
+      -- The restore changes the state and nothing else, so it carries no
+      -- `patch`: one that does would have the shared UPDATE arm below write a
+      -- title, caption, audience or place to the owner's Memory in the
+      -- moderator's name. Refused as malformed, before anything is written.
+      IF v_payload ? 'patch' THEN
+        INSERT INTO public.memory_command_audit (command_id, command_type, memory_id, actor_user_id, idempotency_key, outcome, reason)
+        VALUES (v_cmd_id, v_type, v_memory_id, v_actor, v_key, 'rejected', 'MEMORY_COMMAND_MALFORMED');
+        RETURN jsonb_build_object('ok', false, 'reason', 'MEMORY_COMMAND_MALFORMED',
+                                  'detail', 'MODERATION_RESTORE_MEMORY carries no patch', 'contract_version', 1);
+      END IF;
       IF NOT EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = v_actor AND p.role = 'admin') THEN
         INSERT INTO public.memory_command_audit (command_id, command_type, memory_id, actor_user_id, idempotency_key, outcome, reason)
         VALUES (v_cmd_id, v_type, v_memory_id, v_actor, v_key, 'rejected', 'MEMORY_AUTH_NOT_MODERATOR');

@@ -69,7 +69,7 @@ const INSTALL: Record<"2711" | "3911" | "3912", string> = {
   "3912": RB("2026-10-24-3913-memory-kernel-tag-block-gate-rollback.sql"),
 };
 /** md5(pg_get_functiondef) of each, measured: 2711 is production's (read-only, 2026-10-23). */
-const MD5_PREFIX: Record<"2711" | "3911" | "3912", string> = { "2711": "542cc3a2", "3911": "5e42fd46", "3912": "6ab09a08" };
+const MD5_PREFIX: Record<"2711" | "3911" | "3912", string> = { "2711": "542cc3a2", "3911": "5e42fd46", "3912": "207e80ff" };
 
 /** Production's values for every flag these routes read (feature_flags, read-only 2026-10-24). */
 const PROD_FLAGS: Record<string, boolean> = {

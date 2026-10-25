@@ -17,7 +17,10 @@
 --      directly on ANY Memory of the appellant's, including one its owner had
 --      deleted. Now: the actor is the moderator and must hold the `admin` role;
 --      the command must name the Memory's owner; and it reverses a moderation
---      removal (`removed` -> `published`) and nothing else. Every other state
+--      removal (`removed` -> `published`) and nothing else: a command that
+--      carries a `patch` is refused as MEMORY_COMMAND_MALFORMED, so a
+--      moderator can never edit the owner's title, caption, audience or place
+--      through it (the shared UPDATE arm would apply one). Every other state
 --      is refused as MEMORY_LIFECYCLE_INVALID_TRANSITION, and the appeal route
 --      answers that as a restoration a moderator must decide by hand. It emits
 --      `memory.corrected` (§17 names no restore event), DELETED -> ACTIVE.
@@ -199,6 +202,16 @@ BEGIN
       -- Memory's owner (the appellant): a wrong owner is the old route's
       -- zero-row answer, MEMORY_NOT_FOUND. The event and the audit row name the
       -- moderator, never the owner, because the moderator did it.
+      -- The restore changes the state and nothing else, so it carries no
+      -- `patch`: one that does would have the shared UPDATE arm below write a
+      -- title, caption, audience or place to the owner's Memory in the
+      -- moderator's name. Refused as malformed, before anything is written.
+      IF v_payload ? 'patch' THEN
+        INSERT INTO public.memory_command_audit (command_id, command_type, memory_id, actor_user_id, idempotency_key, outcome, reason)
+        VALUES (v_cmd_id, v_type, v_memory_id, v_actor, v_key, 'rejected', 'MEMORY_COMMAND_MALFORMED');
+        RETURN jsonb_build_object('ok', false, 'reason', 'MEMORY_COMMAND_MALFORMED',
+                                  'detail', 'MODERATION_RESTORE_MEMORY carries no patch', 'contract_version', 1);
+      END IF;
       IF NOT EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = v_actor AND p.role = 'admin') THEN
         INSERT INTO public.memory_command_audit (command_id, command_type, memory_id, actor_user_id, idempotency_key, outcome, reason)
         VALUES (v_cmd_id, v_type, v_memory_id, v_actor, v_key, 'rejected', 'MEMORY_AUTH_NOT_MODERATOR');
@@ -601,6 +614,7 @@ BEGIN
      OR position('(v_write->>''source_post_id'')::uuid' IN def) = 0
      OR position('UPDATE public.memory_items SET visibility = v_payload->>''item_visibility''' IN def) = 0
      OR position('p.role = ''admin''' IN def) = 0
+     OR position('''MODERATION_RESTORE_MEMORY carries no patch''' IN def) = 0
      OR position('IF v_type = ''MODERATION_RESTORE_MEMORY'' AND v_state IS DISTINCT FROM ''removed'' THEN' IN def) = 0 THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3912): memory_kernel_execute does not carry the 3911 and 3912 writes';
   END IF;

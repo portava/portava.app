@@ -31,6 +31,7 @@
  *   R4 a non-admin actor is refused by name; a wrong appellant matches nothing
  *   R5 the kernel OFF: the legacy update, no event claimed
  *   R6 on 3911's kernel the compat arm restores as before 3912
+ *   R7 a restore that carries a patch is MEMORY_COMMAND_MALFORMED and writes nothing; without it, only the state changes
  *   H1 the outbox drain tick drains the kernel's events and writes its job_health row and /healthz/schedulers status
  *   H2 a pass that cannot claim is a FAILED pass: job_health gets last_run_at and no last_success_at, and the status counts it
  *
@@ -45,7 +46,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { HAVE_DB, exec, psql, rows, scalar, seedUser } from "./localDb.js";
+import { HAVE_DB, exec, jsonLiteral, psql, rows, scalar, seedUser } from "./localDb.js";
 import { memoryBridge } from "./memoryPostgrestBridge.js";
 import { _setTestClient } from "../../lib/http.js";
 import { payloadMayNarrowAudience } from "../../lib/memoryOutbox.js";
@@ -269,6 +270,9 @@ describe("§17: a photo's own audience and the moderation restore cross the kern
       ["memory.corrected", "MODERATION_RESTORE_MEMORY", "DELETED", "ACTIVE", moderator]);
     assert.equal(xminOf("memories", `id = '${removed}'`), ev[0]!.xmin);
     assert.equal(scalar(`SELECT actor_user_id::text FROM public.memory_command_audit WHERE memory_id = '${removed}' AND outcome = 'accepted'`), moderator, "the audit names the moderator, not the owner");
+    // Verifier fix 2026-10-24: the receipt is keyed to the MODERATOR, so it keeps the id and state
+    // (resolveAppeal's `select: "id,state"`), never the owner's title, caption, coordinates or lists.
+    assert.equal(scalar(`SELECT string_agg(k, ',' ORDER BY k) FROM public.memory_command_receipts r, jsonb_object_keys(r.result_json) k WHERE r.memory_id = '${removed}' AND r.command_type = 'MODERATION_RESTORE_MEMORY'`), "id,state", "the moderator's receipt holds the id and state only");
     assertOnlyTheKernelWrote("R1");
   });
 
@@ -336,6 +340,28 @@ describe("§17: a photo's own audience and the moderation restore cross the kern
       assert.equal(scalar(`SELECT state FROM public.memories WHERE id = '${target}'`), "published");
       assert.equal(writes().filter((s) => /^WITH w AS \(UPDATE public\.memories SET state = /.test(s)).length, 1, "the pre-3912 update ran");
     });
+  });
+  test("R7 a MODERATION_RESTORE_MEMORY that carries a patch is MALFORMED and writes nothing; the same command without it restores and changes the state only", () => {
+    // Verifier fix 2026-10-24 (3912): the restore shares the UPDATE arm, so a patch would have been
+    // applied to the owner's Memory in the moderator's name. Called at the SQL door, as service_role
+    // calls it, because no route sends a patch; red against 3912 without the guard.
+    const target = newMemory("removed", `${TAG} R7`, "only_me");
+    const cmd = (key: string, payload: Record<string, unknown>) => scalar(`SELECT public.memory_kernel_execute(${jsonLiteral({
+      command_id: randomUUID(), memory_id: target, actor_user_id: moderator, idempotency_key: key,
+      type: "MODERATION_RESTORE_MEMORY", payload })})::text`);
+    const patched = JSON.parse(cmd(`r7-patch-${TAG}`, { owner_id: owner, appeal_id: randomUUID(), patch: { title: "moderator's title", visibility: "public", caption: "x" } })!);
+    assert.equal(patched.ok, false, JSON.stringify(patched));
+    assert.equal(patched.reason, "MEMORY_COMMAND_MALFORMED");
+    assert.deepEqual(rows(`SELECT state, title, visibility, caption FROM public.memories WHERE id = '${target}'`),
+      [{ state: "removed", title: `${TAG} R7`, visibility: "only_me", caption: null }], "nothing of the patch, and no restore");
+    assert.equal(scalar(`SELECT count(*) FROM public.${EVENTS} WHERE memory_id = '${target}'`), "0");
+    assert.equal(scalar(`SELECT count(*) FROM public.memory_command_receipts WHERE memory_id = '${target}'`), "0");
+    assert.equal(scalar(`SELECT string_agg(reason, ',') FROM public.memory_command_audit WHERE memory_id = '${target}' AND outcome = 'rejected'`), "MEMORY_COMMAND_MALFORMED");
+    // The control: the guard, not the owner or state check, refused it.
+    const plain = JSON.parse(cmd(`r7-plain-${TAG}`, { owner_id: owner, appeal_id: randomUUID(), select: "id,state" })!);
+    assert.equal(plain.ok, true, JSON.stringify(plain));
+    assert.deepEqual(rows(`SELECT state, title, visibility, caption FROM public.memories WHERE id = '${target}'`),
+      [{ state: "published", title: `${TAG} R7`, visibility: "only_me", caption: null }], "the restore changes the state and nothing else");
   });
   test("H1 the outbox drain tick drains the kernel's events and writes its job_health row and its /healthz/schedulers status", async () => {
     flags = { ...PROD_FLAGS };
