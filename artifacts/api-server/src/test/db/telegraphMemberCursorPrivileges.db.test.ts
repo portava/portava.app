@@ -12,7 +12,7 @@
  *   - a member reading their OWN cursor: permission denied (the column, not the row, is refused);
  *   - a STRANGER and anon: permission denied;
  *   - `select *` (what an embed would ask for): permission denied, so no shape reaches them;
- *   - control: the same co-member still reads the columns they held before (left_at, last_read_at,
+ *   - control: the same co-member still reads the columns they held before (left_at,
  *     removed_at), so membership and history reads are unchanged;
  *   - the API's service role (the receipts route's client) still reads both cursors.
  *
@@ -84,10 +84,10 @@ describe("3940 — the receipt cursors are no client role's to read, on a real d
   });
 
   it("control: the co-member still reads what they read before — membership and its history columns", () => {
-    const r = asRole("authenticated", alice, `SELECT user_id || ':' || coalesce(left_at::text, 'active') || ':' || coalesce(last_read_at::text, 'unread') FROM public.message_thread_members WHERE thread_id = '${t}' ORDER BY user_id;`);
+    const r = asRole("authenticated", alice, `SELECT user_id || ':' || coalesce(left_at::text, 'active') || ':' || coalesce(role::text, 'none') FROM public.message_thread_members WHERE thread_id = '${t}' ORDER BY user_id;`);
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stdout.split("\n").filter((l) => l.includes(":active:")).length, 2, r.stdout);
-    for (const col of ["thread_id", "user_id", "role", "joined_at", "left_at", "last_read_at", "visible_from_at"]) {
+    for (const col of ["thread_id", "user_id", "role", "joined_at", "left_at", "visible_from_at"]) {
       assert.equal(scalar(`SELECT has_column_privilege('authenticated', 'public.message_thread_members', '${col}', 'SELECT')`), "t", col);
     }
     if (scalar(`SELECT count(*) FROM pg_attribute WHERE attrelid = 'public.message_thread_members'::regclass AND attname = 'removed_at' AND NOT attisdropped`) === "1") {

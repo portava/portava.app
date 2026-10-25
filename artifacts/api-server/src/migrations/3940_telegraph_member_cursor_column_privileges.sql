@@ -15,11 +15,13 @@
 -- member's read marker does). Receipts are a server answer under the DM/group rules (GET
 -- /threads/:id/receipts), never a raw column.
 --
--- THE FIX. A column privilege cannot be revoked from under a table-level grant, so the table-level
--- SELECT is replaced by a column-level SELECT on EVERY column except delivered_sequence and
--- seen_sequence, for exactly the two roles that held it (anon keeps exactly what it had, minus the
--- two columns; RLS still gives it no row). The list is read from the catalog so a column this table
--- has on one database and not another (removed_at, 3934) is carried as it is. INSERT, UPDATE and
+-- THE FIX. A column privilege cannot be revoked from under a table-level grant, so each client role's
+-- SELECT is replaced by a column-level SELECT on exactly the columns that role could read before,
+-- minus delivered_sequence and seen_sequence (anon keeps exactly what it had, minus the two columns;
+-- RLS still gives it no row). The list is read from the catalog AND from the role's current
+-- privileges, so a column this table has on one database and not another (removed_at, 3934) is
+-- carried as it is, and a column another migration already withheld (3941) stays withheld: in either
+-- order 3940 and 3941 compose, because each only narrows. INSERT, UPDATE and
 -- DELETE grants are untouched (no client policy admits them). service_role — the API's client, which
 -- serves receipts — keeps its full table-level privileges.
 --
@@ -38,7 +40,7 @@
 --
 -- ROLLBACK (restores the table-level SELECT; the leak returns with it):
 --   BEGIN;
---   GRANT SELECT ON public.message_thread_members TO anon, authenticated;
+--   GRANT SELECT (delivered_sequence, seen_sequence) ON public.message_thread_members TO anon, authenticated;
 --   DELETE FROM public.schema_migration_ledger WHERE filename = '3940_telegraph_member_cursor_column_privileges.sql';
 --   COMMIT;
 
@@ -52,17 +54,25 @@ BEGIN
   END IF;
 END $pre$;
 
-REVOKE SELECT ON public.message_thread_members FROM anon, authenticated;
-
 DO $grant$
 DECLARE
+  r      text;
   v_cols text;
 BEGIN
-  SELECT string_agg(quote_ident(attname), ', ' ORDER BY attnum) INTO v_cols
-    FROM pg_attribute
-   WHERE attrelid = 'public.message_thread_members'::regclass AND attnum > 0 AND NOT attisdropped
-     AND attname NOT IN ('delivered_sequence', 'seen_sequence');
-  EXECUTE format('GRANT SELECT (%s) ON public.message_thread_members TO anon, authenticated', v_cols);
+  -- Per role, the columns it can read NOW (table-level or column-level), minus the two cursors, read
+  -- BEFORE the REVOKE. So this only ever narrows: a column another migration has already withheld
+  -- (3941's private member columns, whichever of the two lands first) is never granted back here.
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+    SELECT string_agg(quote_ident(attname), ', ' ORDER BY attnum) INTO v_cols
+      FROM pg_attribute
+     WHERE attrelid = 'public.message_thread_members'::regclass AND attnum > 0 AND NOT attisdropped
+       AND attname NOT IN ('delivered_sequence', 'seen_sequence')
+       AND has_column_privilege(r, 'public.message_thread_members', attname, 'SELECT');
+    EXECUTE format('REVOKE SELECT ON public.message_thread_members FROM %I', r);
+    IF v_cols IS NOT NULL THEN
+      EXECUTE format('GRANT SELECT (%s) ON public.message_thread_members TO %I', v_cols, r);
+    END IF;
+  END LOOP;
 END $grant$;
 
 COMMIT;
@@ -81,8 +91,7 @@ BEGIN
     END IF;
     IF NOT (has_column_privilege(r, 'public.message_thread_members', 'thread_id', 'SELECT')
             AND has_column_privilege(r, 'public.message_thread_members', 'user_id', 'SELECT')
-            AND has_column_privilege(r, 'public.message_thread_members', 'left_at', 'SELECT')
-            AND has_column_privilege(r, 'public.message_thread_members', 'last_read_at', 'SELECT')) THEN
+            AND has_column_privilege(r, 'public.message_thread_members', 'left_at', 'SELECT')) THEN
       RAISE EXCEPTION 'POSTCONDITION FAILED (3940): % lost a column it held before.', r;
     END IF;
   END LOOP;

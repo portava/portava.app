@@ -16067,7 +16067,7 @@ The verifier found one security defect, one over-claim and one mislabel, plus sm
 
 **A co-member presence leak, closed by migration 3940.** This batch makes the server write `message_thread_members.delivered_sequence`. On production, `anon` and `authenticated` hold a table-level SELECT on that table, and `mtm_select` lets every active member read every row of their thread. A group member could therefore poll a co-member's cursor through PostgREST and learn when that person was online. That breaks the receipt rule that a group receipt carries only a COUNT. `seen_sequence` has the same shape.
 
-3940 replaces the table-level client SELECT with a column-level SELECT on every other column (`artifacts/api-server/src/migrations/3940_telegraph_member_cursor_column_privileges.sql:55#REVOKE SELECT ON public.message_thread_members FROM anon, authenticated;`). Receipts are served only by the API under the DM/group rules.
+3940 replaces each client role's SELECT with a column-level SELECT on the columns that role could already read, minus the two cursors (`artifacts/api-server/src/migrations/3940_telegraph_member_cursor_column_privileges.sql:71#EXECUTE format('REVOKE SELECT ON public.message_thread_members FROM %I', r);`). It only narrows, so it composes with 3941 (which withholds other private member columns) in either order. Receipts are served only by the API under the DM/group rules.
 
 Inventory: no client reads the table at all; the raw read was removed for T295 and is pinned by the SLO ratchet. No view depends on it. The only function that reads either column is the definer `telegraph_unsend_message_before_seen`, which no client can execute.
 
@@ -16106,13 +16106,13 @@ The new expectations are null with the reason, and DL1 (below the cursor claimed
 
 **Notes on 3934 (unchanged):**
 - Its header line "nothing numbered above names message_thread_members" stops being true with 3935, 3939 and 3940. The four were re-checked together on one PostgreSQL 17 database, with 3934, 3935, 3939 and 3940 applied, before merge.
-- Its rollback discards removal history: dropping `removed_at` loses every recorded removal.
+- Its rollback would discard removal history, so the rollback file refuses while any row carries `removed_at` (`db/rollback/2026-10-24-3934-telegraph-member-removed-at-rollback.sql`); 3940's is `db/rollback/2026-10-24-3940-telegraph-member-cursor-column-privileges-rollback.sql`, and it names the disclosure it reopens. Both were rehearsed on a local replay (2026-10-24 evening).
 
 **References.** Production is `9d5f6d481` on the server and the owner's device build is `96d20f10d`. Q.8's client halves were re-checked at `96d20f10d`, and all are present.
 
 | file | sha256 |
 | --- | --- |
-| `artifacts/api-server/src/migrations/3940_telegraph_member_cursor_column_privileges.sql` | `905cefb385762bd298b2bdec5ee7c4679ea495dfb79b6c86ff5353b705dc870b` |
+| `artifacts/api-server/src/migrations/3940_telegraph_member_cursor_column_privileges.sql` | `dbf6be0801e4552b705595e1e2d79e2db3c3ddffda98e0be8a6d244f2ae3d9a2` |
 
 | id | was | now | why |
 | --- | --- | --- | --- |
