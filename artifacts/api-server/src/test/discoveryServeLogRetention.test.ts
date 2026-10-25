@@ -290,3 +290,99 @@ function get(base: string): Promise<{ status: number; body: any }> {
     req.end();
   });
 }
+
+// ── census-discovery §133 (DV-52): the debug-sample purge, behind 3922's FALSE flag ──
+//
+// The 7-day horizon of purge_old_ranking_debug_samples() (0203) is not a
+// recorded retention ruling (D-OWNER1004-1), so the scheduler may DELETE only
+// while ranking_debug_samples_purge_enabled reads exactly TRUE.
+//   R1  OFF: no RPC at all, outcome disabled, not a failure, nothing persisted
+//   R2  absent row, unreadable read, and a non-boolean `enabled`: no RPC either
+//   R3  ON: exactly one call to the purge, the count reported, job_health success
+//   R4  ON and the purge erroring or answering a non-count: a FAILURE, counted
+//   R5  wired: index.ts starts it, /healthz/schedulers reports it, the flag literal
+//       is 3922's, and 3922 seeds it FALSE, idempotently, without an UPDATE
+import {
+  runDebugSamplePurgeTick, _resetDebugSamplePurgeStatus, RANKING_DEBUG_SAMPLES_PURGE_FLAG, PURGE_RPC as DEBUG_PURGE_RPC,
+  JOB_KEY as DEBUG_JOB_KEY, debugSamplePurgeHealthDetail,
+} from "../lib/rankingDebugSamplePurgeScheduler.js";
+
+function purgeFake(opts: { flag?: { enabled: unknown } | null; flagError?: boolean; answer?: { data: unknown; error: unknown } }) {
+  const rpcs: string[] = []; const upserts: any[] = []; const flagReads: string[] = [];
+  const client: any = {
+    from(table: string) {
+      if (table === "feature_flags") {
+        const q: any = {
+          select: () => q, eq: (_k: string, v: string) => { flagReads.push(v); return q; },
+          maybeSingle: async () => opts.flagError ? { data: null, error: { message: "boom" } } : { data: opts.flag ?? null, error: null },
+        };
+        return q;
+      }
+      if (table === "job_health") return { upsert: async (row: any) => { upserts.push(row); return { error: null }; } };
+      throw new Error(`unexpected table ${table}`);
+    },
+    rpc: async (name: string) => { rpcs.push(name); return opts.answer ?? { data: 3, error: null }; },
+  };
+  return { client, rpcs, upserts, flagReads };
+}
+
+describe("§133 DV-52 — the debug-sample purge runs only behind its own TRUE flag", () => {
+  beforeEach(() => _resetDebugSamplePurgeStatus());
+
+  it("R1 OFF: no RPC, disabled, not a failure, nothing persisted", async () => {
+    const f = purgeFake({ flag: { enabled: false } });
+    const s = await runDebugSamplePurgeTick(f.client);
+    assert.deepEqual(f.rpcs, []);
+    assert.equal(s.lastOutcome, "disabled");
+    assert.equal(s.consecutiveFailures, 0);
+    assert.deepEqual(f.upserts, []);
+    assert.deepEqual(f.flagReads, [RANKING_DEBUG_SAMPLES_PURGE_FLAG]);
+    assert.match(debugSamplePurgeHealthDetail(s) ?? "", /disabled/);
+  });
+
+  it("R2 absent, unreadable, or not exactly true: still no DELETE", async () => {
+    for (const opts of [{ flag: null }, { flagError: true }, { flag: { enabled: "true" } }, { flag: { enabled: 1 } }] as any[]) {
+      _resetDebugSamplePurgeStatus();
+      const f = purgeFake(opts);
+      const s = await runDebugSamplePurgeTick(f.client);
+      assert.deepEqual(f.rpcs, [], JSON.stringify(opts));
+      assert.ok(s.lastOutcome === "no_flag" || s.lastOutcome === "disabled", `${JSON.stringify(opts)} → ${s.lastOutcome}`);
+      assert.equal(s.consecutiveFailures, 0);
+    }
+  });
+
+  it("R3 ON: one purge call, its count reported, success persisted", async () => {
+    const f = purgeFake({ flag: { enabled: true }, answer: { data: 7, error: null } });
+    const s = await runDebugSamplePurgeTick(f.client, new Date("2026-10-23T22:00:00.000Z"));
+    assert.deepEqual(f.rpcs, [DEBUG_PURGE_RPC]);
+    assert.equal(DEBUG_PURGE_RPC, "purge_old_ranking_debug_samples");
+    assert.equal(s.lastOutcome, "purged");
+    assert.equal(s.lastDeleted, 7);
+    assert.deepEqual(f.upserts, [{ job: DEBUG_JOB_KEY, last_run_at: "2026-10-23T22:00:00.000Z", last_success_at: "2026-10-23T22:00:00.000Z" }]);
+  });
+
+  it("R4 ON and the purge errors or answers a non-count: a failure, never zero work", async () => {
+    for (const answer of [{ data: null, error: { code: "42501", message: "permission denied" } }, { data: "x", error: null }, { data: -1, error: null }, { data: null, error: null }]) {
+      _resetDebugSamplePurgeStatus();
+      const f = purgeFake({ flag: { enabled: true }, answer });
+      const s = await runDebugSamplePurgeTick(f.client);
+      assert.equal(s.lastOutcome, "failed", JSON.stringify(answer));
+      assert.equal(s.consecutiveFailures, 1);
+      assert.equal(s.lastSuccessAt, null);
+      assert.ok(f.upserts.every((u) => !("last_success_at" in u)));
+    }
+    _resetDebugSamplePurgeStatus();
+    assert.equal((await runDebugSamplePurgeTick(null)).lastOutcome, "failed", "no client");
+  });
+
+  it("R5 wired: started by index.ts, reported by /healthz/schedulers, seeded FALSE by 3922", () => {
+    const idx = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
+    assert.match(idx, /\n\s[^\n]*\bstartRankingDebugSamplePurgeScheduler\(\);/, "called, not merely imported");
+    const health = readFileSync(new URL("../routes/health.ts", import.meta.url), "utf8");
+    assert.match(health, /job: "rankingDebugSamplePurge"/);
+    const sql = readFileSync(new URL("../migrations/3922_ranking_debug_samples_purge_flag.sql", import.meta.url), "utf8");
+    assert.match(sql, new RegExp(`'${RANKING_DEBUG_SAMPLES_PURGE_FLAG}',\\s*false,`));
+    assert.match(sql, /ON CONFLICT \(flag\) DO NOTHING/);
+    assert.doesNotMatch(sql.replace(/--[^\n]*/g, ""), /\bUPDATE\s+public\.|\bDELETE\s+FROM\b/i, "3922 changes no existing row");
+  });
+});

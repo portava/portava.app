@@ -1766,3 +1766,20 @@ router.post("/rank-events/undo-dismiss", asyncHandler(async (req, res) => {
 
   res.json({ ok: true });
 }));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// census-discovery §133 — DV-78: `04` §4 trail_open, POST /rank-events/trail-open
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Appended at the tail like the dwell route above, so no cited line moves. A
+// sibling path: a Trail open is not a funnel rung on a served place. Everything
+// but the authentication lives in lib/discoveryTrailOpen.ts: the owner's flag
+// (3923, seeded FALSE — off ⇒ 404 feature_disabled, nothing read, nothing
+// written), D-66's visibility, and the retry-idempotent write.
+import { acceptTrailOpen } from "../lib/discoveryTrailOpen.js";
+
+router.post("/rank-events/trail-open", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  await acceptTrailOpen(getServiceClient(), req, res, auth.user.id);
+}));
