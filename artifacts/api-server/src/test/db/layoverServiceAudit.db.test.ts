@@ -8,7 +8,7 @@ import { runLayoverAuditRetentionTick,getLayoverAuditRetentionStatus } from '../
 let db:PressedDb,app:PressedApp,owner:PressedUser,outsider:PressedUser,sid:string;
 const PRESS={migrations:['3890'],flags:{}};
 describe('atomic scoped Layover service audit',{skip:PRESSED_SKIP_REASON},()=>{
- before(async()=>{db=await openForPress(PRESS);await productionBaseFlags(db);app=await startPressedLayoverApp(db);owner=await db.seedUser('audit-owner');outsider=await db.seedUser('audit-outsider');await db.setFlag('layover_service_write_audit_enabled',true);sid=(await startSession(app,owner)).id;});
+ before(async()=>{db=await openForPress(PRESS);keepConstraintsUndeclared();await productionBaseFlags(db);app=await startPressedLayoverApp(db);owner=await db.seedUser('audit-owner');outsider=await db.seedUser('audit-outsider');await db.setFlag('layover_service_write_audit_enabled',true);sid=(await startSession(app,owner)).id;});
  after(async()=>{await app?.close();await db?.close();});
  it('A1 successful HTTP writes record verified actor, route, session and applied outcome in the same database',async()=>{
   const rows=await db.query<any>(`SELECT * FROM public.layover_service_write_audit WHERE layover_session_id='${sid}' AND table_name='layover_sessions'`);
@@ -73,3 +73,5 @@ describe('atomic scoped Layover service audit',{skip:PRESSED_SKIP_REASON},()=>{
   await runLayoverAuditRetentionTick({client:db.client,now:new Date()});assert.equal(getLayoverAuditRetentionStatus().consecutiveFailures,0);assert.equal((await db.query<any>(`SELECT count(*)::int n FROM public.layover_service_write_audit WHERE retain_until<=now()`))[0].n,0);assert.equal((await db.query<any>(`SELECT count(*)::int n FROM public.layover_service_write_audit WHERE retain_until>now()`))[0].n,kept);
  });
 });
+
+import { keepConstraintsUndeclared } from "./pressedLayoverApp.js"; // census-layover §83: this suite owns its constraint declarations under PRESSED_BASE

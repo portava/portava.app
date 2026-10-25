@@ -422,7 +422,7 @@ describe("§133 V — DV-51: intent edges are built and judged from every row", 
       { id: "late-1", user_id: A, item_id: "place-7", item_kind: "place", outcome: "save", served_at: "2026-09-27T09:00:00Z" }];
     await rebuild(store);
     const click = edge(store, (e) => e.edge_type === "behavior:click" && e.src_key === A && e.dst_key === "place-1");
-    assert.equal(Number(click?.observed_count), 6_001, "every one of A's clicks on place-1 is counted (6,000 in September + 1 in February)");
+    assert.equal(Number(click?.observed_count), 6_001, "every one of A's clicks on place-1 is counted (the 6,000 added in September + sources()' own re-1, served 2026-02-01)");
     const late = edge(store, (e) => e.edge_type === "behavior:save" && e.dst_key === "place-7");
     assert.ok(late, "the pair after the first 5,000 rows reached the graph");
     assert.equal(Number(late!.observed_count), 1);

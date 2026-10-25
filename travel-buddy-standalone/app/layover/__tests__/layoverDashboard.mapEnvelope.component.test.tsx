@@ -404,3 +404,25 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { cacheCertifiedPlan } from '../../../src/lib/layoverPlanCache.ts';
 import { cacheCertifiedDeadline } from '../../../src/components/layover/layoverDeadlineCache.ts';
 import type { LayoverCertification, LayoverOfflineBundle, LayoverSafeEnvelope } from '../../../src/services/layover';
+
+// census-layover §83 (verifier M7, 2026-10-24): a card the server serves with `available === false` reaches the MAP as a
+// BLOCKED pin carrying the server's own sentence — through the screen's `candidateFeasibilityByRecId`, not the old inline
+// loop that copied `r.feasibility` through. Mutant M7 (the inline loop restored in app/layover/[id].tsx) turns both red.
+describe('a served card that is not available reaches the map BLOCKED, through candidateFeasibilityByRecId', () => {
+  const SERVER_SENTENCE = 'The journey to this place has not been measured, so it cannot be checked against your return time.';
+
+  it('a banded card the server marks unavailable is a BLOCKED pin with the server sentence, never its old band', async () => {
+    (global as any).__recs = [{ ...BANDED_REC, available: false, status: 'BLOCKED', statusExplanation: SERVER_SENTENCE }, UNBANDED_REC];
+    const props = await mountAndCapture();
+    await waitFor(() => expect(props.candidateFeasibility?.['rec-a']?.band).toBe('BLOCKED'));
+    expect((global as any).__mapProps.candidateFeasibility['rec-a']).toMatchObject({ band: 'BLOCKED', certified: false, reason: SERVER_SENTENCE, impliesFit: false, lowerBoundOneWayMin: 140 });
+    expect((global as any).__mapProps.candidateFeasibility['rec-b']).toBeUndefined();
+  });
+
+  it('an unavailable card with no band of its own still enters the lookup BLOCKED (unmeasured is never unblocked)', async () => {
+    (global as any).__recs = [{ ...UNBANDED_REC, id: 'rec-c', available: false, status: 'BLOCKED', statusExplanation: SERVER_SENTENCE }];
+    await mountAndCapture();
+    await waitFor(() => expect((global as any).__mapProps.candidateFeasibility?.['rec-c']?.band).toBe('BLOCKED'));
+    expect((global as any).__mapProps.candidateFeasibility['rec-c'].reason).toBe(SERVER_SENTENCE);
+  });
+});

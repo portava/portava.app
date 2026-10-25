@@ -7129,3 +7129,45 @@ the baseline and from every migration, with no Supabase history. It was added ou
 deleted accounts' tombstone profiles should be unreadable is an owner decision.
 
 **Rollback.** None at the schema level; deleting the ledger row is the whole rollback.
+
+## 2026-10-23 — `3911_memory_kernel_create_participants_and_canonical_fields.sql`, written and NOT applied anywhere (census drive, Highlights & Memories batch 2)
+
+**What it is.** A `CREATE OR REPLACE` of `public.memory_kernel_execute(jsonb)`. It is 2711's function byte for byte,
+plus four writes the routes used to make after the kernel returned, with no event, receipt or outbox row
+(census-highlights-memories §CA.4 / §CB):
+
+1. CREATE_MEMORY takes `payload.tagged_user_ids` and inserts each named person as a PENDING `memory_tags` row in the
+   creating transaction. The actor is never tagged, an id with no profile is skipped, and a list that is not an array of
+   at most 1000 uuids is refused as `MEMORY_COMMAND_MALFORMED` before any write. `memory.created` names the people it
+   tagged, as ids only. The key is added to `refs` only on such a create, so every other event's `refs` keeps 2711's shape.
+2. CREATE_MEMORY writes `memory_type` (3803) when the write names it, and the INSERT carries
+   `place_display_name_at_occurrence` (3804).
+3. Every edit's UPDATE writes `memory_type` and `place_display_name_at_occurrence` when the patch names them.
+4. ADD_MEDIA's INSERT carries `source_post_id` (3999), so 3999's own-media guard judges the link inside the command.
+
+The signature, SECURITY INVOKER, the pinned `search_path`, the grants (service_role only) and every rejection reason
+are unchanged. No table, column, row or flag is touched.
+
+**Order.** 3911 sorts after 2711, 3803 and 3804, which it requires (`$pre$`), and before 3999. ADD_MEDIA names 3999's
+column, but PL/pgSQL resolves a column when the statement first runs, not at CREATE, and nothing runs ADD_MEDIA
+during a replay. That is why it is deliberately not a precondition. Read-only on 2026-10-23, production and portava-ci
+both hold 3803, 3804 and 3999, and both run 2711's kernel (md5 `542cc3a256e7452a5629cc5d87e7a45f`, identical to this
+tree's 2711). No other file defines the function.
+
+**Order-independent with the API, both ways.** The API (same PR) sends the new keys and reads back what the kernel
+wrote. With the code first, 2711 ignores the keys, and the routes tag and type as before. With 3911 first, the old
+routes send no `tagged_user_ids` and tag as before. The `memory_type` and occurrence text they already send are now
+written by the kernel, so their read-back reconcile finds nothing to change. They do not send `source_post_id` (this PR
+adds that key), so with the old code from-post's follow-up UPDATE still links the post once, as it does today.
+
+**Proofs.** `src/test/db/memoryKernelParticipants.db.test.ts`, P1–P12. The real routers run over HTTP on the replayed
+chain, and the bridge logs every statement. For POST /memories, POST /trips/:tripId/memory, PATCH /memories/:id,
+POST /me/memory-drafts and from-post, the cases assert two things. First, the tag, type, occurrence text, draft or
+source link was written by the event's own transaction (equal `xmin`). Second, the route issued no write of its own to
+`memories`, `memory_tags` or `memory_items`. P11 installs this rollback (2711) and shows the routes' compat arms still tag
+and type. It then re-applies 3911 and checks the definition's md5 is restored exactly. Mutants seen red:
+10 SQL mutants of the function and 11 TypeScript mutants of the routes and bus (census §CB).
+
+**Rollback.** `db/rollback/2026-10-23-3911-memory-kernel-create-participants-rollback.sql` re-creates 2711's definition
+verbatim (the md5 above) with its grants, then delete 3911's ledger row. The routes keep their pre-3911 arms, so
+nothing breaks.
