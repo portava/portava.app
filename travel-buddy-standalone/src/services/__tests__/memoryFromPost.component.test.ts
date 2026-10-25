@@ -106,3 +106,55 @@ describe('saveOwnPostToMemory — every media item, honestly counted', () => {
     expect(describeSavePostReport(r, 'Kyoto')).toBe('Already in “Kyoto”.');
   });
 });
+
+// 2026-10-25, PR #808 verdict finding 2: the server's count (stamped on every answer about the caller's own post) is
+// the one the copy follows. The screen's estimate only opens it; no index past the server's list is ever asked for.
+describe('saveOwnPostToMemory — follows the server\'s mediaCount', () => {
+  const callIndexes = () => fetchMock.mock.calls.map((c) => JSON.parse(c[1].body).mediaIndex);
+
+  it('SC1 the screen counted 3, the server says 2: two requests, "All 2 saved", never a 400', async () => {
+    fetchMock.mockResolvedValue(reply(201, { item: { id: 'i' }, mediaCount: 2 }));
+    const r = await saveOwnPostToMemory({ memoryId: MEM, postId: POST, mediaCount: 3 });
+    expect(callIndexes()).toEqual([0, 1]);
+    expect(r).toEqual({ saved: 2, alreadyThere: 0, total: 2, refusal: null });
+    expect(describeSavePostReport(r, 'Lisbon')).toBe('All 2 saved to “Lisbon”.');
+  });
+
+  it('SC2 the screen counted 1, the server says 2: both are copied', async () => {
+    fetchMock.mockResolvedValue(reply(201, { item: { id: 'i' }, mediaCount: 2 }));
+    const r = await saveOwnPostToMemory({ memoryId: MEM, postId: POST, mediaCount: 1 });
+    expect(callIndexes()).toEqual([0, 1]);
+    expect(r).toEqual({ saved: 2, alreadyThere: 0, total: 2, refusal: null });
+  });
+
+  it('SC3 "already there" answers carry the count too; the copy stops at it', async () => {
+    fetchMock.mockResolvedValue(reply(409, { error: 'conflict', mediaCount: 1 }));
+    const r = await saveOwnPostToMemory({ memoryId: MEM, postId: POST, mediaCount: 3 });
+    expect(callIndexes()).toEqual([0]);
+    expect(r).toEqual({ saved: 0, alreadyThere: 1, total: 1, refusal: null });
+  });
+
+  it('SC4 a "no media there" past the count the server states ends the copy — it is not a refusal', async () => {
+    fetchMock
+      .mockResolvedValueOnce(reply(409, { error: 'conflict' }))
+      .mockResolvedValueOnce(reply(201, { item: { id: 'i' } }))
+      .mockResolvedValueOnce(reply(400, { error: 'invalid_payload', mediaCount: 2 }));
+    const r = await saveOwnPostToMemory({ memoryId: MEM, postId: POST, mediaCount: 3 });
+    expect(callIndexes()).toEqual([0, 1, 2]);
+    expect(r).toEqual({ saved: 1, alreadyThere: 1, total: 2, refusal: null });
+  });
+
+  it('SC5 the server says the post has none: an honest "no media", nothing more asked', async () => {
+    fetchMock.mockResolvedValue(reply(400, { error: 'invalid_payload', mediaCount: 0 }));
+    const r = await saveOwnPostToMemory({ memoryId: MEM, postId: POST, mediaCount: 2 });
+    expect(callIndexes()).toEqual([0]);
+    expect(r).toEqual({ saved: 0, alreadyThere: 0, total: 0, refusal: 'no_media' });
+  });
+
+  it('SC6 a count that is not a whole number is no count: the estimate stands', async () => {
+    fetchMock.mockResolvedValue(reply(201, { item: { id: 'i' }, mediaCount: '7' }));
+    const r = await saveOwnPostToMemory({ memoryId: MEM, postId: POST, mediaCount: 2 });
+    expect(callIndexes()).toEqual([0, 1]);
+    expect(r.total).toBe(2);
+  });
+});

@@ -157,3 +157,25 @@ describe('MP — an upload post (post_media only) is offered and fully counted',
     expect(mockSave).toHaveBeenCalledWith({ memoryId: 'm1', postId: 'post-2', mediaCount: 1 });
   });
 });
+
+// 2026-10-25, PR #808 verdict finding 2: the estimate errs LOW. A media_urls entry the server does not offer (a signed
+// or public storage URL, an unclean relay URL) used to be counted, so the copy asked for an index the server refused.
+describe('MC — the screen never counts a media_urls entry the server will not offer', () => {
+  const UPLOAD = { id: 'post-3', authorId: ME, author: { id: ME }, mediaUrls: [] as string[], media: [{ id: 'pm-1', media_type: 'image', url: 'post-media/me/1.jpg' }], content: null };
+  it('MC1 storage URLs in any spelling and unclean relay URLs are not counted; a plain external URL is', () => {
+    const notOffered = [
+      'https://proj.supabase.co/storage/v1/object/sign/post-media/me/old.jpg?token=t',
+      'https://proj.supabase.co/storage/v1/object/authenticated/post-media/me/old.jpg',
+      'https://proj.supabase.co/storage/v1/render/image/public/post-media/me/old.jpg',
+      'https://proj.supabase.co/storage/v1/object/public/avatars/me/old.jpg',
+      'https://proj.supabase.co/storage%2Fv1%2Fobject/public/post-media/me/old.jpg',
+      'https://api.example/api/media/file/post-media/me/../x.jpg',
+      'not a url',
+    ];
+    for (const u of notOffered) expect([u, ownPostMediaCount({ ...UPLOAD, mediaUrls: [u] })]).toEqual([u, 1]);
+    expect(ownPostMediaCount({ ...UPLOAD, mediaUrls: ['https://images.example/a.jpg', ...notOffered] })).toBe(2);
+  });
+  it('MC2 a post with no items keeps the media_urls count (the server indexes media_urls whole then)', () => {
+    expect(ownPostMediaCount({ ...UPLOAD, media: [], mediaUrls: ['a', 'https://proj.supabase.co/storage/v1/object/sign/post-media/me/x.jpg'] })).toBe(2);
+  });
+});

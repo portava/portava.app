@@ -110,6 +110,44 @@ describe('Watch cell — a private video is signed, then played', () => {
   });
 });
 
+// 2026-10-25, PR #808 verdict finding 4: the Watch list keeps several cells mounted (windowSize 7) and every one used to
+// sign its video on mount, against the 60/min sign budget. A cell now signs only inside its sign window (on screen or
+// one swipe away), as the grid tile signs only in view.
+//   RM-F5  a mounted cell outside its window: no signature request and no <Video>; brought into it: signed, then played
+//   RM-F6  a neighbour (not active, in its window): signed ahead of the swipe
+//   RM-F7  no window given: the active cell signs, an inactive one does not
+describe('Watch cell — signs only inside its sign window', () => {
+  const at = (props: { isActive: boolean; inSignWindow?: boolean }) =>
+    <WatchVideoCell id="post-1" videoUrl={MOV} posterUrl={`${MOV}.poster.jpg`} isMuted onProgress={() => {}} {...props} />;
+
+  it('RM-F5 outside its window: nothing is signed and no <Video>; inside it: signed, then the signed URL plays', async () => {
+    mockSignAnswer = async (urls) => new Map(urls.map((u) => [u, SIGNED]));
+    const r = await render(at({ isActive: false, inSignWindow: false }));
+    await flush();
+    expect(mockSignCalls).toEqual([]);
+    expect(screen.queryByTestId('surface-video')).toBeNull();
+    await r.rerender(at({ isActive: false, inSignWindow: true }));
+    await flush();
+    expect(mockSignCalls).toEqual([[MOV]]);
+    expect(screen.getByTestId('surface-video').props.accessibilityHint).toBe(SIGNED);
+  });
+
+  it('RM-F6 a neighbour in its window signs ahead of the swipe', async () => {
+    await render(at({ isActive: false, inSignWindow: true }));
+    await flush();
+    expect(mockSignCalls).toEqual([[MOV]]);
+  });
+
+  it('RM-F7 no window given: the active cell signs, an inactive one does not', async () => {
+    await render(at({ isActive: false }));
+    await flush();
+    expect(mockSignCalls).toEqual([]);
+    await render(at({ isActive: true }));
+    await flush();
+    expect(mockSignCalls).toEqual([[MOV]]);
+  });
+});
+
 function tile(videoUrl: string | null, isVisible: boolean) {
   const item: MediaGridItem = {
     id: 'v-1', mediaType: 'video', thumbnailUrl: null, posterUrl: null, width: 1080, height: 1920, durationMs: 1000,

@@ -45,12 +45,29 @@ export interface OwnPostForMemory {
  * services/memory/memoryFromOwnMedia.ts ownPostMediaList: the post's media items first, then its EXTERNAL
  * `media_urls` entries; a post with no items keeps the old `media_urls` count. Uploads have lived in `post_media`
  * only since 3924, so counting `media_urls` alone hid the action on every upload post.
+ *
+ * 2026-10-25 (#808 verdict finding 2): this is an ESTIMATE that only decides whether to offer the action and opens
+ * the copy; the server's own count, on every answer, decides how far it goes (services/memoryFromPost.ts). It errs
+ * LOW: a `media_urls` entry is counted as external only when it is plainly not ours — an http(s) URL that names no
+ * Supabase Storage path and no media relay. A signed / authenticated / render storage URL, a public storage URL in
+ * any bucket and an unclean relay URL are all left out, because the server does not offer them.
  */
 export function ownPostMediaCount(post: OwnPostForMemory): number {
   const urls = Array.isArray(post.mediaUrls) ? post.mediaUrls.filter((u): u is string => typeof u === 'string' && u.length > 0) : [];
   const items = Array.isArray(post.media) ? post.media.length : 0;
   if (items === 0) return urls.length;
-  return items + urls.filter((u) => !isPrivateMediaRefOf(u)).length;
+  return items + urls.filter((u) => !isPrivateMediaRefOf(u) && isPlainlyExternalMediaUrl(u)).length;
+}
+
+const STORAGE_OR_RELAY_PATH = /\/storage\/v1\/|\/api\/media\/file\//i;
+
+/** True only for an http(s) URL that names no Supabase Storage path and no media relay, however it is spelled. */
+export function isPlainlyExternalMediaUrl(raw: string): boolean {
+  const s = raw.trim();
+  if (!/^https?:\/\//i.test(s)) return false;
+  let decoded = s;
+  try { decoded = decodeURIComponent(s); } catch { return false; }
+  return !STORAGE_OR_RELAY_PATH.test(s) && !STORAGE_OR_RELAY_PATH.test(decoded);
 }
 
 /** True when the post is the viewer's own and carries media. The SERVER is the guard; this only decides what to offer. */

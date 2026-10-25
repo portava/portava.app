@@ -85,7 +85,7 @@ const _cache = new Map<string, CacheEntry>();
 
 /** Clear the signed-URL cache. For use in tests only. */
 export function _resetBatchSignCache(): void {
-  _cache.clear();
+  _cache.clear(); _inflight.clear(); // 2026-10-25: and the in-flight requests (coalesceSign, at the tail)
 }
 
 /** Return the current number of cached entries. For use in tests only. */
@@ -160,9 +160,9 @@ function _cacheGet(key: string, now: number): CacheEntry | undefined {
  */
 export async function batchSignUrls(
   urls: string[],
-  transform?: { width?: number; quality?: number },
+  transform?: { width?: number; quality?: number }, _lead = false, // 2026-10-25: true only from coalesceSign (tail) — the request that actually goes out
 ): Promise<Map<string, string>> {
-  const result = new Map<string, string>();
+  const result = new Map<string, string>(); if (!_lead && urls.length > 0) return coalesceSign(urls, transform); // 2026-10-25 (#808 finding 4): an identical sign already in flight is joined, not repeated
   if (urls.length === 0) return result; if (transform && urls.some(isVideoRef)) { const [videos, stills] = await Promise.all([batchSignUrls(urls.filter(isVideoRef)), batchSignUrls(urls.filter((u) => !isVideoRef(u)), transform)]); return new Map([...videos, ...stills]); } // Supabase's image transform answers 400 for a video: sign videos plainly
 
   const now = Date.now();
@@ -281,3 +281,55 @@ export function lastSignOutcome(url: string): 'signed' | 'denied' | 'unreachable
 }
 import { isVideoRef } from './media/videoPosterRef.ts';
 import { signableMediaRef } from '../services/playbackUri.ts'; // 2026-10-24 video on every surface: the one ref rule (no imports there, so no cycle)
+
+// ── 2026-10-25, PR #808 verdict finding 4 — appended at the TAIL so no cited line above moves ───────────────────────
+// The cache above answers a URL signed BEFORE; it did nothing for one being signed RIGHT NOW. Two surfaces mounting
+// the same video (a Watch cell and its neighbour's prefetch, a grid tile and the detail screen) each sent their own
+// POST /api/media/sign for it, against the 60/min sign budget. A miss already in flight is now joined: the second
+// caller waits for the first request's answer for that URL instead of sending its own.
+//
+// AUTHORIZATION IS UNCHANGED. Every request that goes out is the same POST /api/media/sign, which authorizes every
+// object for the signed-in viewer; nothing is answered here that the server did not answer. A joined request is keyed
+// by the bearer token as well as the URL and transform, so an answer given to one session is never handed to another
+// (a sign-out / sign-in while a request is in flight starts a fresh one). An answer is shared exactly as the cache
+// above already shares it: the same URL, the same transform, the same session.
+const _inflight = new Map<string, Promise<string>>();
+
+function signTransformSuffix(transform?: { width?: number; quality?: number }): string {
+  return transform && (transform.width !== undefined || transform.quality !== undefined)
+    ? `\x00w${transform.width ?? ''}q${transform.quality ?? ''}`
+    : '';
+}
+
+async function coalesceSign(urls: string[], transform?: { width?: number; quality?: number }): Promise<Map<string, string>> {
+  if (transform && urls.some(isVideoRef)) { // the video split above, made here first: a lead request never re-enters this join for its own URLs
+    const [videos, stills] = await Promise.all([coalesceSign(urls.filter(isVideoRef)), coalesceSign(urls.filter((u) => !isVideoRef(u)), transform)]);
+    return new Map([...videos, ...stills]);
+  }
+  const suffix = signTransformSuffix(transform);
+  const now = Date.now();
+  const unique = [...new Set(urls)];
+  const misses = unique.filter((u) => { const e = _cache.get(u + suffix); return !e || now >= e.expiresAt; });
+  if (misses.length === 0) return batchSignUrls(unique, transform, true);
+  const token = await signToken();
+  if (!token) return batchSignUrls(unique, transform, true);
+  const keyOf = (u: string) => `${token}\x00${u}${suffix}`;
+  const joined = new Set(misses.filter((u) => _inflight.has(keyOf(u))));
+  const waits = [...joined].map((u) => _inflight.get(keyOf(u))!.then((v) => [u, v] as const));
+  const lead = unique.filter((u) => !joined.has(u));
+  let leadRun: Promise<Map<string, string>> = Promise.resolve(new Map());
+  if (lead.length > 0) {
+    leadRun = batchSignUrls(lead, transform, true);
+    for (const u of lead) {
+      if (!misses.includes(u)) continue;
+      const key = keyOf(u);
+      const p = leadRun.then((m) => m.get(u) ?? u, () => u);
+      _inflight.set(key, p);
+      void p.then(() => { if (_inflight.get(key) === p) _inflight.delete(key); });
+    }
+  }
+  const [led, followed] = await Promise.all([leadRun, Promise.all(waits)]);
+  const result = new Map(led);
+  for (const [u, v] of followed) result.set(u, v);
+  return result;
+}

@@ -58,7 +58,7 @@ export interface WatchVideoCellProps {
   captionSource?: string;
   posterUrl: string | null;
   isActive: boolean;
-  playbackEligible?: boolean;
+  playbackEligible?: boolean; /** 2026-10-25 (#808 finding 4): the cell is the one on screen or a neighbour — only then is a private source SIGNED, like GridTile's isVisible. Defaults to isActive. */ inSignWindow?: boolean;
   isMuted: boolean;
   /** Called on every playback tick. `durationMs` is null until the video metadata loads. */
   onProgress: (ratio: number, durationMs: number | null) => void;
@@ -73,7 +73,7 @@ export interface WatchVideoCellHandle {
 
 export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellProps>(
   function WatchVideoCell(
-    { id, videoUrl, captionSource, posterUrl, isActive, playbackEligible = true, isMuted, onProgress, onVideoRef, onVideoUnmount },
+    { id, videoUrl, captionSource, posterUrl, isActive, playbackEligible = true, inSignWindow = isActive, isMuted, onProgress, onVideoRef, onVideoUnmount },
     ref,
   ) {
     const videoRef = useRef<Video>(null);
@@ -85,7 +85,7 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
     const [captionStatus, setCaptionStatus] = useState<{ source: string; status: AVPlaybackStatus } | null>(null);
     const captionsEnabled = useFeatureFlags().isEnabled('media_captions_enabled');
     const shouldPlay = isActive && playbackEligible;
-    const { resolved: hydrated } = useHydratedMedia([videoUrl]); const source = playbackUriState(videoUrl, hydrated); const playbackUri = source.state === 'ready' ? source.uri : ''; const playback = useAdaptivePlayback(captionSource ?? videoUrl, playbackUri, shouldPlay); // 2026-10-24 every surface: a private ref (bare or relay) is SIGNED here and only the signed URL reaches <Video>
+    const { resolved: hydrated } = useHydratedMedia(inSignWindow ? [videoUrl] : []); const source = playbackUriState(videoUrl, hydrated); const playbackUri = source.state === 'ready' ? source.uri : ''; const playback = useAdaptivePlayback(captionSource ?? videoUrl, playbackUri, shouldPlay); // 2026-10-24 every surface: a private ref (bare or relay) is SIGNED here — only while the cell is in its sign window (2026-10-25) — and only the signed URL reaches <Video>
     const dubbing = useMediaDubbingSession({ source: captionSource ?? videoUrl, active: shouldPlay && !hasHardFailed,
       controller, controlSource: { shouldPlay, isMuted, volume: 1, rate: 1 } });
     const mountedRef = useRef(true);

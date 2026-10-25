@@ -702,6 +702,31 @@ describe("4000 — Save to a Memory from an upload post (post_media), reader and
     assert.equal(r.status, 503, JSON.stringify(r.body));
     assert.equal((await rows("SELECT count(*)::int AS n FROM public.memory_items"))[0].n, 0);
   });
+
+  // PM8 (2026-10-25, #808 verdict finding 2): the client counted a storage URL left in media_urls that this list does
+  // not offer, asked for one index too many and stopped part-way. Every answer about the caller's OWN post now
+  // carries the server's count, and the client never asks past it; an answer about anyone else's post carries none.
+  it("PM8 every answer about the caller's own post carries the server's mediaCount; another's post or Memory carries none", async () => {
+    const SIGNED = `https://proj.supabase.co/storage/v1/object/sign/post-media/${ME}/old.jpg?token=t`;
+    const RELAY_UNCLEAN = `https://api.example/api/media/file/post-media/${ME}/../x.jpg`;
+    await db.query(`UPDATE public.posts SET media_urls = media_urls || ARRAY[$2, $3] WHERE id = $1`, [MIXED_POST, SIGNED, RELAY_UNCLEAN]);
+    // The list is [the JPG row, EXTERNAL]: the signed storage URL and the unclean relay URL are not offered.
+    const first = await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: MIXED_POST, mediaIndex: 0 });
+    assert.equal(first.status, 201, JSON.stringify(first.body));
+    assert.equal(first.body.mediaCount, 2, "201 carries the count");
+    const again = await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: MIXED_POST, mediaIndex: 0 });
+    assert.equal(again.status, 409, JSON.stringify(again.body));
+    assert.equal(again.body.mediaCount, 2, "409 carries the count");
+    const past = await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: MIXED_POST, mediaIndex: 2 });
+    assert.equal(past.status, 400, JSON.stringify(past.body));
+    assert.deepEqual([past.body.error, past.body.mediaCount], ["invalid_payload", 2], "the no-such-index refusal carries the count");
+    const theirs = await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: OTHER_UPLOAD });
+    assert.equal(theirs.status, 404);
+    assert.equal("mediaCount" in (theirs.body ?? {}), false, "nothing is said about someone else's post");
+    const notMine = await post(`/memories/${OTHER_MEMORY}/items/from-post`, ME, { postId: MIXED_POST });
+    assert.equal(notMine.status, 403);
+    assert.equal("mediaCount" in (notMine.body ?? {}), false, "a refusal before the post is read carries no count");
+  });
 });
 
 /** 0103's post_media, the columns the from-post reader and 4000's guard read (added 2026-10-24: the reader now reads it). A hoisted function at the tail, so no cited line above moves. */

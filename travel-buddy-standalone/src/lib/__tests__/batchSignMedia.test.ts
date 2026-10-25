@@ -415,3 +415,78 @@ describe('batchSignUrls — videos are never sent to the image transform', () =>
   });
 });
 
+
+// 2026-10-25, PR #808 verdict finding 4: an identical sign already in flight is joined, not repeated. Every request that
+// goes out is still the one authenticated POST /api/media/sign; a joined answer is only ever the same session's.
+describe('batchSignUrls — in-flight identical requests are coalesced', () => {
+  let tokenNow = TOKEN;
+  beforeEach(() => {
+    _origFetch = globalThis.fetch;
+    _origApiBase = process.env.EXPO_PUBLIC_API_BASE_URL;
+    process.env.EXPO_PUBLIC_API_BASE_URL = API_BASE;
+    _resetBatchSignCache();
+    tokenNow = TOKEN;
+    _setTestSignTokenProvider(async () => tokenNow);
+  });
+  afterEach(() => {
+    globalThis.fetch = _origFetch;
+    process.env.EXPO_PUBLIC_API_BASE_URL = _origApiBase;
+    _resetBatchSignCache();
+    _setTestSignTokenProvider(null);
+  });
+
+  function stubSign(answer: (u: string) => string | null = (u) => makeSignedMap([u])[u]!) {
+    const bodies: Array<{ urls: string[]; auth: string }> = [];
+    (globalThis as any).fetch = async (url: string, opts?: any) => {
+      if (!url.includes('/api/media/sign')) throw new Error(`Unexpected fetch: ${url}`);
+      const body = JSON.parse(opts.body);
+      bodies.push({ urls: body.urls, auth: opts.headers.Authorization });
+      await new Promise((r) => setTimeout(r, 5)); // the request is in flight while the second caller arrives
+      return { ok: true, json: async () => ({ signed: Object.fromEntries(body.urls.map((u: string) => [u, answer(u)])), ttlSeconds: 3600 }) };
+    };
+    return bodies;
+  }
+
+  it('CO1 two surfaces asking for the same URL at once: one request, both get its answer', async () => {
+    const bodies = stubSign();
+    const [a, b] = await Promise.all([batchSignUrls([URL_A]), batchSignUrls([URL_A])]);
+    assert.equal(bodies.length, 1, JSON.stringify(bodies));
+    assert.equal(a.get(URL_A), SIGNED_A);
+    assert.equal(b.get(URL_A), SIGNED_A);
+  });
+
+  it('CO2 an overlapping batch sends only what is not already in flight', async () => {
+    const bodies = stubSign();
+    const [a, ab] = await Promise.all([batchSignUrls([URL_A]), batchSignUrls([URL_A, URL_B])]);
+    assert.deepEqual(bodies.map((b) => b.urls), [[URL_A], [URL_B]]);
+    assert.equal(a.get(URL_A), SIGNED_A);
+    assert.equal(ab.get(URL_A), SIGNED_A);
+    assert.equal(ab.get(URL_B), SIGNED_B);
+  });
+
+  it('CO3 another session never joins: a different bearer token sends its own request', async () => {
+    const bodies = stubSign();
+    tokenNow = 'session-one';
+    const first = batchSignUrls([URL_A]);
+    tokenNow = 'session-two';
+    const second = batchSignUrls([URL_A]);
+    await Promise.all([first, second]);
+    assert.equal(bodies.length, 2, JSON.stringify(bodies));
+  });
+
+  it('CO4 a refusal is shared with the joined caller, then forgotten: the next ask goes to the server again', async () => {
+    const bodies = stubSign(() => null);
+    const [a, b] = await Promise.all([batchSignUrls([URL_A]), batchSignUrls([URL_A])]);
+    assert.equal(bodies.length, 1);
+    assert.equal(a.get(URL_A), URL_A, 'refused: the original, as before');
+    assert.equal(b.get(URL_A), URL_A);
+    await batchSignUrls([URL_A]);
+    assert.equal(bodies.length, 2, 'nothing refused is cached or kept in flight');
+  });
+
+  it('CO5 the same URL at another size is another request', async () => {
+    const bodies = stubSign();
+    await Promise.all([batchSignUrls([URL_A], { width: 400 }), batchSignUrls([URL_A], { width: 800 })]);
+    assert.equal(bodies.length, 2);
+  });
+});
