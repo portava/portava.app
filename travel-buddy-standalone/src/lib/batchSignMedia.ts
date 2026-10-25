@@ -85,7 +85,7 @@ const _cache = new Map<string, CacheEntry>();
 
 /** Clear the signed-URL cache. For use in tests only. */
 export function _resetBatchSignCache(): void {
-  _cache.clear(); _inflight.clear(); // 2026-10-25: and the in-flight requests (coalesceSign, at the tail)
+  clearSignedMediaCache(); // 2026-10-25: the cache, the in-flight requests and the generation (clearSignedMediaCache, at the tail)
 }
 
 /** Return the current number of cached entries. For use in tests only. */
@@ -160,12 +160,12 @@ function _cacheGet(key: string, now: number): CacheEntry | undefined {
  */
 export async function batchSignUrls(
   urls: string[],
-  transform?: { width?: number; quality?: number }, _lead = false, // 2026-10-25: true only from coalesceSign (tail) — the request that actually goes out
+  transform?: { width?: number; quality?: number }, _lead?: typeof LEAD_SIGN, // 2026-10-25: LEAD_SIGN (module-private, tail) only from coalesceSign — the request that actually goes out
 ): Promise<Map<string, string>> {
-  const result = new Map<string, string>(); if (!_lead && urls.length > 0) return coalesceSign(urls, transform); // 2026-10-25 (#808 finding 4): an identical sign already in flight is joined, not repeated
+  const result = new Map<string, string>(); if (_lead !== LEAD_SIGN && urls.length > 0) return coalesceSign(urls, transform); // 2026-10-25 (#808 finding 4): an identical sign already in flight is joined, not repeated
   if (urls.length === 0) return result; if (transform && urls.some(isVideoRef)) { const [videos, stills] = await Promise.all([batchSignUrls(urls.filter(isVideoRef)), batchSignUrls(urls.filter((u) => !isVideoRef(u)), transform)]); return new Map([...videos, ...stills]); } // Supabase's image transform answers 400 for a video: sign videos plainly
 
-  const now = Date.now();
+  const now = Date.now(); const generation = _cacheGeneration; // 2026-10-25: an answer that lands after the session changed is neither cached nor handed out
 
   // Build a stable cache-key suffix that encodes the transform so that the
   // same URL requested at different sizes gets separate cache entries.
@@ -235,8 +235,8 @@ export async function batchSignUrls(
         const signedUrl = body.signed?.[signableMediaRef(url)] ?? null;
         noteSignOutcome(url, signedUrl ? 'signed' : 'denied');
         if (signedUrl) {
-          _cacheSet(cacheKey, { url: signedUrl, expiresAt });
-          result.set(url, signedUrl);
+          if (generation === _cacheGeneration) _cacheSet(cacheKey, { url: signedUrl, expiresAt });
+          result.set(url, generation === _cacheGeneration ? signedUrl : url); // the session changed mid-request: the original, as if refused
         } else {
           // null = unauthorized or unrecognized — fall back to original per-URL
           result.set(url, url);
@@ -310,16 +310,16 @@ async function coalesceSign(urls: string[], transform?: { width?: number; qualit
   const now = Date.now();
   const unique = [...new Set(urls)];
   const misses = unique.filter((u) => { const e = _cache.get(u + suffix); return !e || now >= e.expiresAt; });
-  if (misses.length === 0) return batchSignUrls(unique, transform, true);
+  if (misses.length === 0) return batchSignUrls(unique, transform, LEAD_SIGN);
   const token = await signToken();
-  if (!token) return batchSignUrls(unique, transform, true);
+  if (!token) return batchSignUrls(unique, transform, LEAD_SIGN);
   const keyOf = (u: string) => `${token}\x00${u}${suffix}`;
   const joined = new Set(misses.filter((u) => _inflight.has(keyOf(u))));
   const waits = [...joined].map((u) => _inflight.get(keyOf(u))!.then((v) => [u, v] as const));
   const lead = unique.filter((u) => !joined.has(u));
   let leadRun: Promise<Map<string, string>> = Promise.resolve(new Map());
   if (lead.length > 0) {
-    leadRun = batchSignUrls(lead, transform, true);
+    leadRun = batchSignUrls(lead, transform, LEAD_SIGN);
     for (const u of lead) {
       if (!misses.includes(u)) continue;
       const key = keyOf(u);
@@ -333,3 +333,23 @@ async function coalesceSign(urls: string[], transform?: { width?: number; qualit
   for (const [u, v] of followed) result.set(u, v);
   return result;
 }
+
+// ── 2026-10-25, PR #808 verifier (verdict-808b finding 1) — appended at the TAIL so no cited line above moves ──────
+// The cache above is keyed by URL and transform only: it held one session's signed URLs for up to 55 minutes, and
+// nothing cleared it on sign-out, so a second account signing in on the same device could be handed the first
+// account's signed URL for a ref it rendered too. SessionContext's auth listener (the one that already clears the
+// Telegraph cursors and the Discovery device caches on an account change) now calls clearSignedMediaCache() the
+// moment the signed-in user id changes, sign-out included, BEFORE the next account's screens re-render. A request
+// that was already on the wire when that happened is fenced by the generation: its answer is not cached and is not
+// handed out (the caller gets the original ref, as for a refusal), so it cannot repopulate the cache afterwards.
+let _cacheGeneration = 0;
+
+/** Forget every signed URL this device holds and every sign request in flight. Call when the signed-in user changes. */
+export function clearSignedMediaCache(): void {
+  _cacheGeneration++;
+  _cache.clear();
+  _inflight.clear();
+}
+
+/** Marks the one call that may skip the in-flight join (coalesceSign's own). Not exported: no caller can pass it. */
+const LEAD_SIGN: unique symbol = Symbol('batchSignUrls.lead');

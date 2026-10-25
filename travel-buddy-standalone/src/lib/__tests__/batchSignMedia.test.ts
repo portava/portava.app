@@ -23,6 +23,7 @@ import {
   _resetBatchSignCache,
   _getCacheSize,
   _setTestSignTokenProvider,
+  clearSignedMediaCache,
 } from '../batchSignMedia.ts';
 
 const TOKEN = 'test-access-token';
@@ -488,5 +489,52 @@ describe('batchSignUrls — in-flight identical requests are coalesced', () => {
     const bodies = stubSign();
     await Promise.all([batchSignUrls([URL_A], { width: 400 }), batchSignUrls([URL_A], { width: 800 })]);
     assert.equal(bodies.length, 2);
+  });
+});
+
+// 2026-10-25, PR #808 verifier (verdict-808b finding 1): the signed-URL cache is per account. SessionContext calls
+// clearSignedMediaCache() when the signed-in user changes; an answer already on the wire then is fenced.
+describe('batchSignUrls — clearSignedMediaCache (the session changed)', () => {
+  beforeEach(() => {
+    _origFetch = globalThis.fetch;
+    _origApiBase = process.env.EXPO_PUBLIC_API_BASE_URL;
+    process.env.EXPO_PUBLIC_API_BASE_URL = API_BASE;
+    _resetBatchSignCache();
+    _setTestSignTokenProvider(async () => TOKEN);
+  });
+  afterEach(() => {
+    globalThis.fetch = _origFetch;
+    process.env.EXPO_PUBLIC_API_BASE_URL = _origApiBase;
+    _resetBatchSignCache();
+    _setTestSignTokenProvider(null);
+  });
+
+  it('SS1 forgets every signed URL: the next ask goes to the server', async () => {
+    let calls = 0;
+    stubFlagFetch(true, (body) => { calls++; return makeSignedMap(body.urls); });
+    await batchSignUrls([URL_A]);
+    assert.equal(_getCacheSize(), 1);
+    clearSignedMediaCache();
+    assert.equal(_getCacheSize(), 0);
+    await batchSignUrls([URL_A]);
+    assert.equal(calls, 2);
+  });
+
+  it('SS2 an answer that lands after the session changed is neither cached nor handed out', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    (globalThis as any).fetch = async (url: string, opts?: any) => {
+      if (!url.includes('/api/media/sign')) throw new Error(`Unexpected fetch: ${url}`);
+      await gate;
+      const body = JSON.parse(opts.body);
+      return { ok: true, json: async () => ({ signed: makeSignedMap(body.urls), ttlSeconds: 3600 }) };
+    };
+    const pending = batchSignUrls([URL_A]);
+    await new Promise((r) => setTimeout(r, 5));
+    clearSignedMediaCache();
+    release();
+    const out = await pending;
+    assert.equal(out.get(URL_A), URL_A, 'the outgoing session\'s signed URL is not handed out');
+    assert.equal(_getCacheSize(), 0, 'nor cached for the next session');
   });
 });
