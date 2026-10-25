@@ -22,7 +22,7 @@
  * endpoints. Thread access is gated ONLY by message_thread_members rows.
  */
 
-import { Router } from 'express'; import { decoratePlatformReads } from '../services/telegraph/platformReadDecorations.js'; import { notifyNewMessage, messageCausalEventId } from '../services/telegraph/messageNotifications.js'; // census-telegraph T256 (wave 5): the MESSAGE notification
+import { Router } from 'express'; import { decoratePlatformReads, decorateReactions } from '../services/telegraph/platformReadDecorations.js'; import { notifyNewMessage, messageCausalEventId } from '../services/telegraph/messageNotifications.js'; // census-telegraph T256 (wave 5): the MESSAGE notification
 import { isBlockedBetween } from '../lib/blockGuard.js';
 // Telegraph §22 — the six travel-scam families and link reputation, computed
 // for the recipient at read time. Pure; no I/O, no clock.
@@ -2658,7 +2658,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
   // set computed over an unreadable `blocks` table is a FLOOR, not the truth.
   // Shipping the booleans without it would hand a client a confident false and
   // recreate, one layer up, the exact defect §30A.16 forbids.
-  await decoratePlatformReads(sc, rows, messages as Array<Record<string, any>>, req.headers as Record<string, unknown>, req.log); const resolvedCapabilities = await resolveConversationCapabilities(sc, { // census-telegraph T429/T431 + T406/T407 (3665 flags, both seeded FALSE: OFF = page unchanged)
+  await decoratePlatformReads(sc, rows, messages as Array<Record<string, any>>, req.headers as Record<string, unknown>, req.log); await decorateReactions(sc, rows, messages as Array<Record<string, any>>, user.id, req.log); /* census T370 */ const resolvedCapabilities = await resolveConversationCapabilities(sc, { // census-telegraph T429/T431 + T406/T407 (3665 flags, both seeded FALSE: OFF = page unchanged)
     viewerId: user.id,
     conversationId: threadId,
   });
@@ -3774,7 +3774,7 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
   });
 
   // Realtime: notify other members the message body changed.
-  void publishToThread(
+  void publishMessageLifecycle( // census T154 (batch 3): the outbox announces the edit when fan-out is on
     sc,
     threadId,
     { type: 'message.updated', payload: { messageId, editedAt: now } },
@@ -4491,3 +4491,4 @@ function messageReportReasonCode(raw: unknown): ReportReasonCode | null {
 import { replyQuoteForSender } from '../services/telegraph/replyQuote.js';
 
 import { messageKernelEnabled } from '../services/telegraphMessageKernel.js'; import { advanceSeenSequence } from '../lib/telegraphReceiptCursors.js'; // census-telegraph T72 (appended so every cited line keeps its number)
+import { publishMessageLifecycle } from '../lib/telegraphOutboxDrainScheduler.js'; // census T154 (batch 3), at the foot so no cited line moves

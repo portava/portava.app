@@ -13,11 +13,11 @@
  *                       its own transaction (V-TR F1). Rows older than
  *                       TELEGRAPH_OUTBOX_FANOUT_MAX_AGE_MS are acked `expired`.
  *   message.edited / .unsent / .deleted
- *                     → acked `route_direct`: their routes still publish their
- *                       own events directly; the row is the durable record.
- *                       Saying so is the point of the disposition column — an
- *                       ack that claimed a projection ran when none did is the
- *                       "half-built drainer" 2810's header warned against.
+ *                     → CONSUMED since batch 3 (census T154): published as
+ *                       message.updated / .unsent / .deleted from the row (see
+ *                       consumeLifecycleEvent, at the foot). Any other type is
+ *                       acked `route_direct`: an ack that claimed a projection ran
+ *                       when none did is the "half-built drainer" 2810 warned against.
  * There is no message PUSH notification anywhere in this tree (only @mention
  * notifications, which the send route still issues), so there is no push
  * consumer here: inventing one would be a product decision, not a reliability
@@ -211,11 +211,11 @@ export async function runTelegraphOutboxDrainPass(
       let decision: { ack: Disposition } | { fail: string };
       try {
         const age = nowMs - Date.parse(row.created_at);
-        decision = row.event_type !== "message.sent"
+        decision = !OUTBOX_CONSUMED_EVENT_TYPES.has(row.event_type) // census T154 (batch 3): message.edited / .unsent / .deleted are consumed too
           ? { ack: "route_direct" }
           : Number.isFinite(age) && age > TELEGRAPH_OUTBOX_FANOUT_MAX_AGE_MS
             ? { ack: "expired" }
-            : await consumeMessageSent(db, row, publish);
+            : row.event_type === "message.sent" ? await consumeMessageSent(db, row, publish) : await consumeLifecycleEvent(db, row, publish);
       } catch {
         decision = { fail: "consumer_threw" };
       }
@@ -362,3 +362,67 @@ export function registerDeliveredSequenceSink(): void {
 
 import { setDeliverySink } from "./telegraphEvents.js";
 import { advanceDeliveredSequence } from "./telegraphReceiptCursors.js";
+
+// ── census-telegraph T154 (lane TELEGRAPH batch 3) — appended so every cited line keeps its number ──
+/**
+ * The three lifecycle events 2810's trigger writes for an UPDATE — `message.edited`, `message.unsent`,
+ * `message.deleted` — are now CONSUMED here, not acked `route_direct`. Each is published to the thread
+ * from the message row as it stands when the drainer reads it, so every door that edits, unsends or
+ * deletes (the edit route, both unsend doors, the group delete, moderation, any future writer) is
+ * announced ONCE, from the row written in its own transaction — the same contract `message.sent` has.
+ * The realtime names and payloads are exactly what the routes published:
+ *   message.edited  → `message.updated` { messageId, editedAt }        (the client's existing name)
+ *   message.unsent  → `message.unsent`  { messageId, unsentAt, senderId }
+ *   message.deleted → `message.deleted` { messageId, deletedAt, senderId }
+ * No body, ever. An edit of a message since retracted announces nothing (message_absent): the later
+ * retraction is its own row. The sender is excluded, as each route excluded its actor.
+ */
+const OUTBOX_CONSUMED_EVENT_TYPES: ReadonlySet<string> = new Set(["message.sent", "message.edited", "message.unsent", "message.deleted"]);
+
+async function consumeLifecycleEvent(
+  db: any,
+  row: OutboxClaimRow,
+  publish: typeof publishToThread,
+): Promise<{ ack: Disposition } | { fail: string }> {
+  if (!row.message_id) return { ack: "message_absent" };
+  const { data: msg, error } = await db
+    .from("messages")
+    .select("id, thread_id, sender_id, edited_at, deleted_at, unsent_at")
+    .eq("id", row.message_id)
+    .maybeSingle();
+  if (error) return { fail: "message_unreadable" };
+  if (!msg) return { ack: "message_absent" };
+  const m = msg as Record<string, any>;
+  if (m.thread_id !== row.conversation_id) return { fail: "conversation_mismatch" };
+  let event: Parameters<typeof publishToThread>[2];
+  if (row.event_type === "message.edited") {
+    if (m.deleted_at || m.unsent_at) return { ack: "message_absent" };
+    event = { type: "message.updated", payload: { messageId: m.id, editedAt: m.edited_at } };
+  } else if (row.event_type === "message.unsent") {
+    event = { type: "message.unsent", payload: { messageId: m.id, unsentAt: m.unsent_at, senderId: m.sender_id } };
+  } else {
+    event = { type: "message.deleted", payload: { messageId: m.id, deletedAt: m.deleted_at, senderId: m.sender_id } };
+  }
+  const outcome: PublishOutcome = await publish(db, row.conversation_id, event, { excludeUserId: m.sender_id ?? row.actor_id ?? undefined });
+  if (outcome === "audience_unreadable") return { fail: "audience_unreadable" };
+  return { ack: "fanned_out" };
+}
+
+/**
+ * THE ONE PUBLISHER of the three lifecycle events for every door that edits, unsends or deletes
+ * (census T154, batch 3) — `publishMessageCreated`'s contract, for UPDATEs. ON: 2810's trigger has
+ * written the row in the door's own transaction, so nudge the drainer and publish nothing here. OFF
+ * (or unreadable): exactly the publishToThread call the door always made.
+ */
+export async function publishMessageLifecycle(
+  sc: any,
+  threadId: string,
+  event: Parameters<typeof publishToThread>[2],
+  options: Parameters<typeof publishToThread>[3] = {},
+): Promise<PublishOutcome | "outbox"> {
+  if (await outboxFanoutInForce(sc)) {
+    requestTelegraphOutboxDrain();
+    return "outbox";
+  }
+  return publishToThread(sc, threadId, event, options);
+}

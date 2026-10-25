@@ -216,14 +216,14 @@ describe("T154 the drainer, pass by pass", () => {
     assert.notEqual(w.outbox[0].published_at, null);
   });
 
-  it("edited / unsent / deleted rows are acked route_direct and NOT re-published (their routes publish directly)", async () => {
-    w.flags = { ...ON };
-    seedOutbox("message.edited", {}); seedOutbox("message.unsent", {}); seedOutbox("message.deleted", {});
+  it("edited / unsent / deleted rows are CONSUMED (census T154, batch 3): each published once, acked fanned_out", async () => {
+    w.flags = { ...ON }; const at = new Date(w.clock).toISOString();
+    seedOutbox("message.edited", { edited_at: at }); seedOutbox("message.unsent", { unsent_at: at, deleted_at: at }); seedOutbox("message.deleted", { deleted_at: at });
     const rec = recorder();
     const r = await runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: rec.fn });
-    assert.equal(r.routeDirect, 3);
-    assert.equal(rec.calls.length, 0);
-    assert.deepEqual(w.outbox.map((o) => o.disposition), ["route_direct", "route_direct", "route_direct"]);
+    assert.equal(r.routeDirect, 0); assert.equal(r.fannedOut, 3);
+    assert.deepEqual(rec.calls.map((c) => c.event.type), ["message.updated", "message.unsent", "message.deleted"]);
+    assert.deepEqual(w.outbox.map((o) => o.disposition), ["fanned_out", "fanned_out", "fanned_out"]);
   });
 
   it("a message retracted BEFORE fan-out is announced to nobody (message_absent)", async () => {
@@ -397,7 +397,7 @@ describe("valid acknowledgment counts preserve idempotent results", () => {
   it("bounds acknowledgment counts to the disposition batch, not the whole claim", async () => {
     w.flags = { ...ON };
     seedOutbox("message.sent", {});
-    seedOutbox("message.edited", {});
+    seedOutbox("message.reaction_added", {}); // a type still acked route_direct (batch 3 consumes edited/unsent/deleted), so two disposition batches of one
     w.ackOverride = { data: 2 };
     const result = await runTelegraphOutboxDrainTick({ client: db, now: new Date(w.clock), publish: recorder().fn });
     assert.deepEqual([result.outcome, result.reason, result.claimed], ["failed", "ack_failed", 2]);
@@ -554,5 +554,86 @@ describe("V-TR F3/F6: the drainer's guards", () => {
     assert.equal(r.fannedOut, 1);
     assert.equal(rec.calls.length, 1);
     assert.deepEqual(w.outbox.map((o) => o.disposition), ["expired", "fanned_out"]);
+  });
+});
+
+// ── census-telegraph T154 (lane TELEGRAPH batch 3): the three lifecycle events go through the outbox ──
+// MUTANTS (tgprod/mutants-b3.txt): OB1 lifecycle rows acked route_direct again; OB2 a lifecycle
+// payload names the wrong field; OB3 an edit of a retracted message still announced; OB4 a door
+// publishes a lifecycle event directly (bypasses publishMessageLifecycle); OB5 the sender not excluded.
+describe("T154 — message.edited / .unsent / .deleted are consumed from the outbox, announced once", () => {
+  it("each is published with the route's own name and payload, the sender excluded, and no body", async () => {
+    w.flags = { ...ON }; const at = new Date(w.clock).toISOString();
+    const e = seedOutbox("message.edited", { edited_at: at });
+    const u = seedOutbox("message.unsent", { unsent_at: at, deleted_at: at });
+    const d = seedOutbox("message.deleted", { deleted_at: at });
+    const rec = recorder();
+    await runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: rec.fn });
+    const [ce, cu, cd] = rec.calls;
+    assert.deepEqual(ce!.event, { type: "message.updated", payload: { messageId: e.message_id, editedAt: at } });
+    assert.deepEqual(cu!.event, { type: "message.unsent", payload: { messageId: u.message_id, unsentAt: at, senderId: ME } });
+    assert.deepEqual(cd!.event, { type: "message.deleted", payload: { messageId: d.message_id, deletedAt: at, senderId: ME } });
+    for (const c of rec.calls) { assert.equal(c.opts.excludeUserId, ME); assert.equal(c.thread, THREAD); }
+    assert.equal(JSON.stringify(rec.calls).includes("secret body"), false);
+  });
+
+  it("an edit of a message retracted since announces nothing (its retraction is its own row); a vanished row is message_absent", async () => {
+    w.flags = { ...ON }; const at = new Date(w.clock).toISOString();
+    seedOutbox("message.edited", { edited_at: at, deleted_at: at });
+    const gone = seedOutbox("message.deleted", { deleted_at: at }); w.messages = w.messages.filter((m) => m.id !== gone.message_id);
+    const rec = recorder();
+    const r = await runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: rec.fn });
+    assert.equal(rec.calls.length, 0);
+    assert.equal(r.absent, 2);
+  });
+
+  it("an old lifecycle row is acked expired, like an old message.sent", async () => {
+    w.flags = { ...ON };
+    seedOutbox("message.deleted", { deleted_at: new Date(w.clock).toISOString() });
+    const rec = recorder();
+    const r = await runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock + 24 * 3600_000, publish: rec.fn });
+    assert.equal(r.expired, 1);
+    assert.equal(rec.calls.length, 0);
+  });
+
+  it("an event type nobody consumes is still acked route_direct, never claimed as projected", async () => {
+    w.flags = { ...ON };
+    seedOutbox("message.reaction_added", {});
+    const r = await runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: recorder().fn });
+    assert.equal(r.routeDirect, 1);
+  });
+
+  it("publishMessageLifecycle: ON publishes nothing itself; OFF publishes exactly once", async () => {
+    const { publishMessageLifecycle } = await import("../lib/telegraphOutboxDrainScheduler.js");
+    const ev = { type: "message.deleted" as const, payload: { messageId: "m-1", deletedAt: "2026-10-24T00:00:00.000Z", senderId: ME } };
+    w.flags = { ...ON }; _resetOutboxFanoutCache(db);
+    assert.equal(await publishMessageLifecycle(db as any, THREAD, ev), "outbox");
+    const off = makeClient(); w.flags = {};
+    const got: TelegraphEvent[] = [];
+    const unsub = subscribe(OTHER, (e) => { got.push(e); });
+    try { assert.equal(await publishMessageLifecycle(off as any, THREAD, ev), "published"); } finally { unsub(); }
+    assert.equal(got.filter((e) => e.type === "message.deleted").length, 1);
+  });
+
+  it("STRUCTURAL: every door that publishes an edit, unsend or delete does it through publishMessageLifecycle", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const { dirname, join } = await import("node:path");
+    const src = join(dirname(fileURLToPath(import.meta.url)), "..");
+    const doors = ["routes/messaging.ts", "routes/telegraphLifecycle.ts", "routes/groupChat.ts", "server/telegraph/commandRoute.ts"];
+    let sites = 0;
+    for (const d of doors) {
+      const text = readFileSync(join(src, d), "utf8");
+      const re = /type:\s*['"]message\.(?:updated|unsent|deleted)['"]/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(text))) {
+        const before = text.slice(Math.max(0, m.index - 220), m.index);
+        if (!/publish\w*\(/.test(before)) continue; // a type literal that is not a publish (a payload type, a comment)
+        sites += 1;
+        assert.match(before, /publishMessageLifecycle\(/, `${d}: a lifecycle publish that bypasses the one publisher`);
+        assert.doesNotMatch(before.slice(before.lastIndexOf("publishMessageLifecycle(")), /publishToThread\(/, `${d}: direct publishToThread`);
+      }
+    }
+    assert.equal(sites, 4, "the edit route, both unsend doors and the group delete");
   });
 });
