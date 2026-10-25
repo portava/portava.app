@@ -547,6 +547,20 @@ describe("MD281 on the wire — a resumable part upload into the postcard slot",
     assert.equal(state.signedUploads.length, 0, "no URL was ever signed");
   });
 
+  it("ISOLATION (census-media, 2026-10-24): a stranger can neither assemble, abandon nor delete another user's upload, and nothing changes", async () => {
+    state.objects.set(`post-media/${SLOT_PATH}`, Buffer.from("x"));
+    state.objects.set(`post-media/${partPathFor(SLOT_PATH, 0)}`, Buffer.from("a"));
+    const before = [...state.objects.keys()].sort();
+    const assemble = await json("POST", `/api/postcards/${POST}/media/${MEDIA}/upload-session/assemble`, {}, OTHER_TOKEN);
+    assert.equal(assemble.status, 403, JSON.stringify(assemble.body));
+    const abandon = await json("DELETE", `/api/postcards/${POST}/media/${MEDIA}/upload-session`, {}, OTHER_TOKEN);
+    assert.equal(abandon.status, 403, JSON.stringify(abandon.body));
+    const remove = await json("DELETE", `/api/postcards/${POST}/media/${MEDIA}`, {}, OTHER_TOKEN);
+    assert.equal(remove.status, 403, JSON.stringify(remove.body));
+    assert.deepEqual([...state.objects.keys()].sort(), before, "no object of the owner's was touched");
+    assert.equal(state.postMedia.length, 1, "the owner's row is still there");
+  });
+
   it("deleting the media removes its poster and any parts with it", async () => {
     state.objects.set(`post-media/${SLOT_PATH}`, Buffer.from("x"));
     state.objects.set(`post-media/${SLOT_PATH}.poster.jpg`, Buffer.from("p"));
