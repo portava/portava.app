@@ -49,7 +49,7 @@ import {
   getSession,
   type LayoverSession,
 } from "../services/airport/LayoverSessionService.js";
-import { publishableUserIds } from "../services/airport/LayoverPrivacyGuard.js";
+import { publishableUserIds, publishableInGoodStanding } from "../services/airport/LayoverPrivacyGuard.js";
 import { activeCrewForUser, crewMembers, type CrewRow } from "../services/layover/LayoverCrewStore.js";
 import { landsideSuppressionFor } from "../services/layover/LayoverCheckpointStore.js";
 import {
@@ -144,7 +144,7 @@ async function crewLocationBody(sc: SupabaseClient, viewerId: string, session: L
   }
   const others = grants.value.map((g) => g.userId).filter((id) => id !== viewerId);
   const blocks = await readBlockExclusions(sc, viewerId, { among: others });
-  const publish = await publishableUserIds(sc, others);
+  const publish = await publishableInGoodStanding(sc, others); // census-layover §85 (A5): a location share locates a person
 
   const projected = projectCrewLocations({
     viewerId,
@@ -210,7 +210,7 @@ router.get("/airport/sessions/:id/crew/location", asyncHandler(async (req, res) 
   const nowMs = Date.now();
   const crew = await activeCrewForUser(sc, userId, new Date(nowMs).toISOString());
   if (!crew.ok) { sendError(res, "degraded_unavailable", UNREADABLE); return; }
-  if (!crew.value) { res.json({ ok: true, available: true, inCrew: false, maxShareMinutes: CREW_SHARE_MAX_MINUTES }); return; }
+  if (!crew.value || !sessionLive(session) || crew.value.membership.sessionId !== session.id) { res.json({ ok: true, available: true, inCrew: false, maxShareMinutes: CREW_SHARE_MAX_MINUTES }); return; } // census-layover §85 (audit A1): crewmates' shares reach only the LIVE session the crew was joined from
 
   const view = await crewLocationBody(sc, userId, session, crew.value.crew, nowMs);
   if (!view.ok) { sendError(res, "degraded_unavailable", UNREADABLE); return; }
@@ -293,7 +293,7 @@ router.put("/airport/sessions/:id/crew/location/precise-control", asyncHandler(a
   const nowMs = Date.now();
   const crew = await activeCrewForUser(sc, userId, new Date(nowMs).toISOString());
   if (!crew.ok) { sendError(res, "degraded_unavailable", UNREADABLE); return; }
-  if (!crew.value) { sendError(res, "conflict", "You are not in a crew.", { reason: "not_in_crew" }); return; }
+  if (!crew.value || crew.value.membership.sessionId !== gate.session.id || !sessionLive(gate.session)) { sendError(res, "conflict", "You are not in a crew on this layover.", { reason: "not_in_crew" }); return; } // census-layover §85 (audit A1): the same one rule as the share and the read
 
   const written = await writePreciseControl(sc, crew.value.crew.id, userId, parsed.data.enabled, new Date(nowMs).toISOString());
   if (!written.ok) { sendError(res, "degraded_unavailable", "Your setting was not saved. Please try again."); return; }

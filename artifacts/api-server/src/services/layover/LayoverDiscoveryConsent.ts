@@ -41,7 +41,7 @@ import { logger as rootLogger } from "../../lib/logger.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { readBlockExclusions } from "../../lib/exclusionSet.js";
 import { nameVisibilitySet } from "../../lib/publicIdentity.js";
-import { evaluateSharingGate, discloseSharingGate, publishableUserIds } from "../airport/LayoverPrivacyGuard.js";
+import { evaluateSharingGate, discloseSharingGate, publishableUserIds, publishableInGoodStanding } from "../airport/LayoverPrivacyGuard.js";
 import { readDegraded, readValue, type LayoverRead } from "./layoverRead.js";
 
 const logger = rootLogger.child({ service: "LayoverDiscoveryConsent" });
@@ -226,7 +226,7 @@ export async function mutualDiscoveryRoster(
     const blocks = await readBlockExclusions(db, args.viewerId, { among: ids });
     if (!blocks.ok) return refuse("blocks_unreadable");
     const notBlocked = ids.filter((id) => !blocks.ids.has(id));
-    const publishable = await publishableUserIds(db, notBlocked);
+    const publishable = await publishableInGoodStanding(db, notBlocked); // census-layover §85 (A5)
     if (publishable.kind === "degraded") return refuse("sharing_preferences_unreadable");
     const visible = publishable.value.allowed.slice(0, MUTUAL_ROSTER_MAX);
     if (visible.length === 0) return readValue({ ...EMPTY_ROSTER, travelers: [], visibleUserIds: [], consents: [] });
@@ -303,7 +303,7 @@ export async function incomingDiscoveryRequests(
     if (ids.length === 0) return readValue([]);
     const blocks = await readBlockExclusions(db, args.viewerId, { among: ids });
     if (!blocks.ok) return refuse("blocks_unreadable");
-    const publishable = await publishableUserIds(db, ids.filter((id) => !blocks.ids.has(id)));
+    const publishable = await publishableInGoodStanding(db, ids.filter((id) => !blocks.ids.has(id))); // census-layover §85 (A5)
     if (publishable.kind === "degraded") return refuse("sharing_preferences_unreadable");
     const allowed = new Set(publishable.value.allowed);
     const cards = await cardsFor(db, [...allowed]);
