@@ -93,7 +93,7 @@ export async function runTrendRebuildTick(nowMs: number = Date.now()): Promise<T
       logger.info({ pNow, reason: privacyBlock, pruned }, "DiscoveryTrendRebuildScheduler: rebuild withheld");
       return { status: "skipped", reason: privacyBlock, pruned };
     }
-    const { data, error } = await sc.rpc(await trendRebuildRpc(sc), { p_now: pNow });  // §133: 3920's producer over the served places (rebuild_place_momentum_canonical) only while discovery_trend_canonical_place_context_enabled reads TRUE, else rebuild_place_momentum — the one rule, lib/discoveryTrendCanonicalContext.ts trendRebuildRpc
+    const rebuildRpc = (await trendRebuildRpc(sc)) satisfies "rebuild_place_momentum" | "rebuild_place_momentum_canonical"; const { data, error } = await sc.rpc(rebuildRpc, { p_now: pNow });  // the `satisfies` names both RPCs where the static scans (T366 conversation→Memory boundary, unapplied-schema reads) can see them, and tsc holds it to trendRebuildRpc's return type; §133: 3920's producer over the served places (rebuild_place_momentum_canonical) only while discovery_trend_canonical_place_context_enabled reads TRUE, else rebuild_place_momentum — the one rule, lib/discoveryTrendCanonicalContext.ts trendRebuildRpc
     if (error) {
       logger.warn({ code: error?.code, message: error?.message, pNow }, "DiscoveryTrendRebuildScheduler: rebuild failed");
       return { status: "failed", reason: String(error?.code ?? error?.message ?? "rpc_error"), pNow };

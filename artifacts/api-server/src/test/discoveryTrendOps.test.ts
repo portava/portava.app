@@ -422,7 +422,7 @@ describe("K — §133: the trend context keys the places Discovery serves (3920,
     const sched = readFileSync(join(SRC, "lib/discoveryTrendRebuildScheduler.ts"), "utf8");
     // #790 verifier finding 3: the scheduler dispatches through trendRebuildRpc, the one place the rule lives (K1 drives it end to end).
     assert.match(sched, /import \{ trendRebuildRpc \} from "\.\/discoveryTrendCanonicalContext\.js";/);
-    assert.match(sched, /const \{ data, error \} = await sc\.rpc\(await trendRebuildRpc\(sc\), \{ p_now: pNow \}\);/);
+    assert.match(sched, /const rebuildRpc = \(await trendRebuildRpc\(sc\)\) satisfies "rebuild_place_momentum" \| "rebuild_place_momentum_canonical"; const \{ data, error \} = await sc\.rpc\(rebuildRpc, \{ p_now: pNow \}\);/);
     const ctx = readFileSync(join(SRC, "lib/discoveryTrendCanonicalContext.ts"), "utf8");
     assert.match(ctx, /return \(await isFlagEnabled\(sc, "discovery_trend_canonical_place_context_enabled"\)\) \? TREND_REBUILD_RPC_CANONICAL : TREND_REBUILD_RPC;/);
     const mig = readFileSync(join(SRC, "migrations/3920_discovery_trend_canonical_place_context.sql"), "utf8");
