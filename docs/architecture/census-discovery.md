@@ -18042,7 +18042,7 @@ plus one `behavior|analytics` node.
   describes, and it invents no rule.
 - **The gate.** Like the other three reads, it is behind `creator_attribution_enabled`. With that flag OFF the answer
   is `feature_disabled`, never "not eligible".
-- **Tests:** E1–E4 (`artifacts/api-server/src/test/creatorPayoutEligibility.test.ts:71#it("E3. ON ⇒ undecided`), over
+- **Tests:** E1–E4 (`artifacts/api-server/src/test/creatorPayoutEligibility.test.ts:72#it("E3. ON ⇒ undecided`), over
   the real router.
 - **Mutants**, each killed:
   - M-i: the gate skipped. E1 and E3 went red.
