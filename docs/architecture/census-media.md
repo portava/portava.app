@@ -17588,3 +17588,138 @@ A row for §44.18.6's reader table, recorded here so no line above moves:
 | Reader | What it serves | Honoured the block before | Now |
 | --- | --- | --- | --- |
 | Direct PostgREST reads of `post_media` | every ready, public row the policy admits, including rows whose OWNER blocked the reader (the policy's `blocks` subquery ran under `blocks`' own RLS) | no | **fixed on branch by 3905, not merged, not deployed; the viewer's own block was always honoured** |
+
+### Note (2026-10-24, capability refresh, PR #788) — production holds objects that no migration in this tree declares (record only)
+
+*Lane LAYOVER, recorded at the capability refresh. Read-only reads of production's catalogue, 2026-10-24 10:40–11:00 UTC. **NO ROW MOVES**, and nothing is codified: whether each object is codified, dropped or kept is an **owner decision**.*
+
+**How they were found.** The 2026-10-24 capture (digest-verified against production) was compared, name by name, with a database built from this tree's migration chain. Every production table, column and function the replay lacked was then searched for in the migration text. Three objects the replay lacks are declared by the tree and are not on this list: 3982's visual-index tables (the replay builds a pgvector stand-in), 2970's `stamp_definitions.evidences_presence` (unreplayable locally, by its own precondition) and 2976's `global_journey_shadow_stop_v1`. What is left is declared nowhere: not in the 2026-08-19 baseline and not in any migration.
+
+**1. New since the 2026-09-22 capture: a chunked-upload store, plus three media_assets columns.** No code in this tree reads or writes any of it, and the tree's own resumable transport (§37) uses storage parts, not these tables. Production nevertheless holds rows: `media_upload_sessions` has 3 (the newest created 2026-09-26 08:36 UTC), `media_upload_chunks` has 0, and 3 `media_assets` rows have `hls_path` set and `subtitle_processing_status` moved off its default. So code that is not in this tree wrote production rows. Row contents were not read.
+
+`public.media_upload_sessions`. RLS is enabled with no policy. Table grants go to `postgres` and `service_role` only (no `anon`, no `authenticated`).
+- `id uuid NOT NULL DEFAULT gen_random_uuid()`, PRIMARY KEY
+- `owner_user_id uuid NOT NULL`, FOREIGN KEY → `auth.users(id)` ON DELETE CASCADE
+- `resume_token_hash text NOT NULL`
+- `total_bytes bigint NOT NULL`, CHECK `((total_bytes > 0) AND (total_bytes <= 104857600))`
+- `declared_mime text NOT NULL`
+- `expected_sha256 text NOT NULL`, CHECK `(expected_sha256 ~ '^[a-f0-9]{64}$'::text)`
+- `offset_bytes bigint NOT NULL DEFAULT 0`, CHECK `(offset_bytes >= 0)`
+- `state text NOT NULL DEFAULT 'uploading'::text`, CHECK `(state = ANY (ARRAY['uploading'::text, 'completed'::text]))`
+- `expires_at timestamptz NOT NULL`
+- `completed_url text`
+- `asset_id uuid`, FOREIGN KEY → `media_assets(id)` ON DELETE SET NULL
+- `created_at timestamptz NOT NULL DEFAULT now()`
+- `completed_at timestamptz`
+- indexes: `media_upload_sessions_expiry_idx ON (expires_at) WHERE (state = 'uploading'::text)` and `media_upload_sessions_owner_idx ON (owner_user_id, created_at DESC)`
+
+`public.media_upload_chunks`. RLS is enabled with no policy, and the grants are the same as above.
+- `session_id uuid NOT NULL`, FOREIGN KEY → `media_upload_sessions(id)` ON DELETE CASCADE
+- `offset_bytes bigint NOT NULL`, CHECK `(offset_bytes >= 0)`
+- `byte_length integer NOT NULL`, CHECK `((byte_length > 0) AND (byte_length <= 8388608))`
+- `sha256 text NOT NULL`, CHECK `(sha256 ~ '^[a-f0-9]{64}$'::text)`
+- `storage_path text NOT NULL`, UNIQUE
+- `created_at timestamptz NOT NULL DEFAULT now()`
+- PRIMARY KEY `(session_id, offset_bytes)`
+
+`public.commit_media_upload_chunk(uuid, uuid, bigint, integer, text, text)`. SECURITY DEFINER, `search_path=public, pg_temp`, EXECUTE granted to `postgres` and `service_role` only. md5 of its `pg_get_functiondef` is `016ffeae860d57898841514512beabb1`. The definition, exactly as the catalogue returns it:
+
+```sql
+CREATE OR REPLACE FUNCTION public.commit_media_upload_chunk(p_session_id uuid, p_owner_user_id uuid, p_offset bigint, p_chunk_bytes integer, p_sha256 text, p_storage_path text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+  s media_upload_sessions%ROWTYPE;
+  prior media_upload_chunks%ROWTYPE;
+BEGIN
+  SELECT * INTO s FROM media_upload_sessions WHERE id = p_session_id FOR UPDATE;
+  IF NOT FOUND OR s.owner_user_id <> p_owner_user_id THEN
+    RETURN jsonb_build_object('result','invalid','offset',0);
+  END IF;
+  IF s.state <> 'uploading' OR s.expires_at <= now() THEN
+    RETURN jsonb_build_object('result','expired','offset',s.offset_bytes);
+  END IF;
+  IF p_chunk_bytes <= 0 OR p_chunk_bytes > 8388608 OR p_offset + p_chunk_bytes > s.total_bytes THEN
+    RETURN jsonb_build_object('result','invalid','offset',s.offset_bytes);
+  END IF;
+  IF p_offset = s.offset_bytes THEN
+    INSERT INTO media_upload_chunks(session_id, offset_bytes, byte_length, sha256, storage_path)
+    VALUES (p_session_id, p_offset, p_chunk_bytes, p_sha256, p_storage_path);
+    UPDATE media_upload_sessions SET offset_bytes = offset_bytes + p_chunk_bytes WHERE id = p_session_id;
+    RETURN jsonb_build_object('result','accepted','offset',s.offset_bytes + p_chunk_bytes);
+  END IF;
+  SELECT * INTO prior FROM media_upload_chunks
+    WHERE session_id = p_session_id AND offset_bytes = p_offset;
+  IF FOUND AND prior.byte_length = p_chunk_bytes AND prior.sha256 = p_sha256 THEN
+    RETURN jsonb_build_object('result','replay','offset',s.offset_bytes);
+  END IF;
+  RETURN jsonb_build_object('result','conflict','offset',s.offset_bytes);
+END $function$
+```
+
+`public.media_assets`, three columns:
+- `hls_path text` (nullable, no default)
+- `subtitle_paths jsonb NOT NULL DEFAULT '{}'::jsonb`
+- `subtitle_processing_status text NOT NULL DEFAULT 'not_requested'::text`, with CHECK `media_assets_subtitle_processing_status_check`: `(subtitle_processing_status = ANY (ARRAY['not_requested'::text, 'pending'::text, 'ready'::text, 'unavailable'::text]))`
+
+**2. Long-standing: a deletion execution lease on `public.user_deletion_requests`.** It is in every capture since 2026-09-07, and checkSchemaReferences' `UNDECLARED_LIVE_COLUMNS` has named the three columns since 2026-09-04. No row holds an `execution_token`. The `'executing'` status itself IS declared, by 2178.
+- `execution_token uuid` (nullable, no default)
+- `execution_started_at timestamptz` (nullable, no default)
+- `execution_lease_expires_at timestamptz` (nullable, no default)
+- CHECK `user_deletion_requests_execution_claim_check`: `((status <> 'executing'::text) OR ((execution_token IS NOT NULL) AND (execution_started_at IS NOT NULL) AND (execution_lease_expires_at IS NOT NULL) AND (execution_lease_expires_at > execution_started_at)))`
+- index `user_deletion_requests_execution_lease_idx ON (status, execution_lease_expires_at) WHERE (status = 'executing'::text)`
+
+**3. Long-standing: the dormant journey-shadow programme.** 2976's header establishes its origin: migration 2127 on a branch never merged to main, applied to production anyway. All nine tables have RLS enabled and no `anon` or `authenticated` table grant. Every function is EXECUTE to `postgres` and `service_role` only; the two `_journey_shadow_jsonb_has_forbidden_keys*` helpers are `postgres` only. The only row is one in `journey_retention_health`. The observation, segment, cohort, stage and revocation tables are empty, no location session has `journey_purpose = 'journey_observation_v1'`, and no preference row has the observation switch on.
+- **Tables** (column count in brackets; the column names are in the capture): `journey_observations` (22), `journey_retention_health` (19), `journey_revocation_jobs` (19), `journey_segment_revisions` (35), `journey_shadow_cohort_assignments` (11), `journey_shadow_ground_truth` (10), `journey_shadow_qa_reports` (9), `journey_shadow_session_issuances` (9), `journey_shadow_stages` (9).
+- **Columns:**
+  - `location_sessions.journey_purpose text NOT NULL DEFAULT 'legacy_location_share'::text`, with CHECK `location_sessions_journey_purpose_check`: `((journey_purpose = ANY (ARRAY['legacy_location_share'::text, 'journey_observation_v1'::text])) AND ((journey_purpose <> 'journey_observation_v1'::text) OR (expires_at IS NOT NULL)))`
+  - on `user_location_preferences`:
+    - `journey_observation_enabled boolean NOT NULL DEFAULT false`
+    - `journey_consent_scope text`
+    - `journey_consent_version smallint`
+    - `journey_consent_granted_at timestamptz`
+    - `journey_consent_revoked_at timestamptz`
+    - with CHECK `user_location_preferences_journey_con`: `(((journey_observation_enabled = false) OR ((journey_consent_scope = 'journey_observation_v1'::text) AND (journey_consent_version = 1) AND (journey_consent_granted_at IS NOT NULL) AND (journey_consent_revoked_at IS NULL))) AND ((journey_consent_revoked_at IS NULL) OR ((journey_consent_granted_at IS NOT NULL) AND (journey_consent_revoked_at >= journey_consent_granted_at))))`
+- **35 functions.** Each is given as signature (SECURITY DEFINER unless marked invoker) followed by the md5 of its `pg_get_functiondef`:
+  - `_journey_shadow_jsonb_has_forbidden_keys(jsonb)` (invoker): `19365a114f5318b0466dbf53e33e33c0`
+  - `_journey_shadow_jsonb_has_forbidden_keys_deep(jsonb, integer)` (invoker): `3a8b814feb08d33c1e9662456fd15656`
+  - `_journey_shadow_require_admin_actor(uuid)`: `784b9a6d6a2f5e45bc2638dfd679127e`
+  - `aggregate_journey_shadow_observations_v1(uuid, uuid, timestamptz, timestamptz)`: `7942f265ab59c870f61c172344ad30c4`
+  - `aggregate_journey_shadow_segment_revisions_v1(uuid, uuid, timestamptz, timestamptz)`: `288e6e75f741de7bd8d0dc0fb7c0c77d`
+  - `append_journey_segment_revisions(jsonb)`: `75f738c341c9daac9586b894f66c7dce`
+  - `append_journey_segment_revisions_v2(jsonb)`: `671a2019a94a397a6d2f489d1a579b4e`
+  - `assign_journey_shadow_cohort_v1(uuid, uuid, uuid, timestamptz, timestamptz)`: `a3501e2720999effce5a2f7bac14e441`
+  - `begin_journey_retention_cycle_v1(text, timestamptz, integer)`: `e40c64d7f457377dd51019f6acd1df7b`
+  - `claim_journey_revocation_jobs_v1(text, integer, timestamptz, integer)`: `15affd1d9e91a9244777ea5af93b0294`
+  - `complete_journey_revocation_job_v1(uuid, uuid, timestamptz, integer)`: `bdaf6c7e15516afea28986549c57b0f1`
+  - `configure_journey_shadow_stage_v1(uuid, text, timestamptz, timestamptz, uuid, timestamptz)`: `44537934215221a9ed26b9a3d5fdcc19`
+  - `delete_journey_observations_for_user_v1(uuid)`: `f49c18f99acc05410dd5752c3ee51122`
+  - `delete_journey_segments_for_user(uuid)`: `206fff4c40d360a21aadb2eb2bd10c05`
+  - `delete_journey_shadow_rows_v1(uuid, uuid)`: `3c3808f52058dd3bb0d4087e884aee9b`
+  - `fail_journey_revocation_job_v1(uuid, uuid, timestamptz, timestamptz, integer, text)`: `91aee0532537ad60f504ec0bba9d1967`
+  - `finish_journey_retention_cycle_v1(uuid, timestamptz, text, integer, integer, bigint, bigint, integer, text)`: `88f15de35c9fc141eda22a55334ce887`
+  - `finish_journey_retention_cycle_v2(uuid, timestamptz, text, integer, integer, bigint, bigint, integer, text, integer, integer, integer)`: `4346ee05dffe4677bc66401632da5f85`
+  - `ingest_journey_observation_v1(uuid, uuid, smallint, timestamptz, text, float8 ×5, jsonb, text, text, text)`: `b8fa4c1400fb4e5fee81a775b90ea3f9`
+  - `ingest_journey_observation_v2(uuid, uuid, smallint, timestamptz, text, float8 ×5, jsonb, text, text, text, text, numeric, text, text[])`: `024d611abbe4cad7a7023279ac22ae64`
+  - `is_valid_journey_world_ref(jsonb)` (invoker): `decdcc714cc56aa9a634be87f80be23b`
+  - `issue_journey_shadow_session_v1(uuid, uuid, text, timestamptz)`: `2f944ddf75a7f4ac2f55eaf96fd43940`
+  - `journey_shadow_authorize_v1(uuid, uuid, text, timestamptz, text)`: `d4055d52f429a941b0666797bbadfd84`
+  - `persist_journey_shadow_qa_report_v1(uuid, uuid, text, timestamptz, timestamptz, jsonb, text)`: `6d104e9213534ba5f4278117f2e61416`
+  - `prevent_journey_observation_update()` (invoker, trigger): `68c30e332edead97bf0867510e64909d`
+  - `purge_expired_journey_shadow_table_v1(text, timestamptz)`: `9ab8bf5b002ca917596d98df3ecbdc9e`
+  - `purge_journey_observations_on_consent_revocation()` (trigger): `743bce18db8600e11cc48ed32b3aed33`
+  - `purge_journey_observations_on_session_revocation()` (trigger): `d2e267fb1b0312771a2cd983e73c7038`
+  - `read_journey_shadow_observations_v1(uuid, uuid, timestamptz, timestamptz)`: `db4bdcfcbb25a785af77dab93b87350a`
+  - `read_journey_shadow_qa_observations_v1(uuid, uuid, uuid, timestamptz, timestamptz)`: `e41e654160eb1374bb14030a30a92e27`
+  - `read_journey_shadow_qa_segment_revisions_v1(uuid, uuid, uuid, timestamptz, timestamptz)`: `e82f159ce0585a39f632edb6794459c8`
+  - `record_journey_shadow_ground_truth_v1(uuid, uuid, uuid, timestamptz, jsonb, text)`: `98f08d487d8e41fae4a03e597f4ea16f`
+  - `revoke_journey_consent_and_delete_segments(uuid, jsonb)`: `29b5181064e85ab8d2393b933937de12`
+  - `revoke_journey_shadow_cohort_v1(uuid, uuid)`: `991910864b16d725b706be485737b242`
+  - `set_journey_observation_consent_v1(uuid, boolean)`: `6f4627e9cf0fc15f947085d1f55c7153`
+
+**No guard flags this class.** `check:production-drift` compares table presence one way only (tree to production). `audit:live-unexplained` asks the right question, whether every live object has a canonical explanation, but it refuses to run anywhere except the CI project. `UNDECLARED_LIVE_COLUMNS` is maintained by hand and is consulted only when tree code references a column. That is why group 1 entered the 2026-10-24 capture without a single check failing.
+
+**Proposed check (not built).** A credential-free, file-vs-file guard beside `check:production-drift`, in the reverse direction. One input is the committed production capture that each refresh already digest-verifies (tables with their column lists, and function names). The other is the set of public tables, columns and functions the tree creates: the local-db replay's catalogue, unioned with a parse of the migration text, because the replay omits some declared objects (3982's stand-in, 2970's precondition). The guard fails when the capture holds a public table, column or function the tree does not create, unless the name is in an exact, shrink-only ratchet whose every entry cites an owner decision (codify, drop or keep). It also fails when a ratcheted name becomes declared, or leaves the capture, and is not struck off. For tables, `check:production-drift` already holds both sets (the tables the migration text declares, and the production baseline) and never takes their difference in this direction. Columns and functions need the capture's column lists and function names. It would be seeded with the three groups above and would absorb `UNDECLARED_LIVE_COLUMNS`. It reads only committed files, so it runs in the unstarvable static tier and fails on the refresh PR that brings an out-of-band object in.

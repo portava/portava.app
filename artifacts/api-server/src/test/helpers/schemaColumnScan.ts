@@ -880,9 +880,9 @@ const stem = (f: string) => path.basename(f, ".sql");
  * a table production lacks is graded once, at the TABLE; a column of a table
  * that exists nowhere is graded with it.
  */
-export function productionMismatches(scan: SchemaRefScan = scanSchemaReferences(), prod: Pick<ProductionSchema, "tables" | "functions"> = productionSchema()): Mismatch[] {
+export function productionMismatches(scan: SchemaRefScan = scanSchemaReferences(), prod: Pick<ProductionSchema, "tables" | "functions"> = productionSchema(), recordedOverride?: ReadonlySet<string>): Mismatch[] {
   const prov = provenance();
-  const recorded = recordedAppliedMigrations();
+  const recorded = recordedOverride ?? recordedAppliedMigrations(); // override: a FIXTURE record, so a planted B stays B whatever production applies next
   const byKey = new Map<string, Mismatch>();
   const add = (cls: MismatchClass, object: Mismatch["object"], name: string, declaredBy: string[], ref: SchemaRef) => {
     const k = `${object}:${name}`;

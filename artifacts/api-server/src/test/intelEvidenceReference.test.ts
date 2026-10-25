@@ -43,7 +43,7 @@ import {
   _setPhotoEvidenceConsentVersionsForTests,
   attachMediaEvidence,
   openEvidenceReference,
-  rekeyLegacyEvidenceReferences,
+  // rekeyLegacyEvidenceReferences: retired 2026-10-24 with 3361 (case E1 below)
   resolveEvidenceMediaForContributor,
   sealEvidenceReference,
 } from "../lib/intelEvidenceCapture.js";
@@ -573,44 +573,44 @@ describe("D. account deletion removes evidence objects through the sealed refere
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("E. legacy rows, and who may read `reference`", () => {
-  it("the dry run counts plaintext rows and writes nothing; --apply re-seals each through the one-row function", async () => {
-    const USER = randomUUID();
-    const legacy = [
-      { id: "l1", observation_id: OBS_1, evidence_kind: "photo", reference: `post-media/${USER}/1.jpg` },
-      { id: "l2", observation_id: OBS_2, evidence_kind: "video", reference: `post-media/${USER}/2.mp4` },
-      { id: "l3", observation_id: OBS_2, evidence_kind: "photo", reference: "not-a-key-of-ours" },
-    ];
-    const calls: any[] = [];
-    const sc: any = {
-      from: () => {
-        const b: any = new Proxy({}, {
-          get: (_t, p) => (p === "then"
-            ? (res: any) => Promise.resolve({ data: legacy, error: null }).then(res)
-            : () => b),
-        });
-        return b;
-      },
-      rpc: async (fn: string, args: any) => { calls.push({ fn, args }); return { data: true, error: null }; },
-    };
-
-    const dry = await rekeyLegacyEvidenceReferences(sc, { apply: false });
-    assert.deepEqual(dry, { apply: false, legacy: 3, rekeyed: 0, refused: 0, failed: 0 });
-    assert.equal(calls.length, 0, "a dry run writes nothing");
-    assert.equal(JSON.stringify(dry).includes(USER), false, "the outcome names no account");
-
-    const applied = await rekeyLegacyEvidenceReferences(sc, { apply: true });
-    assert.deepEqual(applied, { apply: true, legacy: 3, rekeyed: 2, refused: 1, failed: 0 });
-    assert.deepEqual(calls.map((c) => c.fn), ["intel_evidence_rekey_reference", "intel_evidence_rekey_reference"]);
-    for (const [i, call] of calls.entries()) {
-      assert.equal(call.args.p_legacy_reference, legacy[i]!.reference, "the function is told the exact value it must replace");
-      assertNamesNoAccount(call.args.p_sealed_reference, USER, "the re-sealed value");
-      assert.equal(openEvidenceReference(call.args.p_sealed_reference, legacy[i]!.observation_id).ok, true);
-    }
-
-    delete process.env.INTEL_EVIDENCE_REFERENCE_KEY;
-    await assert.rejects(rekeyLegacyEvidenceReferences(sc, { apply: true }), /INTEL_EVIDENCE_REFERENCE_KEY/);
-    assert.equal(calls.length, 2, "no key: nothing written");
+  it("E1 the legacy re-seal is RETIRED with 3361: no caller of the dropped function, and no CLI", async () => {
+    // 3360 added intel_evidence_rekey_reference so pre-seal plaintext rows could be re-sealed; 3361 validated the
+    // constraint and DROPPED it by design, and both are applied to production (ledger, 2026-10-21). The TS caller
+    // and src/scripts/rekeyIntelEvidenceReferences.ts could only ever fail, so they were removed at the 2026-10-24
+    // capability refresh (lead ruling). The SQL is still proven by test/db/intelEvidenceSealedReference.db.test.ts.
+    const mod = await import("../lib/intelEvidenceCapture.js");
+    assert.equal("rekeyLegacyEvidenceReferences" in mod, false);
+    assert.equal("EVIDENCE_REKEY_RPC" in mod, false);
+    const { existsSync, readFileSync } = await import("node:fs");
+    assert.equal(existsSync(new URL("../scripts/rekeyIntelEvidenceReferences.ts", import.meta.url)), false, "the operator CLI is gone");
+    assert.equal(readFileSync(new URL("../lib/intelEvidenceCapture.ts", import.meta.url), "utf8").includes('rpc("intel_evidence_rekey_reference"'), false);
   });
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
+  // (padding: documents cite this file by line)
 
   it("nothing outside lib/intelEvidenceCapture selects `reference` from intel_evidence", () => {
     const files: string[] = [];
