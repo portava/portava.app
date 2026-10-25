@@ -231,7 +231,7 @@ export async function batchSignUrls(
         : FALLBACK_CACHE_TTL_MS;
       const expiresAt = now + cacheTtlMs;
       for (const url of batch) {
-        const cacheKey = url + transformSuffix;
+        const cacheKey = url + transformSuffix; if (generation !== _cacheGeneration) { result.set(url, url); continue; } // 2026-10-25: a stale session's late answer touches nothing — no cache, no _lastOutcome
         const signedUrl = body.signed?.[signableMediaRef(url)] ?? null;
         noteSignOutcome(url, signedUrl ? 'signed' : 'denied');
         if (signedUrl) {
@@ -247,7 +247,7 @@ export async function batchSignUrls(
       // On 429 the caller already has the cached value; new URLs fall back.
       for (const url of batch) {
         if (!result.has(url)) result.set(url, url);
-        noteSignOutcome(url, 'unreachable');
+        if (generation === _cacheGeneration) noteSignOutcome(url, 'unreachable'); // 2026-10-25: nor does its late failure
       }
     }
   }

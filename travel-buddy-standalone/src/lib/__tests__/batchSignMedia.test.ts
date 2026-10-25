@@ -24,6 +24,7 @@ import {
   _getCacheSize,
   _setTestSignTokenProvider,
   clearSignedMediaCache,
+  lastSignOutcome,
 } from '../batchSignMedia.ts';
 
 const TOKEN = 'test-access-token';
@@ -536,5 +537,49 @@ describe('batchSignUrls — clearSignedMediaCache (the session changed)', () => 
     const out = await pending;
     assert.equal(out.get(URL_A), URL_A, 'the outgoing session\'s signed URL is not handed out');
     assert.equal(_getCacheSize(), 0, 'nor cached for the next session');
+  });
+});
+
+// 2026-10-25, verifier on d95a96afd: a stale session's late answer must not write the sign outcome either. A's sign
+// is in flight, the account switches, B's own sign for the same ref is DENIED; A's late "signed" must not flip it.
+describe('batchSignUrls — a stale session\'s late answer leaves lastSignOutcome alone', () => {
+  beforeEach(() => {
+    _origFetch = globalThis.fetch;
+    _origApiBase = process.env.EXPO_PUBLIC_API_BASE_URL;
+    process.env.EXPO_PUBLIC_API_BASE_URL = API_BASE;
+    _resetBatchSignCache();
+  });
+  afterEach(() => {
+    globalThis.fetch = _origFetch;
+    process.env.EXPO_PUBLIC_API_BASE_URL = _origApiBase;
+    _resetBatchSignCache();
+    _setTestSignTokenProvider(null);
+  });
+
+  it('SS3 A signed late after the switch; B was denied: the outcome stays "denied" and nothing is cached', async () => {
+    let releaseA!: () => void;
+    const gateA = new Promise<void>((r) => { releaseA = r; });
+    (globalThis as any).fetch = async (url: string, opts?: any) => {
+      if (!url.includes('/api/media/sign')) throw new Error(`Unexpected fetch: ${url}`);
+      const body = JSON.parse(opts.body);
+      if (opts.headers.Authorization === 'Bearer token-a') {
+        await gateA;
+        return { ok: true, json: async () => ({ signed: makeSignedMap(body.urls), ttlSeconds: 3600 }) };
+      }
+      return { ok: true, json: async () => ({ signed: Object.fromEntries(body.urls.map((u: string) => [u, null])), ttlSeconds: 3600 }) };
+    };
+    _setTestSignTokenProvider(async () => 'token-a');
+    const forA = batchSignUrls([URL_A]);
+    await new Promise((r) => setTimeout(r, 5));
+    clearSignedMediaCache(); // the account switched
+    _setTestSignTokenProvider(async () => 'token-b');
+    const forB = await batchSignUrls([URL_A]);
+    assert.equal(forB.get(URL_A), URL_A);
+    assert.equal(lastSignOutcome(URL_A), 'denied');
+    releaseA();
+    const lateA = await forA;
+    assert.equal(lateA.get(URL_A), URL_A, 'A\'s signed URL is not handed out');
+    assert.equal(lastSignOutcome(URL_A), 'denied', 'A\'s late answer does not flip B\'s outcome to signed');
+    assert.equal(_getCacheSize(), 0);
   });
 });
