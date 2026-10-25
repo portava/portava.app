@@ -257,6 +257,10 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
     : null;
 
   const canSubmit = !!mediaUri && !submitting;
+  // 2026-10-24 every surface: the video preview follows the one rule — a private ref is signed first, a device file plays as it is.
+  const { resolved: previewHydrated } = useHydratedMedia(isVideo ? [mediaUri] : []);
+  const previewSource = playbackUriState(isVideo ? mediaUri : null, previewHydrated);
+  const previewPlayUri = previewSource.state === 'ready' ? previewSource.uri : null;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -285,9 +289,9 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
               <Text style={s.fieldLabel}>Media <Text style={{ color: color.signal }}>*</Text></Text>
               {mediaUri ? (
                 <View style={s.mediaPreviewWrap}>
-                  {isVideo && !isLoadablePlaybackUri(mediaUri) ? null : isVideo ? (
-                    <Video
-                      source={{ uri: mediaUri }}
+                  {isVideo && !isLoadablePlaybackUri(previewPlayUri) ? null : isVideo ? (
+                    <Video key={previewPlayUri as string}
+                      source={{ uri: previewPlayUri as string }}
                       style={s.mediaPreview}
                       resizeMode={ResizeMode.COVER}
                       shouldPlay
@@ -500,4 +504,4 @@ const s = StyleSheet.create({
   submitDisabled: { opacity: 0.4 },
   submitText: { ...t.bodyStrong, color: color.onInk },
 });
-import { isLoadablePlaybackUri } from '../services/playbackUri.ts'; // 2026-10-24 video playback: the one playback rule
+import { isLoadablePlaybackUri, playbackUriState } from '../services/playbackUri.ts'; import { useHydratedMedia } from '../services/mediaUrl.ts'; // 2026-10-24 video playback: the one playback rule, and the one signing hook

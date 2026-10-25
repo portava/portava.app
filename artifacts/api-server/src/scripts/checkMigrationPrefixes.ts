@@ -168,15 +168,15 @@ if (collisions.length > 0) {
 // reasoning. Reserves 2096-2099 as an unusable buffer and requires any new
 // 4-digit numeric prefix to land in 2100-2999 or 3000-3999. The second range
 // was opened on 2026-09-23 because the first was full — main held up to 2997
-// and unmerged branches held 2998 and 2999.
+// and unmerged branches held 2998 and 2999. 4000-4999 opened 2026-10-24: a fix must sort after 3999 (see migrationPrefixRules.ts).
 
 const bandViolations = validateAllPrefixBands(files);
 if (bandViolations.length > 0) {
   console.error(
     "\nERROR: Migration filename(s) violate the new-numeric-prefix band.\n" +
       "       4-digit prefixes 2096-2099 are a reserved, permanently-unusable\n" +
-      "       buffer. A NEW 4-digit numeric prefix must be in 2100-2999 or\n" +
-      "       3000-3999 (matching /^(?:2[1-9]\\d{2}|3\\d{3})_/) — this keeps the\n" +
+      "       buffer. A NEW 4-digit numeric prefix must be in 2100-2999,\n" +
+      "       3000-3999 or 4000-4999 (matching /^(?:2[1-9]\\d{2}|[34]\\d{3})_/) — this keeps the\n" +
       "       numbering convention structurally distinct from the 8-digit dated\n" +
       "       convention (20260815_...), so a filename >= \"2100\" test can never\n" +
       "       again be fooled by a dated file sorting below it.\n" +

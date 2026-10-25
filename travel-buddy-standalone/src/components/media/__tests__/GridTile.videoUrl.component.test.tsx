@@ -2,7 +2,10 @@
  * GridTile.videoUrl.component.test.tsx
  *
  * Covers:
- *   1. When videoUrl is a relay URL, the Video component receives it as source.uri.
+ *   1. When videoUrl is a relay URL, the tile (in view) signs it and the Video component receives the SIGNED URL as
+ *      source.uri — never the relay URL. (Changed 2026-10-24, video on every surface: the relay requires a bearer
+ *      token that a player never sends, so the old expectation — the relay URL reaches <Video> unchanged — pinned
+ *      the defect. See the PR body's test-change note.)
  *   2. When videoUrl is null (image tile), no Video component is rendered.
  *
  * Run with: pnpm --dir travel-buddy-standalone run test:component
@@ -52,6 +55,13 @@ jest.mock('../../ui/VideoBlurBackdrop.tsx', () => ({
 // NOTE: intentional stub — poster image rendering not under test.
 jest.mock('../../ui/DisplayMediaImage.tsx', () => ({
   DisplayMediaImage: () => null,
+}));
+
+// NOTE: intentional stub — the network call is the only stand-in; useHydratedMedia and hydrateMediaUrls are real.
+const mockSignCalls: string[][] = [];
+jest.mock('../../../lib/batchSignMedia.ts', () => ({
+  ...jest.requireActual('../../../lib/batchSignMedia.ts'),
+  batchSignUrls: async (urls: string[]) => { mockSignCalls.push([...urls]); return new Map(urls.map((u) => [u, u === 'https://relay.example.com/api/media/file/post-media/test-video.mp4' ? 'https://abc.supabase.co/storage/v1/object/sign/post-media/test-video.mp4?token=t' : u])); },
 }));
 
 // lucide-react-native is covered by the global Proxy mock in jest.config moduleNameMapper.
@@ -115,7 +125,7 @@ describe('GridTile — relay video URL prop-wiring', () => {
     mockCapturedVideoSource = null;
   });
 
-  it('Video receives the relay URL as source.uri when videoUrl is a relay URL', async () => {
+  it('Video receives the SIGNED URL for a relay URL once the tile is in view — never the relay URL', async () => {
     const item = makeVideoItem();
 
     await act(async () => {
@@ -126,16 +136,18 @@ describe('GridTile — relay video URL prop-wiring', () => {
           cellWidth={120}
           cellHeight={160}
           onPress={() => {}}
-          isVisible={false}
+          isVisible
         />,
       );
     });
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 
     // Video component must be mounted
     expect(screen.getByTestId('expo-av-video')).toBeTruthy();
-    // Its source prop must carry the relay URL unchanged
+    // Its source prop must carry the signed URL; the relay URL was the thing signed
     expect(mockCapturedVideoSource).not.toBeNull();
-    expect(mockCapturedVideoSource!.uri).toBe(RELAY_VIDEO_URL);
+    expect(mockSignCalls).toEqual([[RELAY_VIDEO_URL]]);
+    expect(mockCapturedVideoSource!.uri).toBe('https://abc.supabase.co/storage/v1/object/sign/post-media/test-video.mp4?token=t');
   });
 
   it('no Video component is rendered for an image tile (videoUrl is null)', async () => {

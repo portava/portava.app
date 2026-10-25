@@ -31,7 +31,7 @@ jest.mock('../../../services/memoryFromPost.ts', () => ({
   saveOwnPostToMemory: (...a: unknown[]) => mockSave(...a),
 }));
 
-import { SaveOwnPostToMemorySheet, canOfferSaveToMemory, titleFromPost } from '../SaveOwnPostToMemorySheet.tsx';
+import { SaveOwnPostToMemorySheet, canOfferSaveToMemory, titleFromPost, ownPostMediaCount } from '../SaveOwnPostToMemorySheet.tsx';
 
 const ME = 'me';
 const POST = { id: 'post-1', authorId: ME, author: { id: ME }, mediaUrls: ['a', 'b', 'c'], content: 'Sunset at the river\nsecond line' };
@@ -134,5 +134,48 @@ describe('SaveOwnPostToMemorySheet', () => {
     expect(mockSave).not.toHaveBeenCalled();
     expect(screen.getByTestId('save-to-memory-message').props.children).toMatch(/Nothing was saved/);
     expect(screen.getByTestId('save-to-memory-retry')).toBeTruthy();
+  });
+});
+
+// 2026-10-24, video on every surface: uploads live in post_media only since 3924 / #795, so an upload post has
+// `media` items and an EMPTY `media_urls`. The offer and the count read the items (#795's fallback items included).
+describe('MP — an upload post (post_media only) is offered and fully counted', () => {
+  const UPLOAD = { id: 'post-2', authorId: ME, author: { id: ME }, mediaUrls: [] as string[], media: [{ id: 'pm-1', media_type: 'video', url: 'post-media/me/1.mov' }], content: null };
+  it('MP1 own upload post with no media_urls: offered', () => {
+    expect(canOfferSaveToMemory(UPLOAD, ME)).toBe(true);
+    expect(canOfferSaveToMemory({ ...UPLOAD, media: [] }, ME)).toBe(false);
+  });
+  it('MP2 the count is the items plus the EXTERNAL media_urls entries (a storage key there is the same object as a row)', () => {
+    expect(ownPostMediaCount({ ...UPLOAD, mediaUrls: ['https://images.example/a.jpg', 'post-media/me/1.mov'] })).toBe(2);
+    expect(ownPostMediaCount({ ...UPLOAD, media: null, mediaUrls: ['post-media/me/legacy.jpg', 'https://x/y.jpg'] })).toBe(2);
+  });
+  it('MP3 picking a Memory copies the upload post\'s media by its item count', async () => {
+    mockSave.mockResolvedValueOnce({ saved: 1, alreadyThere: 0, total: 1, refusal: null });
+    await render(<SaveOwnPostToMemorySheet visible post={UPLOAD} viewerId={ME} onClose={() => {}} />);
+    await act(async () => {});
+    await press('save-to-memory-pick-m1');
+    expect(mockSave).toHaveBeenCalledWith({ memoryId: 'm1', postId: 'post-2', mediaCount: 1 });
+  });
+});
+
+// 2026-10-25, PR #808 verdict finding 2: the estimate errs LOW. A media_urls entry the server does not offer (a signed
+// or public storage URL, an unclean relay URL) used to be counted, so the copy asked for an index the server refused.
+describe('MC — the screen never counts a media_urls entry the server will not offer', () => {
+  const UPLOAD = { id: 'post-3', authorId: ME, author: { id: ME }, mediaUrls: [] as string[], media: [{ id: 'pm-1', media_type: 'image', url: 'post-media/me/1.jpg' }], content: null };
+  it('MC1 storage URLs in any spelling and unclean relay URLs are not counted; a plain external URL is', () => {
+    const notOffered = [
+      'https://proj.supabase.co/storage/v1/object/sign/post-media/me/old.jpg?token=t',
+      'https://proj.supabase.co/storage/v1/object/authenticated/post-media/me/old.jpg',
+      'https://proj.supabase.co/storage/v1/render/image/public/post-media/me/old.jpg',
+      'https://proj.supabase.co/storage/v1/object/public/avatars/me/old.jpg',
+      'https://proj.supabase.co/storage%2Fv1%2Fobject/public/post-media/me/old.jpg',
+      'https://api.example/api/media/file/post-media/me/../x.jpg',
+      'not a url',
+    ];
+    for (const u of notOffered) expect([u, ownPostMediaCount({ ...UPLOAD, mediaUrls: [u] })]).toEqual([u, 1]);
+    expect(ownPostMediaCount({ ...UPLOAD, mediaUrls: ['https://images.example/a.jpg', ...notOffered] })).toBe(2);
+  });
+  it('MC2 a post with no items keeps the media_urls count (the server indexes media_urls whole then)', () => {
+    expect(ownPostMediaCount({ ...UPLOAD, media: [], mediaUrls: ['a', 'https://proj.supabase.co/storage/v1/object/sign/post-media/me/x.jpg'] })).toBe(2);
   });
 });

@@ -10,7 +10,7 @@ import { fetchMySavedPostIds } from '../services/postEngagement.ts';
 import { clearCachedFeed } from '../services/compass.ts';
 import { SECURE_KEYS, deleteSecure } from '../lib/secureStore.ts';
 import { isAccountScopedStorageEnabled } from '../config/accountScopedStorageFlag.ts';
-import { setDiscoveryViewerFromSession } from '../services/discoveryViewerScope.ts';
+import { setDiscoveryViewerFromSession } from '../services/discoveryViewerScope.ts'; import { clearSignedMediaCache } from '../lib/batchSignMedia.ts'; // 2026-10-25: signed media URLs are per account (verdict-808b F1)
 // Prefixes of the per-account scoped keys introduced for reminders,
 // discoveryBookmarks, and the checkpoint-arrival queue (see each service's
 // scoped*Key() helper). Telegraph's suggestion cache is per-(thread,account)
@@ -107,7 +107,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     // The Discovery device caches follow the auth event itself, BEFORE any screen
     // re-renders: a synchronous cache read at mount must never paint the previous
     // account's page (services/discoveryViewerScope.ts).
-    const unsub = onAuthChange((uid) => { const epoch = ++authEpoch; const changed = lastUid !== undefined && uid !== lastUid; if (changed) clearThreadCursors(); lastUid = uid; setDiscoveryViewerFromSession(uid); const publish = () => { if (active && epoch === authEpoch) { setUserId(uid); setLoading(false); } }; if (changed) void clearLayoverOfflineStorage().then(publish); else publish(); }); // Account switches clear device-only Layover data before the next account's screens mount; stale auth promises cannot overwrite a newer event.
+    const unsub = onAuthChange((uid) => { const epoch = ++authEpoch; const changed = lastUid !== undefined && uid !== lastUid; if (changed) clearThreadCursors(); if (changed) clearSignedMediaCache(); lastUid = uid; setDiscoveryViewerFromSession(uid); const publish = () => { if (active && epoch === authEpoch) { setUserId(uid); setLoading(false); } }; if (changed) void clearLayoverOfflineStorage().then(publish); else publish(); }); // Account switches clear device-only Layover data before the next account's screens mount; stale auth promises cannot overwrite a newer event.
     return () => { active = false; unsub(); };
   }, []);
 
@@ -300,7 +300,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       void clearCachedFeed(userId).catch(() => {});
       // Remove this account's scoped reminders/bookmarks/checkpoint-queue/
       // Telegraph-cache keys (no-op while the flag is off — see helper doc).
-      void clearScopedStorageForUser(userId).catch(() => {}); void clearRailSeenForUser(userId).catch(() => {}); clearThreadCursors(); // T264; §71: no conversation cursor outlives the account on this device. T264: what this account last saw in each conversation's rail
+      void clearScopedStorageForUser(userId).catch(() => {}); void clearRailSeenForUser(userId).catch(() => {}); clearThreadCursors(); clearSignedMediaCache(); // T264; §71; 2026-10-25 signed media URLs (verdict-808b F1): no conversation cursor outlives the account on this device. T264: what this account last saw in each conversation's rail
     }
     // Discovery pages and community bylines held on the device are per viewer;
     // none of the outgoing account's may be painted after this point.

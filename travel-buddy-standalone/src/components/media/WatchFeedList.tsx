@@ -63,7 +63,7 @@ const VIEWABILITY_CONFIG = {
 
 interface CellWrapperProps {
   item: MediaFeedItem;
-  isActive: boolean;
+  isActive: boolean; /** 2026-10-25 (#808 finding 4): on screen or one swipe away — the window in which the cell signs its video. */ inSignWindow?: boolean;
   playbackEligible: boolean;
   isMuted: boolean;
   currentUserId?: string;
@@ -79,7 +79,7 @@ interface CellWrapperProps {
 
 const CellWrapper = React.memo(function CellWrapper({
   item,
-  isActive,
+  isActive, inSignWindow = isActive,
   playbackEligible,
   isMuted,
   currentUserId,
@@ -364,7 +364,7 @@ const CellWrapper = React.memo(function CellWrapper({
         id={item.id}
         videoUrl={item.videoUrl}
         posterUrl={item.posterUrl}
-        isActive={effectiveActive}
+        isActive={effectiveActive} inSignWindow={inSignWindow || isActive}
         playbackEligible={playbackEligible}
         isMuted={isMuted}
         onProgress={handleProgress}
@@ -553,7 +553,7 @@ export function WatchFeedList({
     ({ item, index }: { item: MediaFeedItem; index: number }) => (
       <CellWrapper
         item={item}
-        isActive={index === activeIndex}
+        isActive={index === activeIndex} inSignWindow={Math.abs(index - activeIndex) <= 1}
         playbackEligible={playback.playbackEligible}
         isMuted={isMuted}
         currentUserId={currentUserId}

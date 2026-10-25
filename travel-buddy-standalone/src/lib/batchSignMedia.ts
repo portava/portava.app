@@ -85,7 +85,7 @@ const _cache = new Map<string, CacheEntry>();
 
 /** Clear the signed-URL cache. For use in tests only. */
 export function _resetBatchSignCache(): void {
-  _cache.clear();
+  clearSignedMediaCache(); // 2026-10-25: the cache, the in-flight requests and the generation (clearSignedMediaCache, at the tail)
 }
 
 /** Return the current number of cached entries. For use in tests only. */
@@ -160,12 +160,12 @@ function _cacheGet(key: string, now: number): CacheEntry | undefined {
  */
 export async function batchSignUrls(
   urls: string[],
-  transform?: { width?: number; quality?: number },
+  transform?: { width?: number; quality?: number }, _lead?: typeof LEAD_SIGN, // 2026-10-25: LEAD_SIGN (module-private, tail) only from coalesceSign — the request that actually goes out
 ): Promise<Map<string, string>> {
-  const result = new Map<string, string>();
+  const result = new Map<string, string>(); if (_lead !== LEAD_SIGN && urls.length > 0) return coalesceSign(urls, transform); // 2026-10-25 (#808 finding 4): an identical sign already in flight is joined, not repeated
   if (urls.length === 0) return result; if (transform && urls.some(isVideoRef)) { const [videos, stills] = await Promise.all([batchSignUrls(urls.filter(isVideoRef)), batchSignUrls(urls.filter((u) => !isVideoRef(u)), transform)]); return new Map([...videos, ...stills]); } // Supabase's image transform answers 400 for a video: sign videos plainly
 
-  const now = Date.now();
+  const now = Date.now(); const generation = _cacheGeneration; // 2026-10-25: an answer that lands after the session changed is neither cached nor handed out
 
   // Build a stable cache-key suffix that encodes the transform so that the
   // same URL requested at different sizes gets separate cache entries.
@@ -208,7 +208,7 @@ export async function batchSignUrls(
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          urls: batch,
+          urls: batch.map(signableMediaRef), // 2026-10-24: a relay URL is sent as the bare ref it names (the endpoint takes that form, not the relay's)
           ...(transform && (transform.width !== undefined || transform.quality !== undefined)
             ? { transform }
             : undefined),
@@ -231,12 +231,12 @@ export async function batchSignUrls(
         : FALLBACK_CACHE_TTL_MS;
       const expiresAt = now + cacheTtlMs;
       for (const url of batch) {
-        const cacheKey = url + transformSuffix;
-        const signedUrl = body.signed?.[url] ?? null;
+        const cacheKey = url + transformSuffix; if (generation !== _cacheGeneration) { result.set(url, url); continue; } // 2026-10-25: a stale session's late answer touches nothing — no cache, no _lastOutcome
+        const signedUrl = body.signed?.[signableMediaRef(url)] ?? null;
         noteSignOutcome(url, signedUrl ? 'signed' : 'denied');
         if (signedUrl) {
-          _cacheSet(cacheKey, { url: signedUrl, expiresAt });
-          result.set(url, signedUrl);
+          if (generation === _cacheGeneration) _cacheSet(cacheKey, { url: signedUrl, expiresAt });
+          result.set(url, generation === _cacheGeneration ? signedUrl : url); // the session changed mid-request: the original, as if refused
         } else {
           // null = unauthorized or unrecognized — fall back to original per-URL
           result.set(url, url);
@@ -247,7 +247,7 @@ export async function batchSignUrls(
       // On 429 the caller already has the cached value; new URLs fall back.
       for (const url of batch) {
         if (!result.has(url)) result.set(url, url);
-        noteSignOutcome(url, 'unreachable');
+        if (generation === _cacheGeneration) noteSignOutcome(url, 'unreachable'); // 2026-10-25: nor does its late failure
       }
     }
   }
@@ -280,3 +280,76 @@ export function lastSignOutcome(url: string): 'signed' | 'denied' | 'unreachable
   return _lastOutcome.get(url) ?? null;
 }
 import { isVideoRef } from './media/videoPosterRef.ts';
+import { signableMediaRef } from '../services/playbackUri.ts'; // 2026-10-24 video on every surface: the one ref rule (no imports there, so no cycle)
+
+// ── 2026-10-25, PR #808 verdict finding 4 — appended at the TAIL so no cited line above moves ───────────────────────
+// The cache above answers a URL signed BEFORE; it did nothing for one being signed RIGHT NOW. Two surfaces mounting
+// the same video (a Watch cell and its neighbour's prefetch, a grid tile and the detail screen) each sent their own
+// POST /api/media/sign for it, against the 60/min sign budget. A miss already in flight is now joined: the second
+// caller waits for the first request's answer for that URL instead of sending its own.
+//
+// AUTHORIZATION IS UNCHANGED. Every request that goes out is the same POST /api/media/sign, which authorizes every
+// object for the signed-in viewer; nothing is answered here that the server did not answer. A joined request is keyed
+// by the bearer token as well as the URL and transform, so an answer given to one session is never handed to another
+// (a sign-out / sign-in while a request is in flight starts a fresh one). An answer is shared exactly as the cache
+// above already shares it: the same URL, the same transform, the same session.
+const _inflight = new Map<string, Promise<string>>();
+
+function signTransformSuffix(transform?: { width?: number; quality?: number }): string {
+  return transform && (transform.width !== undefined || transform.quality !== undefined)
+    ? `\x00w${transform.width ?? ''}q${transform.quality ?? ''}`
+    : '';
+}
+
+async function coalesceSign(urls: string[], transform?: { width?: number; quality?: number }): Promise<Map<string, string>> {
+  if (transform && urls.some(isVideoRef)) { // the video split above, made here first: a lead request never re-enters this join for its own URLs
+    const [videos, stills] = await Promise.all([coalesceSign(urls.filter(isVideoRef)), coalesceSign(urls.filter((u) => !isVideoRef(u)), transform)]);
+    return new Map([...videos, ...stills]);
+  }
+  const suffix = signTransformSuffix(transform);
+  const now = Date.now();
+  const unique = [...new Set(urls)];
+  const misses = unique.filter((u) => { const e = _cache.get(u + suffix); return !e || now >= e.expiresAt; });
+  if (misses.length === 0) return batchSignUrls(unique, transform, LEAD_SIGN);
+  const token = await signToken();
+  if (!token) return batchSignUrls(unique, transform, LEAD_SIGN);
+  const keyOf = (u: string) => `${token}\x00${u}${suffix}`;
+  const joined = new Set(misses.filter((u) => _inflight.has(keyOf(u))));
+  const waits = [...joined].map((u) => _inflight.get(keyOf(u))!.then((v) => [u, v] as const));
+  const lead = unique.filter((u) => !joined.has(u));
+  let leadRun: Promise<Map<string, string>> = Promise.resolve(new Map());
+  if (lead.length > 0) {
+    leadRun = batchSignUrls(lead, transform, LEAD_SIGN);
+    for (const u of lead) {
+      if (!misses.includes(u)) continue;
+      const key = keyOf(u);
+      const p = leadRun.then((m) => m.get(u) ?? u, () => u);
+      _inflight.set(key, p);
+      void p.then(() => { if (_inflight.get(key) === p) _inflight.delete(key); });
+    }
+  }
+  const [led, followed] = await Promise.all([leadRun, Promise.all(waits)]);
+  const result = new Map(led);
+  for (const [u, v] of followed) result.set(u, v);
+  return result;
+}
+
+// ── 2026-10-25, PR #808 verifier (verdict-808b finding 1) — appended at the TAIL so no cited line above moves ──────
+// The cache above is keyed by URL and transform only: it held one session's signed URLs for up to 55 minutes, and
+// nothing cleared it on sign-out, so a second account signing in on the same device could be handed the first
+// account's signed URL for a ref it rendered too. SessionContext's auth listener (the one that already clears the
+// Telegraph cursors and the Discovery device caches on an account change) now calls clearSignedMediaCache() the
+// moment the signed-in user id changes, sign-out included, BEFORE the next account's screens re-render. A request
+// that was already on the wire when that happened is fenced by the generation: its answer is not cached and is not
+// handed out (the caller gets the original ref, as for a refusal), so it cannot repopulate the cache afterwards.
+let _cacheGeneration = 0;
+
+/** Forget every signed URL this device holds and every sign request in flight. Call when the signed-in user changes. */
+export function clearSignedMediaCache(): void {
+  _cacheGeneration++;
+  _cache.clear();
+  _inflight.clear();
+}
+
+/** Marks the one call that may skip the in-flight join (coalesceSign's own). Not exported: no caller can pass it. */
+const LEAD_SIGN: unique symbol = Symbol('batchSignUrls.lead');
