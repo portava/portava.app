@@ -16,7 +16,7 @@ async function protectedRows(){
 }
 describe('L205 independent service role ownership and audit boundaries',{skip:PRESSED_SKIP_REASON},()=>{
  before(async()=>{
-  db=await openPressedLayoverDb();await productionBaseFlags(db);
+  db=await openPressedLayoverDb();keepConstraintsUndeclared();await productionBaseFlags(db);
   await db.setFlags({layover_plans_enabled:true,layover_compass_replan_enabled:true,layover_experience_execution_enabled:true,layover_recommendation_status_enabled:true,layover_objective_evidence_enabled:true,layover_constraints_enabled:true,layover_stable_recommendation_ids_enabled:true}); // GET experiences must refuse by OWNERSHIP, not by getCandidates' cutover prerequisite (a0f8754f3)
   owner=await db.seedUser('audit_boundary_owner');other=await db.seedUser('audit_boundary_other');app=await startPressedLayoverApp(db);
   await db.setFlag('layover_service_write_audit_enabled',true);
@@ -136,3 +136,5 @@ describe('L205 independent service role ownership and audit boundaries',{skip:PR
   assert.deepEqual(await db.query(`SELECT id,actor_user_id,layover_session_id FROM public.layover_service_write_audit WHERE layover_session_id='${otherSid}' ORDER BY id`),otherBefore);
  });
 });
+
+import { keepConstraintsUndeclared } from "./pressedLayoverApp.js"; // census-layover §83: this suite owns its constraint declarations under PRESSED_BASE
