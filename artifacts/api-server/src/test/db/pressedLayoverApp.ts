@@ -82,7 +82,7 @@ export async function startSession(app: PressedApp, user: PressedUser, over: Rec
   };
   const r = await app.call("POST", "/api/airport/sessions", user, body);
   if (r.status !== 201) throw new Error(`startSession: ${r.status} ${r.raw}`);
-  return r.body.session;
+  return declareLikeTheApp(app, user, r.body.session, over); // census-layover §83: under PRESSED_BASE the traveller answers the constraints question, as the app asks (tail of file)
 }
 
 /**
@@ -97,7 +97,7 @@ export async function productionBaseFlags(db: PressedDb): Promise<void> {
   const { PRODUCTION_SNAPSHOT_URL } = await import("../../lib/capability/snapshots/current.js");
   const { readFileSync } = await import("node:fs");
   const snap = JSON.parse(readFileSync(PRODUCTION_SNAPSHOT_URL, "utf8")) as { flags: Record<string, boolean> };
-  await db.setFlags(Object.fromEntries(Object.entries(snap.flags).map(([f, on]) => [f, on === true])));
+  await db.setFlags(Object.fromEntries(Object.entries(snap.flags).map(([f, on]) => [f, on === true]))); await overlayCurrentProductionFlags(db); // census-layover §83: PRESSED_BASE=production-20261023 overlays production's flags as read on 2026-10-23 (tail of file)
 }
 
 /** A passport on file and a curated visa-free corridor, so the entry gate can CONFIRM entry (verdict `yes`, not `entry_unverified`). */
@@ -160,3 +160,42 @@ export async function seedVerifiedLayoverSpecialist(db: PressedDb, user: Pressed
     `WITH party AS (INSERT INTO public.payment_parties(kind, profile_id) VALUES ('user', '${user.id}') RETURNING id) INSERT INTO public.rent_buddy_payment_recipients(party_id, provider, recipient_ref, country, settlement_currency, onboarding, charges_enabled, payouts_enabled, livemode) SELECT id, 'stripe', 'fixture-${user.id}', 'SG', 'SGD', 'verified', true, true, false FROM party;`,
   );
 }
+
+/**
+ * census-layover §83 — "prove it under production's flag state". With PRESSED_BASE=production-20261023, every pressed
+ * suite's base is production's public.feature_flags as read read-only on 2026-10-23 (382 rows, digest reproduced from
+ * production's own md5; test/db/fixtures/productionFlags20261023.json), overlaid on the 09-22 capture, plus the one
+ * metadata flag (layover_ranking_mode: on, cohort all). Each suite's own press is then applied on top, exactly as in the
+ * default base. Unset (the default, and CI's local-db job): nothing changes. Appended at the tail so no line above moves.
+ */
+export const PRESSED_BASE = (process.env["PRESSED_BASE"] ?? "").trim();
+async function overlayCurrentProductionFlags(db: PressedDb): Promise<void> {
+  if (PRESSED_BASE === "") return;
+  if (PRESSED_BASE !== "production-20261023") throw new Error(`PRESSED_BASE=${PRESSED_BASE}: the only recorded production base is production-20261023`);
+  const { readFileSync } = await import("node:fs");
+  const fx = JSON.parse(readFileSync(new URL("./fixtures/productionFlags20261023.json", import.meta.url), "utf8")) as {
+    flags: Record<string, boolean>; metadata: Record<string, Record<string, unknown>>;
+  };
+  await db.setFlags({ ...fx.flags });
+  for (const [flag, metadata] of Object.entries(fx.metadata)) await db.setFlag(flag, fx.flags[flag] === true, metadata);
+}
+
+/**
+ * census-layover §83 — the traveller's own answers, under production's flag state. With
+ * `layover_constraints_enabled` ON (production since 2026-10-23), a session whose airport change is undeclared is
+ * landside-CLOSED until the traveller answers the dashboard's one question (LayoverConstraintsCard; the creation sheet
+ * sends only `baggageMode`). Under PRESSED_BASE a session is therefore declared the way a traveller who answered would
+ * be — carry-on only (the arithmetic of the default `checkedBags: false`), no recheck, no airport change — through the
+ * real PUT /constraints, unless the case states any constraint itself (then it owns them). Unset base: unchanged.
+ */
+async function declareLikeTheApp(app: PressedApp, user: PressedUser, session: any, over: Record<string, unknown>): Promise<any> {
+  if (PRESSED_BASE === "" || !AUTO_DECLARE) return session;
+  if (["baggageMode", "recheckRequired", "airportChangeRequired"].some((k) => k in over)) return session;
+  const r = await app.call("PUT", `/api/airport/sessions/${session.id}/constraints`, user, { baggageMode: "CARRY_ON_ONLY", recheckRequired: false, airportChangeRequired: false });
+  if (r.status !== 200) throw new Error(`startSession (PRESSED_BASE): the constraints answer was refused: ${r.status} ${r.raw}`);
+  return session;
+}
+
+let AUTO_DECLARE = true;
+/** A suite that tests the constraint store itself (or edits the session booleans it governs) owns every declaration. */
+export function keepConstraintsUndeclared(): void { AUTO_DECLARE = false; }

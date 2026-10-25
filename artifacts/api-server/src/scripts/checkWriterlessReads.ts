@@ -178,13 +178,13 @@ export const KNOWN_WRITERLESS_READS: Record<
 
   // ── HUMAN-CURATED ALLOWLISTS — empty ON PURPOSE, not defects ──────────────
   protected_zones: {
-    readers: 4,
+    readers: 3,
     classification: "human-allowlist",
     note:
       "Migration 2217 says so outright: 'SHIPS EMPTY BY DESIGN: which places are protected is " +
       "a policy decision with a named owner, not a schema decision, and the list of rows is " +
       "itself a map of exactly what it protects.' service_role only. Emptiness is the correct " +
-      "fail-closed default. FOUR readers since 2026-10-17: lib/discoveryTrendProducerPrivacy.ts asks only whether ANY active row exists, and fails closed both ways — an unreadable list blocks the unfiltered trend build (protected_zone_policy_unreadable), and any active zone blocks it until a per-row filter exists (protected_zone_filter_required); only a readable, empty list lets it run.",
+      "fail-closed default. THREE readers since 2026-10-24 (census-map §55: routes/mapProjectionTemporal.ts dropped its private copy and reads through lib/protectedZoneStore.ts; lib/locateFriendsSession.ts keeps an uncached read for live location; pinned by src/test/protectedZoneSingleReader.test.ts). lib/discoveryTrendProducerPrivacy.ts asks only whether ANY active row exists, and fails closed both ways — an unreadable list blocks the unfiltered trend build (protected_zone_policy_unreadable), and any active zone blocks it until a per-row filter exists (protected_zone_filter_required); only a readable, empty list lets it run.",
   },
   // intel_live_promoted_scopes — STRUCK OFF 2026-09-07. Migration 2430 gave it a
   // writer (system_promote/withdraw/expire_intel_live_scope, called only by

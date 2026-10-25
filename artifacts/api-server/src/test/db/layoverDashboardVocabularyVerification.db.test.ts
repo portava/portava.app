@@ -51,7 +51,7 @@ async function brokenDashboardRouter(){
  try{return {router:(await import(pathToFileURL(path).href)).default as express.Router,cleanup:()=>rmSync(directory,{recursive:true,force:true}),sourcePath,original};}catch(error){rmSync(directory,{recursive:true,force:true});throw error;}
 }
 describe("L175/L192 independent acceptance and falsifying controls",{skip:PRESSED_SKIP_REASON},()=>{
- before(async()=>{Date.now=()=>now;db=await openPressedLayoverDb();await productionBaseFlags(db);await db.setFlags({layover_decision_persistence_enabled:true,layover_canonical_snapshot_enabled:true,layover_recommendation_snapshot_enabled:true,layover_recommendation_status_enabled:true});owner=await db.seedUser("dashboard_verify");other=await db.seedUser("dashboard_other");app=await startPressedLayoverApp(db);});
+ before(async()=>{Date.now=()=>now;db=await openPressedLayoverDb();keepConstraintsUndeclared();await productionBaseFlags(db);await db.setFlags({layover_decision_persistence_enabled:true,layover_canonical_snapshot_enabled:true,layover_recommendation_snapshot_enabled:true,layover_recommendation_status_enabled:true});owner=await db.seedUser("dashboard_verify");other=await db.seedUser("dashboard_other");app=await startPressedLayoverApp(db);});
  after(async()=>{Date.now=realNow;await app?.close();await db?.close();});
  it("dashboard main HTTP route publishes one stored evaluation that safety reuses at a later instant",async t=>{
   const sid=(await startSession(app,owner)).id;const start=performance.now(),overview=await app.call("GET",`/api/airport/sessions/${sid}/overview`,owner),writeMs=performance.now()-start;
@@ -100,3 +100,5 @@ describe("L175/L192 independent acceptance and falsifying controls",{skip:PRESSE
   }
  });
 });
+
+import { keepConstraintsUndeclared } from "./pressedLayoverApp.js"; // census-layover §83: this suite owns its constraint declarations under PRESSED_BASE
