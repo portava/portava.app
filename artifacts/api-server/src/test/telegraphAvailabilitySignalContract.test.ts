@@ -365,3 +365,50 @@ describe("the write doors (routes/availabilitySignal.ts)", () => {
     assert.equal(c._store.eta_coordination_grants.filter((g) => g.grantor_id === BEN && g.grantee_id === VIEWER).length, 1, "the other person's grant is theirs");
   });
 });
+
+// ── census-telegraph T26 (lane TELEGRAPH batch 2, 2026-10-23) ─────────────────
+// Appended at the foot so every line the census cites above keeps its number.
+//
+// T26's last remainder read: "under the signal contract (3652, flag off) the skeletons are not served".
+// A skeleton exists only for a person whose ONLY published field was proximity, refused on a zone entry
+// or staleness (§63). If such a person could ever be SHOWN under the contract, dropping their skeleton
+// would make the zone entry observable at poll resolution — the side channel T26 forbids. They cannot:
+// under the contract proximity rides on a published availability signal that admits the viewer, so a
+// person with no published availability is never shown at all, before or after the zone entry. This
+// pins that invariant over every input the contract reads; it is what makes "skeletons are not served
+// under the contract" correct rather than a gap.
+describe("T26 — under the contract nobody is shown on proximity alone, so a dropped skeleton hides no transition", () => {
+  const TIERS: RelationshipTier[] = ["none", "follow", "mutual_follow", "friend", "shared_context", "crew"];
+  const BUCKETS: ProximityBucket[] = ["same_area", "nearby", "same_city", "same_region", "far", "unknown"];
+  const RUNGS = ["HIDDEN", "NEARBY", "DISTANCE_BUCKET", "ETA_IF_MUTUAL"] as const;
+  const AUDS = ["crew_only", "mutual_follow_and_crew", "public"] as const;
+  const SCOPES = [null, "neighborhood", "city", "region"] as const;
+
+  it("every shown person with proximity also has availability published (exhaustive)", () => {
+    let shownWithProximity = 0;
+    for (const tier of TIERS) for (const bucket of BUCKETS) for (const availPub of [true, false])
+      for (const rung of RUNGS) for (const aud of AUDS) for (const scope of SCOPES) for (const opted of [true, false])
+        for (const mutual of [true, false]) {
+          const base = person(ANA, tier, bucket);
+          const p = { ...base, privacy: { ...base.privacy, availabilityPublished: availPub } };
+          const out = applyContractToPerson(p, inputs({
+            optedIn: opted ? new Set([ANA]) : new Set(),
+            signals: new Map([[ANA, signalOf(rung, aud, scope)]]),
+            mutualEta: mutual ? new Set([ANA]) : new Set(),
+          }));
+          if (out && out.privacy.proximityPublished) {
+            shownWithProximity++;
+            assert.equal(out.privacy.availabilityPublished, true, `${tier}/${bucket}/${rung}/${aud}/${scope}: proximity shown without availability`);
+          }
+        }
+    assert.ok(shownWithProximity > 0, "the grid must contain shown people, or the property is vacuous");
+  });
+
+  it("a person whose availability is not published is never shown, whatever their signal and proximity", () => {
+    for (const bucket of BUCKETS) for (const rung of RUNGS) {
+      const base = person(ANA, "crew", bucket);
+      const p = { ...base, privacy: { ...base.privacy, availabilityPublished: false } };
+      assert.equal(applyContractToPerson(p, inputs({ signals: new Map([[ANA, signalOf(rung, "public", null)]]) })), null, `${bucket}/${rung}`);
+    }
+  });
+});

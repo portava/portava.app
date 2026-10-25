@@ -40,7 +40,7 @@ export type ConversationProjectionState =
   | { status: 'unavailable' }
   | {
       status: 'ready';
-      canSendMessage: boolean;
+      canSendMessage: boolean; /** §14.1 canInvite — in a DM, inviting forms a NEW group (census T201). */ canInvite?: boolean;
       /** True when the server said its own answer rests on a failed read. */
       degraded: boolean;
       memberCount: number | null;
@@ -53,7 +53,7 @@ export function toProjectionState(wire: ConversationProjectionWire | null): Conv
   const facts = wire.conversation ?? null;
   return {
     status: 'ready',
-    canSendMessage: wire.capabilities.canSendMessage === true,
+    canSendMessage: wire.capabilities.canSendMessage === true, canInvite: wire.capabilities.canInvite === true,
     degraded: wire.degraded === true || facts?.degraded === true,
     memberCount: typeof facts?.memberCount === 'number' ? facts.memberCount : null,
     isE2ee: typeof facts?.isE2ee === 'boolean' ? facts.isE2ee : null,
@@ -99,4 +99,23 @@ export async function fetchConversationProjection(
   } catch {
     return null;
   }
+}
+
+// ── census-telegraph T201 / T212 (lane TELEGRAPH batch 2) — appended so every cited line keeps its number ──
+/**
+ * Offer "Add people" only on an affirmative, non-degraded answer. In a DM the server grants canInvite
+ * only while group formation is on and the viewer may send; the formation re-checks everything.
+ */
+export function offersAddPeople(state: ConversationProjectionState): boolean {
+  return state.status === 'ready' && state.canInvite === true && !state.degraded;
+}
+
+// ── census-telegraph T406 (lane TELEGRAPH batch 2) — appended so every cited line keeps its number ──
+/**
+ * Offer "Forward" only where it can work: forwarding is on (the server's own flag, read by the app),
+ * and the conversation is affirmatively NOT end-to-end encrypted — the server cannot read an E2EE body
+ * to copy it, so unknown is read as encrypted (offer less). The server re-decides every forward.
+ */
+export function offersForward(forwardingFlagOn: boolean, state: ConversationProjectionState): boolean {
+  return forwardingFlagOn && state.status === 'ready' && state.isE2ee === false && !state.degraded;
 }

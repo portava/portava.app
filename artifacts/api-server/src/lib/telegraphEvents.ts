@@ -439,7 +439,7 @@ function emitDeliveryReceipt(
   if (recipients.size === 0) return;
 
   if (origin === "local" && delivered.size === 0) stats.messagesDeliveredNowhere++;
-  stats.deliveryReceiptsEmitted++;
+  stats.deliveryReceiptsEmitted++; if (delivered.size > 0 && _deliverySink) _deliverySink(event, delivered); // census-telegraph T72/T73: the cursor the receipt claims, persisted (sink set at the foot)
 
   publishToUsersLocalNoReceipt([senderId], {
     type: "message.delivered",
@@ -1057,4 +1057,19 @@ export function terminateScopedConnections(userId: string, scope: ConnectionScop
     }
   }
   return closed;
+}
+
+// ── census-telegraph T72 / T73 (lane TELEGRAPH batch 2) — appended so every cited line keeps its number ──
+// The DELIVERED fact the bus observes is handed to a sink that persists it as the members'
+// `delivered_sequence` (lib/telegraphReceiptCursors.ts). A SINK, not an import, so this in-memory bus
+// takes no database dependency: with no sink registered (tests, scripts) nothing changes. The sink is
+// called only for a POSITIVE delivery, local or replayed from another instance — the instance that
+// holds the socket is the one that saw it.
+type DeliverySink = (event: TelegraphEvent, deliveredTo: ReadonlySet<string>) => void;
+let _deliverySink: DeliverySink | null = null;
+/** Register (or, with null, clear) the delivery sink. Returns the previous one. */
+export function setDeliverySink(sink: DeliverySink | null): DeliverySink | null {
+  const prev = _deliverySink;
+  _deliverySink = sink;
+  return prev;
 }

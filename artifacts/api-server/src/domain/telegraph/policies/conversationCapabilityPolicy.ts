@@ -317,11 +317,11 @@ export async function resolveConversationCapabilities(
   else if (livePrecision === null) deny(d, "canShareExactLocation", "TELEGRAPH_LOCATION_NO_ACTIVE_GRANT");
   else deny(d, "canShareExactLocation", "TELEGRAPH_LOCATION_PRECISION_CEILING");
 
-  // canInvite — §14.3. A DM cannot be extended into a group in place; trip and
-  // circle rosters are owned by the source domain and synced, never invited to
-  // from inside the conversation.
-  deny(d, "canInvite", conversationType === "direct"
-    ? "TELEGRAPH_POLICY_DM_INVITE_FORMS_NEW_GROUP"
+  // canInvite — §14.3. A DM is never extended in place: inviting from a DM FORMS A NEW GROUP (3660, POST
+  // /threads/:id/add-people, census T201). Trip and circle rosters are owned by their source domain and synced.
+  const formation = conversationType === "direct" ? await readFlagState(sc, "telegraph_dm_group_formation_enabled") : "off"; if (formation === "unknown") markDegraded("TELEGRAPH_DEGRADED_SCHEMA_ABSENT");
+  if (conversationType === "direct" && formation === "on" && d.capabilities.canSendMessage) grant(d, "canInvite"); /* the formation re-checks the actor's restriction and EVERY pair of the new roster */ else deny(d, "canInvite", conversationType === "direct"
+    ? (formation === "on" ? (d.reasons.canSendMessage ?? "TELEGRAPH_AUTH_NOT_MEMBER") : "TELEGRAPH_POLICY_DM_INVITE_FORMS_NEW_GROUP")
     : "TELEGRAPH_POLICY_MEMBERSHIP_DERIVED");
 
   // canRequestPayment — §20's prohibition, stated as a capability.
@@ -367,3 +367,5 @@ export async function resolveConversationCapabilities(
 }
 
 export { MOST_PRECISE_LOCATION_LEVEL };
+
+import { readFlagState } from "../../../lib/featureFlags.js"; // census-telegraph T201 (appended at the foot so every cited line keeps its number)

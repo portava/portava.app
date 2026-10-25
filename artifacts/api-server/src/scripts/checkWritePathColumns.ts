@@ -185,7 +185,7 @@ const ALLOWLIST = new Set<string>([
   // `purpose`); read only through lib/locationSharePurpose, which treats an
   // absent column as "every row is legacy". Also carried by
   // checkMissingLiveColumns' allowlist; remove both once 3753's apply is certified.
-  "trip_crew_location_sessions.purpose",
+  "trip_crew_location_sessions.purpose", "message_thread_members.removed_at", // removed_at: 3934 (census-telegraph T389, PR #786), pending its live apply; routes/telegraphGroups.ts writes it beside left_at and, on 42703/PGRST204 naming removed_at, removes with left_at alone (removalRecorded:false). Also carried by checkMissingLiveColumns' allowlist; remove both once 3934 is applied and verified live (line-neutral).
 ]);
 
 // Tables that are not real live relations and should be skipped entirely

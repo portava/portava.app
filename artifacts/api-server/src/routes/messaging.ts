@@ -1696,7 +1696,7 @@ router.post('/threads/:threadId/read', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const boundOn = await historyBoundEnabled(sc);
+  const boundOn = await historyBoundEnabled(sc); const kernelOn = await messageKernelEnabled(sc); // census-telegraph T72: the threshold's sequence, where 2810 is in force
 
   const { data: membership, error: membershipErr } = await sc
     .from('message_thread_members')
@@ -1713,9 +1713,9 @@ router.post('/threads/:threadId/read', async (req, res) => {
   const previous = ((membership as any).last_read_at ?? null) as string | null;
 
   // The threshold: the newest message this member is entitled to have loaded.
-  let newestQuery = sc
-    .from('messages')
-    .select('id, sender_id, created_at')
+  let newestQuery = (kernelOn // two literal select lists, so check:write-path-columns resolves both (census-telegraph T72)
+    ? sc.from('messages').select('id, sender_id, created_at, sequence')
+    : sc.from('messages').select('id, sender_id, created_at'))
     .eq('thread_id', threadId)
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
@@ -1776,7 +1776,7 @@ router.post('/threads/:threadId/read', async (req, res) => {
     return;
   }
 
-  res.status(200).json({ ok: true, threadId, lastReadAt: threshold, advanced: true });
+  void advanceSeenSequence(sc, threadId, user.id, (newestWindowed[0] as any)?.sequence); res.status(200).json({ ok: true, threadId, lastReadAt: threshold, advanced: true }); // census-telegraph T72: seen_sequence follows the marker, forward only
 
   // Realtime: let other members update read receipts for this user. The
   // THRESHOLD is broadcast, not the wall clock — a receipt that named `now()`
@@ -4489,3 +4489,5 @@ function messageReportReasonCode(raw: unknown): ReportReasonCode | null {
 // POST /threads/:threadId/messages — the reply quote in the sender's own 201,
 // built under the thread reader's rules. Declared at the tail so no cited line moves.
 import { replyQuoteForSender } from '../services/telegraph/replyQuote.js';
+
+import { messageKernelEnabled } from '../services/telegraphMessageKernel.js'; import { advanceSeenSequence } from '../lib/telegraphReceiptCursors.js'; // census-telegraph T72 (appended so every cited line keeps its number)

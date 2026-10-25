@@ -260,3 +260,51 @@ describe("§7.2 / T70 — the legacy path is membership-gated, and honest when i
     assert.equal(markerFor(c, DM, A), null, "a marker was written from a read that never happened");
   });
 });
+
+// ── census-telegraph T72 (lane TELEGRAPH batch 2, 2026-10-23) ─────────────────
+// Appended at the foot so every line the census cites above keeps its number.
+// POST /threads/:id/read moves seen_sequence with the marker — to the threshold message's own sequence,
+// and only ever FORWARD (the harness parses PostgREST's `.or()` for real).
+describe("T72 — the read marker advances seen_sequence, forward only", () => {
+  const KERNEL = [{ flag: "telegraph_message_kernel_enabled", enabled: true }];
+  const seq = (n: number) => ({ sequence: n });
+  const seenFor = (c: FakeClient, userId: string) =>
+    (c._store.message_thread_members.find((r: any) => r.thread_id === DM && r.user_id === userId) as any)?.seen_sequence;
+  const settle = () => new Promise((r) => setTimeout(r, 20));
+
+  it("kernel ON: seen_sequence becomes the newest visible message's sequence", async () => {
+    const c = use(store({
+      feature_flags: KERNEL,
+      messages: [
+        msg("11111111-0000-4000-8000-000000000001", DM, B, OLD, seq(1)),
+        msg("11111111-0000-4000-8000-000000000002", DM, B, NEWEST, seq(2)),
+      ],
+    }));
+    const r = await post(harness.base, `/threads/${DM}/read`, A);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    await settle();
+    assert.equal(seenFor(c, A), 2);
+  });
+
+  it("kernel ON: a cursor already PAST the threshold is never moved back", async () => {
+    const c = use(store({
+      feature_flags: KERNEL,
+      message_thread_members: [member(DM, A, { seen_sequence: 9 }), member(DM, B), member(EMPTY, A)],
+      messages: [msg("11111111-0000-4000-8000-000000000002", DM, B, NEWEST, seq(2))],
+    }));
+    const r = await post(harness.base, `/threads/${DM}/read`, A);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    await settle();
+    assert.equal(seenFor(c, A), 9);
+  });
+
+  it("kernel OFF: the sequence is never asked for and seen_sequence is never written", async () => {
+    const c = use(store());
+    const r = await post(harness.base, `/threads/${DM}/read`, A);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    await settle();
+    assert.equal(seenFor(c, A), undefined);
+    const named = c._observed.selects.filter((x: any) => x.table === "messages" || x.table === "message_thread_members").map((x: any) => x.sel);
+    assert.ok(!named.some((sel: string) => /\bsequence\b|seen_sequence/.test(sel)), `a database without 2810 must never be asked for its columns: ${named.join(" | ")}`);
+  });
+});

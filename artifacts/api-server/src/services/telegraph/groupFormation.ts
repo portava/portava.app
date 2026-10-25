@@ -167,7 +167,7 @@ export async function formGroupFromDirect(
   const actorActive = rows.some((r) => r.user_id === req.actorId && r.left_at == null);
   // A non-member learns nothing about the thread — not even that it exists.
   if (!source || !actorActive) return refuse("not_found", "Conversation not found");
-  const sourceType = (source as { thread_type?: string | null }).thread_type ?? "direct";
+  const sourceType = (source as { thread_type?: string | null }).thread_type ?? "direct"; if (String((source as { status?: string | null }).status ?? "active") !== "active") return refuse("forbidden", "This conversation is not active", "source_not_active"); // #786 verifier: canInvite's own rule (TELEGRAPH_POLICY_THREAD_ARCHIVED) — a non-active DM forms no group
   const everActive = rows.filter((r) => r.left_at == null).map((r) => r.user_id);
 
   const nowIso = req.nowIso ?? new Date().toISOString();

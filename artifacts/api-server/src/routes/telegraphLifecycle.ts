@@ -117,11 +117,11 @@ async function memberGate(client: any, threadId: string, userId: string): Promis
  */
 async function readMembers(
   client: any,
-  threadId: string,
+  threadId: string, kernelOn = false,
 ): Promise<{ ok: true; members: ReceiptMember[] } | { ok: false }> {
-  const { data, error } = await client
-    .from("message_thread_members")
-    .select(MEMBER_COLUMNS)
+  const { data, error } = await (kernelOn // two literal select lists (receiptCursorColumns' two answers), so check:write-path-columns resolves both
+    ? client.from("message_thread_members").select(MEMBER_COLUMNS + ", delivered_sequence, seen_sequence")
+    : client.from("message_thread_members").select(MEMBER_COLUMNS))
     .eq("thread_id", threadId);
   if (error) return { ok: false };
   return { ok: true, members: ((data as any[]) ?? []) as ReceiptMember[] };
@@ -166,7 +166,7 @@ router.get(
       return;
     }
 
-    const membersRead = await readMembers(client, threadId);
+    const kernelOn = await messageKernelEnabled(client); const membersRead = await readMembers(client, threadId, kernelOn); // census-telegraph T73: the delivered/seen cursors where 2810 is in force
     if (!membersRead.ok) {
       // A failed member read is not "nobody has seen it" — that would be a
       // receipt asserting a negative it never measured.
@@ -174,9 +174,9 @@ router.get(
       return;
     }
 
-    const { data: rows, error: rowErr } = await client
-      .from("messages")
-      .select(MESSAGE_COLUMNS)
+    const { data: rows, error: rowErr } = await (kernelOn // two literal select lists, so check:write-path-columns resolves both
+      ? client.from("messages").select(MESSAGE_COLUMNS + ", sequence")
+      : client.from("messages").select(MESSAGE_COLUMNS))
       .eq("thread_id", threadId)
       .in("id", ids);
     if (rowErr) {
@@ -212,11 +212,11 @@ router.get(
       threadId,
       receipts, readerFaces: faces.faces, readerFacesDegraded: faces.degraded,
       /**
-       * §7.1 names a DELIVERED state. Nothing on this deployment produces a
-       * delivery signal, so every receipt reports `delivered: null` and says
-       * why, rather than reporting a false it never measured.
+       * §7.1 names a DELIVERED state (census T73). Where the kernel is in force each receipt
+       * derives it from the members' delivered_sequence; where it is not, every receipt reports
+       * `delivered: null` and says why, rather than a false it never measured.
        */
-      deliveredUnavailableReason: DELIVERED_UNAVAILABLE,
+      deliveredUnavailableReason: kernelOn ? null : DELIVERED_UNAVAILABLE,
       /** §7.3's prohibition, stated by the endpoint that could have broken it. */
       receiptStorage: "one row per member per thread; none per message",
     });
@@ -421,7 +421,7 @@ router.post(
       return;
     }
 
-    const gate = await memberGate(client, threadId, user.id);
+    const gate = await memberGate(client, threadId, user.id); const kernelOn = await messageKernelEnabled(client); // census-telegraph T72: the threshold's sequence
     if (!gate.ok) {
       sendError(res, gate.code as any, gate.message);
       return;
@@ -430,9 +430,9 @@ router.post(
     // The threshold message, bound to this thread in the QUERY as well as in
     // the check — two gates, because this one decides what a person may assert
     // about someone else's message.
-    const { data: target, error: targetErr } = await client
-      .from("messages")
-      .select(MESSAGE_COLUMNS)
+    const { data: target, error: targetErr } = await (kernelOn // two literal select lists, so check:write-path-columns resolves both
+      ? client.from("messages").select(MESSAGE_COLUMNS + ", sequence")
+      : client.from("messages").select(MESSAGE_COLUMNS))
       .eq("id", parsed.data.upToMessageId)
       .eq("thread_id", threadId)
       .maybeSingle();
@@ -536,7 +536,7 @@ router.post(
       log.error({ threadId, message: writeErr.message }, "seen marker write failed");
       sendError(res, "db_error", "Could not record that you read this");
       return;
-    }
+    } void advanceSeenSequence(client, threadId, user.id, t.sequence); // census-telegraph T72: seen_sequence follows the marker, forward only
 
     res.status(200).json({
       threadId,
@@ -572,3 +572,5 @@ router.post(
 );
 
 export default router;
+
+import { messageKernelEnabled } from "../services/telegraphMessageKernel.js"; import { advanceSeenSequence } from "../lib/telegraphReceiptCursors.js"; // census-telegraph T72/T73 (appended so every cited line keeps its number)

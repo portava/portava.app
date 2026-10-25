@@ -377,17 +377,32 @@ router.post(
     const targetId = String(req.params.userId);
     if (!(await moderationTarget(res, g.sc, g.thread, g.userId!, targetId))) return;
     const now = new Date().toISOString();
-    const { error } = await g.sc
-      .from("message_thread_members")
-      .update({ left_at: now })
-      .eq("thread_id", g.thread.id)
-      .eq("user_id", targetId)
-      .is("left_at", null);
+    // census T389 (§30A.4, migration 3934): a REMOVAL is recorded as one —
+    // `removed_at` beside `left_at` — so it is never read back as the person
+    // having left. 3934's trigger closes the interval (visible_until_sequence).
+    // A database without 3934 answers 42703 / PGRST204 for the column and has
+    // written nothing (one statement): the member is then removed exactly as
+    // before, left_at alone, and the answer says the removal itself was not
+    // recorded. ANY other error is the refusal it always was — never retried.
+    const removeRow = (withRemovedAt: boolean) => // two literal payloads, so check:write-path-columns resolves both
+      g.sc
+        .from("message_thread_members")
+        .update(withRemovedAt ? { left_at: now, removed_at: now } : { left_at: now })
+        .eq("thread_id", g.thread.id)
+        .eq("user_id", targetId)
+        .is("left_at", null);
+    let removalRecorded = true;
+    let { error } = await removeRow(true);
+    if (error && removedAtAbsent(error)) {
+      removalRecorded = false;
+      req.log?.warn?.({ threadId: g.thread.id }, "message_thread_members.removed_at is absent (3934 not applied): removed with left_at alone");
+      ({ error } = await removeRow(false));
+    }
     if (error) {
       sendError(res, "db_error", "Failed to remove this member");
       return;
     }
-    res.status(200).json({ threadId: g.thread.id, userId: targetId, removedAt: now });
+    res.status(200).json({ threadId: g.thread.id, userId: targetId, removedAt: now, removalRecorded });
   }),
 );
 
@@ -425,3 +440,16 @@ router.get(
 );
 
 export default router;
+
+/**
+ * census T389: the ONE error the removal retries without `removed_at` — the
+ * column is not in this database (3934 not applied). Postgres says 42703,
+ * PostgREST PGRST204; either must NAME the column, so a missing column that is
+ * not this one, a permission error or a lost connection is never mistaken for it.
+ */
+export function removedAtAbsent(err: unknown): boolean {
+  const e = err as { code?: unknown; message?: unknown } | null;
+  if (!e) return false;
+  const code = String(e.code ?? "");
+  return (code === "42703" || code === "PGRST204") && /removed_at/.test(String(e.message ?? ""));
+}
