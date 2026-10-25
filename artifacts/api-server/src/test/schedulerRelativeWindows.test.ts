@@ -364,7 +364,7 @@ describe("the tree as it stands", () => {
   it("every scheduler in the registry has a file, so reachability is not silently empty", () => {
     const tree = readTree();
     assert.deepEqual(tree.ownerless, [], "these start…() functions are listed but no file exports them");
-    assert.equal(tree.owners.size, 67); // Includes the registered layover metrics sampler; exact inventory, not a ceiling.
+    assert.equal(tree.owners.size, 68); // Includes the registered layover metrics sampler and (census-discovery §133) the debug-sample purge; exact inventory, not a ceiling.
     assert.ok(tree.owners.has("startLayoverMetricsScheduler"));
     assert.ok(tree.reachable.size > 100, `only ${tree.reachable.size} files reachable — the import walk is broken`);
   });

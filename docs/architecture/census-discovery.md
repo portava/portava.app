@@ -17634,7 +17634,7 @@ CONSTRUCTED 186 / 188 = **98.9 %**. CORRECT 115 / 188 = **61.2 %**. Twelve rows 
 DV-32, DV-37, DV-40, DV-44, DV-47, DV-53, DV-76, DC-13, DC-18); A01 and DV-54 are restated and stay `W`. These are local
 records on an unmerged branch.
 
-## §132 — 2026-10-23, batch 2: served rows prove the six axes and the §85 stages; DV-70, C19 and DV-42 move W → C; two production defects found under "implementation-complete" rows
+## §132 — 2026-10-23, batch 2: served rows prove the six axes and the §85 stages; C19 and DV-42 move W → C (DV-70 ruled back to W); two production defects found under "implementation-complete" rows
 
 *Lane DISCOVERY, branch `claude/census-disc-b2-20261023`, cut from `claude/census-disc-b1-20261023` (PR #779, §131), because
 this section continues §131's headline. Production and `portava-ci` were read with SELECT and catalog queries only, and
@@ -17822,3 +17822,278 @@ CONSTRUCTED 186 / 188 = **98.9 %**. CORRECT 117 / 188 = **62.2 %**. Two rows mov
 was ruled back to `W` (BLOCKED on the owner's post_media grant decision). Eleven were restated and stay `W` (DV-70,
 DV-54, DC-11, DV-55, DV-51, A21, DV-28, DV-29, DV-33, DC-06, DC-21). These are local records on an unmerged branch
 (#783).
+
+## §133 — 2026-10-23, batch 3: the trend producer keys the places Discovery serves; the graph reads every behaviour pair; the debug-sample purge and the Trail-open event built dark; no row moves
+
+*Lane DISCOVERY, branch `claude/census-disc-b3-20261023`, cut from `claude/census-disc-b2-20261023` (#783) and carrying
+its merge of `origin/main` (669aa51eb), because this section continues §132's headline. Production and `portava-ci`
+were read with SELECT and catalog queries only, 2026-10-23 22:40Z – 2026-10-24 01:30Z. Nothing was written to either
+database and no flag was changed. Every migration below was rehearsed on the local PostgreSQL harness only.
+`head_commit` is not re-declared.*
+
+### 133.1 What was built
+
+**DV-28, DV-29, DV-33, DC-06, DC-21 — the v2 trend context now covers the served places (3920, behind a FALSE flag).**
+§132.3 found the context reading `discovery_places` only, so 0 of the 180 served places had a cell, a city, a content
+class or a peer baseline. 3988 hash-pins the five trend functions and sorts after this lane's band, so patching them
+would make 3988 refuse on a fresh replay. 3920 therefore adds NEW functions only. The canonical context
+(`artifacts/api-server/src/migrations/3920_discovery_trend_canonical_place_context.sql:82#CREATE OR REPLACE FUNCTION public.discovery_trend_place_context_canonical()`)
+is `discovery_places` UNION the active, unmerged `places` rows that no `discovery_places` row shadows, which is the
+materialiser's own precedence. 3988's protected-position filter runs over both, cell labels are chosen across both,
+and D-66's approved-Trail filter applies, as `loadTrendContext` already applied it. A canonical place has no submitter
+column, so its creator is null: no creator peer baseline is claimed for it. The windows, post-group and v2 rebuild
+functions are copied byte for byte from their 3988-reviewed bodies with four textual substitutions. 3920's own
+postcondition proves that equality wherever the originals carry 3988's "after" hash, which production and
+`portava-ci` do (read 2026-10-24). A dispatcher, `rebuild_place_momentum_canonical`, runs today's rebuild unless
+`discovery_trend_canonical_place_context_enabled` reads TRUE. The in-process twin adds the same rows under the same flag
+(`artifacts/api-server/src/lib/discoveryTrendCanonicalContext.ts:57#export async function loadCanonicalContextRows(`),
+and the rebuild scheduler calls the canonical rebuild only while the flag is TRUE. Feature and model versions are
+unchanged, because the per-row contribution is unchanged.
+- **Harness evidence:**
+  - C1: the SQL context equals the REAL `loadTrendContext`, run over a psql adapter, key for key
+    (`artifacts/api-server/src/test/db/discoveryTrendCanonicalContext.db.test.ts:215#it("C1. context parity`).
+  - C2: every stored canonical v2 row equals `computeTrendStates`
+    (`artifacts/api-server/src/test/db/discoveryTrendCanonicalContext.db.test.ts:242#it("C2. every stored canonical v2 row`).
+    An enduring canonical place reads `evergreen`, and a neighbourhood's shared surge is its peer baseline.
+  - C3: a canonical-only cell has a Local Pulse row
+    (`artifacts/api-server/src/test/db/discoveryTrendCanonicalContext.db.test.ts:277#it("C3. Local Pulse`).
+  - C4: the original producer at the same instant still gives those places no cell, so the defect is real on the
+    harness.
+  - C5: the copies equal the installed originals.
+  - C6: an active zone removes a canonical place and its rows.
+  - C7: flag OFF or absent, the dispatcher's run equals `rebuild_place_momentum`'s.
+  - C8: no client role executes any of the five functions. Each REVOKE names one function, so the static twin of 3813's
+    precondition (`memoriesClientBoundary` P-2) sees the copied post-group function, which reads `memories`, revoked.
+  - C9: re-applying is a no-op, and the rollback refuses while the flag is TRUE.
+  - K1–K5 (`src/test/discoveryTrendOps.test.ts`): the scheduler and loader, OFF/absent/unreadable/ON.
+- **Order-independence:** 3920–3923 replayed fresh in byte order (3920 before 3988) and applied on top of the full chain
+  (after 3988, the `portava-ci`/production order), each twice. The five definitions' md5s are identical in both orders,
+  and C1–C9 pass on both databases.
+
+**DV-51 — the graph reads every behaviour pair, completely (3921).** The build's `.limit(5000)` unordered sample and
+the reconcile's capped raw support (§132.3) are replaced by one read-only view, `graph_behavior_observations`
+(`artifacts/api-server/src/migrations/3921_graph_behavior_observations.sql:53#CREATE OR REPLACE VIEW public.graph_behavior_observations`):
+one row per (viewer, item, outcome) with its count, first and last instants and UTC days, ordered by a total key. It is
+`security_invoker`, and SELECT is granted to service_role only. The build pages it to the end
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:839#.from("graph_behavior_observations")`). A read past
+`BEHAVIOR_READ_PAGES` writes no behaviour edge rather than a partial family. The reconcile's support read completes per
+chunk.
+- **Tests:**
+  - V1: a pair beyond any 5,000-row sample is built at its full count.
+  - V2: a chunk whose raw support exceeds the old 10,000-row cap is decided, and the stale intent edge is retired
+    (`artifacts/api-server/src/test/compassGraphDecay.test.ts:431#it("V2 the reconcile decides`).
+  - V3: a bounded read writes no behaviour edge.
+  - G1–G4 on the harness: the view equals its TypeScript mirror column for column
+    (`artifacts/api-server/src/test/db/graphBehaviorObservations.db.test.ts:61#test("G1 parity`).
+- **Mutants**, each killed and restored byte-identical:
+  - M-a: the build back on the raw 5,000-row sample. V1 went red.
+  - M-b: the reconcile back on raw rows under the cap. V2 went red.
+  - M-c: a bounded read returning its partial rows. V3 went red.
+
+**DV-52 — the debug-sample purge has a scheduled caller, OFF (3922).** The 7-day horizon in
+`purge_old_ranking_debug_samples()` is a constant in a backfilled function, not a recorded ruling. D-OWNER1004-1 leaves
+the horizon for `ranking_debug_samples` to the legal review. So the hourly tick
+(`artifacts/api-server/src/lib/rankingDebugSamplePurgeScheduler.ts:106#export async function runDebugSamplePurgeTick(`)
+issues the purge only while `ranking_debug_samples_purge_enabled` reads exactly TRUE. OFF, absent or unreadable issues
+no DELETE and no RPC. The job is reported at `/healthz/schedulers`.
+- **Tests:** R1–R5. R2 covers absent, unreadable and not-exactly-true
+  (`artifacts/api-server/src/test/discoveryServeLogRetention.test.ts:343#it("R2 absent, unreadable`).
+- **Mutants**, each killed:
+  - M-d: anything not FALSE purges. R2 went red.
+  - M-e: an absent flag read as ON. R2 went red.
+  - M-f: the scheduler never started. R5 went red.
+
+**DV-78 — the Trail-open event, server half, OFF (3923).** `04` §4's `trail_open` is one `rank_events` row with no schema
+change (`artifacts/api-server/src/lib/discoveryTrailOpen.ts:141#export async function acceptTrailOpen(`):
+- **The row:** `event_type 'trail_open'`, `outcome 'analytics'` (the sentinel every funnel, momentum and trend reader
+  excludes), `item_id 'trail/<id>'`, surface `discovery`.
+- **Who can write it:** a signed-in viewer only, and only for a Trail D-66 lets them see
+  (`artifacts/api-server/src/test/discoveryTrailOpen.test.ts:159#it("O5. D-66`).
+- **Retries:** idempotent through 2891's arbiter.
+- **The gate:** behind `discovery_trail_open_telemetry_enabled`. OFF, absent or unreadable gives 404
+  `feature_disabled`, and the flag is the only read.
+- **Tests:**
+  - O1–O9: the real router.
+  - W1–W3 on the harness: the row passes every CHECK, a retry lands nothing, and no trend producer reads it.
+- **Mutants**, each killed:
+  - O-m1: no flag check.
+  - O-m2: any non-archived Trail recordable.
+  - O-m3: a clock in the token.
+  - O-m4: the row written as a funnel `tap`.
+- **Not built here: the client emitter** (call `POST /rank-events/trail-open` once per Trail shown). This lane's worktree
+  has no client toolchain installed, so the client typecheck and component suites could not run. The code is
+  BUILDABLE next batch.
+
+**Mutants for 3920**, each killed and restored, with the harness re-applied to the original afterwards:
+- S1: no `discovery_places` precedence. C1–C6 went red.
+- S2: closed and merged places admitted. C1 went red.
+- S3: D-66 dropped. C1 went red.
+- S4: no zone filter. C6 went red.
+- S5: the dispatcher ignores its flag. C7 went red.
+- S6, S7, S8: the windows copy reading the old context, a copy drifting from its original, and a client grant. Each was
+  refused by 3920's own postconditions at apply.
+- S7b: S7 with that check disabled, as on a fresh replay before 3988. C5 went red.
+- S9: the flag seeded TRUE. K5 went red.
+- T1–T4: the TypeScript flag, scheduler, loader and precedence. K1–K3 and C1–C3 went red.
+
+### 133.2 Row moves
+
+None. Every row this batch built still needs a release, a production observation and, for four of them, an owner
+decision. No production row could show the new behaviour yet.
+
+### 133.3 Rows restated
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-28 | W | **W** | **Waiting on release (server deploy):** rumazi.com runs main `4fb0fe5f5`, which carries none of this batch. **Built (§133.1).** The served places are keyed in the v2 context, in SQL (3920) and in process, behind `discovery_trend_canonical_place_context_enabled` (FALSE). C1–C9 and K1–K5. IMPLEMENTATION-COMPLETE; awaits: 3920 applied to production + this branch released + the flag TRUE + one production run in which a served `db/<places.id>` row carries a non-null `cell_key` and a lifecycle other than `unknown`. BLOCKED: owner retention ruling Q11(b) (D-W10-R1-12, D-OWNER1004-1). |
+| DV-29 | W | **W** | As DV-28. A canonical-only cell is stored as Local Pulse on the harness (C3). Awaits as DV-28 + one production `area_momentum` row. BLOCKED: Q11(b). |
+| DV-33 | W | **W** | As DV-28. Awaits as DV-28 + one production explanation carrying a driver code for a served place. BLOCKED: Q11(b). |
+| DC-06 | W | **W** | As DV-28. The location and Trail peers and content age now have inputs for served places. The creator peer cannot for canonical places, which record no submitter; that is stated, not inferred. Awaits as DV-28 + one production row whose `peer_factor` is computed from peers rather than defaulted. BLOCKED: Q11(b). |
+| DC-21 | W | **W** | As DV-28. Trending by location gets cells. Awaits as DV-28 + one production `GET …/trending/areas` answer above the k-floor. BLOCKED: Q11(b). |
+| DV-51 | W | **W** | **Waiting on release (server deploy):** rumazi.com runs main `4fb0fe5f5`, which carries none of this batch. **Built (§133.1):** 3921's complete, ordered behaviour read; V1–V3, G1–G4, M-a–M-c. IMPLEMENTATION-COMPLETE; awaits: 3921 applied to production + this branch released + one production rebuild in which a stale intent edge is retired or decayed. **Read before grading that rebuild:** 373 of production's 383 `behavior:*` edges are `behavior:analytics`, over 7 viewers. Those are the ranker's own telemetry rows (`ranking_item_scored` and the like) folded as behaviour, §55.8's routed finding. The 10 genuine `behavior:tap`/`save` edges belong to ONE viewer. A retirement observed on them is single-viewer evidence and must say so. |
+| DV-52 | W | **W** | **Waiting on release (server deploy):** rumazi.com runs main `4fb0fe5f5`, which carries none of this batch. **Built (§133.1):** the scheduled caller behind `ranking_debug_samples_purge_enabled` (3922, FALSE); R1–R5, M-d–M-f. BLOCKED: owner retention ruling for discovery debug samples (D-OWNER1004-1; AR-W11A-3). Then awaits: 3922 applied + the flag TRUE + one production pass reporting `purged`. |
+| DV-78 | W | **W** | **Waiting on release (server deploy):** rumazi.com runs main `4fb0fe5f5`, which carries none of this batch. **Server half built (§133.1)** behind `discovery_trail_open_telemetry_enabled` (3923, FALSE); O1–O9, W1–W3. The client emitter is the remaining code (BUILDABLE). D-1 Q2's concern does not arise for this shape. D-W10T-6 kept Trail serves out of Discovery's momentum; an `analytics` open is excluded by every momentum, trend and serve reader (W2). BLOCKED, not `C`: recording a Trail open against the viewer's account is new collection, a consent and data-use question in the class of D-W10-O-9, whose request names only the place detail sheet. **Question for the owner:** may Discovery record which Trails a signed-in viewer opens, and under which wording and retention? If yes, it is D-W10-O-9's request with "and which Trails you open" added. Still 5 of 8 in force. |
+
+### 133.4 For the lead
+
+- **Migrations** (band 3920–3929; none is applied anywhere). Each is order-independent and idempotent, with a rollback in
+  `db/rollback/2026-10-23-392N-*`. sha256 values:
+  - `3920_discovery_trend_canonical_place_context.sql`: `13372f8f358e031a009802d349578571c4ac9f912d00a915df2bb902cdf59386`
+  - `3921_graph_behavior_observations.sql`: `87fd348659bfe5de657f4d71474784bd9df12cad22f007d6fa0fd4e5cf3520f1`
+  - `3922_ranking_debug_samples_purge_flag.sql`: `4c65b70e8a0bce92059ea7d4f6ad9f45c127d347bc0334044552358fe1ebe515`
+  - `3923_discovery_trail_open_telemetry_flag.sql`: `6cbe131d9022dc41cc224551bd1db9be43da7e9329324b5887cbbc105902c1d7`
+- **Apply 3921 before this code ships.** Without the view, the graph build fails soft and writes no behaviour edge that
+  pass (the schema-scan fixture records it as fail-soft).
+- **Seeded flags 233 → 236** (the beta bootstrap suite's pin). Layover's #781, now merged, took it 232 → 233.
+- **DV-80**, which the lead runs:
+  `pnpm --filter @workspace/api-server run report:discovery-ecosystem -- --db-url "<production Postgres URL>" --days 7 --json`.
+  It needs `psql` on PATH, and nothing has to be applied first. Every read runs in `BEGIN TRANSACTION READ ONLY` with
+  `default_transaction_read_only=on` and is rolled back. The reads are:
+  - `discovery_stop_measurements(since, until)`, which is STABLE and present in production;
+  - the trace corpus;
+  - the repeats, spam, Trail, page, new-creator and stale SQL in `lib/discoveryEcosystemGovernor.ts`.
+
+  DV-80 moves when every monitor reads `measured` or `insufficient_sample`.
+
+### 133.5 What would turn this red
+
+- C1 or C2 red: the in-process context and the stored run have parted.
+- C5 red after a migration that touches a 3988-pinned function: the copies must be re-derived in the same change.
+- A served row stored by the canonical run with a creator: a submitter was inferred.
+- Any `trail_open` row with an `outcome` other than `analytics`, or one in a trend window.
+
+### 133.6 Headline, restated from the rows
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **117** |
+| BUILT-BUT-WRONG | **69** |
+| NOT-BUILT | **2** |
+| CANNOT-VERIFY | **0** |
+
+CONSTRUCTED 186 / 188 = **98.9 %**. CORRECT 117 / 188 = **62.2 %**. No row moved. Eight were restated and stay `W`
+(DV-28, DV-29, DV-33, DC-06, DC-21, DV-51, DV-52, DV-78). These are local records on an unmerged branch stacked on #783.
+
+## §134 — 2026-10-24, batch 4: ranker telemetry is no longer recorded as the viewer's behaviour; DC-23's fourth read answers "undecided"; no row moves
+
+*Lane DISCOVERY, branch `claude/census-disc-b4-20261024`, cut from `claude/census-disc-b3-20261023` (#790) at
+`3422bdaaf`, because this section continues §133's headline. Production was read with SELECT and catalog queries only,
+2026-10-24. Nothing was written to production or `portava-ci`. No migration is added: band 3924–3929 is unused.
+`head_commit` is not re-declared.*
+
+### 134.1 What was built
+
+**The ranker's own telemetry stops becoming behaviour edges.** Production, read 2026-10-24: 373 of the 383
+`behavior:*` edges in `compass_graph_edges` are `behavior:analytics`, over 7 viewers, with `last_seen` ≤ 2026-08-27,
+plus one `behavior|analytics` node.
+- **Where they come from.** They are the ranker's `ranking_item_scored`, `_eligible` and `_selected` rows (outcome
+  `analytics`). The graph's behaviour family read `outcome <> 'impression'`, so it filed each one as the viewer acting
+  on the item. §55.8 routed this finding.
+- **Whose code it is.** The producer is the behaviour family of `CompassGraphEngine.ts`, which this census grades for
+  DV-51 and watches in `CENSUS_SCOPE`. So it is fixed here.
+- **The build.** It now skips the telemetry sentinel
+  (`artifacts/api-server/src/compass/CompassGraphEngine.ts:844#if (isRankerTelemetryOutcome(r.outcome)) continue;`,
+  same line). `artifacts/api-server/src/compass/CompassGraphEngine.ts:3080#export function isRankerTelemetryOutcome(`
+  defines the sentinel. No new telemetry edge or node is written.
+- **The stored edges.** The reconcile derives support through the build. Left alone, it would find the 373 stored edges
+  unsupported and retire them on the first pass after release, which would delete production rows as a side effect of
+  a deploy. So a stored `behavior:analytics` edge now belongs to no edge family. The reconcile counts it `unclassified`
+  and neither judges, decays nor retires it.
+- **Tests:**
+  - B1 (`artifacts/api-server/src/test/compassGraphDecay.test.ts:472#it("B1 ranker telemetry writes no`): 39
+    telemetry rows across three event types write no edge and no node, and the viewer's own tap is still built.
+  - B2 (`artifacts/api-server/src/test/compassGraphDecay.test.ts:483#it("B2 a stored behavior:analytics`): with
+    decay ON, a stored telemetry edge with weight 86 survives a rebuild unretired and unreweighed, and is counted. A
+    stale February click beside it is still retired.
+- **Mutants**, each killed and restored byte-identical:
+  - M-g: the build reads telemetry as behaviour again. B1 and B2 went red.
+  - M-h: the stored edges judged again, so retired by the deploy. B2 went red.
+- **The suites around it pass unchanged:** decay, revocation (including "every edge the builder writes belongs to a
+  reconciled family") and the intelligence-graph suite, 107 of 107.
+
+**DC-23 — `11` §6's fourth read is served, and it answers what is true**
+(`artifacts/api-server/src/routes/creatorEconomy.ts:113#router.get("/creator-economy/me/payout-eligibility"`).
+- **What `07` §4 gives, and what it leaves open.** It gives a suggested progression and six inputs eligibility "can
+  consider", and no threshold, order or weighting. Those are the owner's decision, W10D-B5.
+- **What the read answers.** Undecided, `eligible: null`, nothing payable, and the pending decision named. It returns
+  the progression and the inputs as vocabulary
+  (`artifacts/api-server/src/services/creators/creatorPayoutEligibility.ts:37#export function payoutEligibilityAnswer(`).
+- **What it does not do.** It reads no input for the caller, so no trust or fraud signal reaches the person it
+  describes, and it invents no rule.
+- **The gate.** Like the other three reads, it is behind `creator_attribution_enabled`. With that flag OFF the answer
+  is `feature_disabled`, never "not eligible".
+- **Tests:** E1–E4 (`artifacts/api-server/src/test/creatorPayoutEligibility.test.ts:72#it("E3. ON ⇒ undecided`), over
+  the real router.
+- **Mutants**, each killed:
+  - M-i: the gate skipped. E1 and E3 went red.
+  - M-j: a verdict invented (`eligible: false`). E3 and E4 went red.
+  - M-k: an input read for the caller. E3 went red.
+
+### 134.2 Row moves
+
+None.
+
+### 134.3 Rows restated
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-51 | W | **W** | **Ranker telemetry is no longer behaviour (§134.1).** Together with §133's complete read, the behaviour family is now built only from what viewers did. **Waiting on release (server deploy):** rumazi.com runs `4fb0fe5f5`, which carries neither §133 nor §134. Then awaits: 3921 applied + one production rebuild that retires or decays a stale GENUINE intent edge. Production has 10 such edges (`behavior:tap` ×9, `behavior:save` ×1), all ONE viewer's, so that evidence will be single-viewer and must say so. The 373 held telemetry edges are not evidence either way (§134.4). |
+| DC-23 | W | **W** | **All four `11` §6 reads are now served**, the fourth answering `undecided` (§134.1). BLOCKED: owner decision W10D-B5 (the thresholds) + `creator_attribution_enabled`, FALSE under C-11. **Waiting on release (server deploy)** for the fourth read. |
+| DV-41 | W | **W** | **Not built in batch 4, and why.** The planned item was opt-in enforcement for the case the owner rules an opt-in is required. D-OWNER1004-3 keeps dwell OFF until a privacy notice is written and approved, and records that whether the consent model "also needs an opt-in built" is **unknown**. An opt-in store, its default, its withdrawal and its wording ARE that consent model, so building one would decide it. It would also add a dark path that moves nothing, the lead's ground for leaving DV-78's client half (2026-10-24). **Corrected:** §131.4 read `discovery_dwell_telemetry_enabled` TRUE in production. It has been FALSE since 2026-10-23 21:39:49Z (read 2026-10-24), as D-OWNER1004-3 requires, and no dwell row exists. BLOCKED: D-OWNER1004-3's approved privacy notice. |
+| DV-67 | W | **W** | **Not built in batch 4, and why.** Carrying the served `recommendation_id` from the buddy card into the booking needs a `rent_buddy_bookings` column, the Rent-a-Buddy booking route (watched by the layover, passport, trips, trust and wall censuses, not this one) and the client booking flow. A caller that passes a recommendation is also what W10D-B7 (`11` §7's ingestion) decides, inside a credit window W10D-B3 has not set, and the ledger is held under C-11. Recorded and skipped, under the rule the lead set for code another census owns. BLOCKED: C-11 + W10D-B7 + W10D-B3. |
+| DV-63 | W | **W** | **Not built in batch 4, and why.** What remains is the erasure half: the retention anchor (a fiscal year-end per jurisdiction) and the purge. Both are legal rules, and the code that would carry them is #592's retain-pseudonymised 3513, an open PR marked DO NOT MERGE that pseudonymises ledger data. That is held, so nothing is built on top of it. BLOCKED: C-11 legal confirmation (W10D-B0). |
+
+### 134.4 For the lead and the owner
+
+- **The 373 stored `behavior:analytics` edges.** The released code will leave them exactly as they are: no rewrite, no
+  retirement, no decay. No reader consumes `behavior:*` edges (§55.8), so they affect nothing served. Removing them is
+  a data migration for the owner to approve. It was NOT written as a migration file, so no applier can pick it up:
+
+  ```sql
+  -- proposal only; owner-approved data migration; production counts read 2026-10-24
+  DELETE FROM public.compass_graph_edges
+   WHERE src_type = 'person' AND dst_type = 'place' AND edge_type = 'behavior:analytics';   -- 373 rows, 7 viewers
+  DELETE FROM public.compass_graph_nodes WHERE node_type = 'behavior' AND node_key = 'analytics';   -- 1 row
+  ```
+
+  These rows are derived, and no source can rebuild them, because the build no longer reads telemetry. A backup copy
+  (`CREATE TABLE … AS SELECT`) before the delete is the only way back. After the cleanup the classification hold is
+  inert.
+- **No flag and no migration in this batch.** The seeded-flag pin is unchanged by batch 4.
+
+### 134.5 What would turn this red
+
+- A `behavior:analytics` edge written by a rebuild (B1), or one retired or reweighed without the owner's cleanup (B2).
+- A payout-eligibility answer that names a verdict, a number, or an input read for the caller (E3, E4).
+
+### 134.6 Headline, restated from the rows
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **117** |
+| BUILT-BUT-WRONG | **69** |
+| NOT-BUILT | **2** |
+| CANNOT-VERIFY | **0** |
+
+CONSTRUCTED 186 / 188 = **98.9 %**. CORRECT 117 / 188 = **62.2 %**. No row moved. Five were restated and stay `W` (DV-51,
+DC-23, DV-41, DV-67, DV-63). These are local records on an unmerged branch stacked on #790.
