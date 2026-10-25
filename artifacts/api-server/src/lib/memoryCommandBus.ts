@@ -554,7 +554,7 @@ export type MemoryKernelReason =
   | "MEMORY_NOT_FOUND"
   | "MEMORY_ITEM_NOT_FOUND"
   | "MEMORY_TAG_NOT_FOUND"
-  | "MEMORY_AUTH_NOT_OWNER" | "MEMORY_AUTH_NOT_MODERATOR" // 3912: MODERATION_RESTORE_MEMORY's actor holds no admin role
+  | "MEMORY_AUTH_NOT_OWNER" | "MEMORY_AUTH_NOT_MODERATOR" | "MEMORY_AUTH_BLOCKED" // 3912: MODERATION_RESTORE_MEMORY's actor holds no admin role; 3913: consent across a block — INTERNAL, rendered as a missing tag
   | "MEMORY_AUTH_NOT_PARTICIPANT"
   // §24 reason codes for the Highlight aggregate. SEPARATE from the Memory
   // ones on purpose: the audit row and the metric must say which aggregate
@@ -852,6 +852,8 @@ export function sendMemoryCommandRejection(
     case "MEMORY_ITEM_NOT_FOUND":
       res.status(404).json({ error: "not_found", message: "Item not found", reason: r.reason });
       return;
+    case "MEMORY_AUTH_BLOCKED": // 3913, INTERNAL-ONLY: the wire must not say "blocked" (TRIP_AUTH_BLOCKED's rule), so it is a missing tag, with no reason field
+      res.status(404).json({ error: "not_found", message: "Tag not found" }); return;
     case "MEMORY_TAG_NOT_FOUND":
       res.status(404).json({ error: "not_found", message: "Tag not found", reason: r.reason });
       return;

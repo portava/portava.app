@@ -65,8 +65,8 @@
  *   - `memory_search` is a deterministic query over canonical `memories`, not
  *     §15's derivative-backed `services/memoryRetrieval/searchMemories.ts`. That
  *     module reads registered derivatives out of `memory_derivative_registry`,
- *     which is migration 2730 and unapplied, so it cannot serve a production
- *     request. H110–H114 are unmoved by this file.
+ *     which is migration 2730 (applied in production 2026-09-15; this tool still does
+ *     not read it). H110–H114 are unmoved by this file.
  *   - There is no merge and no split to propose. MERGE_MEMORY and SPLIT_MEMORY
  *     are undeclared commands (`lib/memoryCommandBus.ts`
  *     `MEMORY_COMMAND_TYPES_NOT_DECLARED`), so `suggestMemoryCorrection` is the
@@ -81,7 +81,7 @@ import { wrapUgc } from "./CompassStructuredContext.js";
 import { getLiveVenueStatus, liveVenueAnchorOf } from "../lib/liveIntelligence.js";
 import { readMemoryPrecisionGate, precisionColumnSelectable, precisionClampApplies } from "../lib/memoryPrecisionGate.js";
 import { memoryPlaceLabelsForNonOwner } from "./memoryPlaceLabels.js";
-import { publicationPrecision } from "../lib/memoryLocationPrecision.js";
+import { publicationPrecision } from "../lib/memoryLocationPrecision.js"; import { loadAudienceCeilings, rowAtNonOwnerRung } from "../services/memory/memoryVisibilityPolicies.js"; // census-highlights-memories §CD (H33): the owner's per-audience ceiling
 import {
   canCompassReadMemory,
   acceptedCrewOfTrip,
@@ -97,7 +97,7 @@ import {
   type HistoricalFact,
 } from "../services/memory/historicalTruth.js";
 import { guardMemoryRows } from "../services/memory/memoryReaderGuard.js"; // census H48 H49 H73 H87 H187 H188 H210 (RECON-W A1): the owner's per-Memory controls
-import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; // census H80: a photo the owner keeps to themself
+import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { placeKnownToViewer, personKnown } from "../services/memory/memorySearchService.js"; // census H80: a photo the owner keeps to themself; census-highlights-memories §CD (H262): §28.3, one place/person rule with the Memory search
 
 const log = rootLogger.child({ mod: "memoryCompassTools" });
 
@@ -173,7 +173,7 @@ async function withPlaceLabelsForViewer(sc: SupabaseClient, rows: any[], viewerI
   if (others.length === 0) return rows;
   const gate = await readMemoryPrecisionGate(sc);
   const clamp = precisionClampApplies(gate);
-  if (!clamp) return rows;
+  const ceilings = await loadAudienceCeilings(sc, others); if (!clamp && ceilings.state === "off") return rows; // §CD (H33): the owner's ceiling for the Memory's audience applies with the §10 gate off too; unreadable is `hidden`
   const rungs = new Map<string, unknown>();
   if (precisionColumnSelectable(gate)) {
     const ids = [...new Set(others.map((r) => String(r.id)))].slice(0, CANDIDATE_SCAN_LIMIT);
@@ -187,12 +187,12 @@ async function withPlaceLabelsForViewer(sc: SupabaseClient, rows: any[], viewerI
   return rows.map((r) => {
     if (r?.owner_id === viewerId) return r;
     const { location_precision: _unread, ...base } = r ?? {};
-    const withRung = rungs.has(String(r.id)) ? { ...base, location_precision: rungs.get(String(r.id)) } : base;
-    const { city, country } = memoryPlaceLabelsForNonOwner(withRung, clamp);
+    const withRung = rungs.has(String(r.id)) ? { ...base, location_precision: rungs.get(String(r.id)) } : base; const atRung = rowAtNonOwnerRung(withRung, clamp, ceilings); // §CD (H33): §10's rung, never finer than the owner's ceiling
+    const { city, country } = memoryPlaceLabelsForNonOwner(atRung, true);
     // A place, a canonical location or an event names a VENUE: served only at
     // the `exact` or `venue` rung, with the same failure direction as the words
     // (unreadable gate or label -> 'hidden' -> none). census-compass §48.
-    const rung = publicationPrecision(withRung, clamp);
+    const rung = publicationPrecision(atRung, true);
     const venue = rung === "exact" || rung === "venue";
     const had = (v: unknown) => (typeof v === "string" && v.trim().length > 0) || (typeof v === "number");
     const venueIdsWithheld = !venue && (had(base.place_id) || had(base.canonical_location_id) || had(base.event_id));
@@ -489,7 +489,7 @@ async function toolMemorySearch(sc: SupabaseClient, viewerId: string, args: Reco
     // Named so nobody reads this as §15's retrieval. It is not.
     retrieval: "deterministic_token_overlap_over_canonical_rows",
     ceiling:
-      "No semantic index and no §15 derivative was consulted: memory_derivative_registry (migration 2730) is not applied, so there is no registered derivative to read.",
+      "No semantic index and no §15 derivative was consulted: this tool matches the user's own canonical rows by keyword. The registered derivatives (memory_derivative_registry, migration 2730, applied) are read by Memory search, not by this tool.", // census-highlights-memories §CD: the old text said 2730 was unapplied; production applied it 2026-09-15
     ...(scored.length === 0 ? { info: "No Memory in the user's own history matches that." } : {}),
   };
 }
@@ -506,7 +506,7 @@ async function toolMemoryGetShared(sc: SupabaseClient, viewerId: string, args: R
 
   let personId = idArg;
   let personHandle: string | null = handleArg || null;
-  if (!personId) {
+  if (personId && (await personKnown(sc, personId)).state !== "known") return opaque; if (!personId) { // §CD (H262): an id that is no person is not answered as "nothing shared"
     const { data, error } = await sc.from("profiles").select("id, handle").ilike("handle", handleArg).maybeSingle();
     if (error || !data) return opaque;
     personId = String((data as any).id);
@@ -571,8 +571,8 @@ async function toolMemoryGetPlaceHistory(sc: SupabaseClient, viewerId: string, a
   const nowMs = Date.now();
   const rows = history.rows
     .filter((r) => (placeId ? String(r.place_id ?? "") === placeId || String(r.canonical_location_id ?? "") === placeId : true))
-    .filter((r) => (city ? String(r.location_city ?? "").toLowerCase().includes(city) : true))
-    .slice(0, MAX_RESULTS);
+    .filter((r) => (city ? sameCity(r.location_city, city) : true)) // §CD (H262): the city the user named, exactly — never a substring ("san" is not San Francisco)
+    .slice(0, MAX_RESULTS); if (placeId && rows.length === 0) { const known = await placeKnownToViewer(sc, viewerId, placeId); if (known.state === "unreadable") return refuse("The user's places could not be checked right now. Say that it could not be looked up."); if (known.state === "unknown") return refuse(PLACE_NOT_KNOWN); } // §CD (H262): a place the readable history does not carry must be a catalog place or the user's own; otherwise it is "not known", never an empty history
 
   const visits = rows.map((r) => toMemoryFact(r, viewerId, nowMs));
 
@@ -1110,4 +1110,16 @@ export async function executeMemoryCompassTool(
     case "memory_suggest_correction":  return toolMemorySuggestCorrection(sc, userId, args);
     default:                           return refuse(`Unknown Memory tool: ${name}`);
   }
+}
+
+// ── census-highlights-memories §CD (H262): §28.3 on the Compass memory tools ──
+// Appended at the foot so no cited line above moves.
+const PLACE_NOT_KNOWN =
+  "That place is not known: it is not a catalog place, and no Memory or correction of the user's names it. Nothing similar was looked up in its place. Say so; do not guess which place they meant.";
+
+/** The same city, compared as text the user would recognise as the same: case, accents' composition and outer space ignored — never a substring. */
+function sameCity(stored: unknown, named: string): boolean {
+  const norm = (v: unknown) => String(v ?? "").normalize("NFC").trim().toLowerCase();
+  const a = norm(stored);
+  return a.length > 0 && a === norm(named);
 }

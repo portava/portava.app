@@ -7224,3 +7224,37 @@ red) and 3912 without the patch guard (R7 red).
 
 **Rollback.** `db/rollback/2026-10-24-3912-memory-kernel-item-visibility-and-moderation-restore-rollback.sql`
 re-creates 3911's definition verbatim with its grants, then delete 3912's ledger row. The routes' compat arms take over.
+
+## 2026-10-24 — `3913_memory_kernel_tag_block_gate.sql`, written and NOT applied anywhere (census drive, Highlights & Memories batch 4)
+
+**What it is.** A `CREATE OR REPLACE` of `public.memory_kernel_execute(jsonb)`: 3912's function byte for byte, plus the
+block gate on tagging (census-highlights-memories §CD):
+
+1. **CREATE_MEMORY** never tags a person the owner has blocked, or a person who has blocked the owner
+   (`public.blocks`, either direction). Such a person is SKIPPED, as an id with no profile is (3911): the create
+   succeeds, and the answer and `memory.created` name only the people actually tagged. Skipped, not refused, because a
+   refusal would tell the owner about another person's block.
+2. **ADD_PERSON** (a tagged person's consent) across a block is refused with the INTERNAL reason `MEMORY_AUTH_BLOCKED`,
+   audited. The API answers it byte for byte as a tag that does not exist (404 "Tag not found", no reason on the wire).
+   REMOVE_PERSON is never gated.
+
+The gate is one predicate inside the command's transaction: a blocks table that cannot be read raises, and the whole
+command rolls back. The signature, SECURITY INVOKER, the pinned `search_path`, the grants and every other branch are
+3912's. No table, column, row or flag is touched.
+
+**Order.** After 3911 and 3912. The `$pre$` block refuses a kernel without 3912's commands (and requires
+`public.blocks (blocker_id, blocked_id)`), so 3913 can never discard 3911's or 3912's writes. The postcondition checks
+both gate markers.
+
+**Order-independent with the API.** The API filters blocked people out of a create, a trip memory and a consent
+BEFORE it calls any kernel, and `notifyTagged` re-checks before it writes a notification or sends a push. So with 2711,
+3911, 3912 or 3913 installed, and in either deploy order, nobody blocked is tagged or notified once the API ships.
+3913 is the same rule held by the database for every other caller.
+
+**Proofs.** `src/test/db/memoryTagBlockGate.db.test.ts`, 40/40: G1–G4, R1 and F1–F4 on all four kernels (both block
+directions; the notification and the push; an unreadable blocks table), K1–K3 on 3913 called directly, H1 for the
+wire. 10 TypeScript and 7 SQL mutants of the gate, all killed (census §CD.3).
+
+**Rollback.** `db/rollback/2026-10-24-3913-memory-kernel-tag-block-gate-rollback.sql` re-creates 3912's definition and
+comment verbatim with its grants (measured: md5 `207e80ff…`, comment md5 `fe1d33b5…`), then delete 3913's ledger row.
+The API's own gate keeps holding.

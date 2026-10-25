@@ -8023,7 +8023,7 @@ Lane N7's section, appended after lane R's §AE under the same label, is renumbe
   So with the gate on, an owner's `country` or `hidden` rung was ignored on both, and with the gate unreadable nothing clamped. Both now do four things:
   - read the gate through `readMemoryPrecisionGate`;
   - name `location_precision` only when the gate is definitely on (`artifacts/api-server/src/services/telegraph/shareables.ts:651#const precisionGate = await readMemoryPrecisionGate(client);`, `artifacts/api-server/src/routes/wellKnownShare.ts:534#const precisionGate = await readMemoryPrecisionGate(sc);`);
-  - take their words from `memoryPlaceLabelsForNonOwner(row, precisionClampApplies(gate))` (`artifacts/api-server/src/services/telegraph/shareables.ts:694#memoryPlaceLabelsForNonOwner(r, precisionClampApplies(precisionGate)).city`, `artifacts/api-server/src/routes/wellKnownShare.ts:541#const place = memoryPlaceLabelsForNonOwner`). That helper applies the stricter of the owner's rung and the gem ceiling, exactly as `protectMemoryRow` does;
+  - take their words from `memoryPlaceLabelsForNonOwner(row, precisionClampApplies(gate))` (`artifacts/api-server/src/services/telegraph/shareables.ts:694#memoryPlaceLabelsForNonOwner(rowAtNonOwnerRung(r, precisionClampApplies(precisionGate)`, `artifacts/api-server/src/routes/wellKnownShare.ts:541#const place = memoryPlaceLabelsForNonOwner`). That helper applies the stricter of the owner's rung and the gem ceiling, exactly as `protectMemoryRow` does;
   - clamp to no city and no country when the gate is unreadable, or when the label is absent, null or off the ladder.
 
   Nothing changes for the owner's own card, or when the gate is definitely off. Cases: `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:827#a Memory's city takes the §10 precision gate` (seven), including `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:856#gate UNREADABLE: the card still resolves`. The share-landing-page suite adds five more, and the helper's own suite four, one of which pins that no gem sensitivity is stricter than the ceiling the helper assumes. Mutants P1–P5, W1, W2, L1 and G1 are killed. W3 (the preview's row-read error ignored) survives as an equivalent: supabase-js returns `data: null` with every error, so the absent-row branch already answers it. No row here grades these two surfaces. `compass/MemoryCompassTools.ts` still serves `location_city`/`location_country` to non-owners without the rung, and says so itself; that file is Compass's, so it is recorded here and not changed.
@@ -10212,4 +10212,169 @@ be evidence rows rather than build rows. That needs measuring.
 
 No row moves. 266 = 109 C / 152 W / 3 N / 2 X, unchanged from §CB.7.
 - NOT-GRADED: artifacts/api-server/src/lib/inputAssistance/memoryContext.ts — §CC.4 names it as a lead to measure for H169/H243 in a later batch; no row rests on it.
+
+## §CD — 2026-10-24 (census drive, lane HIGHLIGHTS & MEMORIES, batch 4): the block gate on tagging (migration 3913, written and NOT applied), §28.3 on every place surface, the owner's ceilings on four more surfaces, and four rows move W → C (H29, and three of #784's nine now that it is deployed)
+
+*Measured on branch `claude/census-hm-b4-20261024`, cut from batch 3 (`d0f575242`, PR #787). `head_commit` is not
+re-declared. This section changes product code and adds one migration, **written and NOT applied anywhere**. Four
+rows move, on production evidence: H29 on a lead ruling, and three of the nine rows #784 left waiting on release, now
+that its code and its kernel are both on production. Everything this section builds is restated below with what it
+waits on.*
+
+### §CD.1 What changed
+
+| write, read or gap | before | now |
+| --- | --- | --- |
+| a create's participants (POST /memories, POST /trips/:tripId/memory, the kernel's CREATE_MEMORY) | each named person was tagged PENDING without asking whether they and the owner had blocked each other (§CB's finding) | a person the owner blocked, or who blocked the owner, is SKIPPED: the API filters them out before any kernel is called (`artifacts/api-server/src/routes/memories.ts:516#const tagGate = await tagsNotBlocked(sc, user.id, d.taggedUserIds);`, `artifacts/api-server/src/routes/memories.ts:2776#const crewGate = await tagsNotBlocked(`), and 3913's kernel holds the same rule for every other caller (`artifacts/api-server/src/migrations/3913_memory_kernel_tag_block_gate.sql:380#AND NOT EXISTS (SELECT 1 FROM public.blocks b`). Skipped, not refused: a refusal would tell the owner about someone else's block |
+| a tagged person's consent (ADD_PERSON) | approvable across a block | refused before the kernel (`artifacts/api-server/src/routes/memories.ts:2486#const consentGate = await tagsNotBlocked(`) and inside it (`artifacts/api-server/src/migrations/3913_memory_kernel_tag_block_gate.sql:508#IF v_type = 'ADD_PERSON' AND v_status <> 'removed' AND EXISTS (`, internal reason `MEMORY_AUTH_BLOCKED`, audited). Both answers are byte-identical to a tag that does not exist (`artifacts/api-server/src/lib/memoryCommandBus.ts:855#case "MEMORY_AUTH_BLOCKED":`). REMOVE_PERSON is never gated |
+| the tag notification and push (`notifyTagged`) | written to whoever was tagged | nobody blocked either way is notified or pushed, and an unreadable blocks table notifies nobody (`artifacts/api-server/src/routes/memories.ts:354#const notifyGate = await tagsNotBlocked(sc, memory.owner_id, [taggedUserId]);`). The block read is the platform's canonical set reader, both directions, fail closed (`artifacts/api-server/src/routes/memories.ts:3979#async function tagsNotBlocked(`, over `lib/exclusionSet.ts` `readBlockExclusions`). An unreadable blocks table refuses the create, the trip memory and the consent BEFORE any write (503) |
+| §28.3 on the Compass Memory tools and GET /memories/places/:placeId (H262's two named gaps) | the place history answered an unknown place id as an empty history and matched a city by substring; the shared tool answered an id that is nobody as "nothing shared"; the route answered an unknown place as an empty history | ONE rule (`artifacts/api-server/src/services/memory/memorySearchService.ts:938#export async function placeKnownToViewer(`): a catalog place, a reference on one of the viewer's own live Memories, or a place the owner asserted through a correction. Anything else is "not known", on the search (`artifacts/api-server/src/services/memory/memorySearchService.ts:912#const known = await placeKnownToViewer(sc, viewerId, placeId);`), the Compass place history (`artifacts/api-server/src/compass/MemoryCompassTools.ts:575#if (placeId && rows.length === 0)`) and the route (`artifacts/api-server/src/routes/memories.ts:1517#const knownPlace = await placeKnownToViewer(sc, user.id, placeId);`). A city is matched exactly (`artifacts/api-server/src/compass/MemoryCompassTools.ts:1121#function sameCity(`); an id with no profile is the same opaque refusal as a hidden person (`artifacts/api-server/src/compass/MemoryCompassTools.ts:509#if (personId && (await personKnown(sc, personId)).state !== "known") return opaque;`). A read that fails is retryable, never "unknown" |
+| the owner's per-audience ceiling (H33) on the Compass Memory tools, the anonymous share card, the Telegraph Memory card and the action menu | each applied §10's per-Memory rung alone, so a `public` ceiling of `country` still let a public Memory's city and venue out through them | one composition (`artifacts/api-server/src/services/memory/memoryVisibilityPolicies.ts:245#export function rowAtNonOwnerRung<`), applied at each: `artifacts/api-server/src/compass/MemoryCompassTools.ts:190#const atRung = rowAtNonOwnerRung(withRung, clamp, ceilings);`, `artifacts/api-server/src/routes/wellKnownShare.ts:541#rowAtNonOwnerRung(data`, `artifacts/api-server/src/services/telegraph/shareables.ts:694#rowAtNonOwnerRung(r,`, and the action menu (`artifacts/api-server/src/services/memory/memoryActionService.ts:421#const ceilings = await loadAudienceCeilings(sc, [memory]);`). An unreadable ceiling is `hidden` (the action menu: a could-not-check). It holds with §10's gate off |
+| the Compass `memory_search` answer's `ceiling` text | told the model that 2730 is not applied | states what the tool does; 2730 has been applied in production since 2026-09-15 |
+
+**Order.** 3913 carries 3912's function forward and its `$pre$` refuses a kernel without 3912's commands, so it is
+applied AFTER 3911 and 3912. The API side is order-independent: it filters blocked people before calling any kernel,
+so on 2711, 3911, 3912 or 3913 — and in either deploy order — nobody blocked is tagged, consents or is notified once
+this API ships (G, R and F below run on all four). Rollback:
+`db/rollback/2026-10-24-3913-memory-kernel-tag-block-gate-rollback.sql` re-creates 3912's definition and comment
+(measured after rollback: md5 `207e80ff…`, comment md5 `fe1d33b5…`).
+
+### §CD.2 Production state, measured (read-only, 2026-10-24)
+
+- **Kernel.** `memory_kernel_execute` on production is **3911** (md5 `5e42fd46…`, comment `1df4c03d…`; ledger
+  checksum `b2a88293…` = the tree's file; applied 08:12Z, ledger row 831). #784 is merged as `9d5f6d481`, and
+  production serves it since about 08:25Z (the lead's release measurement; unauthenticated GETs: `/api/healthz` 200,
+  `/api/memories` 401). The tree of `9d5f6d481` is identical to #784's head `9c5820184` (`git diff` is empty). 3912
+  and 3913 are applied nowhere.
+- **Release reference (lead correction, 2026-10-24).** Client code counts as on production only in the owner's
+  installed device build: 259224e31 (2026-10-23 10:23Z; main `bfc8142c5` + #776). Server: rumazi.com serves main at
+  `9d5f6d481` (#784).
+- **Blocks.** `public.blocks (id, blocker_id, blocked_id, created_at)`, all NOT NULL — what 3913's `$pre$` requires.
+- **Memory activity.** 0 rows in `memory_domain_events`, `memory_event_outbox`, `memory_command_receipts` and
+  `memory_derivative_registry`; the newest of the 80 Memories was created 2026-07-07 (fixtures). 0
+  `input_memory_context_consent` rows.
+- **Flags** (TRUE): `memory_kernel_enabled`, `push_notifications_enabled`, `input_memory_context_enabled`,
+  `memory_projection`, `memory_visibility_policies_enabled`, `memory_shared_experiences_enabled`.
+- **Storage** (ledger checksum = the tree's sha256): 2710 `303d8a98…`, 2730 `9cd4fb95…`, 3673 `d1be17de…`, 3782
+  `ea875c83…`, 3997 `bc49dfc7…`. `memory_command_receipts` has the unique key `(actor_user_id, idempotency_key)`, and
+  production's kernel writes it (`INSERT INTO public.memory_command_receipts` is in the installed definition).
+
+### §CD.3 The new evidence
+
+`artifacts/api-server/src/test/db/memoryTagBlockGate.db.test.ts`, 40/40 on the full chain, through the real router
+over HTTP. Pushes go to a stub (`lib/push.ts` `_setTestFetch`); nothing leaves the machine. Groups G, R and F run on
+FOUR kernels — 2711 (3911's rollback), 3911 (production's, from 3912's rollback), 3912 (3913's rollback) and the
+tree's 3913 — and each group puts back the definition and comment it found:
+
+- **G1–G4** (`artifacts/api-server/src/test/db/memoryTagBlockGate.db.test.ts:231#G1[`): a create, a trip memory and a
+  consent across a block in BOTH directions (the owner blocked A; B blocked the owner). Only the unblocked person is
+  tagged, notified and pushed; neither blocked person's push token is even read; a consent across a block is answered
+  with the bytes of a missing tag and leaves no event or receipt; removing a tag across a block works.
+- **R1** (`artifacts/api-server/src/test/db/memoryTagBlockGate.db.test.ts:294#R1[`): `notifyTagged`'s own gate — a block
+  made, in either direction, between the tag and the notification stops the notification and the push.
+- **F1–F4** (`artifacts/api-server/src/test/db/memoryTagBlockGate.db.test.ts:316#F1[`): the blocks table unreadable —
+  the create, the trip memory and the consent refuse before any write; `notifyTagged` notifies and pushes nobody.
+- **K1–K3** (`artifacts/api-server/src/test/db/memoryTagBlockGate.db.test.ts:379#K1 CREATE_MEMORY`): 3913 called
+  directly — CREATE skips both directions, ADD_PERSON is refused `MEMORY_AUTH_BLOCKED` and audited, REMOVE_PERSON is not
+  gated.
+- **H1** (`artifacts/api-server/src/test/db/memoryTagBlockGate.db.test.ts:172#H1 sendMemoryCommandRejection`): the
+  kernel's refusal reaches the wire exactly as `sendError(not_found, "Tag not found")`.
+
+H262: `memoryCompassTools.test.ts` (`artifacts/api-server/src/test/memoryCompassTools.test.ts:984#§28.3 (H262)`) and
+`memoryCorrections.test.ts` (`artifacts/api-server/src/test/memoryCorrections.test.ts:1307#§28.3 (H262) GET /memories/places/:placeId`).
+H33: `artifacts/api-server/src/test/memoryCompassTools.test.ts:1041#§3.6 / §28.7 (H33)`,
+`artifacts/api-server/src/test/wellKnownShare.test.ts:812#never finer than the owner's`,
+`artifacts/api-server/src/test/telegraphShareReadGates.test.ts:884#never finer than its owner's ceiling`,
+`artifacts/api-server/src/test/memoryActions.test.ts:733#§3.6 / §28.7 (H33)`.
+
+| mutant | result |
+| --- | --- |
+| the create's gate dropped · the trip crew's gate dropped · the consent gate dropped | G1 · G2 · G3 red, each on 2711, 3911 and 3912 (on 3913 the kernel holds it) |
+| `notifyTagged`'s gate dropped · it fails OPEN on an unreadable read | R1 + F4 on all four kernels · F4 on all four |
+| the consent refusal says "Blocked" (403) | G3 red on all four |
+| the shared block helper fails OPEN · filters nothing | F1–F4 on all four (16) · G1–G3, R1 (13) |
+| the kernel refusal carries its reason on the wire | H1 red |
+| SQL: no CREATE predicate · outbound only · inbound only | K1 · K1 · K1 red |
+| SQL: no ADD_PERSON gate · outbound only · inbound only · removal gated too | K2 · K2 · K2 · K3 + G4[tree] red |
+| H262: everything known · no corrections lookup · unreadable catalog is unknown · another owner's Memory counts · Compass place guard dropped · Compass city by substring · Compass person guard dropped · route guard dropped · route answers unknown as an empty history | 11 · 3 · 3 · 1 · 4 · 1 · 1 · 3 · 2 red |
+| H33: the composition ignores the ceiling · the Compass tools pass none · their gate-off early return skips it · the share card passes none · the Telegraph card passes none · the action rung ignores it · an unreadable ceiling is not a could-not-check · an unreadable ceiling is `exact` | 8 · 4 · 1 · 2 · 2 · 1 · 1 · 5 red |
+
+10 TypeScript and 7 SQL block-gate mutants, 9 H262 and 8 H33 mutants: **34 of 34 killed**. A first run killed the
+"no CREATE predicate" mutant only through the suite's own precondition (it named a 3913 marker); the precondition now
+names "a kernel after 3912" instead, and the recount above kills it through K1. Run with this section: the batch-1,
+2 and 3 suites (21/21, 38/38, 13/13, on the 3913 chain), `memoryCompassTools` 73/73, `memoryCorrections` 98/98,
+`memorySearchRoute` 52/52, `wellKnownShare` 48/48, `telegraphShareReadGates` 135/135, `memoryActions` 45/45, the 35
+suites that touch the H33 surfaces 1229/1229 before the new cases, `memoryCommandBus` 60/60.
+
+**Production's exact code on production's exact kernel (for §CD.4's #784 rows).** #784's head (`9c5820184`, the tree
+production serves) was run on the local chain with 3911 installed from the 3913 and 3912 rollback files (md5
+`5e42fd46…` and comment md5 `1df4c03d…`, both equal to production's): `memoryKernelParticipants.db.test.ts` 38/38
+(P1–P12, O1, Q1–Q10 on 2711 and on 3911, K1–K3) and `memoryOwnerControls.db.test.ts` 21/21. The chain was then put
+back to 3913 (md5 `3f5eb530…`).
+
+**One existing assertion changed, and it is stronger.** `memoryCompassTools.test.ts`'s canonical-location case
+asserted `visits: []` (old requirement: a withheld venue id serves no visit). It now asserts no visit AND that the
+answer is identical to a never-seen place's (new requirement, §28.3: an unknown place is "not known", so the answer
+must not tell a withheld place from an unknown one). Nothing it protected is lost.
+
+### §CD.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H29 | W | **C** | `memory_commands` — the receipt / idempotency ledger. **Lead ruling 2026-10-24:** `memory_command_receipts` stands as §3's `memory_commands`; renaming a live table adds risk and no behaviour. That was its only remaining reason (§CC.4). **On production:** 2710 is applied with the tree's checksum, the table is keyed `(actor_user_id, idempotency_key)`, `memory_kernel_enabled` is TRUE, and production's kernel (3911) writes the receipt in the mutation's transaction (§CD.2). **On the real chain, on both of production's definitions:** the receipt is written with the change (`artifacts/api-server/src/test/db/memoryKernelParticipants.db.test.ts:216#P2 the same Idempotency-Key replayed`), and a replay is one effect (§CA K1). Same standard as H30 (§CB.4): the row is the table and its transactional writer. No member has created a Memory since the kernel went on, so production holds 0 receipts |
+| H130 | W | **C** | `CREATE_MEMORY` crosses a command boundary. **Its stated gap is gone on production:** the create's participants, type and occurrence text are written by the kernel's own transaction, and the Telegraph draft is a CREATE_MEMORY, not a direct insert — #784 is served and 3911 is production's kernel (§CD.2). On production's exact code and kernel: `artifacts/api-server/src/test/db/memoryKernelParticipants.db.test.ts:185#P1 POST /memories`, `artifacts/api-server/src/test/db/memoryKernelParticipants.db.test.ts:230#P3 POST /trips/:tripId/memory`, `artifacts/api-server/src/test/db/memoryKernelParticipants.db.test.ts:294#P5 POST /me/memory-drafts with the kernel ON` (§CD.3). Who may be tagged across a block is graded on H138 and H84, not here |
+| H140 | W | **C** | `CHANGE_PLACE`. On 3911 the place and its occurrence text are one UPDATE inside the kernel (`artifacts/api-server/src/test/db/memoryKernelParticipants.db.test.ts:467#is CHANGE_PLACE: memory.corrected`, run on 3911), and that is production's kernel and code (§CD.2, §CD.3) |
+| H71 | W | **C** | The occurrence-time place name. 3804 is applied and its flag is TRUE; on 3911 a provider pick's occurrence text is written inside the kernel's INSERT and UPDATE (P1, Q3), and that is production's kernel and code |
+
+The three #784 moves above use §CB.4's proof level for a command row: production's own kernel (md5-checked), the
+served code, and a route-level case on both. **Each row's own criterion was read first** (the Map verifier's rule,
+2026-10-24): H130 ("crosses a command boundary"), H140 (`CHANGE_PLACE`, whose stated gap was the occurrence text
+outside the kernel) and H71 ("merges repoint canonical identity, preserving occurrence-time display text") name a
+property of the write path, not an observed production effect. The six that do not move are below: H147 and H149
+name an observation (their gap is "never emitted", and production holds 0 events), H175 names the CLIENT's operation
+id, and H138, H160 and H40 have open gaps.
+
+### §CD.5 Rows read, reason restated, NOT moved
+
+This table restates no verdict. The `standing` column is spelled out.
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H84 | BUILT-BUT-WRONG | The blocking half gains the write and notification side §CB found missing: in the tree nobody blocked either way is tagged, consents or is notified (G1–G4, R1, F1–F4). Waiting on release: merged (this PR) and a server deploy; 3913 applied for every non-API caller. W stands on the deletion half (owner decision D6) |
+| H147 | BUILT-BUT-WRONG | Every create path emits `memory.created` on production's code and kernel (P1, P3, P5 on 3911, §CD.3), the Telegraph draft included. **W because its criterion names an observation:** its gap was "never emitted", and production's `memory_domain_events` holds 0 rows, so on production it has still never been emitted. Waits on: a signed-in check (a Memory created on production, then a read-only check for its `memory.created` row) |
+| H149 | BUILT-BUT-WRONG | On 3911 a type correction's event is written in the transaction that changes it (P4), and every other §17 correction emits `memory.corrected` (Q3–Q7). **W for the same reason as H147:** "never emitted", and 0 events on production. Waits on: a signed-in check (a correction on production, then a read-only check for its `memory.corrected` row) |
+| H175 | BUILT-BUT-WRONG | The server half is on production: a replayed key is one effect, and POST /me/memory-drafts now takes a key (P2, P5, P12 on production's code and kernel). **The client half is not:** the criterion is "client operation ids + server idempotency", and the Telegraph save-to-Memory call in device build 259224e31 sends no `Idempotency-Key` (`travel-buddy-standalone/src/features/telegraph/memory/memoryApi.ts`; the Memory service `src/services/memories.ts` does send one). With no key the server mints a fresh one per request, so a retried draft is still two drafts. Waits on: missing client (a key derived from the message), then the next device build |
+| H138 | BUILT-BUT-WRONG | On production, the people named at creation are now added by the kernel's own CREATE (3911, deployed), and ADD_PERSON crosses the kernel (`artifacts/api-server/src/test/db/memoryKernelParticipants.db.test.ts:505#is ADD_PERSON: memory.corrected`). **W because of a privacy defect in who may be tagged:** on production a person who blocked the owner, or whom the owner blocked, is still tagged at creation, notified and pushed, and can approve a tag across a block. Closed in the tree (G1–G3, R1, K1–K2). Waits on: merged (this PR) and a server deploy; migration 3913 applied for every non-API caller |
+| H160 | BUILT-BUT-WRONG | On production the four writes §CB.1 named now cross the kernel (#784 served, 3911 applied). Two canonical writes still land outside it: a photo's own audience and the appeal restore (§CC.1). Waits on: merged (#787), migration 3912 applied, and a server deploy |
+| H40 | BUILT-BUT-WRONG | Code-complete on production: 3803 is applied, `memory_type_enabled` is TRUE, and on 3911 the type is written inside the kernel (P1, P4 on production's code and kernel). **BLOCKED — OWNER DECISION Q-H40:** what type does an untyped new row get? (the column's DEFAULT today is MOMENT, `artifacts/api-server/src/test/db/memoryKernelParticipants.db.test.ts:627#K2[`) |
+| H262 | BUILT-BUT-WRONG | Both gaps §BP named are closed in the tree: the Compass place history, the shared tool and GET /memories/places/:placeId resolve the entity by the search's own rule, and a city is matched exactly. Waiting on release: merged (this PR) and a server deploy. `memory_search`'s city filter stays a keyword filter: that tool says on the wire that it is deterministic keyword matching over canonical rows and does not claim a match IS the requested place |
+| H33 | BUILT-BUT-WRONG | Its storage and switch are discharged: 3997 is applied (checksum = tree) and `memory_visibility_policies_enabled` is TRUE. In the tree four more non-owner surfaces take the ceiling (Compass tools, share card, Telegraph card, action menu). Still open: (1) no screen sets a ceiling — missing client, next device build; (2) the Compass intelligence graph publishes public Memories' place words at §10's rung only (`artifacts/api-server/src/compass/CompassGraphEngine.ts:970#const rung = publicationPrecision(r, memoryClamp);`) — taking the ceiling there needs `memory_visibility_policies` as a graph source table with revocation (census-compass §47). The narrative service is not a non-owner surface (it serves the owner only) |
+| H169 | BUILT-BUT-WRONG | No longer "no Compass tool reads it": the Compass prompt's memory starters read `CompassMemoryProjection` through §15's retrieval (`lib/inputAssistance/memoryContext.ts`), behind the owner's separate opt-in, which is in device build 259224e31. **On production it serves nothing:** the registry holds 0 rows and no Memory has a kernel event. The projection is built only by the outbox drain after a new event; the 80 legacy Memories never get one (no backfill, and §15's retrieval does not build on demand). Waits on: missing server (a build for legacy Memories), #787 merged and deployed (so the drain's run is observable), then one signed-in check (opt in, create a Memory, see the registration) |
+| H243 | BUILT-BUT-WRONG | The invariant holds on the projection (§25 mutation 5) and the one reader states it ("From your memories — a past trip, not current information"). Same production gap as H169 |
+| H47 | BUILT-BUT-WRONG | **The requested proof is not reachable, and why.** The verifier's rank-swap mutant (SYSTEM_OBSERVED ↔ INFERRED) changes nothing whenever a correction is present, because USER_CORRECTION outranks both. It is visible only when an observed value meets an inferred one with no correction, and no production path produces either: `mergeByPrecedence`'s one production caller compares a correction with the owner's own assertion (`artifacts/api-server/src/services/memory/memoryCorrections.ts:171#export function correctedPlaceRef(`), and §6's source vocabulary has no entity-resolution type. A store-level case that injected an inferred place would test a path production never takes. Missing code: a producer of observed or inferred place values (the capture-time spine, BLOCKED on Q-HM-CAPTURE-1, is the natural one); unclear requirement: which §6 source an entity resolution is |
+| H242 | BUILT-BUT-WRONG | As H47 |
+
+### §CD.6 What this section does not claim
+
+- Nothing built in THIS section is on production: not 3913, not its API. The three #784 rows that move rest on #784's
+  code (served since ~08:25Z) and 3911 (applied 08:12Z), not on anything here.
+- No production write was observed for any move; each rests on production's kernel, its served code and a route-level
+  case run on both (§CB.4's proof level for a command or event row).
+- Existing tags made before a block are not removed when a block is made; the gate is on new tags, consent and the
+  notification.
+- H169/H243 are not moved on the strength of a reader that serves nothing on production.
+
+### §CD.7 Headline
+
+| bucket | was (§CC.5) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 109 | 113 |
+| BUILT-BUT-WRONG | 152 | 148 |
+| NOT-BUILT | 3 | 3 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**Four moves, all W → C:** H29, H130, H140, H71. 266 = 113 C / 148 W / 3 N / 2 X. CONSTRUCTED% is unchanged at
+(113 + 148) / 266 = 98.1 %. CORRECT% is 113 / 266 = 42.5 %.
+- WITHDRAWN NOT-GRADED: artifacts/api-server/src/lib/inputAssistance/memoryContext.ts — §CD.5 grades H169 and H243 on it, so from this section on it is watched (CENSUS_SCOPE), not declared not graded.
 - NOT-GRADED: artifacts/api-server/src/test/appealReversalAffectedRows.test.ts — §CC.3 names the payload case the 2026-10-24 verifier fix appends (the restore sends `select: "id,state"`); controlled evidence for a stated fix, and no row rests on it.
