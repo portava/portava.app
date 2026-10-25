@@ -1713,9 +1713,9 @@ router.post('/threads/:threadId/read', async (req, res) => {
   const previous = ((membership as any).last_read_at ?? null) as string | null;
 
   // The threshold: the newest message this member is entitled to have loaded.
-  let newestQuery = sc
-    .from('messages')
-    .select(kernelOn ? 'id, sender_id, created_at, sequence' : 'id, sender_id, created_at')
+  let newestQuery = (kernelOn // two literal select lists, so check:write-path-columns resolves both (census-telegraph T72)
+    ? sc.from('messages').select('id, sender_id, created_at, sequence')
+    : sc.from('messages').select('id, sender_id, created_at'))
     .eq('thread_id', threadId)
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
