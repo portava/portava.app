@@ -578,7 +578,7 @@ export async function publishableInGoodStanding(db: SupabaseClient, userIds: str
 
 export async function withAccountStanding(db: SupabaseClient, allowed: string[], denied: string[]): Promise<LayoverRead<{ allowed: string[]; denied: string[] }>> {
   if (allowed.length === 0) return readValue({ allowed, denied });
-  const { data, error } = await db.from("profiles").select(`id, ${ACCOUNT_STATE_GATE_SELECT}`).in("id", allowed);
+  const { data, error } = await db.from("profiles").select("id, account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)").in("id", allowed); // = `id, ${ACCOUNT_STATE_GATE_SELECT}`, spelled out so check:write-path-columns can read it (pinned in layoverStandingDoors.test.ts)
   if (error || !Array.isArray(data)) {
     privacyLogger.error({ err: error, candidates: allowed.length }, "account standing unreadable — no traveller is published; a failed read is not good standing");
     return readDegraded({ allowed: [], denied: [...denied, ...allowed] }, ["account_standing_unreadable"]);

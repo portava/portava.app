@@ -112,3 +112,17 @@ describe("census-layover §85 A5 — presence-roster cards name only an account 
     assert.deepEqual(r.reasons, ["traveller_cards_unreadable"]);
   });
 });
+
+// The standing read in withAccountStanding spells the gate's select out as a literal (check:write-path-columns cannot
+// resolve a template over an imported constant). This pins it to lib/accountStateGate's ACCOUNT_STATE_GATE_SELECT, so a
+// change to the gate's embed (a renamed foreign key, a new column pickRestriction reads) cannot leave Layover behind.
+describe("withAccountStanding reads exactly the account-state gate's select", () => {
+  it("its literal select is `id, ${ACCOUNT_STATE_GATE_SELECT}`", async () => {
+    const { ACCOUNT_STATE_GATE_SELECT } = await import("../lib/accountStateGate.js");
+    const guard = readFileSync(`${SRC}services/airport/LayoverPrivacyGuard.ts`, "utf8");
+    const body = guard.slice(guard.indexOf("export async function withAccountStanding"));
+    const m = body.match(/\.from\("profiles"\)\.select\("([^"]*)"\)/);
+    assert.ok(m, "withAccountStanding's profiles select is not a string literal");
+    assert.equal(m![1], `id, ${ACCOUNT_STATE_GATE_SELECT}`);
+  });
+});
