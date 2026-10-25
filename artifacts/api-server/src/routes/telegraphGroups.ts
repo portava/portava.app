@@ -384,19 +384,19 @@ router.post(
     // written nothing (one statement): the member is then removed exactly as
     // before, left_at alone, and the answer says the removal itself was not
     // recorded. ANY other error is the refusal it always was — never retried.
-    const removeRow = (patch: Record<string, string>) =>
+    const removeRow = (withRemovedAt: boolean) => // two literal payloads, so check:write-path-columns resolves both
       g.sc
         .from("message_thread_members")
-        .update(patch)
+        .update(withRemovedAt ? { left_at: now, removed_at: now } : { left_at: now })
         .eq("thread_id", g.thread.id)
         .eq("user_id", targetId)
         .is("left_at", null);
     let removalRecorded = true;
-    let { error } = await removeRow({ left_at: now, removed_at: now });
+    let { error } = await removeRow(true);
     if (error && removedAtAbsent(error)) {
       removalRecorded = false;
       req.log?.warn?.({ threadId: g.thread.id }, "message_thread_members.removed_at is absent (3934 not applied): removed with left_at alone");
-      ({ error } = await removeRow({ left_at: now }));
+      ({ error } = await removeRow(false));
     }
     if (error) {
       sendError(res, "db_error", "Failed to remove this member");

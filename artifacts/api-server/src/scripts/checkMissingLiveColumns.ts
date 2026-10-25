@@ -265,7 +265,7 @@ const ALLOWLIST = new Set<string>([
   // Remove this entry once the merge-to-main apply is certified in
   // docs/migrations.md — NOT when the migration merges.
   "layover_recommendations.travel_time_source",  // 2745 — where the row's travel figure came from
-
+  "message_thread_members.removed_at", // 3934_telegraph_member_removed_at.sql (census-telegraph T389, PR #786) — INTENTIONALLY PENDING its live apply: on no database until applied, and the code is safe without it (routes/telegraphGroups.ts removal retries with left_at alone on 42703/PGRST204 naming removed_at, answering removalRecorded:false; 3940 reads it only if present; nothing else reads it). REMOVE this entry once 3934 is applied and verified live.
 ]);
 
 

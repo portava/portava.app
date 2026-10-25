@@ -119,9 +119,9 @@ async function readMembers(
   client: any,
   threadId: string, kernelOn = false,
 ): Promise<{ ok: true; members: ReceiptMember[] } | { ok: false }> {
-  const { data, error } = await client
-    .from("message_thread_members")
-    .select(MEMBER_COLUMNS + receiptCursorColumns(kernelOn))
+  const { data, error } = await (kernelOn // two literal select lists (receiptCursorColumns' two answers), so check:write-path-columns resolves both
+    ? client.from("message_thread_members").select(MEMBER_COLUMNS + ", delivered_sequence, seen_sequence")
+    : client.from("message_thread_members").select(MEMBER_COLUMNS))
     .eq("thread_id", threadId);
   if (error) return { ok: false };
   return { ok: true, members: ((data as any[]) ?? []) as ReceiptMember[] };
@@ -174,9 +174,9 @@ router.get(
       return;
     }
 
-    const { data: rows, error: rowErr } = await client
-      .from("messages")
-      .select(MESSAGE_COLUMNS + (kernelOn ? ", sequence" : ""))
+    const { data: rows, error: rowErr } = await (kernelOn // two literal select lists, so check:write-path-columns resolves both
+      ? client.from("messages").select(MESSAGE_COLUMNS + ", sequence")
+      : client.from("messages").select(MESSAGE_COLUMNS))
       .eq("thread_id", threadId)
       .in("id", ids);
     if (rowErr) {
@@ -430,9 +430,9 @@ router.post(
     // The threshold message, bound to this thread in the QUERY as well as in
     // the check — two gates, because this one decides what a person may assert
     // about someone else's message.
-    const { data: target, error: targetErr } = await client
-      .from("messages")
-      .select(MESSAGE_COLUMNS + (kernelOn ? ", sequence" : ""))
+    const { data: target, error: targetErr } = await (kernelOn // two literal select lists, so check:write-path-columns resolves both
+      ? client.from("messages").select(MESSAGE_COLUMNS + ", sequence")
+      : client.from("messages").select(MESSAGE_COLUMNS))
       .eq("id", parsed.data.upToMessageId)
       .eq("thread_id", threadId)
       .maybeSingle();
@@ -573,4 +573,4 @@ router.post(
 
 export default router;
 
-import { messageKernelEnabled } from "../services/telegraphMessageKernel.js"; import { advanceSeenSequence, receiptCursorColumns } from "../lib/telegraphReceiptCursors.js"; // census-telegraph T72/T73 (appended so every cited line keeps its number)
+import { messageKernelEnabled } from "../services/telegraphMessageKernel.js"; import { advanceSeenSequence } from "../lib/telegraphReceiptCursors.js"; // census-telegraph T72/T73 (appended so every cited line keeps its number)
