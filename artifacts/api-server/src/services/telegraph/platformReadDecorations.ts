@@ -196,3 +196,93 @@ export async function decorateReactions(
 
 import { messageKernelEnabled } from "../telegraphMessageKernel.js";
 import { readBlockExclusions } from "../../lib/exclusionSet.js";
+
+// ── census-telegraph T431 (lane TELEGRAPH batch 4) — appended so every cited line keeps its number ──
+/**
+ * THE OTHER SERIALISERS. §86.2 recorded T431's sibling gap: negotiation covered `GET /threads/:id/messages`
+ * and share projections ONLY, so "the inbox preview, the drawer, search and the single-message serialisers"
+ * still served a stored structured body to a client that had declared it cannot render it — a LOCATION
+ * envelope's coordinates in an inbox preview's first 80 characters, a saved location's raw body. Every
+ * one of them now applies the thread page's decision, `negotiateRender`, to the row it serves, with the
+ * same consequence: the content goes, the fixed sentence comes, and `structured` says which and why.
+ *
+ *   structuredNegotiation  the caller's declared capabilities while telegraph_structured_schemas_enabled
+ *                          is ON; `null` while OFF, and every serialiser below is then byte-for-byte
+ *                          unchanged. A client that declares nothing is the baseline (every registered
+ *                          schema at v1), exactly as on the thread page.
+ *   negotiateServed        one served object, given which of ITS fields carry the row's content: the body
+ *                          fields take the sentence, the type fields become text, the media fields are
+ *                          nulled and the list fields emptied — removed, never hidden behind a flag the
+ *                          client may not read.
+ *
+ * Applied by: GET /me/threads (each `lastMessagePreview`), GET /threads/:id/drawer and
+ * GET /threads/:id/search (routes/telegraphKinds.ts, each item and result), GET /telegraph/search and
+ * GET /threads/:id/ask (each hit; a hit that falls back ranks as prose), GET /threads/:id/messages/:id/edits
+ * (the current body and every version) and GET /me/saved-messages (each item). The group chat's own page
+ * (routes/groupChat.ts GET /trips/:id/chat, /circles/:id/chat) is not reached: messaging.ts answers both
+ * paths first (routes/index.ts mounts it ahead), with thread metadata and no messages.
+ */
+export async function structuredNegotiation(
+  sc: any,
+  headers: Record<string, unknown> | undefined,
+): Promise<ClientCapabilities | null> {
+  return (await isFlagEnabled(sc, "telegraph_structured_schemas_enabled")) ? parseClientCapabilities(headers) : null;
+}
+
+export interface ServedShape {
+  /** Fields that carry the row's words: each becomes the fallback sentence. */
+  body: readonly string[];
+  /** The name of the field carrying the stored type, if the serialiser has one: it becomes "text". */
+  typeField?: string;
+  /** The name of the field carrying the stored subtype: it becomes null. */
+  subtypeField?: string;
+  /** Media or derived fields: nulled where present. */
+  cleared?: readonly string[];
+  /** List fields (links, tags…): emptied where present. */
+  emptied?: readonly string[];
+  /** Boolean claims about the content (translated, show-original): false where present. */
+  falsified?: readonly string[];
+}
+
+/** Negotiate one served object in place. `caps === null` (flag OFF) changes nothing. */
+export function negotiateServed(
+  out: Record<string, any>,
+  row: RawThreadRow,
+  caps: ClientCapabilities | null,
+  shape: ServedShape,
+): void {
+  if (!caps) return;
+  const neg = negotiateRender(row, caps);
+  if (!neg.fallback) {
+    if (neg.schemaId) out.structured = { schema: neg.schemaId, fallback: false };
+    return;
+  }
+  const originalMsgType = (shape.typeField ? out[shape.typeField] : undefined) ?? row.msg_type ?? null;
+  for (const f of shape.body) out[f] = neg.label;
+  if (shape.typeField) out[shape.typeField] = "text";
+  if (shape.subtypeField) out[shape.subtypeField] = null;
+  for (const f of shape.cleared ?? []) if (f in out) out[f] = null;
+  for (const f of shape.emptied ?? []) if (f in out) out[f] = [];
+  for (const f of shape.falsified ?? []) if (f in out) out[f] = false;
+  out.structured = { schema: neg.schemaId, fallback: true, reason: neg.reason, originalMsgType };
+}
+
+/**
+ * GET /threads/:id/messages/:id/edits: the current body and every earlier version. Negotiated on the row
+ * as SERVED (after the location and card rules), so a version never carries what the current body may not.
+ */
+export function negotiateEditHistory<T extends { currentBody: string | null; versions: Array<Record<string, any>> }>(
+  caps: ClientCapabilities | null,
+  msg: RawThreadRow,
+  payload: T,
+): T & { structured?: Record<string, unknown> } {
+  if (!caps) return payload;
+  const neg = negotiateRender({ ...msg, body: payload.currentBody }, caps);
+  if (!neg.fallback) return neg.schemaId ? { ...payload, structured: { schema: neg.schemaId, fallback: false } } : payload;
+  return {
+    ...payload,
+    currentBody: neg.label,
+    versions: payload.versions.map((v) => ({ ...v, previousBody: neg.label })),
+    structured: { schema: neg.schemaId, fallback: true, reason: neg.reason, originalMsgType: msg.msg_type ?? null },
+  };
+}

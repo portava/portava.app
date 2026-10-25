@@ -349,13 +349,13 @@ router.get(
     const counts: Record<DrawerTab, number> = {
       MEDIA: 0, PLACES: 0, PORTAVA: 0, VOICE: 0, GIFS: 0, LINKS: 0, FILES: 0,
     };
-    const items: DrawerRow[] = [];
+    const items: DrawerRow[] = []; const drawerNegotiation = await structuredNegotiation(client, req.headers); /* census-telegraph T431 */
     for (const row of read.rows) {
       const tab = drawerTabFor(row);
       if (!tab) continue;
       counts[tab] += 1;
       if (tabRaw === null || tab === tabRaw) {
-        if (items.length < DRAWER_PAGE_LIMIT) items.push(toDrawerRow(row, tab));
+        if (items.length < DRAWER_PAGE_LIMIT) { items.push(toDrawerRow(row, tab)); negotiateServed(items[items.length - 1]! as any, row, drawerNegotiation, { body: ["title"], typeField: "msgType", subtypeField: "subtype", cleared: ["previewUrl"], emptied: ["links"] }); } /* census-telegraph T431: an item the client cannot draw is its sentence, its media and links removed */
       }
     }
 
@@ -416,7 +416,7 @@ router.get(
       return;
     }
 
-    const results = [];
+    const results = []; const searchNegotiation = await structuredNegotiation(client, req.headers); /* census-telegraph T431 */
     for (const row of read.rows) {
       const text = row.cardIndexText ?? searchableTextOf(row); // T448: a card's text is its live projection
       if (!matchesQuery(text, q)) continue;
@@ -431,7 +431,7 @@ router.get(
         tab,
         snippet: (text ?? "").slice(0, 160),
       });
-      if (results.length >= DRAWER_PAGE_LIMIT) break;
+      negotiateServed(results[results.length - 1]! as any, row, searchNegotiation, { body: ["snippet"], typeField: "msgType", subtypeField: "subtype" }); if (results.length >= DRAWER_PAGE_LIMIT) break; /* census-telegraph T431 */
     }
 
     res.status(200).json({ threadId, query: q, tab: tabRaw, results, scanned: read.rows.length });
@@ -439,3 +439,5 @@ router.get(
 );
 
 export default router;
+
+import { negotiateServed, structuredNegotiation } from "../services/telegraph/platformReadDecorations.js"; // census-telegraph T431 (batch 4), at the foot so no cited line moves
