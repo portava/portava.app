@@ -17616,7 +17616,7 @@ the only door is the service client. `DELETE /postcards/:id/media/:mediaId`
 its object and its count. It now answers 409 before any write, for an owner and an admin alike. Moderators still remove
 files through `POST /admin/media/:id/moderate`. The DELETE is a compare-and-set on the status it read, so a verdict that
 lands mid-request is not deleted. A non-owner still gets 403 first. Tests: `artifacts/api-server/src/test/postcards.test.ts`
-"2098 moderation pin" (8 cases; red before the fix), and
+"2098 moderation pin" (8 cases; 5 red before the fix), and
 `artifacts/api-server/src/test/db/postcardMediaDeletePin.db.test.ts`, which holds the route's predicate to the policy's
 answer for every status the chain's CHECK admits. MD269 does not move: its blocker is still the (a) owner rule and the
 missing classifier (§37.8.5).
