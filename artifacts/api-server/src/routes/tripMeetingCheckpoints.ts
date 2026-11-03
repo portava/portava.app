@@ -125,7 +125,7 @@ router.post("/trips/:tripId/meeting-checkpoints/:checkpointId/arrival", asyncHan
     commandId: randomUUID(), tripId: ctx.tripId, actorUserId: ctx.userId, actorRole: "user",
     idempotencyKey: parsed.data.idempotencyKey ?? `arrival:${checkpointId}:${ctx.userId}:${parsed.data.arrivalState}:${randomUUID()}`,
     type: "SET_MEETING_ARRIVAL", payload: { checkpoint_id: checkpointId, arrival_state: parsed.data.arrivalState },
-    correlationId: `checkpoint:${checkpointId}`,
+    correlationId: tripCorrelationId(`checkpoint:${checkpointId}`), // census-trips hotfix 2026-10-24: a uuid, derived from the label
   });
   if (!result.ok) { sendKernelRefusal(res, result.reason, result.detail, { currentVersion: result.currentVersion, expectedVersion: result.expectedVersion }); return; }
   res.json({ ok: true, checkpointId, arrival: result.result, kernel: { version: result.version, eventId: result.eventId, duplicate: result.duplicate } });
@@ -143,10 +143,11 @@ router.post("/trips/:tripId/meeting-checkpoints/:checkpointId/close", asyncHandl
     commandId: randomUUID(), tripId: ctx.tripId, actorUserId: ctx.userId, actorRole: "user",
     idempotencyKey: parsed.data.idempotencyKey ?? `close:${checkpointId}:${randomUUID()}`,
     type: "CLOSE_MEETING_CHECKPOINT", payload: { checkpoint_id: checkpointId, outcome: parsed.data.outcome ?? "met" },
-    correlationId: `checkpoint:${checkpointId}`,
+    correlationId: tripCorrelationId(`checkpoint:${checkpointId}`), // census-trips hotfix 2026-10-24: a uuid, derived from the label
   });
   if (!result.ok) { sendKernelRefusal(res, result.reason, result.detail, { currentVersion: result.currentVersion, expectedVersion: result.expectedVersion }); return; }
   res.json({ ok: true, checkpointId, closed: result.result, kernel: { version: result.version, eventId: result.eventId, duplicate: result.duplicate }, prioritySwitch: "closed: REGROUP_OPEN no longer derives from this checkpoint" });
 }));
 
 export default router;
+import { tripCorrelationId } from "../domain/trips/commands/tripKernel.js"; // census-trips hotfix 2026-10-24; at the foot so no cited line moves

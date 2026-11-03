@@ -124,7 +124,7 @@ export async function syncTripChatMembers(
   // supports: we do not know who belongs in this thread, so we change nothing.
   const { data: acceptedRows, error: acceptedErr } = await sc
     .from('trip_members')
-    .select('user_id, role')
+    .select('user_id, role, status')
     .eq('trip_id', tripId)
     .in('role', ['owner', 'member']);
 
@@ -136,7 +136,7 @@ export async function syncTripChatMembers(
     return null;
   }
 
-  const accepted = (acceptedRows ?? []) as Array<{ user_id: string; role: string }>;
+  const { data: ownerRow, error: ownerErr } = await sc.from('trips').select('owner_id').eq('id', tripId).maybeSingle(); if (ownerErr) { console.error(`syncTripChatMembers: trip owner read failed for trip ${tripId}: ${ownerErr.message} — refusing to reconcile without the owner`); return null; } /* fix to #803 (verifier finding 4): the OWNER is crew with or without a trip_members row (see withTripOwner at the foot); an unreadable owner is refused like an unreadable roster, since reconciling without it could evict the owner from their own chat */ const accepted = withTripOwner(((acceptedRows ?? []) as Array<{ user_id: string; role: string; status?: string | null }>).filter(isAcceptedTripRow).map((r) => ({ user_id: r.user_id, role: tripChatThreadRole(r.role) })), (ownerRow as any)?.owner_id ?? null); // follow-up hotfix 2026-10-24: an invited, declined, removed or left row is not crew, and the owner is the thread's admin (the CHECK allows member | admin)
   const acceptedIds = new Set(accepted.map((r) => r.user_id));
 
   // 3. Read current thread members (including those who already left).
@@ -387,4 +387,37 @@ export async function syncCircleChatMembers(
   }
 
   return threadId;
+}
+
+/**
+ * Follow-up hotfix (2026-10-24, verifier finding on #797). `message_thread_members.role` is CHECKed to member | admin
+ * (production carries the same constraint), and this sync inserted the TRIP role, so a trip's owner ('owner') was
+ * refused by the database and every new trip's chat was created without its owner. Telegraph's own rule for a
+ * thread's host is `admin` (services/telegraph/groupFormation.ts: "The actor is the group's first admin (its host);
+ * everyone else a member"), so a trip owner is the trip thread's admin and every other crew member a member. No new
+ * role is invented.
+ */
+export function tripChatThreadRole(tripRole: string): "admin" | "member" {
+  return tripRole === "owner" ? "admin" : "member";
+}
+
+/**
+ * The same acceptance rule as lib/http.ts requireTripMember: a row with an explicit status other than 'accepted'
+ * (invited, declined, removed, left) is not crew. This sync used to select by ROLE alone, so a pending invitee (role
+ * 'member', status 'invited') was put into the crew chat before accepting, and a member who left kept access.
+ */
+export function isAcceptedTripRow(row: { status?: string | null }): boolean {
+  return row.status == null || row.status === "accepted";
+}
+
+/**
+ * fix to #803 (verifier finding 4): the accepted roster with the trip's owner (trips.owner_id) in it as the thread's
+ * admin, whether or not the owner has a trip_members row — the same rule as lib/http.ts requireTripMember, which admits
+ * the owner by trips.owner_id. Migration 2337 found owners with no membership row; without this they were left out of
+ * (or, on a later sync, evicted from) their own trip's chat.
+ */
+export function withTripOwner<T extends { user_id: string; role: "admin" | "member" }>(accepted: T[], ownerId: string | null): Array<T | { user_id: string; role: "admin" }> {
+  if (!ownerId) return accepted;
+  const rest = accepted.filter((r) => r.user_id !== ownerId);
+  return [{ user_id: ownerId, role: "admin" as const }, ...rest];
 }

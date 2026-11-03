@@ -334,13 +334,13 @@ export function timeBudgetRowFor(
 /**
  * §4 L24 `layover_return_plans`.
  *
- * `recommended_return_by` is the engine's `hardReturnTime` and NOT a softer
- * figure invented here. This tree publishes ONE deadline — that is L1's whole
- * requirement and `9c26efba` closed the duplicate-buffer defect that came from
- * having two — so the recommended return equals the hard return until
- * something upstream certifies a genuinely earlier one. The column exists
- * because the spec names it; storing the hard return in it is honest, and
- * 2992's CHECK (`recommended <= hard`) holds trivially rather than by luck.
+ * `recommended_return_by` is spec §5's "recommended return threshold" (EXECUTING → RETURN_SOON), which this engine
+ * already certifies: the RETURN_SOON rung begins at `hardReturnTime − RETURN_SOON_LEAD_MIN` (computeReturnState), the
+ * same instant the one stored reminder fires (reminderDisposition). It is a THRESHOLD on the one certified deadline,
+ * not a second deadline — so L1's single deadline and `9c26efba`'s duplicate-buffer fix stand, and 2992's CHECK
+ * (`recommended <= hard`) holds by construction (census-layover §83 L24; it used to store the hard return itself).
+ * `latest_activity_departure_at` stays NULL: spec §5 orders it AFTER this threshold (RETURN_SOON → RETURN_NOW) while
+ * 2992's CHECK orders it before, and no measured return leg exists to compute it from — a ruling, recorded in §83.
  */
 export function returnPlanRowFor(
   snapshotId: string,
@@ -352,7 +352,7 @@ export function returnPlanRowFor(
     snapshot_id: snapshotId,
     session_id: sessionId,
     hard_return_by: hard,
-    recommended_return_by: hard,
+    recommended_return_by: new Date(record.deadline.hardReturnTime.getTime() - RETURN_SOON_LEAD_MIN * 60_000).toISOString(), // census-layover §83 L24: the RETURN_SOON instant (doc above)
     // The latest instant a traveller may still be at an activity. The engine
     // publishes it only when a landside probe was assessed; `null` otherwise,
     // and never a guess.
@@ -452,7 +452,7 @@ export async function persistDecision(
   // ── 1. the parent (3873: with the compare-and-swap expectation read before the immutability check above)
   const { error: parentErr } = await db
     .from("layover_certified_computations")
-    .insert({ ...certifiedComputationRowFor(userId, sessionId, record), ...cas.column });
+    .insert({ ...certifiedComputationRowFor(userId, sessionId, record), ...cas.column, ...(await snapshotEnvelopeRefColumn(db, record)) }); // census-layover §83 L25: safe_envelope_ref only under layover_snapshot_envelope_ref_enabled (3951)
 
   let state: PersistState = "recorded";
   if (parentErr) {
@@ -903,3 +903,5 @@ function casRefusalOf(err: { code?: string; message?: string }, sessionId: strin
   logger.info({ sessionId, reason }, "certified computation refused by the active-snapshot compare-and-swap — nothing written");
   return { ok: false, reason, message: String(err.message ?? reason) };
 }
+import { RETURN_SOON_LEAD_MIN } from "../airport/LayoverSafetyEngine.js"; // census-layover §83 L24 (returnPlanRowFor); at the foot so no cited line moves
+import { snapshotEnvelopeRefColumn } from "./LayoverSnapshotEnvelopeRef.js"; // census-layover §83 L25 (persistDecision); at the foot so no cited line moves

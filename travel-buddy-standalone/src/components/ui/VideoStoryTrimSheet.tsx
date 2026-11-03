@@ -101,7 +101,7 @@ export function VideoStoryTrimSheet({
           {/* 9:16 crop frame */}
           <View style={s.frameOuter}>
             <View style={s.frame}>
-              {uri !== '' && !hasError ? (
+              {isLoadablePlaybackUri(uri) && !hasError ? ( // 2026-10-24: the one playback rule
                 <Video
                   ref={videoRef}
                   source={{ uri }}
@@ -310,3 +310,4 @@ const s = StyleSheet.create({
     fontWeight: '700',
   },
 });
+import { isLoadablePlaybackUri } from '../../services/playbackUri.ts'; // 2026-10-24 video playback: the one playback rule

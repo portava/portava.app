@@ -1013,7 +1013,7 @@ export interface FusedReadDeps {
     targetUserIds: string[],
     contextType: ContextType,
     contextId: string,
-  ) => Promise<Map<string, CircleAccessResult>>;
+  ) => Promise<Map<string, CircleAccessResult>>; /** census-map M93 (verifier 2026-10-24): is this user STILL in the session's group scope? Asked on every read, for the viewer and for each member; false or a throw is a refusal. The route passes routes/locateFriends.ts verifyScopeMembership. */ scopeMember?: (db: Db, kind: string, scopeId: string, userId: string) => Promise<boolean>;
 }
 
 export const DEFAULT_FUSED_READ_DEPS: FusedReadDeps = Object.freeze({
@@ -1401,7 +1401,7 @@ export async function readSessionForViewer(
   if (mUnreadable) return { ...EMPTY_READ, status: "unreadable" };
   if (!isMembershipLive(membership, nowMs)) {
     return { ...EMPTY_READ, status: "not_member" };
-  }
+  } if (deps.scopeMember && !(await scopeStillHolds(deps, db, session, viewerId))) return { ...EMPTY_READ, status: "not_member" }; // census-map M93 (verifier 2026-10-24): membership in the GROUP is re-checked on every read, not only at join; a viewer removed from the trip reads nothing
 
   const blocked = await fetchBlockedSet(db as any, viewerId);
   if (blocked === null) {
@@ -1418,10 +1418,10 @@ export async function readSessionForViewer(
     .is("left_at", null);
   if (membersError) return { ...EMPTY_READ, status: "unreadable" };
 
-  const otherIds = ((memberRows as MembershipRow[]) ?? [])
+  let otherIds = ((memberRows as MembershipRow[]) ?? [])
     .filter((r) => isMembershipLive(r, nowMs))
     .map((r) => r.user_id)
-    .filter((id) => id !== viewerId && !blocked.has(id));
+    .filter((id) => id !== viewerId && !blocked.has(id)); if (deps.scopeMember) otherIds = await membersStillInScope(deps, db, session, otherIds); // census-map M93: a member removed from the group is not served either
 
   if (otherIds.length === 0) {
     return { status: "ok", session: summarize(session, nowMs), members: [] };
@@ -1552,4 +1552,24 @@ export async function leaveSession(
 
   if (updError) return { outcome: "error", positionDeleteError: delError ?? undefined, revokedEstimates };
   return { outcome: "left", positionDeleteError: delError ?? undefined, revokedEstimates };
+}
+
+// ── census-map M93 (independent verifier, 2026-10-24): the group scope, re-checked on every read ──────
+// Membership in the group (trip, circle, event, plan) used to be checked only at JOIN, so a person removed
+// from the trip kept seeing the session's positions for up to 12 hours. Appended at the tail so no cited
+// line above moves; function declarations hoist.
+
+/** True only when the injected verifier says the user is still in the session's scope; a throw is false. */
+async function scopeStillHolds(deps: FusedReadDeps, db: Db, session: SessionRow, userId: string): Promise<boolean> {
+  try {
+    return (await deps.scopeMember!(db, String(session.group_scope_kind), String(session.group_scope_id), userId)) === true;
+  } catch {
+    return false;
+  }
+}
+
+/** The members whose scope membership still holds; any that cannot be vouched for are dropped. */
+async function membersStillInScope(deps: FusedReadDeps, db: Db, session: SessionRow, ids: string[]): Promise<string[]> {
+  const answers = await Promise.all(ids.map(async (id) => [id, await scopeStillHolds(deps, db, session, id)] as const));
+  return answers.filter(([, ok]) => ok).map(([id]) => id);
 }

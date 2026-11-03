@@ -145,6 +145,7 @@ describe("Route trigger — awardSocialPostStamps (post-creation stamp path)", (
         },
         eq(col: string, val: unknown)  { _eq[col] = val; return b; },
         not()                          { _hasNot = true; return b; },
+        gt(col: string, val: unknown)  { if (col === "media_count" && val === 0) _hasNot = true; return b; }, // the photo-post count's filter since 2026-10-24 (media_count > 0, not media_urls <> '{}'); answered as the photo count, exactly as not() was
         is()                           { return b; },
         in()                           { return b; },
         upsert()                       { return b; },

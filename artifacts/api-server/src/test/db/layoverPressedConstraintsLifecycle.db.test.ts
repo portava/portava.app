@@ -40,7 +40,7 @@ const getC = (u: PressedUser, sid: string) => app.call("GET", `/api/airport/sess
 
 describe("B1-P constraints / lifecycle / checkpoints / outcomes (P2, P3)", { skip: PRESSED_SKIP_REASON }, () => {
   before(async () => {
-    db = await openForPress(PRESS);
+    db = await openForPress(PRESS); keepConstraintsUndeclared();
     for (const f of Object.keys(PRESS.flags)) seeds[f] = await db.flag(f);
     await productionBaseFlags(db);
     await applyPress(db, PRESS);
@@ -112,7 +112,7 @@ describe("B1-P constraints / lifecycle / checkpoints / outcomes (P2, P3)", { ski
       assert.deepEqual(lc.guardFailures, []);
       assert.deepEqual(lc.intents, ["CREATE_SNAPSHOT", "CREATE_SAFE_ENVELOPE", "CREATE_CANDIDATE_SET"]);
       // the side effects, really there:
-      assert.equal(open.body.persisted.state, "recorded", "CREATE_SNAPSHOT: the snapshot is stored");
+      assert.equal(open.body.persisted.state, PRESSED_BASE === "production-20261023" ? "active_snapshot" : "recorded", "CREATE_SNAPSHOT: the snapshot is stored"); // §83: only under production's canonical door (PRESSED_BASE=production-20261023) is the stored decision already the active one; the default base keeps the strict value
       const snap = await db.query<any>(`SELECT snapshot_id FROM public.layover_certified_computations WHERE snapshot_id = '${open.body.snapshotId}'`);
       assert.equal(snap.length, 1);
       assert.ok(open.body.safeEnvelope, "CREATE_SAFE_ENVELOPE");
@@ -195,3 +195,6 @@ describe("B1-P constraints / lifecycle / checkpoints / outcomes (P2, P3)", { ski
     it("A5 the bridge saw no unmodelled request shape", () => { assert.deepEqual(db.bridge.unmodelled, []); });
   });
 });
+
+import { keepConstraintsUndeclared } from "./pressedLayoverApp.js"; // census-layover §83: this suite owns its constraint declarations under PRESSED_BASE
+import { PRESSED_BASE } from "./pressedLayoverApp.js"; // census-layover §83: the base decides which stored state is correct

@@ -12,13 +12,7 @@ const OUTCOMES = 'session_id,left_airport,actual_airport_return_at';
 export async function readSafeReturnMetricWindow(db: SupabaseClient, events: LayoverEventRow[], eventsTruncated: boolean, fromIso: string, toIso: string): Promise<SafeReturnMetricWindow> {
   const unavailable = (reason: string): SafeReturnMetricWindow => { logger.warn({ operation:'readSafeReturnMetricWindow',reason },'layover return metric unavailable'); return { available:false,reason }; };
   try {
-    const ready = await probeSchemaReadiness(db, {
-      flag:'schema:layover-metrics-returns:3893:v1',providedBy:['2992_layover_decision_record_and_operational_tables.sql','3893_layover_safe_return_links.sql'],consumers:['services/airport/LayoverMetricsReturns.ts'],note:'Historical return measurements require complete outcome and linked timer schemas, regardless of current product flag state.',
-      requires:{tables:{
-        layover_safe_return_links:{columns:['layover_session_id','return_started_at'],probe:{column:'layover_session_id',value:SCHEMA_PROBE_SENTINEL_ID}},
-        layover_outcomes:{columns:['session_id','left_airport','actual_airport_return_at'],probe:{column:'session_id',value:SCHEMA_PROBE_SENTINEL_ID}},
-      }},
-    });
+    const ready = await probeSchemaReadiness(db, LAYOVER_METRICS_RETURNS_SCHEMA);
     if (ready.state !== 'ready') return unavailable(`layover_outcomes (2992) and layover_safe_return_links (3893) readiness ${ready.state}; no return completion rate reported.`);
     const links = countedLayoverWindow(await db.from('layover_safe_return_links').select(LINKS,{count:'exact'}).gte('return_started_at',fromIso).lt('return_started_at',toIso).order('return_started_at',{ascending:false}).limit(LIMIT+1),LINKS,LIMIT);
     if (!links) return unavailable('layover_safe_return_links window could not be read completely.');
@@ -42,3 +36,13 @@ export async function readSafeReturnMetricWindow(db: SupabaseClient, events: Lay
     return {available:true,started,outcomes,truncated};
   } catch(err) { logger.warn({err,operation:'readSafeReturnMetricWindow'},'layover return metric read threw');return {available:false,reason:'layover_outcomes / layover_safe_return_links read threw; no rate reported.'}; }
 }
+
+/** census-trips follow-up hotfix (2026-10-24): exported so test/db/capabilityProbeColumns.db.test.ts runs this probe on the replayed chain. */
+export const LAYOVER_METRICS_RETURNS_SCHEMA: CapabilityDefinition = {
+      flag:'schema:layover-metrics-returns:3893:v1',providedBy:['2992_layover_decision_record_and_operational_tables.sql','3893_layover_safe_return_links.sql'],consumers:['services/airport/LayoverMetricsReturns.ts'],note:'Historical return measurements require complete outcome and linked timer schemas, regardless of current product flag state.',
+      requires:{tables:{
+        layover_safe_return_links:{columns:['layover_session_id','return_started_at'],probe:{column:'layover_session_id',value:SCHEMA_PROBE_SENTINEL_ID}},
+        layover_outcomes:{columns:['session_id','left_airport','actual_airport_return_at'],probe:{column:'session_id',value:SCHEMA_PROBE_SENTINEL_ID}},
+      }},
+    };
+import type { CapabilityDefinition } from "../../lib/capability/schemaRequirement.js";

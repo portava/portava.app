@@ -71,9 +71,9 @@ describe("B1-P stable recommendation ids (P4)", { skip: PRESSED_SKIP_REASON }, (
     });
 
     it("I2 L117 L125 — the place outside the certified action universe is not offered, and no banded pin implies a fit it was not certified for", () => {
-      const titles = (first.recommendations as any[]).map((r) => r.title);
-      assert.ok(titles.includes("Marina Bay Walk"), `control: the reachable place is offered (${titles.join(", ")})`);
-      assert.ok(!titles.includes("Far Away Fort"), "a place outside the envelope was offered as a card");
+      const cards = first.recommendations as any[]; const titles = cards.filter((r) => r.available !== false).map((r) => r.title); const card = (t: string) => cards.find((c: any) => c.title === t); // §83: a BLOCKED card (status flag ON) is served visibly unavailable, never offered
+      if (PRESSED_BASE !== "production-20261023") assert.ok(titles.includes("Marina Bay Walk"), `control: the reachable place is OFFERED (${titles.join(", ")})`); else { assert.ok(cards.some((c: any) => c.insideAirport && c.available === true && c.status === "ELIGIBLE"), `control (production base, where every unrouted landside card is BLOCKED journey_not_measured): an airside card is OFFERED (${JSON.stringify(cards.map((c: any) => [c.title, c.available]))})`); assert.equal(card("Marina Bay Walk")?.statusReason, "journey_not_measured", "the reachable place is blocked only by the base-wide unmeasured journey, never as outside the envelope"); } // verifier M8 (every served card unavailable) is red here
+      assert.ok(!titles.includes("Far Away Fort") && cards.filter((r) => r.title === "Far Away Fort").every((r) => r.status === "BLOCKED" && r.statusReason === "outside_certified_envelope"), "a place outside the envelope was offered as a card, or served BLOCKED for another reason");
       const join = screenJoin(first.recommendations);
       assert.ok(Object.keys(join).length > 0, "no pin is banded at all — nothing on the map can be 'visibly blocked'");
       for (const f of Object.values(join)) {
@@ -128,3 +128,4 @@ describe("B1-P stable recommendation ids (P4)", { skip: PRESSED_SKIP_REASON }, (
     it("A3 the bridge saw no unmodelled request shape", () => { assert.deepEqual(db.bridge.unmodelled, []); });
   });
 });
+import { PRESSED_BASE } from "./pressedLayoverApp.js"; // census-layover §83 (verifier M8): the control is base-aware — production's flags make no unrouted landside card available

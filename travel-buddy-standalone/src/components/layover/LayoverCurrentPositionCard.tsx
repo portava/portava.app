@@ -8,7 +8,7 @@ import {requestLocationForUserAction,USER_PRESS_MAP_CONTEXT} from '../../lib/loc
 import {fmtClock} from './layoverFormat.ts';
 import {LayoverActivityTimingNote} from './LayoverTimingEvidenceCard.tsx';
 export function LayoverCurrentPositionCard({sessionId,recs,timezone,enabled}:{sessionId:string;recs:LayoverRecommendation[];timezone:string|null;enabled:boolean}){
-  const choices=recs.filter(r=>r.id&&r.snapshotId&&!r.insideAirport&&r.routing?.state==='FEASIBLE'),[selected,setSelected]=useState<string|null>(null),[preview,setPreview]=useState<CurrentPositionPreview|null>(null),[message,setMessage]=useState<string|null>(null),[busy,setBusy]=useState(false),[now,setNow]=useState(Date.now());
+  const choices=recs.filter(r=>r.id&&r.snapshotId&&!r.insideAirport&&r.routing?.state==='FEASIBLE'&&r.available!==false/* census-layover §83: a card served unavailable is never checked as an option */),[selected,setSelected]=useState<string|null>(null),[preview,setPreview]=useState<CurrentPositionPreview|null>(null),[message,setMessage]=useState<string|null>(null),[busy,setBusy]=useState(false),[now,setNow]=useState(Date.now());
   const generation=useRef(0),inFlight=useRef(false),candidate=choices.find(c=>c.id===selected)??choices[0];const identity=`${sessionId}:${candidate?.id}:${candidate?.snapshotId}:${enabled}`;
   useEffect(()=>{setPreview(null);setMessage(null);setBusy(false);inFlight.current=false;return()=>{generation.current++;};},[identity]);
   useEffect(()=>{const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[]);

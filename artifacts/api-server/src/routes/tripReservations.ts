@@ -703,7 +703,7 @@ router.delete("/trips/:tripId/reservations/:id", asyncHandler(async (req, res) =
     res.json({ reservation: cancelled });
     return;
   }
-
+  if (history.reason === "schema_missing") { sendError(res, "feature_disabled", "Reservation cancellation is not available on this deployment yet (schema_missing); the reservation was not deleted."); return; } if (history.reason !== "flag_off") { sendTripRefusal(res, "degraded_unavailable", "TRIP_PROJECTION_UNAVAILABLE", "The reservation could not be cancelled just now, and it is never deleted instead. Please try again."); return; } // follow-up hotfix 2026-10-24, + fix to #803: the legacy hard delete is the flag-DEFINITELY-OFF behaviour only. flag_unknown / schema_unknown (the flag or the schema could not be read, a transient error included) refuse with a retryable 503 and destroy nothing; schema_missing (flag ON, history schema absent: a stable state) is feature_disabled, as refusalForGate answers it, so a client is not told to retry forever
   const { error } = await sc
     .from("trip_reservations")
     .delete()

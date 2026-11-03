@@ -58,7 +58,7 @@ export async function syncTripChatMembers(
   // than the defect. So the refusal is placed where the durability is.
   const { data: trip, error: tripErr } = await sc
     .from('trips')
-    .select('id, title, destination_city')
+    .select('id, title, destination_city, owner_id')
     .eq('id', tripId)
     .maybeSingle();
 
@@ -145,7 +145,7 @@ export async function syncTripChatMembers(
   // id. Refusing is the only answer supported by a read that did not happen.
   const { data: tripMembers, error: tripMembersErr } = await sc
     .from('trip_members')
-    .select('user_id')
+    .select('user_id, role, status')
     .eq('trip_id', tripId)
     .in('role', ['owner', 'member']);
 
@@ -156,7 +156,7 @@ export async function syncTripChatMembers(
     );
   }
 
-  const acceptedIds = new Set(((tripMembers ?? []) as any[]).map((m) => m.user_id as string));
+  const acceptedRows = withTripOwner(((tripMembers ?? []) as any[]).filter(isAcceptedTripRow).map((m) => ({ user_id: m.user_id as string, role: tripChatThreadRole(String(m.role)) })), (trip as any)?.owner_id ?? null); /* fix to #803 (verifier finding 4): the owner is crew by trips.owner_id, with or without a trip_members row, as requireTripMember says */ const acceptedIds = new Set(acceptedRows.map((m) => m.user_id)); const threadRoleOf = new Map(acceptedRows.map((m) => [m.user_id, m.role])); // follow-up hotfix 2026-10-24: accepted crew only; the owner is the thread's admin
 
   // A genuinely empty accepted set. Distinct from the refusal above: the read
   // succeeded and the trip really has nobody left to reconcile.
@@ -184,7 +184,7 @@ export async function syncTripChatMembers(
   const upsertRows = [...acceptedIds].map((userId) => ({
     thread_id: threadId,
     user_id: userId,
-    role: 'member',
+    role: threadRoleOf.get(userId) ?? 'member',
     joined_at: now,
     left_at: null,
   }));
@@ -214,7 +214,7 @@ export async function syncTripChatMembers(
   // as removal that wrongly does.
   const { data: activeMembers, error: activeMembersErr } = await sc
     .from('message_thread_members')
-    .select('user_id')
+    .select('user_id, role')
     .eq('thread_id', threadId)
     .is('left_at', null);
 
@@ -226,7 +226,7 @@ export async function syncTripChatMembers(
   }
 
   const toRemove = ((activeMembers ?? []) as any[])
-    .map((m) => m.user_id as string)
+    .filter((m) => !(tripErr && m.role === 'admin')).map((m) => m.user_id as string) // fix to #803: with trips.owner_id unreadable (tripErr) the owner is UNKNOWN, not absent — the sync still runs, but never evicts a thread admin, the only row the owner can hold
     .filter((id) => !acceptedIds.has(id));
 
   if (toRemove.length > 0) {
@@ -415,3 +415,4 @@ export async function syncCircleChatMembers(
 
   return threadId;
 }
+import { isAcceptedTripRow, tripChatThreadRole, withTripOwner } from '../lib/chatSync.js'; // follow-up hotfix 2026-10-24; at the foot so no cited line moves

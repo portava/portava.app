@@ -1820,6 +1820,13 @@
       "evidence": []
     },
     {
+      "flag": "layover_snapshot_envelope_ref_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: seeded FALSE by 3951_layover_snapshot_safe_envelope_ref.sql:78, newer than this policy and not launch-approved for beta — turning it on is a reviewed policy edit with evidence.",
+      "evidence": []
+    },
+    {
       "flag": "layover_stable_recommendation_ids_enabled",
       "kind": "CAPABILITY",
       "enabled": false,

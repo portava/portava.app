@@ -392,7 +392,7 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
           {/* Media preview / picker */}
           {primaryItem ? (
             <View style={styles.mediaPreviewWrap}>
-              {primaryItem.type === 'video' ? (
+              {primaryItem.type === 'video' && !isLoadablePlaybackUri(primaryItem.uri) ? null : primaryItem.type === 'video' ? (
                 <Video
                   source={{ uri: primaryItem.uri }}
                   style={styles.mediaPreview}
@@ -1190,3 +1190,4 @@ const styles = StyleSheet.create({
     color: '#C43B23', // census-media §31.12: `signal` x 0.77
   },
 });
+import { isLoadablePlaybackUri } from '../../services/playbackUri.ts'; // 2026-10-24 video playback: the one playback rule

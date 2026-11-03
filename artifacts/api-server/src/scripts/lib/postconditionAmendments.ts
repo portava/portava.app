@@ -500,6 +500,31 @@ $reassert$;`,
       "The recurrence-family and lost-command checks of the block are still re-run.",
   },
   {
+    file: "3924_post_media_backfill_create_path_uploads.sql",
+    blockLine: 179,
+    blockSha256: "f676305f022458f3",
+    kind: "session-bound",
+    sessionState: "_m3924_entries",
+    drops: [{ lines: [183, 185], failsWith: 'relation "_m3924_entries" does not exist' }],
+    why:
+      "check:migration-session-state KNOWN: postcondition A counts the moved entries in the ON COMMIT DROP table " +
+      "_m3924_entries, which exists only inside 3924's apply transaction (where the applier ran it; 3924 was applied " +
+      "before this declaration, so its bytes are frozen). Postcondition B of the next block, the one that holds the " +
+      "2083 invariant at any later point, is still re-run.",
+  },
+  {
+    file: "3924_post_media_backfill_create_path_uploads.sql",
+    blockLine: 224,
+    blockSha256: "a4d586d29d1bc8ac",
+    kind: "session-bound",
+    sessionState: "_m3924_entries",
+    drops: [{ lines: [237, 243], failsWith: 'relation "_m3924_entries" does not exist' }],
+    why:
+      "check:migration-session-state KNOWN: postcondition C compares the touched posts (read from the ON COMMIT DROP " +
+      "table _m3924_entries) with their rows. Postcondition B of the same block — no storage-backed media_urls entry " +
+      "anywhere, check:media-urls-external-only's predicate — is still re-run.",
+  },
+  {
     file: "3720_trip_plan_privacy_scope_rls.sql",
     blockLine: 86,
     blockSha256: "9111f2d4449320e3",

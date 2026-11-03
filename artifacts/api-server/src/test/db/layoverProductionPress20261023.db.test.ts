@@ -68,7 +68,7 @@ let ana: PressedUser;
 
 describe("§82 — production's 2026-10-23 flag state, on the migrated chain", { skip: PRESSED_SKIP_REASON }, () => {
   before(async () => {
-    db = await openPressedLayoverDb();
+    db = await openPressedLayoverDb(); keepConstraintsUndeclared(); // this suite declares for itself
     await productionBaseFlags(db);
     await db.setFlags({ ...PRODUCTION_FLAGS_20261023 });
     // `layover_ranking_mode` is a metadata flag: production holds { mode: "on", cohort: { kind: "all" } }.
@@ -197,3 +197,5 @@ describe("§82 — production's 2026-10-23 flag state, on the migrated chain", {
     }
   });
 });
+
+import { keepConstraintsUndeclared } from "./pressedLayoverApp.js"; // census-layover §83: this suite owns its constraint declarations under PRESSED_BASE

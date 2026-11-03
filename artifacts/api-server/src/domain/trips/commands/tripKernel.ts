@@ -342,7 +342,7 @@ export interface TripCommand {
   type: TripCommandType;
   payload: Record<string, unknown>;
   clientObservedAt?: string | null;
-  correlationId?: string | null;
+  correlationId?: TripCorrelationId | null; // a uuid (2420 casts correlation_id ::uuid): tripCorrelationId(label) or asTripCorrelationId(uuid), never a label
 }
 
 // ── Reason codes ─────────────────────────────────────────────────────────────
@@ -728,7 +728,7 @@ export async function executeTripCommand(sc: any, cmd: TripCommand): Promise<Tri
   // BY NAME before the kernel sees it, rather than persisted into a plan's or a
   // proposal's payload_json where nothing would ever look for it again.
   // census-trips TR56: the boundary is a check now, not an accident of routing.
-  const crossing = sensitiveDomainKey(cmd.payload);
+  const crossing = sensitiveDomainKey(cmd.payload); if (cmd.correlationId != null && !isTripCorrelationId(cmd.correlationId)) { countRejection("TRIP_COMMAND_MALFORMED"); return { ok: false, reason: "TRIP_COMMAND_MALFORMED", detail: "correlationId must be a uuid: derive one from a label with tripCorrelationId(label)", contractVersion: null }; } // census-trips hotfix 2026-10-24: refused before the RPC, never a 22P02 inside it
   if (crossing) {
     countRejection("TRIP_COMMAND_SENSITIVE_DOMAIN");
     return {
@@ -900,3 +900,43 @@ export function sendKernelRejection(
       return;
   }
 }
+
+// ── Correlation ids (census-trips hotfix, 2026-10-24) ─────────────────────────
+//
+// `trip_events.correlation_id` is a uuid and trip_kernel_execute casts the envelope's value `::uuid` (2420). Four doors
+// passed a LABEL (`closeout:<trip>`, `regroup:<trip>`, `checkpoint:<id>`), harmless while trip_kernel_enabled was off
+// (those doors refused first) and fatal once it went ON in production on 2026-10-23: every closeout answer, /regroup and
+// meeting arrival/close came back TRIP_COMMAND_MALFORMED ("invalid input syntax for type uuid"). The type below makes a
+// label a compile error at every call site, and executeTripCommand refuses a non-uuid one before the RPC.
+
+/** A uuid-shaped correlation id. Only `tripCorrelationId` and `asTripCorrelationId` produce one. */
+export type TripCorrelationId = string & { readonly __tripCorrelationId: unique symbol };
+
+const TRIP_CORRELATION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The fixed RFC 4122 namespace every Trips correlation label is derived under (never change it: retries must correlate). */
+export const PORTAVA_TRIP_CORRELATION_NAMESPACE = "6f1d2c9e-8a4b-5c3d-9e7f-1a2b3c4d5e6f";
+
+export function isTripCorrelationId(value: unknown): value is TripCorrelationId {
+  return typeof value === "string" && TRIP_CORRELATION_UUID.test(value);
+}
+
+/** A uuid already in hand (an operation id, a client's correlation id), or null when it is not uuid-shaped. */
+export function asTripCorrelationId(value: unknown): TripCorrelationId | null {
+  return isTripCorrelationId(value) ? value : null;
+}
+
+/**
+ * RFC 4122 §4.3 name-based UUID (version 5, SHA-1) of `label` under PORTAVA_TRIP_CORRELATION_NAMESPACE. Deterministic:
+ * the same label is the same id on every retry and every process, so the events of one closeout, one regroup or one
+ * checkpoint still correlate, exactly as the label meant them to.
+ */
+export function tripCorrelationId(label: string): TripCorrelationId {
+  const ns = Buffer.from(PORTAVA_TRIP_CORRELATION_NAMESPACE.replace(/-/g, ""), "hex");
+  const h = createHash("sha1").update(ns).update(Buffer.from(label, "utf8")).digest();
+  h[6] = (h[6]! & 0x0f) | 0x50;
+  h[8] = (h[8]! & 0x3f) | 0x80;
+  const hex = h.subarray(0, 16).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}` as TripCorrelationId;
+}
+import { createHash } from "node:crypto"; // census-trips hotfix 2026-10-24; at the foot so no cited line moves
