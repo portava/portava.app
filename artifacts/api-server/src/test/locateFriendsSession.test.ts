@@ -1235,7 +1235,7 @@ describe("group scope — you can only join a group you are provably in", () => 
 
 describe("attribution — every membership and position write is recorded", () => {
   it("a position write leaves an audit row naming the actor, rung and precision", async () => {
-    const db = makeDb({ sessions: [session()], members: [member(ALICE)] });
+    const db = makeDb({ sessions: [session()], members: [member(ALICE)], trips: [{ id: TRIP, owner_id: ALICE }] }); // ALICE is in the session's trip: publish re-checks the group (census-map M93, 2026-10-24)
     const outcome = await publishPosition(
       db as any,
       ALICE,
@@ -1254,7 +1254,7 @@ describe("attribution — every membership and position write is recorded", () =
   });
 
   it("the audit row carries NO coordinate — attribution must not rebuild a track", async () => {
-    const db = makeDb({ sessions: [session()], members: [member(ALICE)] });
+    const db = makeDb({ sessions: [session()], members: [member(ALICE)], trips: [{ id: TRIP, owner_id: ALICE }] }); // ALICE is in the session's trip: publish re-checks the group (census-map M93, 2026-10-24)
     await publishPosition(
       db as any,
       ALICE,
@@ -1273,7 +1273,7 @@ describe("attribution — every membership and position write is recorded", () =
   });
 
   it("a session write leaves ONE current position row per member, never a history", async () => {
-    const db = makeDb({ sessions: [session()], members: [member(ALICE)] });
+    const db = makeDb({ sessions: [session()], members: [member(ALICE)], trips: [{ id: TRIP, owner_id: ALICE }] }); // ALICE is in the session's trip: publish re-checks the group (census-map M93, 2026-10-24)
     for (let i = 0; i < 5; i++) {
       await publishPosition(
         db as any,
@@ -1297,7 +1297,7 @@ describe("attribution — every membership and position write is recorded", () =
   });
 
   it("a future-dated observation is refused rather than buying a longer window", async () => {
-    const db = makeDb({ sessions: [session()], members: [member(ALICE)] });
+    const db = makeDb({ sessions: [session()], members: [member(ALICE)], trips: [{ id: TRIP, owner_id: ALICE }] }); // ALICE is in the session's trip: publish re-checks the group (census-map M93, 2026-10-24)
     const outcome = await publishPosition(
       db as any,
       ALICE,
@@ -1315,7 +1315,7 @@ describe("attribution — every membership and position write is recorded", () =
   });
 
   it("an observation older than the decay horizon is refused, not stored unservable", async () => {
-    const db = makeDb({ sessions: [session()], members: [member(ALICE)] });
+    const db = makeDb({ sessions: [session()], members: [member(ALICE)], trips: [{ id: TRIP, owner_id: ALICE }] }); // ALICE is in the session's trip: publish re-checks the group (census-map M93, 2026-10-24)
     const outcome = await publishPosition(
       db as any,
       ALICE,
@@ -1328,7 +1328,7 @@ describe("attribution — every membership and position write is recorded", () =
       },
       NOW,
     );
-    assert.equal(outcome.ok, false);
+    assert.equal(outcome.ok, false); assert.equal(outcome.ok === false && outcome.code, "invalid_payload", "refused for its age, not for its group");
     assert.equal(db._tables[POSITIONS_TABLE].length, 0);
   });
 });
