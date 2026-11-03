@@ -34,7 +34,7 @@ import { estimateTravel, type GeoPoint, type TravelAssumption } from "../contrac
 import { withDepartureAssumptions } from "../services/TripDepartureAssumptions.js";
 import { liveEnvelope, type TripProjectionEnvelope } from "../contracts/TripProjectionEnvelope.js";
 import { recordTripDecision, persistTripDecision, TRIP_ENGINE_VERSIONS } from "../services/TripDecisionLedger.js";
-import { recordDerivedEvents, type DerivedEventsReport } from "../events/tripDerivedEvents.js";
+import type { DerivedEventsReport } from "../events/tripDerivedEvents.js"; // recordDerivedEvents is no longer called from a read (follow-up hotfix 2026-10-24)
 import {
   computeFreedomWindows, type EngineCommitment, type FreedomWindow, type HopTravel, type TemporalConflict,
 } from "../invariants/TripFreedomEngine.js";
@@ -289,12 +289,12 @@ async function buildFreedomInBudget(sc: any, tripId: string, opts: { now?: Date 
   });
   for (const c of result.conflicts) incrementTripMetric("temporal_conflict_total", { kind: c.kind });
 
-  // §4.2: the engine's judgement becomes domain events — commitment_at_risk
-  // per conflicting commitment, free_window_created per window — through the
-  // kernel's 'engine' capability (2785), keyed by the fact's identity so a
-  // re-read is a duplicate. Skipped, and said so, while trip_kernel_enabled
-  // is false.
-  const derivedEvents = await recordDerivedEvents(sc, tripId, { windows: result.windows, conflicts: result.conflicts }, { now });
+  // §4.2: the engine's judgement (commitment_at_risk per conflicting
+  // commitment, free_window_created per window) is SERVED here, not recorded:
+  // a kernel command appends at the next trips.version, and a read must not
+  // move the version a client edits against (follow-up hotfix 2026-10-24).
+  // recordDerivedEvents is kept for an engine that runs outside a read.
+  const derivedEvents = derivedEventsNotIssuedFromARead(); // follow-up hotfix 2026-10-24: a read never issues recordDerivedEvents — a GET must not move trips.version (tripDerivedEvents.ts READ_PATH_NOT_ISSUED)
 
   // §21.2: ids, versions and counts — never a coordinate or a name.
   const decision = recordTripDecision({
@@ -351,3 +351,4 @@ async function buildFreedomInBudget(sc: any, tripId: string, opts: { now?: Date 
     },
   };
 }
+import { derivedEventsNotIssuedFromARead } from "../events/tripDerivedEvents.js"; // follow-up hotfix 2026-10-24; at the foot so no cited line moves

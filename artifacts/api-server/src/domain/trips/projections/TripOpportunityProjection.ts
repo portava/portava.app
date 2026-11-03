@@ -420,24 +420,11 @@ export async function buildTripOpportunityProjection(
     });
     void persistTripDecision(sc, pd);
 
+    // Follow-up hotfix 2026-10-24: a significant change is REPORTED, never recorded from a read. RECORD_OPPORTUNITY_CHANGE
+    // appends at the next trips.version, and a GET must not move the version a client edits against
+    // (tripDerivedEvents.ts READ_PATH_NOT_ISSUED). recordOpportunityChange, at the foot, is kept for an engine outside a read.
     if (event.significance !== "none") {
-      if (!(await isFlagEnabled(sc, "trip_kernel_enabled"))) recorded.skipped = "trip_kernel_enabled is false";
-      else {
-        try {
-          const r = await executeTripCommand(sc, {
-            commandId: randomUUID(), tripId, actorUserId: null, actorRole: "system", idempotencyKey: diffKey(event), type: "RECORD_OPPORTUNITY_CHANGE",
-            payload: {
-              trigger: event.trigger, window_id: event.windowId, previous_window: event.previousFreedomWindow, new_window: event.newFreedomWindow,
-              added: event.opportunitiesAdded.map((a) => ({ id: a.id, candidateId: a.candidateId, name: a.name, primitive: a.primitive, score: a.score })),
-              removed: event.opportunitiesRemoved.map((r) => ({ id: r.id, candidateId: r.candidateId, name: r.name, reasonCodes: r.reasonCodes, verdictNow: r.verdictNow })),
-              significance: event.significance, expires_at: event.expiresAt, reason_codes: event.reasonCodes, source: "TripOpportunityProjection",
-            },
-            clientObservedAt: nowIso,
-          });
-          if (r.ok) { recorded.issued = !r.duplicate; recorded.duplicate = r.duplicate; }
-          else recorded.failed = r.reason;
-        } catch (e: any) { recorded.failed = String(e?.message ?? e); log.warn({ tripId, err: recorded.failed }, "opportunity event threw"); }
-      }
+      recorded.skipped = READ_PATH_NOT_ISSUED;
     } else recorded.skipped = "no change";
   }
 
@@ -446,7 +433,7 @@ export async function buildTripOpportunityProjection(
     tripId, type: "opportunity_projection",
     inputs: { canonicalVersion, windows: views.map((v) => ({ id: v.windowId, executable: v.executable.length, uncertain: v.uncertain.length, notExecutable: v.notExecutable.length })), suppressed, trigger: event?.trigger ?? null },
     sources: ["trips", "TripHealthProjection", "TripFreedomProjection", "TripPulseProjection", "trip_saved_places", "trip_goals", "trip_members"],
-    assumptions: ["the event is the diff against the last ledgered portfolio of the same window", "a significant change is recorded through the kernel, never pushed from here"],
+    assumptions: ["the event is the diff against the last ledgered portfolio of the same window", "a significant change is reported, never recorded from a read (a GET must not move trips.version) and never pushed from here"],
     constraints: event ? event.reasonCodes.map(String) : [],
     result: { event: event ? { significance: event.significance, added: event.opportunitiesAdded.length, removed: event.opportunitiesRemoved.length } : null, recorded, notify },
     confidence: "N/A",
@@ -467,3 +454,32 @@ export async function buildTripOpportunityProjection(
     },
   };
 }
+
+/**
+ * RECORD_OPPORTUNITY_CHANGE for a significant §13.3 change, keyed by the diff (a second recompute that finds the same
+ * change is a duplicate at the receipt). Moved out of the projection build by the follow-up hotfix (2026-10-24): a
+ * read must not move trips.version. Kept, unit-tested, for an engine that runs outside a read; nothing calls it today.
+ */
+export async function recordOpportunityChange(
+  sc: any, tripId: string, event: OpportunityEvent, nowIso: string,
+): Promise<{ issued: boolean; duplicate: boolean; skipped: string | null; failed: string | null }> {
+  const recorded = { issued: false, duplicate: false, skipped: null as string | null, failed: null as string | null };
+  if (event.significance === "none") { recorded.skipped = "no change"; return recorded; }
+  if (!(await isFlagEnabled(sc, "trip_kernel_enabled"))) { recorded.skipped = "trip_kernel_enabled is false"; return recorded; }
+  try {
+    const r = await executeTripCommand(sc, {
+      commandId: randomUUID(), tripId, actorUserId: null, actorRole: "system", idempotencyKey: diffKey(event), type: "RECORD_OPPORTUNITY_CHANGE",
+      payload: {
+        trigger: event.trigger, window_id: event.windowId, previous_window: event.previousFreedomWindow, new_window: event.newFreedomWindow,
+        added: event.opportunitiesAdded.map((a) => ({ id: a.id, candidateId: a.candidateId, name: a.name, primitive: a.primitive, score: a.score })),
+        removed: event.opportunitiesRemoved.map((r) => ({ id: r.id, candidateId: r.candidateId, name: r.name, reasonCodes: r.reasonCodes, verdictNow: r.verdictNow })),
+        significance: event.significance, expires_at: event.expiresAt, reason_codes: event.reasonCodes, source: "TripOpportunityProjection",
+      },
+      clientObservedAt: nowIso,
+    });
+    if (r.ok) { recorded.issued = !r.duplicate; recorded.duplicate = r.duplicate; }
+    else recorded.failed = r.reason;
+  } catch (e: any) { recorded.failed = String(e?.message ?? e); log.warn({ tripId, err: recorded.failed }, "opportunity event threw"); }
+  return recorded;
+}
+import { READ_PATH_NOT_ISSUED } from "../events/tripDerivedEvents.js"; // follow-up hotfix 2026-10-24; at the foot so no cited line moves
