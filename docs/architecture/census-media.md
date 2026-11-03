@@ -17588,3 +17588,103 @@ A row for §44.18.6's reader table, recorded here so no line above moves:
 | Reader | What it serves | Honoured the block before | Now |
 | --- | --- | --- | --- |
 | Direct PostgREST reads of `post_media` | every ready, public row the policy admits, including rows whose OWNER blocked the reader (the policy's `blocks` subquery ran under `blocks`' own RLS) | no | **fixed on branch by 3905, not merged, not deployed; the viewer's own block was always honoured** |
+
+### Correction (2026-10-24, video playback, owner-reported) — POST /posts never wrote a post_media row, so uploaded videos were served as images
+
+*Branch `claude/fix-video-playback-20261024`, cut from main `9d5f6d481`. Production was read with SELECT only. **NO ROW
+MOVES:** no row of this census grades a post's own detail playback or 2083's split of the two stores. The defect sat
+under rows whose evidence is about other paths, and it is recorded here so that the next grader can find it.*
+
+**What production held (read 2026-10-24).**
+- Every post with uploaded media since 2026-08-16 (4 of 4) carries the upload's bare key in `posts.media_urls`
+  (`post-media/<author>/<ts>.<ext>`) and has no `post_media` row. In every case, the key's first segment is the author.
+- Two of these posts are videos (`video/quicktime`, 8 and 16 MB), and each has its poster at `<key>.poster.jpg`.
+- `posts.has_video` is false on both, and `media_count` is 0.
+- So the read side, which builds `media` from rows only, served `media: []`. The detail screen chose its player from
+  `media[0].media_type` and gave the `.mov` to an image component. The edge logs show no AVPlayer request at all.
+
+**The fix, in four parts.**
+- **A — read side, one authority.** `artifacts/api-server/src/lib/media/storageBackedPostMedia.ts:204#export async function mediaUrlsFallback(`
+  - It is used by the following, global and trip feeds, `withPostMedia` (pending and every mutation response) and the
+    detail endpoint (`artifacts/api-server/src/routes/posts.ts:1990#const detailFallback = await mediaUrlsFallback(`).
+  - When a post has NO `post_media` row at all, its storage-backed `media_urls` entries are served as items marked
+    `id: null, source: "media_urls"`. The video type comes from the extension, then from the post's declared type.
+  - A poster is named only when the object exists.
+  - A post with any row, a rejected one included, is never synthesized for.
+  - An unreadable read stays `media: null` (§47). `withPostMedia`'s old fail-open `[]` is now `null`.
+- **B — the create path.** `artifacts/api-server/src/routes/posts.ts:590#const uploadPlan = planPostMediaUploads(`
+  - An upload becomes a `post_media` row (ready, `pending` per 2098, the author's), and `media_urls` keeps external
+    references only.
+  - A key whose first segment is not the author's is refused 403. A key in `post_media_moderation_ledger` is refused 409.
+    An unreadable ledger is refused 503. In each case nothing is written.
+  - A failed row write deletes the post and answers an error
+    (`artifacts/api-server/src/routes/posts.ts:691#const rowsWrite = await insertUploadRows(`), never a 201 for a post
+    with no media.
+  - `PATCH /posts/:id` refuses an upload key after the D-82 hold (MD269's ordering is kept).
+  - The photographer stamp counts `media_count > 0`, because uploads are no longer in `media_urls`.
+- **C — backfill.** `artifacts/api-server/src/migrations/3924_post_media_backfill_create_path_uploads.sql` moves the
+  entries, preserving order.
+  - Preconditions refuse the whole file: another storage spelling, a key that is not the author's, a moderated key.
+  - Postconditions assert that every entry has a row, that `check:media-urls-external-only`'s predicate is empty, and that
+    the summary columns equal the rows.
+  - **Applied** to production on 2026-10-24 at 09:59Z (ledger 832) and to `portava-ci` (ledger 838, a no-op), by the lead.
+  - Production read afterwards: 4 rows, ready and `pending`; both videos typed `video` with their posters; `media_urls` empty.
+  - certify stage 4 cannot re-run postconditions A and C, which read the ON COMMIT DROP entry list. They are declared
+    session-bound for certify, the declaration 2570, 2745 and 2798 carry, and postcondition B is still re-run.
+  - Rollback: `db/rollback/2026-10-24-3924-post-media-backfill-create-path-uploads-rollback.sql`.
+- **D — client.** `mapPost` now carries `mediaType` and `hasVideo`.
+  - The detail screen plays a video file, or a post declared as video, when `media` is empty
+    (`travel-buddy-standalone/src/lib/media/videoPosterRef.ts:41#export function refPlaysAsVideo(`), as PulseFeedCard
+    has since #776.
+  - The media viewer chooses Video when any of three signals says video: the full post's flag, the item's type, or a
+    video file about to be shown. It never draws a video file as its own poster.
+
+- **E — the second cause, client side (found by the lead after 3924, 2026-10-24).**
+  - The owner's video still did not play. At 10:11:50Z the server signed the `.mov`, and the phone never requested the
+    signed URL.
+  - Why: SharedVideoPlayer mounted `<Video>` with the bare `post-media/…` ref while the signature was in flight.
+    AVPlayer failed on it, the error latched "Video unavailable", and the signed URL that followed was never handed to a
+    player.
+  - The fix: one rule for what a player may be handed
+    (`travel-buddy-standalone/src/services/playbackUri.ts:61#export function playbackUriState(`, re-exported by
+    `services/mediaUrl.ts`, which now delegates its private-bucket rule to it).
+  - SharedVideoPlayer mounts no player until the source is loadable, and shows the poster and a loading state
+    meanwhile.
+  - The error is keyed to the source that failed, and the player is keyed by its source, so a late or refreshed
+    signature recovers. A refused signature keeps "Video unavailable".
+  - MediaPerspectiveViewerScreen and HighlightViewer had the same race and are fixed.
+  - Every other `<Video>` now decides through the rule: WatchVideoCell, GridTile, the media viewer, HighlightComposer,
+    VideoStoryTrimSheet, AddGemForm and MemoryVideoSegments. A guard test requires each one to call it.
+
+**Isolation.** An item exposes exactly the reference `media_urls` already exposed, from the same row, after the route's
+own visibility, block and Hidden-Gem gates. Nothing reads another post. Byte access is unchanged: `lib/mediaAccess`
+branch 3b authorizes a `media_urls` key, 3a authorizes a row, and a poster is authorized as its video.
+`artifacts/api-server/src/test/storageBackedPostMedia.test.ts:282#it("R3 ISOLATION` checks two things. A private post is
+a 404 for another user, and no key of it reaches that user. Each post's items name only that post's own refs.
+
+**Tests.**
+- `storageBackedPostMedia.test.ts`: U1–U6 and R1–R10, including e4bbf335's exact production shape (R1).
+- `postMediaBackfill3924.db.test.ts`: B1–B7 on PostgreSQL.
+- Client:
+  - `PostDetailCard.mediaUrlsVideo.component.test.tsx` V1–V4;
+  - `mediaViewer.videoFile.component.test.tsx` W1–W3;
+  - `posts.videoFields.component.test.ts`.
+- Mutants:
+  - server V1–V18, all killed;
+  - SQL S1–S9, all killed;
+  - client CM1–CM7, all killed.
+- E: `SharedVideoPlayer.sourceRace.component.test.tsx` R1–R5, `playbackUri.test.ts` P1–P4 (P4 is the guard), the
+  perspective viewer's pending-signature case, and the media viewer's W1–W4.
+- Race mutants RM2–RM9 are killed. RM1, the raw ref kept as the playback URI while no player is mounted, is equivalent:
+  no player exists to receive it.
+
+**Release.** The fix ships in four steps, and each one fixes something by itself:
+1. **Migration 3924 applied — done 2026-10-24 09:59Z.** It fixes the existing posts with no deploy: the deployed server
+   already reads rows, and a `ready` row is authorized through `lib/mediaAccess` 3a.
+2. **Server deploy** of this branch makes new posts write rows (B) and serves any post still missing one (A). Until it
+   ships, every new upload post repeats the defect. The
+   installed build `96d20f10d` then plays them: the detail screen sees `media_type: 'video'` and mounts
+   SharedVideoPlayer, which signs the key.
+3. **Next device build** adds D and E. E is required: without it the installed build's player latches on the bare ref
+   before the signature arrives.
+4. **Signed-in check**: the owner plays `e4bbf335` on a device.

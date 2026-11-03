@@ -60,6 +60,10 @@ const DONE_TRIP = "40000000-0000-4000-8000-000000000004";
 const FOREIGN_TRIP = "40000000-0000-4000-8000-000000000005";
 const CANCELLED_TRIP = "40000000-0000-4000-8000-000000000006";
 const REMOVED_TRIP = "40000000-0000-4000-8000-000000000007";
+// Trips meant to be current are dated from today (UTC, as the route reads it), so they stay
+// current whenever the suite runs. A fixed date in the future turns into the past and drops the
+// trip from the current plans; that is how PARIS_TRIP fell out on 2026-10-26.
+const daysFromToday = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
 
 function memory(id: string, extra: Record<string, unknown>) {
   return {
@@ -111,18 +115,18 @@ function tables(): Record<string, any[]> {
       { id: OLD_TRIP, owner_id: OWNER, title: "Tokyo 2026", destination_city: "Tokyo", destination_country: "Japan",
         start_date: "2026-03-01", end_date: "2026-03-08", status: "completed" },
       { id: TOKYO_TRIP, owner_id: OWNER, title: "Back to Tokyo", destination_city: "tokyo", destination_country: "Japan",
-        start_date: "2026-11-01", end_date: "2026-11-09", status: "upcoming" },
+        start_date: daysFromToday(20), end_date: daysFromToday(28), status: "upcoming" },
       { id: PARIS_TRIP, owner_id: FRIEND, title: "Paris", destination_city: "Paris", destination_country: "France",
-        start_date: "2026-10-20", end_date: "2026-10-25", status: "planning" },
+        start_date: daysFromToday(10), end_date: daysFromToday(15), status: "planning" },
       { id: DONE_TRIP, owner_id: OWNER, title: "Lisbon", destination_city: "Lisbon", destination_country: "Portugal",
         start_date: "2026-01-01", end_date: "2026-01-05", status: "completed" },
       { id: FOREIGN_TRIP, owner_id: STRANGER, title: "Not yours", destination_city: "Tokyo", destination_country: "Japan",
-        start_date: "2026-11-01", end_date: "2026-11-05", status: "upcoming" },
+        start_date: daysFromToday(20), end_date: daysFromToday(24), status: "upcoming" },
       // Dates still ahead, status says it is not happening: not a current plan.
       { id: CANCELLED_TRIP, owner_id: OWNER, title: "Called off", destination_city: "Tokyo", destination_country: "Japan",
-        start_date: "2026-12-01", end_date: "2026-12-05", status: "cancelled" },
+        start_date: daysFromToday(50), end_date: daysFromToday(54), status: "cancelled" },
       { id: REMOVED_TRIP, owner_id: STRANGER, title: "Removed from", destination_city: "Tokyo", destination_country: "Japan",
-        start_date: "2026-11-10", end_date: "2026-11-12", status: "upcoming" },
+        start_date: daysFromToday(29), end_date: daysFromToday(31), status: "upcoming" },
     ],
     trip_members: [
       { trip_id: PARIS_TRIP, user_id: OWNER, role: "member", status: "accepted" },

@@ -306,7 +306,7 @@ const POST_COLUMNS =
   "location_privacy_mode, post_status, " +
   "public_lat, public_lng, public_location_label, geofence_radius_meters, " +
   "publish_after_exit, publish_after_time, publish_eligible_at, published_at, location_sensitivity_level, " +
-  "category, save_count, media_count, has_video, primary_media_type, original_language";
+  "category, save_count, media_count, has_video, primary_media_type, original_language, media_type, media_thumbnail_url"; // 2026-10-24 (video playback): the post's own declared media type and thumbnail, which the client reads when `media` is empty
 
 const POST_MEDIA_FEED_COLUMNS =
   "post_id, id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status";
@@ -362,30 +362,30 @@ export function filterPostMedia(items: any[]): Array<Record<string, unknown>> {
  * So this is not defensive padding — these responses are a render source, and
  * the field they rendered from was deliberately emptied.
  *
- * Fails OPEN, matching the feed endpoints: a post_media read failure omits the
- * media rather than failing the mutation the caller actually asked for. The
- * mutation has already been committed by the time this runs.
+ * Never fails the mutation (it has already been committed): a post_media read
+ * failure answers `media: null` — unknown, never [] (census-media §47, 2026-10-24) —
+ * and a post with no row at all gets its media_urls uploads (storageBackedPostMedia).
  */
 async function withPostMedia(sc: any, rows: any[]): Promise<any[]> {
   if (!Array.isArray(rows)) return [];
   const ids = rows.map((r) => r?.id).filter((id): id is string => Boolean(id));
-  const byPost: Record<string, any[]> = {};
+  const byPost: Record<string, any[]> = {}; let unread = false;
   if (ids.length > 0) {
     try {
-      const { data } = await sc
+      const { data, error } = await sc
         .from("post_media")
         .select(POST_MEDIA_FEED_COLUMNS + (await stampOverlayCol(sc)) + (await feedVariantCol(sc)))
-        .in("post_id", ids);
+        .in("post_id", ids); if (error) unread = true;
       for (const m of (data ?? []) as any[]) {
         (byPost[m.post_id] ??= []).push(m);
       }
     } catch {
-      /* fail-open — see the note above */
+      unread = true; /* a thrown read is unread, as a resolved error is */
     }
   }
   // filterPostMedia applies the ready/rejected/flagged rules and the sort, so
   // the projection here is identical to what the feed endpoints emit.
-  return rows.map((r) => ({ ...r, media: filterPostMedia(byPost[r?.id ?? ""] ?? []) }));
+  const fallback = await mediaUrlsFallback(sc, rows, byPost, unread); return rows.map((r) => ({ ...r, media: projectedMedia(r?.id, fallback, unread ? null : filterPostMedia(byPost[r?.id ?? ""] ?? [])) }));
 }
 
 /** Single-row convenience wrapper for withPostMedia. */
@@ -523,7 +523,7 @@ export async function awardSocialPostStamps(
       .eq("author_id", userId).eq("status", "active"),
     sc.from("posts").select("id", { count: "exact", head: true })
       .eq("author_id", userId).eq("status", "active")
-      .not("media_urls", "eq", "{}"),
+      .gt("media_count", 0), // 2026-10-24: uploads live in post_media, so media_urls no longer says "has a photo"; media_count does (create path, /complete, 3924)
   ]);
 
   const totalPosts = totalRes.count ?? 0;
@@ -587,7 +587,7 @@ router.post("/posts", async (req, res) => {
   } = parsed.data;
   const locationSource = locationSrc ?? 'none'; if (!(await neighborhoodOnlyModePermitted(flagSc, reqPrivacyMode))) { sendError(res, "feature_disabled", NEIGHBORHOOD_ONLY_DISABLED_MESSAGE); return; } const mediaHold = await postMediaModerationHold(flagSc, mediaUrls ?? []); if (mediaHold.state !== "clear") { sendError(res, mediaHold.state === "held" ? "conflict" : "degraded_unavailable", mediaHold.state === "held" ? POST_MEDIA_HELD_MESSAGE : POST_MEDIA_UNREADABLE_MESSAGE); return; } // §34 "Show neighborhood only" is refused, and nothing written, until media_neighborhood_only_mode_enabled (census-media §36); census-media MD269 (a), lead ruling D-82: while the moderation stage holds any of its media, the post is refused and nothing is written
 
-  // ── Delayed geotag: compute sensitivity / privacy mode / geofence radius ──
+  const uploadPlan = planPostMediaUploads(mediaUrls ?? [], user.id, mediaType ?? null); if (!uploadPlan.ok) { sendError(res, uploadPlan.code, uploadPlan.message); return; } const moderatedKeys = await moderatedUploadKeys(flagSc, uploadPlan.uploads); if (moderatedKeys === null) { sendError(res, "degraded_unavailable", POST_MEDIA_UNREADABLE_MESSAGE); return; } if (uploadPlan.uploads.some((u) => moderatedKeys.has(u.path))) { sendError(res, "conflict", POST_MEDIA_HELD_MESSAGE); return; } // ── Delayed geotag: compute sensitivity / privacy mode / geofence radius ── (and, before it, 2026-10-24 video playback part B: uploads become post_media rows per 2083/2098; a key that is not the author's or carries a moderation verdict is refused before anything is written)
   const sens = sensitivityLevel(venueName ?? null); const vantageDecision = await decidePerspectiveVantageWrite(flagSc, perspectiveVantage ?? null, category ?? null); if (!vantageDecision.ok) { sendError(res, vantageDecision.code, vantageDecision.message); return; } // §12 vantage: refused while media_perspective_vantage_enabled is off, and outside the category's §12 groups (census-media §36)
   const privacyMode: LocationPrivacyMode = reqPrivacyMode ?? defaultPrivacyMode(locationSource, sens);
   const radius = geofenceRadius(sens, geofenceRadiusMeters ?? undefined);
@@ -634,7 +634,7 @@ router.post("/posts", async (req, res) => {
       author_id: user.id, // verified user only — never from client
       trip_id: tripId ?? null,
       content: content ?? "",
-      media_urls: mediaUrls ?? [],
+      media_urls: uploadPlan.external, media_count: uploadPlan.uploads.length, has_video: uploadPlan.uploads.some((u) => u.kind === "video"), primary_media_type: uploadSummary(uploadPlan.uploads)?.primary_media_type ?? null, // 2026-10-24: external references only (2083); uploads are rows, written below. Explicit keys (no spread) so check:write-path-columns resolves the payload; 0/false/null are the columns' own defaults
       media_type: mediaType ?? null,
       visibility,
       status: "active",
@@ -688,7 +688,7 @@ router.post("/posts", async (req, res) => {
     sendError(res, "db_error", error.message);
     return;
   }
-  { const msc = getServiceClient(); if (msc) void recordPostMediaAttachments(msc, { postId: String((data as any).id), authorId: user.id, mediaUrls: mediaUrls ?? [] }); } // §6.1 post→asset link, gated inside (census-media §20)
+  { const rowsWrite = await insertUploadRows(flagSc, String((data as any).id), user.id, uploadPlan.uploads, { durationSeconds: mediaDurationSeconds ?? null }); if (!rowsWrite.ok) { req.log.error({ err: rowsWrite.error, postId: (data as any).id }, "post create: post_media write failed; removing the post"); const { error: undoErr } = await flagSc!.from("posts").delete().eq("id", (data as any).id); if (undoErr) req.log.error({ err: undoErr, postId: (data as any).id, flag: "post_without_uploaded_media" }, "post create: compensation failed; a post exists without its uploaded media"); sendError(res, "db_error", "We couldn't attach your photos and videos. Please try again."); return; } } { const msc = getServiceClient(); if (msc) void recordPostMediaAttachments(msc, { postId: String((data as any).id), authorId: user.id, mediaUrls: mediaUrls ?? [] }); } // §6.1 post→asset link, gated inside (census-media §20)
   // Compass activity ingestion — fire-and-forget
   recordActivityEvent(
     getServiceClient(),
@@ -967,7 +967,7 @@ router.post("/posts", async (req, res) => {
     }
   }
 
-  res.status(201).json({ ...(data as any), postcard });
+  res.status(201).json({ ...(await withPostMediaOne(getServiceClient() ?? client, data)), postcard }); // 2026-10-24: the created post carries its media (#3585's shape-B rule, now that uploads are rows)
 
   // Fire-and-forget: resolve the post's tagged location to a canonical venue-level
   // place record. Fail-soft — a resolution failure must never affect the post.
@@ -1056,7 +1056,7 @@ router.post("/posts", async (req, res) => {
       const stampSc = getServiceClient();
       if (!stampSc) return;
       const postId   = (data as any).id as string;
-      const hasPhoto = ((data as any).media_urls as string[] ?? []).length > 0;
+      const hasPhoto = (mediaUrls ?? []).length > 0; // the request's media: uploads no longer sit in media_urls (2026-10-24)
 
       const awardedSlugs = await awardSocialPostStamps(stampSc, user.id, postId, hasPhoto);
 
@@ -1351,7 +1351,7 @@ router.get("/posts", async (req, res) => {
     // Step 6: merge author + engagement + spans + media into each post.
     // Hidden-Gem location protection (fail-closed) — coarsens public coords/labels
     // for posts that sit at / are tagged to a protected gem.
-    const followingGemCtx = await loadPostGemContext(sc, posts);
+    const followingGemCtx = await loadPostGemContext(sc, posts); const followingFallback = await mediaUrlsFallback(sc, posts, followingMediaByPost, followingMediaUnread); // 2026-10-24: a post with no post_media row serves its media_urls uploads
     const merged = posts.map((p) => {
       const safe = withholdReleaseTiming(p.author_id === user.id ? p : gemProtectPost(mapPublicPost(p), followingGemCtx, user.id), user.id); // census-media MD79 (verifier F1): the author is never capped; F6: the release instant is the author's alone
       const pr = profileMap[p.author_id];
@@ -1381,7 +1381,7 @@ router.get("/posts", async (req, res) => {
         canShare: true,
         tags: spans.tags,
         hashtagUsages: spans.hashtagUsages,
-        media: followingMediaUnread ? null : filterPostMedia(followingMediaByPost[p.id] ?? []),
+        media: projectedMedia(p.id, followingFallback, followingMediaUnread ? null : filterPostMedia(followingMediaByPost[p.id] ?? [])),
       };
     });
 
@@ -1532,7 +1532,7 @@ router.get("/posts", async (req, res) => {
   }
 
   // Hidden-Gem location protection (fail-closed).
-  const globalGemCtx = await loadPostGemContext(svc, globalPosts);
+  const globalGemCtx = await loadPostGemContext(svc, globalPosts); const globalFallback = await mediaUrlsFallback(svc, globalPosts, globalMediaByPost, globalMediaUnread); // 2026-10-24: as the following feed
   const mergedGlobal = globalPosts.map((p) => {
     const safe = withholdReleaseTiming(p.author_id === user.id ? p : gemProtectPost(mapPublicPost(p), globalGemCtx, user.id), user.id); // census-media MD79 (verifier F1): the author is never capped; F6: the release instant is the author's alone
     const pr = globalProfileMap[p.author_id];
@@ -1553,7 +1553,7 @@ router.get("/posts", async (req, res) => {
       canShare: true,
       tags: spans.tags,
       hashtagUsages: spans.hashtagUsages,
-      media: globalMediaUnread ? null : filterPostMedia(globalMediaByPost[p.id] ?? []),
+      media: projectedMedia(p.id, globalFallback, globalMediaUnread ? null : filterPostMedia(globalMediaByPost[p.id] ?? [])),
     };
   });
 
@@ -1724,7 +1724,7 @@ router.get("/trips/:tripId/posts", async (req, res) => {
     }
   }
 
-  const mergedTrip = tripPosts.map((p) => {
+  const tripFallback = tripSvc ? await mediaUrlsFallback(tripSvc, tripPosts, tripMediaByPost, tripMediaUnread) : new Map(); const mergedTrip = tripPosts.map((p) => { // 2026-10-24: as the following feed
     const pr = tripProfileMap[p.author_id];
     const eng = tripEngMap.get(p.id) ?? UNKNOWN_POST_ENGAGEMENT; // census-media §47: null is "could not be read", never 0/false
     const spans = (tripSpansMap as any)[p.id] ?? { tags: [], hashtagUsages: [] };
@@ -1745,7 +1745,7 @@ router.get("/trips/:tripId/posts", async (req, res) => {
       canShare: canEngage,
       tags: spans.tags,
       hashtagUsages: spans.hashtagUsages,
-      media: tripMediaUnread ? null : filterPostMedia(tripMediaByPost[p.id] ?? []),
+      media: projectedMedia(p.id, tripFallback, tripMediaUnread ? null : filterPostMedia(tripMediaByPost[p.id] ?? [])),
     };
   });
 
@@ -1987,7 +1987,7 @@ router.get("/posts/:postId", async (req, res) => {
       stamp_overlay:     m.stamp_overlay ?? null,
     }));
 
-  // Hidden-Gem location protection (fail-closed) for non-author reads.
+  const detailFallback = await mediaUrlsFallback(sc, [post], { [postId]: (rawMedia ?? []) as any[] }, rawMedia === null); // 2026-10-24 (video playback, part A) — and: Hidden-Gem location protection (fail-closed) for non-author reads.
   const singlePostGemCtx = isAuthor ? null : await loadPostGemContext(sc, [post]);
   const base = isAuthor
     ? post
@@ -2018,7 +2018,7 @@ router.get("/posts/:postId", async (req, res) => {
     savedByMe: unread(savedRes, "post_saves") ? null : !!savedRes.data,
     stampCount: stampCountRes.error ? null : (stampCountRes.count ?? null),
     isStampedByViewer: myStampRes.error ? null : !!myStampRes.data,
-    media,
+    media: projectedMedia(postId, detailFallback, media),
     canLike: true,
     canComment: true,
     canShare: true,
@@ -2307,7 +2307,7 @@ router.patch("/posts/:postId", async (req, res) => {
 
   const patch: Record<string, unknown> = { updated_by: user.id };
   if (parsed.data.content !== undefined) patch.content = parsed.data.content;
-  if (parsed.data.mediaUrls !== undefined) { const mediaHold = await postMediaModerationHold(getServiceClient(), parsed.data.mediaUrls); if (mediaHold.state !== "clear") { sendError(res, mediaHold.state === "held" ? "conflict" : "degraded_unavailable", mediaHold.state === "held" ? POST_MEDIA_HELD_MESSAGE : POST_MEDIA_UNREADABLE_MESSAGE); return; } patch.media_urls = parsed.data.mediaUrls; } // census-media MD269 (a), lead ruling D-82: an edit cannot put held media into a post either
+  if (parsed.data.mediaUrls !== undefined) { const mediaHold = await postMediaModerationHold(getServiceClient(), parsed.data.mediaUrls); if (mediaHold.state !== "clear") { sendError(res, mediaHold.state === "held" ? "conflict" : "degraded_unavailable", mediaHold.state === "held" ? POST_MEDIA_HELD_MESSAGE : POST_MEDIA_UNREADABLE_MESSAGE); return; } const editPlan = planPostMediaUploads(parsed.data.mediaUrls, user.id); if (!editPlan.ok) { sendError(res, editPlan.code, editPlan.message); return; } if (editPlan.uploads.length > 0) { sendError(res, "invalid_payload", EDIT_CANNOT_ADD_UPLOADS_MESSAGE); return; } patch.media_urls = parsed.data.mediaUrls; } // 2026-10-24: after the hold, an edit may carry external references only — uploads are rows, attached at create (2083); census-media MD269 (a), lead ruling D-82: an edit cannot put held media into a post either
   if (parsed.data.visibility !== undefined) patch.visibility = parsed.data.visibility;
   if (parsed.data.status !== undefined) patch.status = parsed.data.status;
   if (parsed.data.category !== undefined) patch.category = parsed.data.category ?? null;
@@ -3745,3 +3745,4 @@ async function checkPostCommentsReadPermission(
   }
   return true;
 }
+import { planPostMediaUploads, moderatedUploadKeys, uploadSummary, insertUploadRows, mediaUrlsFallback, projectedMedia } from "../lib/media/storageBackedPostMedia.js"; const EDIT_CANNOT_ADD_UPLOADS_MESSAGE = "Photos and videos are added when a post is created."; // 2026-10-24 video playback: the one authority for uploads named by media_urls

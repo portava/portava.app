@@ -250,7 +250,7 @@ function OwnerVideoSegments({ ownerId, memoryId, itemId, uri, style }: MemoryVid
     };
     await video.unloadAsync();
     if (!authorized()) return;
-    await video.loadAsync({ uri: signed.uri }, { shouldPlay: false, isLooping: false, progressUpdateIntervalMillis: 50 });
+    if (!isLoadablePlaybackUri(signed.uri)) { refuse('degraded_unavailable'); return; } await video.loadAsync({ uri: signed.uri }, { shouldPlay: false, isLooping: false, progressUpdateIntervalMillis: 50 }); // 2026-10-24: the one playback rule
     if (!authorized()) return;
     await video.setPositionAsync(selected?.startMs ?? 0, { toleranceMillisBefore: 0, toleranceMillisAfter: 0 });
     if (!authorized()) return;
@@ -420,3 +420,4 @@ const styles = StyleSheet.create({
   form: { gap: space.sm, marginTop: space.sm },
   input: { minHeight: 44, borderWidth: 1, borderColor: color.haze, borderRadius: radius.sm, padding: space.md, color: color.ink, ...typography.body },
 });
+import { isLoadablePlaybackUri } from '../../services/playbackUri.ts'; // 2026-10-24 video playback: the one playback rule
