@@ -288,9 +288,9 @@ const pos = (f: string) => ORDER.indexOf(f);
 const reasserting = (a: PostconditionAmendment) => a.reassertedBy ?? [...new Set(a.drops.map((d) => d.supersededBy!))];
 
 describe("B. every declaration in lib/postconditionAmendments.ts", () => {
-  it("anti-vacuity: the 34 blocks and 53 statements (33/52 measured on the 2026-10-14 rehearsal, + 2786:96 superseded by 3826)", () => {
-    assert.equal(POSTCONDITION_AMENDMENTS.length, 34);
-    assert.equal(POSTCONDITION_AMENDMENTS.reduce((n, a) => n + a.drops.length, 0), 53);
+  it("anti-vacuity: the 36 blocks and 55 statements (33/52 measured on the 2026-10-14 rehearsal, + 2786:96 superseded by 3826, + 3924's two session-bound postconditions, 2026-10-24)", () => {
+    assert.equal(POSTCONDITION_AMENDMENTS.length, 36);
+    assert.equal(POSTCONDITION_AMENDMENTS.reduce((n, a) => n + a.drops.length, 0), 55);
   });
 
   it("anti-vacuity for the count-pin rule (V-714 F4): it binds the 16 superseded kernel count statements (3826 superseded 2786's engine count)", () => {
@@ -429,11 +429,11 @@ describe("C. session-bound declarations match check:migration-session-state, bot
   }
   const sessionBound = POSTCONDITION_AMENDMENTS.filter((a) => a.kind === "session-bound");
 
-  it("anti-vacuity: the three KNOWN findings (2570, 2745, 2798)", () => {
+  it("anti-vacuity: the four KNOWN files (2570, 2745, 2798, and 3924 since 2026-10-24)", () => {
     assert.deepEqual([...new Set(stage4Findings.map((x) => x.file))].sort(), [
       "2570_intel_live_scope_admin_surface_flag.sql",
       "2745_layover_recommendation_travel_provenance.sql",
-      "2798_trip_kernel_recurrence_family.sql",
+      "2798_trip_kernel_recurrence_family.sql", "3924_post_media_backfill_create_path_uploads.sql",
     ]);
   });
 

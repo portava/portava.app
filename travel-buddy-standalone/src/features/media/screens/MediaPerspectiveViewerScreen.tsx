@@ -278,13 +278,13 @@ function PerspectiveFrame({ media }: { media: MediaProjection }) {
    */
   const { resolved: hydrated } = useHydratedMedia(isVideo && media.url ? [media.url] : []);
   const hydratedUrl = media.url ? hydrated[media.url] : undefined;
-  const playbackUri = typeof hydratedUrl === 'string' ? hydratedUrl : media.url ?? null;
-  const unresolvable = hydratedUrl === null;
+  const sourceState = playbackUriState(media.url ?? null, hydrated); const playbackUri = sourceState.state === 'ready' ? sourceState.uri : null; // 2026-10-24: no player until the source is loadable (a bare ref is never handed to <Video>)
+  const unresolvable = isVideo && sourceState.state === 'unavailable'; void hydratedUrl;
   const videoRef = useRef<Video>(null);
   const [isMuted, setIsMuted] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
-  const [hasPlaybackError, setHasPlaybackError] = useState(false);
+  const [hasPlaybackError, setHasPlaybackError] = useState(false); useEffect(() => { setHasPlaybackError(false); }, [playbackUri]); // a new source (a late or refreshed signature) starts clean
   const [showCaptions, setShowCaptions] = useState(false);
   const [progress, setProgress] = useState(0);
   const durationRef = useRef(media.durationMs ?? 0);
@@ -349,7 +349,7 @@ function PerspectiveFrame({ media }: { media: MediaProjection }) {
     <View style={styles.frame}>
       {uri ? (
         isVideo && playbackUri && !unresolvable ? (
-          <Video
+          <Video key={playbackUri}
             ref={videoRef}
             source={{ uri: playbackUri }}
             style={StyleSheet.absoluteFill}
@@ -365,7 +365,7 @@ function PerspectiveFrame({ media }: { media: MediaProjection }) {
           // the reference the server just refused — CachedImage would only fail
           // on it a second time.
           <CachedImage
-            source={{ uri: isVideo && unresolvable ? (media.thumbnailUrl ?? uri) : uri }}
+            source={{ uri: isVideo ? (media.thumbnailUrl ?? uri) : uri }} // a video still being signed, or refused, shows its poster — never the video file as an image
             style={StyleSheet.absoluteFill}
             resizeMode="cover"
             fallbackLabel=""
@@ -781,3 +781,4 @@ const tailStyles = StyleSheet.create({
   topTitleScrim: { flex: 0, flexShrink: 1, backgroundColor: 'rgba(17,17,15,0.59)', borderRadius: radius.pill, paddingHorizontal: space.sm, paddingVertical: 2, overflow: 'hidden' },
   bufferingScrim: { backgroundColor: 'rgba(17,17,15,0.71)', borderRadius: radius.pill, paddingHorizontal: space.sm, paddingVertical: 2, overflow: 'hidden' },
 });
+import { playbackUriState } from '../../../services/playbackUri.ts'; // 2026-10-24 video playback: the one playback rule
