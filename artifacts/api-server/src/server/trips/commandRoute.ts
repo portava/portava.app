@@ -204,7 +204,7 @@ router.post("/trips/:tripId/commands", asyncHandler(async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const membership = await requireTripMember(sc, tripId, user.id);
+  if (body.correlation_id !== undefined && body.correlation_id !== null && asTripCorrelationId(body.correlation_id) === null) { sendError(res, "invalid_payload", "correlation_id must be a uuid"); return; } const membership = await requireTripMember(sc, tripId, user.id); // census-trips hotfix 2026-10-24: a non-uuid correlation_id is refused at the door
   if (!membership) { sendError(res, "forbidden", "Not a trip member"); return; } if (type === "CREATE_PROPOSAL" ? await refuseTripActionIfRestricted(res, sc, tripId, user.id, "create_proposal") : !SAFETY_COMMANDS.has(type) && await refuseIfRetainedRecordOnly(res, sc, tripId, user.id)) return; // census-trips §84 / TRV2-08; §85 (R5): a retained-record-only member changes nothing but a safety path
 
   const result = await executeTripCommand(sc, {
@@ -217,7 +217,7 @@ router.post("/trips/:tripId/commands", asyncHandler(async (req, res) => {
     type: type as TripCommandType,
     payload: (payload as Record<string, unknown>) ?? {},
     clientObservedAt: typeof body.client_observed_at === "string" ? body.client_observed_at : null,
-    correlationId: typeof body.correlation_id === "string" ? body.correlation_id : null,
+    correlationId: asTripCorrelationId(body.correlation_id), // census-trips hotfix 2026-10-24: a non-uuid correlation_id is refused 400 above
   });
 
   if (result.ok) {
@@ -375,3 +375,4 @@ export default router;
 
 /** census-trips §85 (R5): never refused for a retained-record-only member, nor on an unreadable membership read. */
 const SAFETY_COMMANDS: ReadonlySet<string> = new Set(["DECLARE_DISRUPTION", "RESOLVE_DISRUPTION", "CREATE_MEETING_CHECKPOINT", "CLOSE_MEETING_CHECKPOINT", "SET_MEETING_ARRIVAL"]);
+import { asTripCorrelationId } from "../../domain/trips/commands/tripKernel.js"; // census-trips hotfix 2026-10-24; at the foot so no cited line moves

@@ -182,7 +182,7 @@ export async function regroup(sc: SupabaseClient, tripId: string, actorUserId: s
       participant_ids: input.participantIds ?? [],
       explanation,
     },
-    correlationId: `regroup:${tripId}`,
+    correlationId: tripCorrelationId(`regroup:${tripId}`), // census-trips hotfix 2026-10-24: a uuid, derived from the label
   });
   if (!kernel.ok) return { ok: false, reason: kernel.reason, message: kernel.detail ?? kernel.reason, kernel };
   return {
@@ -197,3 +197,4 @@ export async function regroup(sc: SupabaseClient, tripId: string, actorUserId: s
 function summarize(o: MeetingOption) {
   return { candidateId: o.candidateId, name: o.name, primitive: o.primitive, groupBurdenMinutes: o.groupBurdenMinutes, longestJourneyMinutes: o.longestJourneyMinutes, journeys: o.journeys, explanation: o.explanation };
 }
+import { tripCorrelationId } from "../commands/tripKernel.js"; // census-trips hotfix 2026-10-24; at the foot so no cited line moves
