@@ -138,11 +138,11 @@ export async function getMyFollowing(): Promise<FollowResult<FollowUser[]>> {
     const res = await fetch(`${apiBase()}/api/me/following`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!res.ok) return { ok: true, data: [] };
+    if (!res.ok) return { ok: false, data: null, errorKind: res.status === 401 ? 'unauthenticated' : 'db_error', message: `API ${res.status}` }; // a failed read is not an empty list
     const body = await res.json();
     return { ok: true, data: body.users ?? [] };
-  } catch {
-    return { ok: true, data: [] };
+  } catch (e) {
+    return { ok: false, data: null, errorKind: isNetworkError(e) ? 'network_unreachable' : 'db_error' };
   }
 }
 
@@ -408,11 +408,11 @@ export async function getMyFollowers(): Promise<FollowResult<FollowUser[]>> {
     const res = await fetch(`${apiBase()}/api/me/followers`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!res.ok) return { ok: true, data: [] };
+    if (!res.ok) return { ok: false, data: null, errorKind: res.status === 401 ? 'unauthenticated' : 'db_error', message: `API ${res.status}` }; // a failed read is not an empty list
     const body = await res.json();
     return { ok: true, data: body.users ?? [] };
-  } catch {
-    return { ok: true, data: [] };
+  } catch (e) {
+    return { ok: false, data: null, errorKind: isNetworkError(e) ? 'network_unreachable' : 'db_error' };
   }
 }
 
@@ -425,11 +425,11 @@ export async function getUserFollowers(userId: string): Promise<FollowResult<Fol
     const res = await fetch(`${apiBase()}/api/users/${encodeURIComponent(userId)}/followers`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
-    if (!res.ok) return { ok: true, data: [] };
+    if (!res.ok) return { ok: false, data: null, errorKind: res.status === 401 ? 'unauthenticated' : 'db_error', message: `API ${res.status}` }; // a failed read is not an empty list
     const body = await res.json();
     return { ok: true, data: body.users ?? [] };
-  } catch {
-    return { ok: true, data: [] };
+  } catch (e) {
+    return { ok: false, data: null, errorKind: isNetworkError(e) ? 'network_unreachable' : 'db_error' };
   }
 }
 
@@ -440,10 +440,10 @@ export async function getUserFollowing(userId: string): Promise<FollowResult<Fol
     const res = await fetch(`${apiBase()}/api/users/${encodeURIComponent(userId)}/following`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
-    if (!res.ok) return { ok: true, data: [] };
+    if (!res.ok) return { ok: false, data: null, errorKind: res.status === 401 ? 'unauthenticated' : 'db_error', message: `API ${res.status}` }; // a failed read is not an empty list
     const body = await res.json();
     return { ok: true, data: body.users ?? [] };
-  } catch {
-    return { ok: true, data: [] };
+  } catch (e) {
+    return { ok: false, data: null, errorKind: isNetworkError(e) ? 'network_unreachable' : 'db_error' };
   }
 }

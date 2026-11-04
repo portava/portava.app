@@ -12,7 +12,7 @@
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { PublicProfile, PassportPostcard } from '../types/models.ts';
-import { getPublicPassport, getPublicPostcards, type PostcardsSentinel } from '../services/profile.ts';
+import { getPublicPassport, getPublicPostcards, type PostcardsWallNotice } from '../services/profile.ts';
 import { useSocialVersion } from './useSocialVersion.ts';
 
 /** Minimal safe fields returned by the private sentinel — enough for the locked header. */
@@ -56,8 +56,8 @@ export interface PublicPassportState {
   notFound: boolean;
   isBlocked: boolean;
   blockedTargetId: string | null;
-  /** Sentinel returned by the postcards endpoint — 'private' | 'blocked' | 'unavailable' | null. */
-  postcardSentinel: PostcardsSentinel | null;
+  /** Sentinel returned by the postcards endpoint — 'private' | 'blocked' | 'unavailable' — or 'load_failed' when the read failed; null otherwise. */
+  postcardSentinel: PostcardsWallNotice | null;
   /** Re-fetches the passport (and postcards) for the current username without resetting to a blank loading state. */
   reload: () => void;
 }
@@ -155,7 +155,7 @@ export function usePublicPassport(username: string): PublicPassportState {
         setState((s) => ({
           ...s,
           postcards: pcRes.ok ? (pcRes.data ?? []) : [],
-          postcardSentinel: pcRes.ok ? (pcRes.sentinel ?? null) : null,
+          postcardSentinel: pcRes.ok ? (pcRes.sentinel ?? null) : 'load_failed',
         }));
       }
     }).catch(() => {

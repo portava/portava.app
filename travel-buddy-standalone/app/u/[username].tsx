@@ -1128,7 +1128,7 @@ function PublicPassportScreenNative() {
         </View>
 
         <View style={{ marginTop: space.md }}>
-          {tab === 'postcards' && <PostcardsTab postcards={postcards} isOwner={isOwn} sentinel={isOwn ? undefined : postcardSentinel ?? undefined} />}
+          {tab === 'postcards' && <PostcardsTab postcards={postcards} isOwner={isOwn} sentinel={isOwn && postcardSentinel !== 'load_failed' ? undefined : postcardSentinel ?? undefined} />}
           {tab === 'stamps' && (
             <StampsTab
               stamps={profile?.stamps ?? []}
@@ -1137,7 +1137,7 @@ function PublicPassportScreenNative() {
               isOwner={isOwn}
             />
           )}
-          {tab === 'map' && <MapTab postcards={postcards} sentinel={isOwn ? undefined : postcardSentinel ?? undefined} />}
+          {tab === 'map' && <MapTab postcards={postcards} sentinel={isOwn && postcardSentinel !== 'load_failed' ? undefined : postcardSentinel ?? undefined} />}
           {tab === 'activity' && <ProfileActivityTab username={profile?.username ?? username ?? ''} />}
           {tab === 'about' && (
             <View style={{ paddingHorizontal: space.lg, gap: space.md }}>

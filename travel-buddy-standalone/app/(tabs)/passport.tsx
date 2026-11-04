@@ -69,7 +69,7 @@ import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 
 export default function PassportScreen() {
   const { pickMedia } = useMediaPicker();
-  const { profile, postcards, stamps, stampsNew, memories, memoriesUnreadable, suggestions, loading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, updateStamp, reload, lastLoadedAt } = usePassport();
+  const { profile, postcards, postcardsUnreadable, stamps, stampsNew, memories, memoriesUnreadable, suggestions, loading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, updateStamp, reload, lastLoadedAt } = usePassport();
   const { markFirstContent, epoch } = useScreenTiming('Passport');
   const { userId: ownUserId, signOut } = useSession();
   // Deep links (e.g. the stamp-earned toast) can request a specific tab via
@@ -278,7 +278,7 @@ export default function PassportScreen() {
         stampsNew={stampsNew}
         onStampUpdated={updateStamp}
         memories={memories}
-        memoriesUnreadable={memoriesUnreadable}
+        memoriesUnreadable={memoriesUnreadable} postcardsUnreadable={postcardsUnreadable}
         trips={trips}
         tripsLoaded={tripsLoaded} tripsError={tripsError} onRetryTrips={loadTrips}
         tab={tab}
@@ -376,7 +376,7 @@ export default function PassportScreen() {
 // ─── PassportContent ──────────────────────────────────────────────────────────
 
 function PassportContent({
-  profile, postcards, stamps, stampsNew, onStampUpdated, memories, memoriesUnreadable, trips, tripsLoaded, tripsError, onRetryTrips, tab, setTab,
+  profile, postcards, postcardsUnreadable, stamps, stampsNew, onStampUpdated, memories, memoriesUnreadable, trips, tripsLoaded, tripsError, onRetryTrips, tab, setTab,
   menuOpen, setMenuOpen,
   openSettings, actions, handleEditProfile, handleViewAsPublic,
   reload, stampsTotal, loadingMoreStamps, loadMoreStamps,
@@ -396,7 +396,7 @@ function PassportContent({
   memories: PassportMemory[];
   /** §28.11 — true when the Memories READ FAILED, so `memories` being empty is
    *  "we could not find out" rather than "you have none". See MemoriesTab. */
-  memoriesUnreadable: boolean;
+  memoriesUnreadable: boolean; postcardsUnreadable: boolean; // the postcards read failed: PostcardsTab and MapTab say "didn't load"
   trips: TripRow[];
   /** True once the initial trips fetch (for the Plans tab) has resolved. */
   tripsLoaded: boolean; /** True when the trips read FAILED — not "you have no trips". */ tripsError: boolean; onRetryTrips: () => void;
@@ -602,7 +602,7 @@ function PassportContent({
         {tab === 'postcards' && (
           <PostcardsTab
             postcards={postcards}
-            isOwner
+            isOwner sentinel={postcardsUnreadable ? 'load_failed' : undefined}
             actions={actions}
             onAddPostcard={onAddPostcard}
           />
@@ -633,7 +633,7 @@ function PassportContent({
           />
         )}
         {tab === 'map' && (
-          <MapTab postcards={postcards} />
+          <MapTab postcards={postcards} sentinel={postcardsUnreadable ? 'load_failed' : undefined} />
         )}
         {tab === 'destinations' && (
           <DestinationsTab

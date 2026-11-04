@@ -10680,7 +10680,7 @@ nothing was built.
 (`artifacts/api-server/baseline/20260819_baseline_structure.sql:7801#media_url text NOT NULL,`).
 So the only value it could keep was the held or removed file's URL. The
 Postcards tab renders that URL as its last fallback
-(`travel-buddy-standalone/src/components/PostcardsTab.tsx:225#card.mediaUrl);`).
+(`travel-buddy-standalone/src/components/PostcardsTab.tsx:226#card.mediaUrl);`).
 
 **The rule.** One rule, in `repointPassportCover`, decides the cover:
 - A cover that is one of the post's files that no longer counts, or the file

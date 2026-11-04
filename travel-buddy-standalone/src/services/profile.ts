@@ -374,6 +374,12 @@ function enrichPostcard(raw: Record<string, unknown>): PassportPostcard {
 
 export type PostcardsSentinel = 'private' | 'blocked' | 'unavailable';
 
+/**
+ * What a postcard wall shows instead of postcards: a server sentinel, or
+ * 'load_failed' when the read itself failed (never shown as "no postcards").
+ */
+export type PostcardsWallNotice = PostcardsSentinel | 'load_failed';
+
 export type PublicPostcardsResult =
   | { ok: true; data: PassportPostcard[]; sentinel?: undefined }
   | { ok: true; data: PassportPostcard[]; sentinel: PostcardsSentinel }
@@ -382,11 +388,21 @@ export type PublicPostcardsResult =
 export async function getPublicPostcards(username: string): Promise<PublicPostcardsResult> {
   if (!apiBase()) return { ok: true, data: [] };
 
+  // Auth is optional server-side, but WHEN a session exists it must be sent, as
+  // getPublicPassport does: the route decides follower access, blocks and
+  // "is this me" from the viewer. Sent without it, a follower of a
+  // followers-only passport was told the wall is private, and a viewer someone
+  // had blocked was not recognised as that viewer.
+  const token = await freshToken();
+
   try {
     const res = await fetch(
       `${apiBase()}/api/users/${encodeURIComponent(username)}/passport/postcards`,
+      token ? { headers: { Authorization: `Bearer ${token}` } } : undefined,
     );
-    if (!res.ok) return { ok: true, data: [] };
+    // A failed read is not an empty wall: say so, so the screen can too.
+    if (res.status === 404) return { ok: false, data: null, errorKind: 'not_found', message: 'User not found' };
+    if (!res.ok) return { ok: false, data: null, errorKind: 'db_error', message: `API ${res.status}` };
     const body = await res.json();
     // Detect sentinel shapes returned by the API.
     if (body.blocked === true)     return { ok: true, data: [], sentinel: 'blocked' };
@@ -394,8 +410,9 @@ export async function getPublicPostcards(username: string): Promise<PublicPostca
     if (body.private === true)     return { ok: true, data: [], sentinel: 'private' };
     const raw: Record<string, unknown>[] = body.postcards ?? [];
     return { ok: true, data: raw.map(enrichPostcard) };
-  } catch {
-    return { ok: true, data: [] };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
   }
 }
 
@@ -417,12 +434,12 @@ export async function getMyPassportPostcards(): Promise<ProfileResult<PassportPo
     const res = await fetch(`${apiBase()}/api/me/passport/postcards`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!res.ok) return { ok: true, data: [] };
+    if (!res.ok) return { ok: false, data: null, errorKind: 'db_error', message: `API ${res.status}` }; // not "no postcards": usePassport's snapshot guard (§28.11) reads ok
     const body = await res.json();
     const raw: Record<string, unknown>[] = body.postcards ?? [];
     return { ok: true, data: raw.map(enrichPostcard) };
-  } catch {
-    return { ok: true, data: [] };
+  } catch (e) {
+    return { ok: false, data: null, errorKind: isNetworkError(e) ? 'network_unreachable' : 'db_error' };
   }
 }
 

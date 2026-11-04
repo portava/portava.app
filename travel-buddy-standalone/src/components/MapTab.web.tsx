@@ -13,9 +13,9 @@ import {
 import { Avatar } from './ui/Avatar.tsx';
 import type { PassportPostcard } from '../types/models.ts';
 import type { PassportMapPayload } from '../services/passportStamps.ts';
-import type { PostcardsSentinel } from '../services/profile.ts';
+import type { PostcardsWallNotice } from '../services/profile.ts';
 import { getPassportMap } from '../services/passportStamps.ts';
-import { Lock, Ban, EyeOff } from 'lucide-react-native';
+import { Lock, Ban, EyeOff, CloudOff } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
 import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
@@ -94,7 +94,7 @@ function verificationDot(level: string): string {
 
 // ── Sentinel copy (mirrors PostcardsTab for consistency) ─────────────────────
 
-const MAP_SENTINEL_COPY: Record<PostcardsSentinel, { Icon: React.ComponentType<any>; title: string; body: string }> = {
+const MAP_SENTINEL_COPY: Record<PostcardsWallNotice, { Icon: React.ComponentType<any>; title: string; body: string }> = {
   private: {
     Icon: Lock,
     title: 'Private passport',
@@ -110,9 +110,10 @@ const MAP_SENTINEL_COPY: Record<PostcardsSentinel, { Icon: React.ComponentType<a
     title: 'Account unavailable',
     body: 'This account is no longer available.',
   },
+  load_failed: { Icon: CloudOff, title: "Map didn't load", body: 'Something went wrong loading this travel map. Open this passport again to retry.' },
 };
 
-function MapSentinelView({ kind }: { kind: PostcardsSentinel }) {
+function MapSentinelView({ kind }: { kind: PostcardsWallNotice }) {
   const { Icon, title, body } = MAP_SENTINEL_COPY[kind];
   return (
     <View style={sv.root} accessibilityRole="text" accessibilityLabel={title}>
@@ -130,7 +131,7 @@ interface MapTabProps {
   currentCity?: string | null;
   currentUserId?: string | null;
   /** Sentinel returned by the postcards endpoint — renders a graceful state instead of the map. */
-  sentinel?: PostcardsSentinel;
+  sentinel?: PostcardsWallNotice;
 }
 
 export function MapTab({ postcards: _postcards, currentCity, currentUserId, sentinel }: MapTabProps) {
