@@ -6,9 +6,15 @@
  *   - A stop is MEASURED from the persisted row, not assumed: an old beat read
  *     at boot is a "restart" gap, a late beat inside one process is a "frozen"
  *     gap, and a beat inside the alert window is neither.
- *   - The health entry keeps failing / stale / never_ran / healthy apart, and a
- *     recent stop answers 503 through the real route for its report window, then
- *     returns to 200 by the clock alone.
+ *   - The health entry keeps failing / stale / never_ran / healthy apart.
+ *   - A stop is an incident only on a host declared always-on
+ *     (PORTAVA_ALWAYS_ON=true): there it reaches Sentry and answers 503 through
+ *     the real route for its report window, then returns to 200 by the clock
+ *     alone. By default (Autoscale, which sleeps when idle by decision) the
+ *     same stop is measured and named in the detail, with no Sentry issue and
+ *     no 503.
+ *   - A probe that lands on a resumed process beats before it reports, so the
+ *     resume reads as a recorded stop and not as a dead timer.
  *   - supabase-js RESOLVES with `error`: a write that "succeeded" with an error
  *     is a failure, and the next real success clears it.
  *   - An unreadable or absent row never invents a gap.
@@ -35,6 +41,8 @@ import {
   schedulerHeartbeatReady,
   schedulerHeartbeatReport,
   startSchedulerHeartbeat,
+  stopSchedulerHeartbeat,
+  stopsAreIncidents,
 } from "../lib/schedulerHeartbeat.js";
 import { Sentry } from "../lib/sentry.js";
 import healthRouter from "../routes/health.js";
@@ -77,13 +85,17 @@ const iso = (ms: number) => new Date(ms).toISOString();
 
 const sentryCalls: unknown[][] = [];
 const realCapture = Sentry.captureMessage;
+const ALWAYS_ON = "PORTAVA_ALWAYS_ON";
+const alwaysOn = () => { process.env[ALWAYS_ON] = "true"; };
 beforeEach(() => {
   _resetSchedulerHeartbeat();
+  delete process.env[ALWAYS_ON];
   sentryCalls.length = 0;
   (Sentry as any).captureMessage = (...args: unknown[]) => { sentryCalls.push(args); return "id"; };
 });
 after(() => {
   _resetSchedulerHeartbeat();
+  delete process.env[ALWAYS_ON];
   (Sentry as any).captureMessage = realCapture;
 });
 
@@ -115,6 +127,12 @@ describe("the beat itself", () => {
     assert.equal(s.lastSuccessAt, iso(now + 120_000));
   });
 
+  it("PORTAVA_ALWAYS_ON accepts true or 1, and nothing else", () => {
+    assert.equal(stopsAreIncidents(), false, "unset");
+    for (const v of ["true", "TRUE", " 1 "]) { process.env[ALWAYS_ON] = v; assert.equal(stopsAreIncidents(), true, v); }
+    for (const v of ["", "false", "0", "yes"]) { process.env[ALWAYS_ON] = v; assert.equal(stopsAreIncidents(), false, v); }
+  });
+
   it("no service client is a failure, not a quiet skip", async () => {
     await runSchedulerHeartbeat(null, new Date("2026-11-04T12:00:00.000Z"));
     assert.equal(getSchedulerHeartbeatStatus().consecutiveFailures, 1);
@@ -123,7 +141,16 @@ describe("the beat itself", () => {
 });
 
 describe("a stop is measured from the persisted row at boot", () => {
-  it("an old beat is a restart gap: logged, sent to Sentry, and reported stale", async () => {
+  it("an old beat is a restart gap; by default it is recorded without a Sentry issue", async () => {
+    const boot = Date.parse("2026-11-04T12:00:00.000Z");
+    const prev = boot - 6 * 60 * 60_000;
+    await hydrateSchedulerHeartbeat(fakeClient({ row: { last_run_at: iso(prev), last_success_at: iso(prev) } }), new Date(boot));
+    assert.deepEqual(getSchedulerHeartbeatStatus().lastGap, { from: iso(prev), to: iso(boot), ms: 6 * 60 * 60_000, kind: "restart" });
+    assert.equal(sentryCalls.length, 0, "a host that sleeps by decision does not page anyone for sleeping");
+  });
+
+  it("on an always-on host the same restart gap is sent to Sentry", async () => {
+    alwaysOn();
     const boot = Date.parse("2026-11-04T12:00:00.000Z");
     const prev = boot - 6 * 60 * 60_000; // six hours with no instance running
     await hydrateSchedulerHeartbeat(fakeClient({ row: { last_run_at: iso(prev), last_success_at: iso(prev) } }), new Date(boot));
@@ -191,7 +218,18 @@ describe("the /healthz/schedulers entry keeps its four states apart", () => {
     assert.equal(schedulerHeartbeatReport().status, "never_ran");
   });
 
-  it("a recent stop is stale for its report window, then healthy by the clock alone", async () => {
+  it("by default a recent stop is healthy, with the stop and the reason in the detail", async () => {
+    const prev = Date.now() - 3 * 60 * 60_000;
+    startSchedulerHeartbeat({ client: fakeClient({ row: { last_run_at: iso(prev), last_success_at: iso(prev) } }) });
+    await schedulerHeartbeatReady();
+    const r = schedulerHeartbeatReport(Date.parse(getSchedulerHeartbeatStatus().lastSuccessAt!) + 1_000);
+    assert.equal(r.status, "healthy");
+    assert.match(r.detail ?? "", /last stop: background jobs were stopped for 180 min \(no instance was running\)/);
+    assert.match(r.detail ?? "", /PORTAVA_ALWAYS_ON is not set/);
+  });
+
+  it("on an always-on host a recent stop is stale for its report window, then healthy by the clock alone", async () => {
+    alwaysOn();
     const boot = Date.now();
     const prev = boot - 3 * 60 * 60_000;
     startSchedulerHeartbeat({ client: fakeClient({ row: { last_run_at: iso(prev), last_success_at: iso(prev) } }) });
@@ -239,10 +277,40 @@ describe("the route waits for the boot read, within a bound", () => {
     assert.ok(waited >= 150 && waited < 1_500, `waited ${waited} ms`);
   });
 
-  it("a stop measured at boot answers 503 through the real route", async () => {
-    const prev = Date.now() - 2 * 60 * 60_000;
-    startSchedulerHeartbeat({ client: fakeClient({ row: { last_run_at: iso(prev), last_success_at: iso(prev) } }) });
+  it("beats before reporting when the timer is armed but overdue (a resumed process)", async () => {
+    const upserts: Upsert[] = [];
+    const client = fakeClient({ row: null, upserts });
+    startSchedulerHeartbeat({ client });
+    await schedulerHeartbeatReady();
+    // The last attempt was twenty minutes ago and the armed timer has not fired
+    // yet: what a suspended container looks like to the request that resumes it.
+    const suspendedAt = Date.now() - 20 * 60_000;
+    await runSchedulerHeartbeat(client, new Date(suspendedAt));
+    const before = upserts.length;
+    await schedulerHeartbeatReady();
+    assert.equal(upserts.length, before + 1, "the probe's wait wrote one beat");
+    const s = getSchedulerHeartbeatStatus();
+    assert.equal(s.lastGap?.kind, "frozen", "the suspension is recorded, not hidden");
+    assert.ok((s.lastGap?.ms ?? 0) >= 20 * 60_000);
+    assert.equal(schedulerHeartbeatReport().status, "healthy", "default: disclosed");
+    alwaysOn();
+    assert.equal(schedulerHeartbeatReport().status, "stale", "always-on: an incident");
+  });
 
+  it("does not beat on behalf of a timer that was stopped", async () => {
+    const upserts: Upsert[] = [];
+    const client = fakeClient({ row: null, upserts });
+    startSchedulerHeartbeat({ client });
+    await schedulerHeartbeatReady();
+    stopSchedulerHeartbeat();
+    await runSchedulerHeartbeat(client, new Date(Date.now() - 20 * 60_000));
+    const before = upserts.length;
+    await schedulerHeartbeatReady();
+    assert.equal(upserts.length, before, "a dead loop must read as stale, not be covered for");
+    assert.equal(schedulerHeartbeatReport().status, "stale");
+  });
+
+  async function getSchedulers(): Promise<{ status: number; body: any }> {
     const app = express();
     app.use((req: any, _res, next) => { req.log = { info() {}, warn() {}, error() {}, debug() {}, child() { return this; } }; next(); });
     app.use("/api", healthRouter);
@@ -250,19 +318,37 @@ describe("the route waits for the boot read, within a bound", () => {
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
     try {
       const port = (server.address() as any).port;
-      const { status, body } = await new Promise<{ status: number; body: any }>((resolve, reject) => {
+      return await new Promise<{ status: number; body: any }>((resolve, reject) => {
         http.get({ host: "127.0.0.1", port, path: "/api/healthz/schedulers" }, (res) => {
           let raw = "";
           res.on("data", (c) => { raw += c; });
           res.on("end", () => resolve({ status: res.statusCode ?? 0, body: JSON.parse(raw) }));
         }).on("error", reject);
       });
-      const hb = (body.jobs as any[]).find((j) => j.job === "schedulerHeartbeat");
-      assert.ok(hb, "the heartbeat is reported");
-      assert.equal(hb.status, "stale");
-      assert.equal(status, 503, "the exact code: a stop of every scheduler is the incident the probe exists for");
     } finally {
       await new Promise<void>((r) => server.close(() => r()));
     }
+  }
+
+  it("by default a stop measured at boot answers 200 through the real route, and names the stop", async () => {
+    const prev = Date.now() - 2 * 60 * 60_000;
+    startSchedulerHeartbeat({ client: fakeClient({ row: { last_run_at: iso(prev), last_success_at: iso(prev) } }) });
+    const { status, body } = await getSchedulers();
+    const hb = (body.jobs as any[]).find((j) => j.job === "schedulerHeartbeat");
+    assert.ok(hb, "the heartbeat is reported");
+    assert.equal(hb.status, "healthy");
+    assert.match(hb.detail ?? "", /stopped for 120 min/);
+    assert.equal(status, 200, "a host that sleeps by decision is not failing its probe for sleeping");
+  });
+
+  it("on an always-on host a stop measured at boot answers 503 through the real route", async () => {
+    alwaysOn();
+    const prev = Date.now() - 2 * 60 * 60_000;
+    startSchedulerHeartbeat({ client: fakeClient({ row: { last_run_at: iso(prev), last_success_at: iso(prev) } }) });
+    const { status, body } = await getSchedulers();
+    const hb = (body.jobs as any[]).find((j) => j.job === "schedulerHeartbeat");
+    assert.ok(hb, "the heartbeat is reported");
+    assert.equal(hb.status, "stale");
+    assert.equal(status, 503, "the exact code: a stop of every scheduler is the incident the probe exists for");
   });
 });

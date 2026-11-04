@@ -19,8 +19,9 @@
  *
  *   - At boot, the new process reads the row before writing it, and the
  *     distance between the previous beat and now IS the time no scheduler ran
- *     anywhere. That stop is logged, sent to Sentry when SENTRY_DSN is set, and
- *     reported by GET /api/healthz/schedulers.
+ *     anywhere. That stop is logged and reported by GET /api/healthz/schedulers
+ *     (and, on an always-on host, sent to Sentry when SENTRY_DSN is set; see
+ *     below).
  *   - While running, a beat that arrives long after the one before it means the
  *     event loop itself was frozen (a suspended container that was resumed
  *     rather than replaced). Same report.
@@ -31,15 +32,24 @@
  * ── WHAT THE HEALTH ENTRY SAYS (job "schedulerHeartbeat") ────────────────────
  *   failing    the last beat could not be written. Every other job_health
  *              writer is likely failing too.
- *   stale      either this process has not beaten for three intervals, or a
- *              stop longer than GAP_ALERT_MS ended less than
- *              GAP_REPORT_WINDOW_MS ago. The second case is "recovered", and it
- *              is still 503 on purpose: the probe that wakes a sleeping
- *              container is the first thing that can learn the jobs were
- *              stopped, and a 200 would tell it nothing happened.
+ *   stale      this process has not beaten for three intervals; or, on a host
+ *              declared always-on, a stop longer than GAP_ALERT_MS ended less
+ *              than GAP_REPORT_WINDOW_MS ago. That second case is "recovered",
+ *              and it is still 503 on purpose: the probe that wakes the host is
+ *              the first thing that can learn the jobs were stopped.
  *   never_ran  this process has not completed its first beat (or never started
  *              the heartbeat, as in tests).
- *   healthy    beating, and no recent stop.
+ *   healthy    beating. A stop, if any, is in the detail.
+ *
+ * ── A STOP IS AN INCIDENT ONLY ON AN ALWAYS-ON HOST ──────────────────────────
+ * Owner call, 2026-11-04: production stays on Autoscale for now, with no new
+ * hosting spend. On Autoscale a stop after every quiet spell is the expected
+ * behaviour of the host, not an incident, and a probe or a Sentry issue that
+ * fires on every wake is one that gets muted, taking the real failures with it.
+ * So by default a stop is DISCLOSED: logged at warn, named in the detail, and
+ * the entry stays healthy. Set PORTAVA_ALWAYS_ON=true on a host that should
+ * never stop (a Reserved VM) and the same stop is logged at error, sent to
+ * Sentry, and answers 503 for its report window.
  *
  * WHAT IT IS NOT. It proves the timers in this process can fire. It does not
  * prove any single scheduler's loop is still armed, and it does not make a
@@ -60,14 +70,15 @@ export const HEARTBEAT_INTERVAL_MS = 60_000;
 export const HEARTBEAT_STALE_AFTER_MS = 3 * HEARTBEAT_INTERVAL_MS;
 
 /**
- * A stop longer than this is an incident. Ten minutes stays clear of an
+ * A stop longer than this is recorded (and is an incident on an always-on
+ * host; see the header). Ten minutes stays clear of an
  * ordinary restart (a publish keeps the old instance serving until the new one
  * is promoted) while catching an Autoscale sleep, which starts at fifteen idle
  * minutes.
  */
 export const GAP_ALERT_MS = 10 * 60_000;
 
-/** How long after a stop ends the endpoint keeps answering 503 for it. */
+/** On an always-on host, how long after a stop ends the endpoint keeps answering 503 for it. */
 export const GAP_REPORT_WINDOW_MS = 30 * 60_000;
 
 /** How long GET /healthz/schedulers waits for the boot read before answering anyway. */
@@ -113,12 +124,24 @@ export function getSchedulerHeartbeatStatus(): Readonly<SchedulerHeartbeatStatus
 
 let _timer: ReturnType<typeof setInterval> | null = null;
 let _ready: Promise<void> | null = null;
+let _client: any = undefined;
+
+/**
+ * True when the deployment declares an always-on host (PORTAVA_ALWAYS_ON), so
+ * that a stop of the schedulers is an incident. Read on every call so a test,
+ * or an operator, changes it without a restart of this module.
+ */
+export function stopsAreIncidents(): boolean {
+  const v = (process.env["PORTAVA_ALWAYS_ON"] ?? "").trim().toLowerCase();
+  return v === "true" || v === "1";
+}
 
 /** Test seam: stop the timer and forget everything. */
 export function _resetSchedulerHeartbeat(): void {
   stopSchedulerHeartbeat();
   Object.assign(_status, emptyStatus());
   _ready = null;
+  _client = undefined;
 }
 
 function resolveClient(db?: any): any | null {
@@ -136,7 +159,13 @@ function recordGap(gap: SchedulerGap): void {
   const what = gap.kind === "restart"
     ? "no instance ran the background schedulers"
     : "this process's timers did not fire (the container was suspended and resumed)";
-  logger.error(payload, `schedulerHeartbeat: ${what} for ${minutes(gap.ms)} minute(s), ${gap.from} to ${gap.to}`);
+  const line = `schedulerHeartbeat: ${what} for ${minutes(gap.ms)} minute(s), ${gap.from} to ${gap.to}`;
+  if (!stopsAreIncidents()) {
+    // The host sleeps when idle by decision; see the header.
+    logger.warn({ ...payload, alwaysOn: false }, line);
+    return;
+  }
+  logger.error({ ...payload, alwaysOn: true }, line);
   try {
     Sentry.captureMessage(`Background schedulers were stopped for ${minutes(gap.ms)} minute(s)`, {
       level: "error",
@@ -233,6 +262,7 @@ export function startSchedulerHeartbeat(opts: { client?: any; intervalMs?: numbe
   _status.started = true;
   _status.bootAt = new Date().toISOString();
   const intervalMs = opts.intervalMs ?? HEARTBEAT_INTERVAL_MS;
+  _client = opts.client;
   _ready = (async () => {
     await hydrateSchedulerHeartbeat(opts.client);
     await runSchedulerHeartbeat(opts.client);
@@ -251,12 +281,29 @@ export function stopSchedulerHeartbeat(): void {
  * or at once when the heartbeat was never started. GET /healthz/schedulers
  * waits on this because the request that wakes a sleeping container is the one
  * that most needs the measured stop, and it arrives before the boot read ends.
+ *
+ * It also beats once itself when the timer is armed but overdue. That only
+ * happens when the process was suspended and has just resumed: Node can run
+ * the waking request before the overdue timer, and without this beat the
+ * report would read "timers are not firing" for a loop that is about to fire.
+ * The beat records the suspension as a "frozen" stop, so nothing is hidden. A
+ * timer that was stopped is not armed, so it is never covered for.
  */
 export async function schedulerHeartbeatReady(timeoutMs: number = READY_TIMEOUT_MS): Promise<void> {
   if (!_ready) return;
+  const ready = _ready;
   let t: ReturnType<typeof setTimeout> | null = null;
   try {
-    await Promise.race([_ready, new Promise<void>((r) => { t = setTimeout(r, timeoutMs); })]);
+    await Promise.race([
+      (async () => {
+        await ready;
+        const last = _status.lastAttemptAt ? Date.parse(_status.lastAttemptAt) : Number.NaN;
+        if (_timer && Number.isFinite(last) && Date.now() - last > HEARTBEAT_STALE_AFTER_MS) {
+          await runSchedulerHeartbeat(_client);
+        }
+      })(),
+      new Promise<void>((r) => { t = setTimeout(r, timeoutMs); }),
+    ]);
   } finally {
     if (t) clearTimeout(t);
   }
@@ -293,7 +340,7 @@ export function schedulerHeartbeatReport(now: number = Date.now()): SchedulerHea
   if (Number.isFinite(own) && now - own > HEARTBEAT_STALE_AFTER_MS) {
     return { ...base, status: "stale", detail: [`no beat from this process since ${s.lastSuccessAt}: its timers are not firing`, gapNote].filter(Boolean).join(" | ") };
   }
-  if (s.lastGap && now - Date.parse(s.lastGap.to) < GAP_REPORT_WINDOW_MS) {
+  if (s.lastGap && stopsAreIncidents() && now - Date.parse(s.lastGap.to) < GAP_REPORT_WINDOW_MS) {
     return { ...base, status: "stale", detail: `${gapNote}; running again since ${s.lastGap.to}` };
   }
   if (!Number.isFinite(own)) {
@@ -302,6 +349,10 @@ export function schedulerHeartbeatReport(now: number = Date.now()): SchedulerHea
   return {
     ...base,
     status: "healthy",
-    detail: [`beating every ${Math.round(HEARTBEAT_INTERVAL_MS / 1000)} s since ${s.bootAt}`, gapNote ? `last stop: ${gapNote}` : null].filter(Boolean).join(" | "),
+    detail: [
+      `beating every ${Math.round(HEARTBEAT_INTERVAL_MS / 1000)} s since ${s.bootAt}`,
+      gapNote ? `last stop: ${gapNote}` : null,
+      gapNote && !stopsAreIncidents() ? "expected on a host that sleeps when idle (PORTAVA_ALWAYS_ON is not set)" : null,
+    ].filter(Boolean).join(" | "),
   };
 }

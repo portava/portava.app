@@ -4,10 +4,9 @@
 #
 # WHY THIS FILE EXISTS. Every background job is a timer inside the API process,
 # and nothing outside the process ever asked whether those timers were firing.
-# /api/healthz/schedulers answers that question (503 when a job is failing or
-# stale, and since lib/schedulerHeartbeat.ts, 503 for thirty minutes after any
-# stop of the whole process longer than ten minutes). This workflow is the
-# thing that asks, and a failed scheduled run emails the repository owner.
+# /api/healthz/schedulers answers that question: 503 when a job is failing or
+# stale. This workflow is the thing that asks, and a failed scheduled run emails
+# the repository owner.
 #
 # WHAT IT IS NOT: a keep-awake ping. GitHub delays and drops scheduled runs.
 # Measured on this repository: story-retention.yml's "hourly" cron ran 154 times
@@ -19,9 +18,19 @@
 # docs/ops/scheduler-hosting.md. Each run here does wake a sleeping container,
 # and that is a side effect, not the design.
 #
-# While the app is still on Autoscale with no traffic, most runs will find a
-# container that was asleep and fail on the heartbeat's stop. That failure is
-# true: the jobs were not running.
+# Production stays on Autoscale for now (decided 2026-11-04: no new hosting
+# spend without the owner's yes). There a stop after a quiet spell is expected,
+# so the heartbeat names it in the run summary and the run still passes; a run
+# fails for a job that is failing or stale while the app is up. Once the app
+# moves to an always-on host and PORTAVA_ALWAYS_ON=true is set there, any stop
+# of the whole process longer than ten minutes also fails runs for thirty
+# minutes after it ends.
+#
+# COST. On Autoscale each run that finds the app asleep keeps one instance up
+# for its fifteen idle minutes, and that time is billed. Every three hours is
+# at most 8 wakes a day: about $1.40 a month at 0.5 vCPU and 1 GB, $2.90 at
+# 1 vCPU and 2 GB, if GitHub delivered every run (it delivers far fewer; see
+# above). On a Reserved VM the runs cost nothing extra.
 #
 # On a PUBLIC repository GitHub disables a scheduled workflow after 60 days with
 # no repository activity. Re-enable it from the Actions tab if that happens.
@@ -30,8 +39,9 @@ name: Scheduler health
 
 on:
   schedule:
-    # Twice an hour, off the top of the hour (GitHub's busiest minute).
-    - cron: '7,37 * * * *'
+    # Every three hours, off the top of the hour (GitHub's busiest minute).
+    # Kept low on purpose: see COST above.
+    - cron: '7 */3 * * *'
   workflow_dispatch:
 
 permissions:

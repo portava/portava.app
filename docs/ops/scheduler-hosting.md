@@ -18,8 +18,19 @@ It cannot keep the app awake. Measured on this repository:
 | `clean-build-proof.yml` | daily 03:47 | started 4.3 to 7.9 hours late |
 
 A schedule that misses by hours cannot beat a fifteen-minute idle timeout. GitHub can still be the
-alarm: `.github/workflows/scheduler-health.yml` asks `/api/healthz/schedulers` and fails (which
-emails the owner) when the answer is 503.
+alarm: `.github/workflows/scheduler-health.yml` asks `/api/healthz/schedulers` every three hours and
+fails (which emails the owner) when the answer is 503. On Autoscale each run that finds the app
+asleep keeps one instance up for its fifteen idle minutes, which is billed: at most about $1.40 a
+month at 0.5 vCPU and 1 GB if GitHub delivered every run. Each wake also lets the jobs run for a
+quarter of an hour, which helps but is not a schedule: GitHub's gaps are hours long and irregular.
+Disable the workflow from the Actions tab to stop both.
+
+## The decision (2026-11-04)
+
+Production stays on Autoscale for now: no new hosting spend without the owner's yes. A Reserved
+VM is still the recommended upgrade, at $15 a month, and the steps are below. Until then a stop is
+expected after every quiet spell, so the heartbeat discloses it instead of alarming on it (see
+"How to tell whether the jobs were running").
 
 ## The options
 
@@ -38,7 +49,8 @@ instances run two copies of each pass: the 2026-11-04 launch audit found a lease
 job_health write in 16 of 73 scheduler modules.
 
 **Switching to a Reserved VM** is done in the Replit app "port": in its publishing settings, change
-the deployment type to Reserved VM, pick the machine, and publish. Then confirm rumazi.com is still attached under the
+the deployment type to Reserved VM, pick the machine, add the secret `PORTAVA_ALWAYS_ON` with the
+value `true`, and publish. Then confirm rumazi.com is still attached under the
 deployment's domains and that `https://rumazi.com/api/healthz` answers 200. The `[deployment]`
 block in `.replit` says the UI setting wins over the file, so update `deploymentTarget` there to
 match afterwards.
@@ -49,10 +61,18 @@ match afterwards.
 (`artifacts/api-server/src/lib/schedulerHeartbeat.ts`). Every running instance writes the
 `job_health` row `scheduler_heartbeat` once a minute. A new process reads that row before writing
 it, so the time since the last beat is the time no scheduler ran anywhere; a beat that fires long
-after the previous one means a frozen container. Either stop, if longer than ten minutes, is
-logged as an error, sent to Sentry when `SENTRY_DSN` is set, and makes the endpoint answer 503 for
-thirty minutes after it ends. The probe that wakes a sleeping app is the first thing that can learn
-the jobs were stopped, so it gets a 503 and not a 200.
+after the previous one means a frozen container. A stop longer than ten minutes is measured either
+way. What happens next depends on `PORTAVA_ALWAYS_ON`:
+
+| `PORTAVA_ALWAYS_ON` | A stop is | Log | Sentry | `/api/healthz/schedulers` |
+| --- | --- | --- | --- | --- |
+| unset (Autoscale, today) | expected | warn | no | 200; the stop is named in the heartbeat's `detail` |
+| `true` (Reserved VM) | an incident | error | yes, when `SENTRY_DSN` is set | 503 for thirty minutes after the stop ends |
+
+On an always-on host the probe that finds a stop is the first thing that can learn the jobs were
+stopped, so it gets a 503 and not a 200. On Autoscale the same answer would fire on every quiet
+spell, and an alarm that always fires gets muted along with the real failures. Either way a job
+that is failing or stale while the app is up still answers 503.
 
 What it does not show: whether one particular scheduler's loop has died while the process runs.
 45 of the 69 schedulers still report nothing of their own (`coverage.unobservable` in the same
