@@ -1,5 +1,25 @@
 import type { ConfigContext, ExpoConfig } from 'expo/config';
-import { withEntitlementsPlist } from 'expo/config-plugins';
+import * as ConfigPluginsNamespace from 'expo/config-plugins';
+
+type ConfigPlugins = typeof import('expo/config-plugins');
+
+/**
+ * `expo/config-plugins` is CommonJS. Expo's own config loader transpiles this
+ * file to CommonJS, where the namespace import IS the module; the node:test
+ * suite loads it as ESM (tsx/esm on Node 24), where Node cannot detect the
+ * module's getter-defined named exports and parks the whole thing on
+ * `.default`. A named import therefore throws at load time under one loader
+ * or the other; resolving the function at call time works under both.
+ */
+function configPlugins(): ConfigPlugins {
+  const ns = ConfigPluginsNamespace as unknown as Record<string, unknown>;
+  for (const candidate of [ns, ns.default]) {
+    if (candidate && typeof (candidate as Record<string, unknown>).withEntitlementsPlist === 'function') {
+      return candidate as ConfigPlugins;
+    }
+  }
+  throw new Error('expo/config-plugins did not expose withEntitlementsPlist under this module loader');
+}
 
 /**
  * PORTAVA_PERSONAL_TEAM=1 — a local Xcode build signed with a free Apple ID (a
@@ -39,7 +59,7 @@ export function withPersonalTeam(config: ExpoConfig): ExpoConfig {
   const plugins = (config.plugins ?? []).filter((entry) => !PERSONAL_TEAM_PLUGINS_DROPPED.has(pluginName(entry)));
   const stripped: ExpoConfig = { ...config, ios: { ...ios, usesAppleSignIn: false }, plugins };
   // Belt and braces for the entitlement a plugin writes rather than the config declares (aps-environment).
-  return withEntitlementsPlist(stripped, (c) => {
+  return configPlugins().withEntitlementsPlist(stripped, (c) => {
     for (const key of PERSONAL_TEAM_ENTITLEMENTS_DROPPED) delete c.modResults[key];
     return c;
   });
