@@ -40,8 +40,6 @@
     "routes/contentTranslation.ts::authorizeTrip::trips.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "routes/contentTranslation.ts::authorizeBio::profiles.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "routes/contentTranslation.ts::authorizeBio::user_follows.filter": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
-    "routes/engagement.ts::checkPostAccess::posts.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
-    "routes/engagement.ts::checkPostAccess::trip_members.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "routes/engagement.ts::checkAccess::posts_comments.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "routes/engagement.ts::checkAccess::highlights.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "routes/engagement.ts::checkAccess::memories.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
