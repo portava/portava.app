@@ -15,12 +15,12 @@ import {
   // Social
   Zap, Image as ImageIcon, Film, BookOpen, MessageSquare, Phone, UserPlus, Users, UserCheck,
   // Discover
-  Compass, Search, Map, MapPin, Gem, Calendar, Globe, Home,
+  Compass, Search, Map, MapPin, Gem, Calendar, Globe, Home, Award,
   // Travel
   Briefcase, Navigation, CalendarDays, Bookmark, CreditCard,
   MailOpen, TicketCheck, FileText,
   // Create
-  PenLine, Star, Plus, Route,
+  PenLine, Star,
   // Passport
   User, Camera, FileImage, AlignLeft, Stamp, LayoutGrid,
   Eye, Shield, ShieldCheck,
@@ -36,7 +36,7 @@ import { AppHeader } from '../src/components/ui/AppHeader';
 import { CreateHubSheet } from '../src/components/create/CreateHubSheet';
 import { useSession } from '../src/context/SessionContext';
 import { color, space, radius, type as t } from '../src/theme/tokens';
-import { useBottomInset } from '../src/hooks/useBottomInset'; import { useRentABuddyFlag } from '../src/hooks/useRentABuddyFlag';
+import { useBottomInset } from '../src/hooks/useBottomInset'; import { useRentABuddyFlag } from '../src/hooks/useRentABuddyFlag'; import { useFeatureFlags } from '../src/context/FeatureFlagsContext';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -53,6 +53,8 @@ interface DirectoryItem {
   action?: 'create-hub' | 'sign-out';
   /** True → nothing behind it yet: the row is left out of the directory. */
   disabled?: boolean;
+  /** Listed only while this server feature flag is on. */
+  featureFlag?: string;
 }
 
 interface DirectorySection {
@@ -86,6 +88,7 @@ export const SECTIONS: DirectorySection[] = [
       { key: 'map',            label: 'Map',             Icon: Map,      iconColor: '#2563EB', route: '/map?entry=unknown' },
       { key: 'places',         label: 'Places',          Icon: MapPin,   iconColor: '#059669', disabled: true },
       { key: 'hidden-gems',    label: 'Hidden Gems',     Icon: Gem,      iconColor: '#D97706', route: '/gems' },
+      { key: 'local-guide',    label: 'Become a Local Guide', Icon: Award, iconColor: '#4C8BF5', route: '/gems/become-guide', featureFlag: 'local_guides_enabled' },
       { key: 'events',         label: 'Events',          Icon: Calendar, iconColor: '#7C3AED', route: '/(tabs)/events' },
       { key: 'travelers',      label: 'Travelers',       Icon: Globe,    iconColor: '#0891B2', route: '/discover' },
       { key: 'neighborhoods',  label: 'Neighborhoods',   Icon: Home,     iconColor: '#27AE71', route: '/map?entry=unknown' },
@@ -114,10 +117,8 @@ export const SECTIONS: DirectorySection[] = [
       { key: 'create-memory',  label: 'Memory',      Icon: BookOpen,  iconColor: '#27AE71', action: 'create-hub' },
       { key: 'create-event',   label: 'Event',       Icon: Calendar,  iconColor: '#7C3AED', action: 'create-hub' },
       { key: 'create-trip',    label: 'Trip',        Icon: Briefcase, iconColor: '#4F46E5', action: 'create-hub' },
-      { key: 'create-plan',    label: 'Plan',        Icon: Route,     iconColor: '#0891B2', disabled: true },
       { key: 'add-gem',        label: 'Add a Gem',   Icon: Gem,       iconColor: '#D97706', action: 'create-hub' },
-      { key: 'add-place',      label: 'Add Place',   Icon: Plus,      iconColor: '#059669', disabled: true },
-      { key: 'review',         label: 'Review',      Icon: Star,      iconColor: '#F59E0B', disabled: true },
+      { key: 'review',         label: 'Review a Place', Icon: Star,   iconColor: '#F59E0B', route: '/search?type=places' },
     ],
   },
   {
@@ -293,6 +294,7 @@ export default function ExplorePortavaScreen() {
   // production, 2026-10-22): the row opened nothing but the (rent-a-buddy)
   // layout's "COMING SOON" gate, so it is not listed until the flag is on.
   const rentABuddyOn = useRentABuddyFlag().enabled;
+  const { isEnabled } = useFeatureFlags();
   // A `disabled` row has nothing behind it yet. It used to be drawn muted with
   // a "Coming soon" badge, which made a third of the directory read as
   // unfinished; such rows are now left out until they get a route.
@@ -300,10 +302,10 @@ export default function ExplorePortavaScreen() {
     () => SECTIONS
       .map((sec) => ({
         ...sec,
-        data: sec.data.filter((item) => !item.disabled && (rentABuddyOn || item.key !== 'rent-buddy')),
+        data: sec.data.filter((item) => !item.disabled && (rentABuddyOn || item.key !== 'rent-buddy') && (!item.featureFlag || isEnabled(item.featureFlag))),
       }))
       .filter((sec) => sec.data.length > 0),
-    [rentABuddyOn],
+    [rentABuddyOn, isEnabled],
   );
 
   const handleItemPress = useCallback((item: DirectoryItem) => {

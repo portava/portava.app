@@ -6425,7 +6425,7 @@ dispatched at `artifacts/api-server/src/routes/memories.ts:518#commandType: "CRE
   (`travel-buddy-standalone/app/memory/new.tsx:171#if (failed > 0)`), because §19
   says a failed upload does not invalidate saved Memory facts.
 - **The entry.** The hub routes Memory to the new screen
-  (`travel-buddy-standalone/src/components/create/CreateHubSheet.tsx:74#route: '/memory/new'`),
+  (`travel-buddy-standalone/src/components/create/CreateHubSheet.tsx:76#route: '/memory/new'`),
   and `/memory/edit` without an id now redirects there instead of spinning
   (`travel-buddy-standalone/app/memory/edit.tsx:149#if (!id) return <Redirect`),
   line-neutral.

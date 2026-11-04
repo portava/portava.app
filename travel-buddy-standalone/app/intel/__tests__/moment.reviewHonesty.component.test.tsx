@@ -56,8 +56,9 @@ beforeEach(() => {
   mockParams = { ...AUTHOR };
 });
 
+/** A caller the server says may approve (a reviewer) takes step 2 by hand. */
 async function proposeThenApprove() {
-  mockPropose.mockResolvedValue({ ok: true, claim: { id: 'claim-1' } });
+  mockPropose.mockResolvedValue({ ok: true, claim: { id: 'claim-1' }, canApprove: true });
   const r = await render(<MomentScreen />);
   fireEvent.press(r.getByText('Propose Moment'));
   fireEvent.press(await r.findByText('Approve & publish'));
@@ -65,6 +66,25 @@ async function proposeThenApprove() {
 }
 
 describe('Moment — approval is a reviewer step', () => {
+  it('a traveller proposes and is told it waits for a reviewer: no approve button, no approve call', async () => {
+    mockPropose.mockResolvedValue({ ok: true, claim: { id: 'claim-1' }, canApprove: false });
+    const r = await render(<MomentScreen />);
+    expect(r.getByText('Portava makes it live')).toBeTruthy();
+    fireEvent.press(r.getByText('Propose Moment'));
+    await r.findByTestId('intel-moment-in-review');
+    expect(r.getByText('Waiting for a reviewer')).toBeTruthy();
+    expect(r.queryByText('Approve & publish')).toBeNull();
+    expect(mockApprove).not.toHaveBeenCalled();
+  });
+
+  it('an older server that sends no canApprove is read as a traveller', async () => {
+    mockPropose.mockResolvedValue({ ok: true, claim: { id: 'claim-1' } });
+    const r = await render(<MomentScreen />);
+    fireEvent.press(r.getByText('Propose Moment'));
+    await r.findByTestId('intel-moment-in-review');
+    expect(r.queryByText('Approve & publish')).toBeNull();
+  });
+
   it('a 403 on approve says the Moment is WAITING FOR REVIEW — no error, no retry button', async () => {
     mockApprove.mockResolvedValue({ ok: false, code: 'forbidden', error: 'Admin role required' });
     const r = await proposeThenApprove();

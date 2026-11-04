@@ -12,8 +12,9 @@
  *     /events/create, not /create), after the sheet's 80 ms close delay;
  *   - for every label both menus show, this sheet opens exactly what the
  *     Create hub opens (or, like the hub, nothing);
- *   - a row with no live screen (Plan, Group activity) is a disabled "Soon"
- *     row that never navigates — in particular never falls back to /create.
+ *   - no row is left without a live screen: Plan and Group activity, the two
+ *     "Soon" rows, were removed on 2026-11-04 (a plan lives inside a trip, a
+ *     group meetup is an Event), so nothing can fall back to /create.
  *
  * Run with: npx jest --forceExit src/components/media/__tests__/MediaQuickCreateSheet.routes.component.test.tsx
  */
@@ -92,7 +93,7 @@ describe('MediaQuickCreateSheet — each entry opens its own screen', () => {
   });
 
   it('opens what the Create hub opens for every label both menus show', async () => {
-    const shared = ['Post', 'Story', 'Memory', 'Event', 'Trip', 'Plan'];
+    const shared = ['Post', 'Story', 'Memory', 'Event', 'Trip'];
 
     await render(<CreateHubSheet visible onClose={jest.fn()} />);
     const hub: Record<string, unknown[]> = {};
@@ -106,16 +107,10 @@ describe('MediaQuickCreateSheet — each entry opens its own screen', () => {
     }
   });
 
-  it('shows a row with no live screen as a disabled "Soon" row that never navigates', async () => {
-    const onClose = jest.fn();
-    await render(<MediaQuickCreateSheet visible onClose={onClose} />);
+  it('shows no "Soon" rows: the two with no screen (Plan, Group activity) are gone', async () => {
+    await render(<MediaQuickCreateSheet visible onClose={jest.fn()} />);
 
-    expect(screen.getAllByText('Soon')).toHaveLength(2);
-    for (const label of ['Plan', 'Group activity']) {
-      const row = screen.getByLabelText(label);
-      expect(row.props.accessibilityState?.disabled).toBe(true);
-      expect(await pushedBy(label)).toEqual([]); // not /create
-    }
-    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.queryByText('Soon')).toBeNull();
+    for (const label of ['Plan', 'Group activity']) expect(screen.queryByLabelText(label)).toBeNull();
   });
 });
