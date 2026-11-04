@@ -1,8 +1,9 @@
 /**
- * Gem detail — Share-to-Telegraph thread-ID modal test.
+ * Gem detail — Share to a chat.
  *
- * The Share action used iOS-only Alert.prompt (a silent no-op on
- * Android/web). It now uses ReasonPromptModal to collect the thread ID.
+ * The Share action first used iOS-only Alert.prompt (a silent no-op on
+ * Android/web), then a modal asking for a raw "Thread ID" nobody knows. It now
+ * lists the traveller's chats (ThreadPickerSheet) and shares to the one tapped.
  *
  * ## Act strategy
  *
@@ -61,6 +62,19 @@ jest.mock('../../hooks/useHiddenGems', () => ({
   useGemCheckin: () => ({ checkin: jest.fn(), loading: false, result: null }),
   useGemReport: () => ({ report: jest.fn(), loading: false, done: false }),
 }));
+jest.mock('../../services/messaging', () => ({
+  ...jest.requireActual('../../services/messaging'),
+  getMyThreads: jest.fn(async () => ({
+    ok: true,
+    data: {
+      threads: [
+        { id: 'thread-42', threadType: 'trip', title: 'Split crew', otherMembers: [], archivedAt: null },
+        { id: 'thread-7', threadType: 'direct', title: null, otherMembers: [{ id: 'u2', handle: 'ana', name: 'Ana', avatarUrl: null }], archivedAt: null },
+        { id: 'thread-old', threadType: 'direct', title: 'Archived', otherMembers: [], archivedAt: '2026-01-01T00:00:00Z' },
+      ],
+    },
+  })),
+}));
 jest.mock('../../services/hiddenGems', () => ({
   ...jest.requireActual('../../services/hiddenGems'),
   verificationBadge: () => 'Community verified',
@@ -91,68 +105,46 @@ const gem = {
 // finish in <1s — this only widens headroom, it does not mask regressions.
 jest.setTimeout(20000);
 
-describe('Gem detail share modal', () => {
-  it('shares to a Telegraph thread via the modal with a required thread ID', async () => {
-    (useGemDetail as jest.Mock).mockReturnValue({
-      gem, savedByMe: false, guideProfile: null,
-      loading: false, error: null, refresh: jest.fn(), toggleSave: jest.fn(),
-    });
-    // Deferred so the share continuation fires outside the act() flush — no overlap.
-    mockShare.mockImplementation(() => deferred({}));
+function mountGem() {
+  (useGemDetail as jest.Mock).mockReturnValue({
+    gem, savedByMe: false, guideProfile: null,
+    loading: false, error: null, refresh: jest.fn(), toggleSave: jest.fn(),
+  });
+  // Deferred so the share continuation fires outside the act() flush — no overlap.
+  mockShare.mockImplementation(() => deferred({}));
+  return render(<GemDetailScreen />);
+}
 
-    await render(<GemDetailScreen />);
+describe('Gem detail share to a chat', () => {
+  it('lists your chats (not archived ones) and shares to the one tapped', async () => {
+    mockShare.mockClear();
+    await mountGem();
     await waitFor(() => expect(screen.getByText('Share')).toBeTruthy());
+    expect(screen.queryByText('Split crew')).toBeNull();
 
-    expect(screen.queryByTestId('reason-modal')).toBeNull();
-
-    // Bare press — sync setState; waitFor below confirms modal appears.
+    // Bare press — sync setState; waitFor confirms the chats are listed.
     fireEvent.press(screen.getByText('Share'));
-    await waitFor(() => expect(screen.getByTestId('reason-modal')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Split crew')).toBeTruthy());
+    expect(screen.getByText('Ana')).toBeTruthy();
+    expect(screen.queryByText('Archived')).toBeNull();
+    expect(screen.queryByText(/Thread ID/i)).toBeNull();
 
-    // Thread ID required — disabled confirm does nothing.
-    // Bare press — sync no-op; assert immediately.
-    fireEvent.press(screen.getByTestId('reason-confirm-btn'));
-    expect(mockShare).not.toHaveBeenCalled();
-
-    // Bare changeText — sync setState; waitFor confirms thread ID committed.
-    fireEvent.changeText(screen.getByTestId('reason-input'), 'thread-42');
-    await waitFor(() =>
-      expect(screen.getByTestId('reason-input').props.value).toBe('thread-42'),
-    );
-
-    // Bare press — async submit handler; waitFor below settles the chain.
-    fireEvent.press(screen.getByTestId('reason-confirm-btn'));
+    fireEvent.press(screen.getByLabelText('Share to Split crew'));
     await waitFor(() => expect(mockShare).toHaveBeenCalledWith('gem-1', 'thread-42'));
-    expect(screen.queryByTestId('reason-modal')).toBeNull();
   });
 
-  it('double-tapping the modal confirm shares exactly once', async () => {
+  it('double-tapping a chat shares exactly once', async () => {
     mockShare.mockClear();
-    (useGemDetail as jest.Mock).mockReturnValue({
-      gem, savedByMe: false, guideProfile: null,
-      loading: false, error: null, refresh: jest.fn(), toggleSave: jest.fn(),
-    });
-    // Deferred so the share continuation fires outside the act() flush — no overlap.
-    mockShare.mockImplementation(() => deferred({}));
-
-    await render(<GemDetailScreen />);
+    await mountGem();
     await waitFor(() => expect(screen.getByText('Share')).toBeTruthy());
 
-    // Bare press — sync setState; waitFor confirms modal appears.
     fireEvent.press(screen.getByText('Share'));
-    await waitFor(() => expect(screen.getByTestId('reason-input')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Split crew')).toBeTruthy());
 
-    // Bare changeText — sync setState; waitFor confirms thread ID committed.
-    fireEvent.changeText(screen.getByTestId('reason-input'), 'thread-42');
-    await waitFor(() =>
-      expect(screen.getByTestId('reason-input').props.value).toBe('thread-42'),
-    );
-
-    // Fast double-tap before the modal closes — both presses are bare so the
-    // in-flight guard (submittingRef) sees the first press before any re-render.
-    const btn = screen.getByTestId('reason-confirm-btn');
-    fireEvent.press(btn);
-    fireEvent.press(btn);
+    // Both presses are bare so the in-flight guard sees the first press before any re-render.
+    const row = screen.getByLabelText('Share to Split crew');
+    fireEvent.press(row);
+    fireEvent.press(row);
 
     await waitFor(() => expect(mockShare).toHaveBeenCalledTimes(1));
     expect(mockShare).toHaveBeenCalledWith('gem-1', 'thread-42');
