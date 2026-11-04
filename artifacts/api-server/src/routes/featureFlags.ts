@@ -8,8 +8,8 @@ const router = Router();
 
 /**
  * GET /api/feature-flags
- * Returns all feature flags from the feature_flags table.
- * Public endpoint — flags only control UI behavior, contain no sensitive data.
+ * Returns the CLIENT-FACING flags only (lib/clientFeatureFlags.ts), resolved.
+ * Public, tokenless: kill switches and server-only gates are never served.
  */
 router.get("/feature-flags", asyncHandler(async (req, res) => {
   const sc = getServiceClient();
@@ -56,9 +56,10 @@ router.get("/feature-flags", asyncHandler(async (req, res) => {
     if (!INERT_FLAGS.has(row.flag)) flags[row.flag] = row.enabled ?? false;
   }
 
-  return res.json({ flags: resolveFeatureFlags(flags) });
+  return res.json({ flags: clientFeatureFlags(resolveFeatureFlags(flags)) }); // resolved over EVERY row first (a parent may be server-only in principle), then cut to what a client reads
 }));
 
 import { HIDDEN_INERT_FLAGS } from "../lib/hiddenInertFlags.js";
+import { clientFeatureFlags } from "../lib/clientFeatureFlags.js"; // sec/public-surface (2026-11-04): the public bundle is the client-facing set only
 
 export default router;

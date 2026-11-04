@@ -18,17 +18,22 @@
  *   3. auth required     GET /api/verification/status with no token → 401
  *                        (a 503 server_not_configured here means the
  *                        service-role key is missing)
- *   4. booking stops     GET /api/feature-flags (the app's own unauthenticated flag
- *      engaged          read) → 200 with disable_rent_buddy_booking, disable_rab_bookings
- *                       and RENT_BUDDY_ADMIN_ONLY_MODE all true and rent_buddy_enabled
- *                       false — the three engaged stops OBSERVED, not inferred from a
- *                       capability. A missing service client answers 503 here, so
- *                       this check cannot pass vacuously.
+ *   4. Rent-a-Buddy off, GET /api/feature-flags (the app's own unauthenticated flag
+ *      stops unpublished read) → 200 with rent_buddy_enabled false and none of the
+ *                       three booking stops (disable_rent_buddy_booking, disable_rab_bookings,
+ *                       RENT_BUDDY_ADMIN_ONLY_MODE) in the response: since sec/public-surface
+ *                       (2026-11-04) the endpoint serves only the flags the app reads
+ *                       (artifacts/api-server/src/lib/clientFeatureFlags.ts), and the stops are
+ *                       enforced on the server. That they are ENGAGED is proved by
+ *                       beta-configure's read-back (see NOT CHECKED). A missing service client
+ *                       answers 503 here, so this check cannot pass vacuously.
  *   5. flags = policy    the same response, judged against scripts/src/beta-flag-policy.json
- *                        AT THIS COMMIT: every flag the policy turns ON is served true; every
- *                        served flag the policy knows reads the policy's value (the API's
- *                        live-places derivation applied, LIVE_PLACES_REQUIREMENTS); a flag
- *                        the policy does not know may only be served false. This proves
+ *                        AT THIS COMMIT, on the client flags (CLIENT_FEATURE_FLAGS, read at
+ *                        this commit too): every client flag the policy turns ON is served
+ *                        true; every served flag reads the policy's value (the API's
+ *                        live-places derivation applied, LIVE_PLACES_REQUIREMENTS); a client
+ *                        flag the policy does not know may only be served false; a flag that
+ *                        is not a client flag must not be served at all. This proves
  *                        beta-config.yml applied THIS policy to the database this API reads
  *                        (re-dispatch it after any policy edit, or this check fails).
  *   6. Auth sign-up      GET https://emfpckykpzfturllshly.supabase.co/auth/v1/settings with
@@ -51,12 +56,15 @@
  *                        gate 3c requires this check AND a passing step f after the last schema
  *                        write.
  *
- * REPORTED, NOT CHECKED — the API exposes no unauthenticated read of either,
- * and this lane does not add an endpoint that would publish configuration:
+ * REPORTED, NOT CHECKED — the API exposes no unauthenticated read of any of
+ * these, and this lane does not add an endpoint that would publish configuration:
+ *   • the booking stops ENGAGED: server-only flags, no longer published (check 4);
+ *     beta-configure step e reads every flag row back against the policy, and
+ *     beta:status gate 3c accepts only an applying run that got past it.
  *   • identity-verification readiness ("not operational for real bookings"):
  *     read the `payments/identity provider mode` startup line (booleans only,
- *     lib/paymentsStartupLog.ts) in the beta deployment's logs. Check 4 is the
- *     observable consequence: the booking stops are engaged.
+ *     lib/paymentsStartupLog.ts) in the beta deployment's logs. The booking
+ *     stops (above) are what keep real bookings shut meanwhile.
  *   • production runtime mode (NODE_ENV=production): not observable from outside, but
  *     ENFORCED: a PORTAVA_DEPLOYMENT_ENV=beta API refuses to start unless NODE_ENV=production
  *     (artifacts/api-server/src/lib/deploymentEnvironment.ts), and only a beta-labelled process
@@ -142,15 +150,35 @@ export function expectedServedFlags(policy: FlagPolicy): Map<string, boolean> {
   return out;
 }
 
+/**
+ * The flags GET /api/feature-flags serves at all: CLIENT_FEATURE_FLAGS in
+ * artifacts/api-server/src/lib/clientFeatureFlags.ts, read AT THIS COMMIT, like
+ * the policy. Since sec/public-surface (2026-11-04) the public bundle carries
+ * only the flags the app reads; kill switches and server-only gates are not
+ * published, so check 5 compares the policy with the API on this subset, and the
+ * rest of the policy is proved by beta-configure's read-back (step e).
+ */
+export function loadClientFeatureFlags(): ReadonlySet<string> {
+  const rel = "artifacts/api-server/src/lib/clientFeatureFlags.ts";
+  const src = readFileSync(join(REPO_ROOT, rel), "utf8");
+  const block = /export const CLIENT_FEATURE_FLAGS[^=]*=\s*\[([\s\S]*?)\n\];/.exec(src);
+  if (!block) throw new Error(`CLIENT_FEATURE_FLAGS not found in ${rel}`);
+  const names = [...block[1].replace(/\/\/[^\n]*/g, "").matchAll(/"([A-Za-z0-9_]+)"/g)].map((m) => m[1]);
+  if (names.length === 0) throw new Error(`CLIENT_FEATURE_FLAGS in ${rel} parsed to no names`);
+  return new Set(names);
+}
+
 /** null when the served flag map is the policy's; otherwise what differs (flag names only). */
-export function flagPolicyMismatch(served: Record<string, unknown>, policy: FlagPolicy): string | null {
+export function flagPolicyMismatch(served: Record<string, unknown>, policy: FlagPolicy, clientFlags: ReadonlySet<string> = loadClientFeatureFlags()): string | null {
   const want = expectedServedFlags(policy);
   const wrong: string[] = [];
   for (const [flag, on] of want) {
+    if (!clientFlags.has(flag)) continue; // not published by the public bundle; beta-configure step e reads its row back
     if (!(flag in served)) { if (on) wrong.push(`${flag} not served (policy ON)`); continue; }
     if (served[flag] !== on) wrong.push(`${flag}=${JSON.stringify(served[flag])} (policy ${on})`);
   }
   for (const [flag, value] of Object.entries(served)) {
+    if (!clientFlags.has(flag)) { wrong.push(`${flag} served (not a client flag: the public bundle must not publish it)`); continue; }
     if (!want.has(flag) && value !== false) wrong.push(`${flag}=${JSON.stringify(value)} (not in the policy; only false is acceptable)`);
   }
   if (wrong.length === 0) return null;
@@ -192,6 +220,8 @@ export interface SmokeOptions {
   publishableKey?: string;
   /** How to read the key when none is given (default betaPublishableKey); a throw fails checks 6 and 7. */
   readPublishableKey?: () => string;
+  /** Defaults to the API's CLIENT_FEATURE_FLAGS at this commit (loadClientFeatureFlags). */
+  clientFlags?: ReadonlySet<string>;
 }
 
 export async function runBetaSmoke(base: string, fetchImpl: SmokeFetch, opts: SmokeOptions = {}): Promise<SmokeResult[]> {
@@ -222,19 +252,19 @@ export async function runBetaSmoke(base: string, fetchImpl: SmokeFetch, opts: Sm
     r.status === 401 ? null
       : r.status === 503 ? `got 503 — the service-role key is missing on the beta deployment (${snippet(r.raw)})`
       : `expected 401 without a token, got ${r.status} ${snippet(r.raw)}`);
-  await check("Rent-a-Buddy booking stops engaged", "/api/feature-flags", (r) => {
+  await check(RENT_A_BUDDY_CHECK, "/api/feature-flags", (r) => {
     const flags = typeof r.body === "object" && r.body !== null ? (r.body as { flags?: Record<string, unknown> }).flags : undefined;
     if (r.status !== 200 || !flags) return `expected 200 {flags:{…}}, got ${r.status} ${snippet(r.raw)}`;
     const wrong = [
-      ...BOOKING_STOPS.filter((f) => flags[f] !== true).map((f) => `${f}=${JSON.stringify(flags[f])} (want true)`),
       ...(flags.rent_buddy_enabled !== false ? [`rent_buddy_enabled=${JSON.stringify(flags.rent_buddy_enabled)} (want false)`] : []),
+      ...BOOKING_STOPS.filter((f) => f in flags).map((f) => `${f} is served (a server-only stop must not be published)`),
     ];
-    return wrong.length ? `booking stops not as the beta policy sets them: ${wrong.join(", ")}` : null;
+    return wrong.length ? `Rent-a-Buddy not as the beta policy and the public bundle require: ${wrong.join(", ")}` : null;
   });
   await check("feature flags match the beta policy", "/api/feature-flags", (r) => {
     const flags = typeof r.body === "object" && r.body !== null ? (r.body as { flags?: Record<string, unknown> }).flags : undefined;
     if (r.status !== 200 || !flags) return `expected 200 {flags:{…}}, got ${r.status} ${snippet(r.raw)}`;
-    return flagPolicyMismatch(flags, opts.policy ?? loadFlagPolicy());
+    return flagPolicyMismatch(flags, opts.policy ?? loadFlagPolicy(), opts.clientFlags ?? loadClientFeatureFlags());
   });
   let key: string;
   try {
@@ -279,10 +309,14 @@ export async function runBetaSmoke(base: string, fetchImpl: SmokeFetch, opts: Sm
   return results;
 }
 
-/** The three STOP flags that keep Rent-a-Buddy bookings shut on beta (scripts/src/beta-flag-policy.json). */
+/** The three STOP flags that keep Rent-a-Buddy bookings shut on beta (scripts/src/beta-flag-policy.json). Server-only: never served by GET /api/feature-flags. */
 export const BOOKING_STOPS = ["disable_rent_buddy_booking", "disable_rab_bookings", "RENT_BUDDY_ADMIN_ONLY_MODE"] as const;
 
+/** Check 4's name. */
+export const RENT_A_BUDDY_CHECK = "Rent-a-Buddy off, booking stops unpublished";
+
 export const NOT_CHECKED = [
+  "Rent-a-Buddy booking stops ENGAGED (disable_rent_buddy_booking, disable_rab_bookings, RENT_BUDDY_ADMIN_ONLY_MODE): server-only, so GET /api/feature-flags no longer publishes them (sec/public-surface); beta-configure step e reads every row back against the policy, and beta:status gate 3c accepts only an applying beta-config.yml run, which cannot pass step f without passing step e. Check 4 shows rent_buddy_enabled off and the stops unpublished.",
   "identity-verification readiness: no unauthenticated read exists; read the `payments/identity provider mode` startup line in the beta deployment logs (it must not report identity operational for real bookings).",
   "production runtime mode (NODE_ENV=production): not observable from outside; ENFORCED at startup (a PORTAVA_DEPLOYMENT_ENV=beta API refuses to start without it, lib/deploymentEnvironment.ts), and only a beta-labelled process may use the beta database, which checks 2 and 5 show this API reads.",
 ];
