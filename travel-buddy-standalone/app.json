@@ -21,7 +21,7 @@
       "bundleIdentifier": "com.passporttravelbuddy.app",
       "buildNumber": "2",
       "associatedDomains": [
-        "applinks:portava.replit.app"
+        "applinks:rumazi.com"
       ],
       "infoPlist": {
         "LSApplicationQueriesSchemes": [
@@ -89,12 +89,12 @@
           "data": [
             {
               "scheme": "https",
-              "host": "portava.replit.app",
+              "host": "rumazi.com",
               "pathPrefix": "/passport"
             },
             {
               "scheme": "https",
-              "host": "portava.replit.app",
+              "host": "rumazi.com",
               "pathPrefix": "/u"
             }
           ],
@@ -112,7 +112,7 @@
       [
         "expo-router",
         {
-          "origin": "https://portava.replit.app/"
+          "origin": "https://rumazi.com/"
         }
       ],
       "expo-font",

@@ -143,6 +143,7 @@ async function extract(state: FakeState, text: string, errors?: Set<string>) {
 describe("G158 — parseEventLink (pure)", () => {
   it("reads Portava's own share link and app scheme; nothing else", () => {
     assert.deepEqual(parseEventLink(`https://portava.replit.app/event/${EV}?share=${TOKEN}`, {}), { eventId: EV });
+    assert.deepEqual(parseEventLink(`https://rumazi.com/event/${EV}?share=${TOKEN}`, {}), { eventId: EV });
     assert.deepEqual(parseEventLink(`portava.app/event/${EV}`, {}), { eventId: EV });
     assert.deepEqual(parseEventLink(`travelbuddy://event/${EV}`, {}), { eventId: EV });
     // MUTATION: drop the host allow-list → another site's /event/<uuid> is read → RED.

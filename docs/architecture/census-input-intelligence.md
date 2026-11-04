@@ -7930,17 +7930,17 @@ against each other.
 
 A pasted Portava event link — `<web origin>/event/<uuid>` from the event screen's Share, or `travelbuddy://event/<uuid>`;
 any other host is not ours to read — is an `event_link` item with a FIXED label
-(`artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts:54#export function parseEventLink(`,
+(`artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts:55#export function parseEventLink(`,
 `artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:432#const evLink = parseEventLink(line);`). It
 resolves only as the viewer's own event search would show it — public, live (not draft / cancelled / archived /
-completed, started no more than 2 h ago — V-IN F1), host not blocked, not age-restricted, active (`artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts:86#export async function readLinkedEvent(`) —
+completed, started no more than 2 h ago — V-IN F1), host not blocked, not age-restricted, active (`artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts:87#export async function readLinkedEvent(`) —
 and the event's city then goes through the gateway like typed text
 (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:1040#async function resolveEventLinkItem(`). The
 link's `share` token is never read, echoed or logged; a private, blocked, cancelled or unknown event is dropped
 silently (PR-D2-7c); a failed read is a failure with fixed copy. Mounted where every paste is: the Trip stop editor's
 review screen.
 
-Proof: `artifacts/api-server/src/test/inputAssistancePasteEventLinks.test.ts:164#it("resolves to the event's city`.
+Proof: `artifacts/api-server/src/test/inputAssistancePasteEventLinks.test.ts:165#it("resolves to the event's city`.
 Mutants killed: the host allow-list, visibility, state, block/age, the flag gate, the failure mapping, the branch in
 `resolveOne`, the id scrub.
 
@@ -7975,7 +7975,7 @@ the narrowed policy (`entityTypes: ['event']`, `entity` rows only) already guara
 | G46 | N | **W** | Produced, policy-declared and applied on the event create screen (`artifacts/api-server/src/lib/inputAssistance/structuredValues.ts:321#export async function buildStructuredValueRows(`, `travel-buddy-standalone/app/events/create/index.tsx:755#<StructuredValueChips`); flag `input_structured_values_enabled` seeded FALSE (3690). 43.1. |
 | G229 | N | **W** | The viewer's own successful searches, from the store they already own and erase (`artifacts/api-server/src/lib/inputAssistance/previousQueries.ts:86#export async function buildPreviousQueryCompletions(`); flag `input_previous_queries_enabled` seeded FALSE (3690). 43.2. |
 | G135 | N | **W** | All four actions, propose-only, dispatched by the search screen (`artifacts/api-server/src/lib/inputAssistance/tripActions.ts:86#export async function buildTripActionRows(`, `travel-buddy-standalone/app/search.tsx:503#const tripAct = getTripActionTarget(suggestion)`); flag `input_trip_actions_enabled` seeded FALSE (3692). 43.3. |
-| G158 | N | **W** | `artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts:86#export async function readLinkedEvent(`; flag `input_paste_event_links_enabled` seeded FALSE (3691). 43.4. |
+| G158 | N | **W** | `artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts:87#export async function readLinkedEvent(`; flag `input_paste_event_links_enabled` seeded FALSE (3691). 43.4. |
 | G303 | N | **W** | `artifacts/api-server/src/lib/inputAssistance/telegraphActions.ts:244#action: { type: 'share_entity', entityType: 'event', entityId: e.entityId! },`; flag `input_telegraph_share_entity_enabled` seeded FALSE (3691). 43.5. |
 
 ### 43.7 Headline, restated after 43.6
@@ -8380,7 +8380,7 @@ unchanged. The three displaced structured-value anchors above now point to the
 same parser/builder statements, not to new evidence for an old promotion.
 
 Malformed percent-encoding in a candidate event-link path is caught locally
-(`artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts:70#try { const id = decodeURIComponent(m[1]!);`).
+(`artifacts/api-server/src/lib/inputAssistance/pasteEventLinks.ts:71#try { const id = decodeURIComponent(m[1]!);`).
 It cannot abort the paste batch. Host recognition, share-token handling and
 viewer checks are not widened; a parsed identifier is not permission to view.
 
