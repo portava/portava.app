@@ -75,7 +75,7 @@ const BASELINE_DIR = join(API_SERVER_ROOT, "baseline");
  * stale silently on the next refresh, which is how two cases in
  * productionDriftExtraction.test.ts came to assert the opposite of the truth.
  */
-export const PRODUCTION_SNAPSHOT = "20261024_production_tables.txt"; // 2026-10-24 capability refresh (the header of that file)
+export const PRODUCTION_SNAPSHOT = "20261104_production_tables.txt"; // 2026-11-04 refresh after release 2 (the header of that file)
 
 /**
  * `unmerged-pr` HAS NO MEMBERS AS OF 2026-09-15, AND IS KEPT — ruling, with the
