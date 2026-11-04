@@ -9,8 +9,9 @@
  *    the trip title and the visited-place label without crashing.
  * 2. When both return empty, the appropriate empty-state texts appear.
  * 3. When listMyTrips succeeds but getMyPassportStamps rejects (Promise.allSettled
- *    partial failure), the trip section still renders without crashing — the
- *    stamps error is silently swallowed.
+ *    partial failure), the trip section still renders without crashing, and
+ *    the stamps section says the stamps could not be loaded (it used to claim
+ *    "No stamps collected yet.", which a failed read cannot know).
  *
  * ## Why these tests exist
  *
@@ -181,7 +182,8 @@ describe('TravelHistoryScreen', () => {
     // The trip should still appear
     expect(screen.getByText('Rome Adventure')).toBeTruthy();
 
-    // Stamps section shows empty state (stamps error was swallowed)
-    expect(screen.getByText('No stamps collected yet.')).toBeTruthy();
+    // A failed stamps read is said as one, not shown as an empty passport.
+    expect(screen.getByText('Your stamps could not be loaded.')).toBeTruthy();
+    expect(screen.queryByText('No stamps collected yet.')).toBeNull();
   });
 });
