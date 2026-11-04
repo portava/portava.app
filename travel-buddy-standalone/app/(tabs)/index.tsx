@@ -545,7 +545,7 @@ function Pulse() {
       {/* Quick filter chips — only visible in For You mode */}
       {feedMode === 'forYou' && (
         <FlatList
-          data={QUICK_FILTERS}
+          data={visibleFilters}
           horizontal
           showsHorizontalScrollIndicator={false}
           keyExtractor={(x) => x}
@@ -617,7 +617,13 @@ function Pulse() {
       ) : pulseFeed.error ? (
         ForYouError
       ) : feed.length === 0 ? (
-        <TravelEmptyState title="No results for these filters" sub="Try clearing a filter or switch to All." action="Clear filters" onAction={() => setActive(['All'])} />
+        filterCount > 0 ? (
+          <TravelEmptyState title="Nothing matches these filters yet" sub="Try another filter or switch back to All." action="Show all" onAction={() => setActive(['All'])} />
+        ) : (
+          // No filter is on, so "clear filters" would do nothing: the feed is
+          // simply empty (a new city, or nobody nearby has posted yet).
+          <TravelEmptyState title="Nothing on Pulse yet" sub="Public posts from travelers around you show up here. Share one from your trip to get it started." action="Create a post" onAction={() => router.push('/create' as any)} />
+        )
       ) : null}
       {isLoadingMore && (
         <View style={styles.loadMoreWrap}>
