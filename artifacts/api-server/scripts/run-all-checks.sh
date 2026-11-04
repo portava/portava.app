@@ -309,6 +309,16 @@ run_check "check:trust-event-vocabulary" pnpm run check:trust-event-vocabulary
 # migrations we applied ourselves — which the checker now excuses from the applied
 # ledger rather than reporting as missing storage.
 run_check "check:production-drift" pnpm run check:production-drift
+# check:undeclared-production-objects — the same comparison in the OTHER direction:
+# every table, column, function and enum the committed production capture holds,
+# checked against what the tree declares. The 2026-10-24 capability refresh found
+# by hand that production carried a chunked-upload store nothing in this tree
+# wrote, a deletion lease and a never-merged journey-shadow programme, and that
+# no check had gone red when any of them arrived — check:production-drift only
+# ever asks whether the tree's tables reach production. Offline and
+# credential-free like its sibling; its ratchet names each object with the owner
+# decision that governs it and fails when one is codified, dropped or joined.
+run_check "check:undeclared-production-objects" pnpm run check:undeclared-production-objects
 # check:flag-polarity — every feature flag is classified STOP/CAPABILITY/CONFIG
 # and read through the reader that classification demands. Wired 2026-08-10
 # after c89f09a7 converted eleven emergency stops that had been reading

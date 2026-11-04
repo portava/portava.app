@@ -486,6 +486,24 @@ export const GUARDS: readonly GuardEntry[] = [
     },
   },
   {
+    checker: "src/scripts/checkUndeclaredProductionObjects.ts",
+    responsibility:
+      "Every table, column, function and enum the committed production capture holds is declared " +
+      "by a migration in this tree or sits on a ratchet with the owner decision that governs it.",
+    // The reverse of checkProductionDrift, which only asks whether the tree's
+    // tables reach production. The 2026-10-24 capability refresh found a
+    // chunked-upload store, a deletion lease and a never-merged journey-shadow
+    // programme in production BY HAND, and nothing had gone red when any of them
+    // arrived. File-vs-file like its sibling: no credentials, no socket. Named on
+    // a live line of ci.yml's api-server-static job, and in check:all.
+    reach: { kind: "workflow", script: "check:undeclared-production-objects" },
+    // MEASURED: "Compared 642 relation(s) with 6939 column(s), 447 function(s) ...".
+    inspects: {
+      countPattern: "Compared (\\d+) relation\\(s\\) with",
+      unit: "relations in the production capture",
+    },
+  },
+  {
     checker: "src/scripts/checkDiscoveryCacheKeys.ts",
     responsibility: "Reports discovery cache keys whose shape would collide or leak across viewers.",
     reach: {
