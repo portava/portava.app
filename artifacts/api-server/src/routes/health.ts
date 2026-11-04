@@ -608,3 +608,30 @@ router.get("/healthz/schedulers", (_req, res) => {
 
 export default router;
 import { getLayoverMetricsStatus } from '../lib/layoverMetricsScheduler.js';
+
+// ── GET /healthz/client-ip (#817) ────────────────────────────────────────────
+// Appended at the foot: the lines above are cited by line.
+//
+// The caller's OWN address as this API derives it (req.ip under `trust proxy`,
+// lib/clientIp.ts), the shape of the chain it came through, and the public rate
+// limiter's mode. This is how the proxy chain is proven before
+// PUBLIC_RATE_LIMIT_MODE=enforce is set: call it from a machine whose public
+// address you know. `ip` must be that address. If it is a proxy's address
+// instead (the same for every caller), enforcing would put every user in one
+// bucket, and the remedy is TRUST_PROXY with that proxy added.
+//
+// It answers only what the caller already knows about itself (its own address
+// and the shape of its own request), so it is safe to serve to anyone. Never
+// cached. Under /healthz, so the limiter never counts it.
+router.get("/healthz/client-ip", (req, res) => {
+  const xff = req.headers["x-forwarded-for"];
+  res.set("Cache-Control", "no-store");
+  res.json({
+    ip: req.ip ?? null,
+    public: isPublicAddress(req.ip),
+    chain: describeAddressChain(typeof xff === "string" ? xff : undefined, req.socket?.remoteAddress, req.ip),
+    rateLimitMode: publicRateLimitBudgets().enforce ? "enforce" : "observe",
+  });
+});
+import { describeAddressChain, isPublicAddress } from "../lib/clientIp.js";
+import { publicRateLimitBudgets } from "../lib/publicRateLimit.js";

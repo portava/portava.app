@@ -317,6 +317,25 @@ describe("app.ts wiring", () => {
     for (let i = 0; i < 10; i++) assert.equal((await request(server, "GET", "/api/healthz", from(ip))).status, 200);
   });
 
+  it("GET /api/healthz/client-ip answers the caller's own derived address, its chain shape and the limiter mode, uncached", async () => {
+    const r = await request(server, "GET", "/api/healthz/client-ip", { "x-forwarded-for": "198.51.100.7, 10.1.2.3" });
+    assert.equal(r.status, 200);
+    assert.equal(r.headers["cache-control"], "no-store");
+    const body = r.body;
+    assert.equal(body.ip, "198.51.100.7", "the private hop is peeled, the client is what is left");
+    assert.equal(body.public, true);
+    assert.deepEqual(body.chain, { xffEntries: 2, kinds: ["public", "non_public"], socketPublic: false, derivedFrom: "xff", entriesLeftOfClient: 0 });
+    assert.equal(body.rateLimitMode, "enforce", "this suite sets PUBLIC_RATE_LIMIT_MODE=enforce");
+  });
+
+  it("the probe names a PUBLIC proxy hop as the client: exactly the case it exists to catch before enforcing", async () => {
+    // A load balancer with a public address that appends itself is not in the default list, so the walk stops on it.
+    const r = await request(server, "GET", "/api/healthz/client-ip", { "x-forwarded-for": "198.51.100.8, 34.120.0.1" });
+    const body = r.body;
+    assert.equal(body.ip, "34.120.0.1");
+    assert.equal(body.chain.entriesLeftOfClient, 1, "one entry sits left of req.ip: the real client, behind an untrusted public hop");
+  });
+
   it("provider webhooks are registered BEFORE the limiter, so they are never limited", async () => {
     const ip = "203.0.113.103";
     for (let i = 0; i < 3; i++) await request(server, "POST", "/api/feature-flags", from(ip)); // exhaust the write budget
