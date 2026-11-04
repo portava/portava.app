@@ -261,9 +261,18 @@ export const RESTRICTIVE_WHEN_ON_FLAGS = [
 //
 // Busted by invalidateFeatureFlagCache() after every flag write the API makes
 // (lib/hotPathCache.ts lists them); a write anywhere else is seen within 15s.
-async function readFlagRowThroughCache(sc: any, flag: string, columns: string, read: () => any): Promise<any> {
+//
+// NOT async on purpose. A read through any other client is handed back as the
+// very builder `read()` returns, so the reader's `await` resolves on the same
+// microtask tick it always did. An async wrapper would add ticks to every flag
+// read, which reorders reads that run concurrently (Promise.allSettled buckets
+// in discovery search): census-discovery §70's golden asserts that order.
+function readFlagRowThroughCache(sc: any, flag: string, columns: string, read: () => any): any {
   if (!isHotPathCacheableClient(sc)) return read();
-  const key = flagRowCacheKey(columns, flag);
+  return readFlagRowRemembering(flagRowCacheKey(columns, flag), read);
+}
+
+async function readFlagRowRemembering(key: string, read: () => any): Promise<any> {
   const remembered = rememberedFlagRow(key);
   if (remembered) return { data: remembered.row, error: null };
   const generation = flagCacheGeneration();
