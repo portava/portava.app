@@ -751,6 +751,17 @@ function PublicPassportScreenNative() {
     username: username ?? undefined,
   }));
 
+  // The Followers count and "Following N" pill were plain text although
+  // /followers and /following take a userId. They open those lists now —
+  // except on a private profile the viewer may not see (the server answers
+  // such a list empty anyway), where they stay text.
+  const canOpenFollowLists = isOwn || (!socialLoading && !isBlockedRelation && (!social?.isPrivate || isFriend));
+  const openFollowList = (list: 'followers' | 'following') => {
+    if (!profile?.id) return;
+    const title = encodeURIComponent(displayName || displayHandle || '');
+    router.push(`/${list}?userId=${profile.id}&title=${title}` as any);
+  };
+
   const navHeader = (
     <View style={styles.header}>
       <Pressable onPress={() => router.back()} style={styles.backBtn} hitSlop={8}>
@@ -986,17 +997,23 @@ function PublicPassportScreenNative() {
             { n: postcards.length, label: 'Postcards' },
             { n: countries, label: 'Countries' },
             { n: cities, label: 'Cities' },
-            { n: follow.followersCount, label: 'Followers' },
+            { n: follow.followersCount, label: 'Followers', onPress: canOpenFollowLists ? () => openFollowList('followers') : undefined },
             { n: stampsEarned ?? '—', label: 'Stamps Earned' },
           ].map((item, i) => (
             <React.Fragment key={item.label}>
               {i > 0 && <View style={styles.statsDivider} />}
-              <View style={styles.statsCell}>
+              <Pressable
+                style={styles.statsCell}
+                onPress={item.onPress}
+                disabled={!item.onPress}
+                accessibilityRole={item.onPress ? 'button' : undefined}
+                testID={item.onPress ? `stats-open-${item.label}` : undefined}
+              >
                 <Text style={styles.statsN} testID={`stats-n-${item.label}`}>
                   {follow.loading && item.label === 'Followers' ? '—' : item.n}
                 </Text>
                 <Text style={styles.statsL}>{item.label}</Text>
-              </View>
+              </Pressable>
             </React.Fragment>
           ))}
         </View>
@@ -1054,12 +1071,18 @@ function PublicPassportScreenNative() {
 
         {/* Following pill */}
         {follow.followingCount > 0 && (
-          <View style={styles.followingPill}>
+          <Pressable
+            style={styles.followingPill}
+            onPress={canOpenFollowLists ? () => openFollowList('following') : undefined}
+            disabled={!canOpenFollowLists}
+            accessibilityRole={canOpenFollowLists ? 'button' : undefined}
+            testID="following-pill"
+          >
             <Users size={12} color={color.mute} />
             <Text style={styles.followingText}>
               Following {follow.followingCount} {follow.followingCount === 1 ? 'traveler' : 'travelers'}
             </Text>
-          </View>
+          </Pressable>
         )}
 
         {/* Social actions: friend + message (only for other users) */}

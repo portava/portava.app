@@ -40,6 +40,7 @@ export function SaveToCollectionSheet({
   const [creating, setCreating]         = useState(false);
   const [newName, setNewName]           = useState('');
   const [createLoading, setCreateLoading] = useState(false);
+  const [error, setError]               = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -52,13 +53,17 @@ export function SaveToCollectionSheet({
   }, []);
 
   useEffect(() => {
-    if (visible) { void load(); }
+    if (visible) { setError(null); void load(); }
   }, [visible, load]);
 
+  // saveItem's result used to be ignored: a save that failed still closed the
+  // sheet and lit the bookmark as if the item were in the collection.
   const handlePick = async (col: Collection) => {
     setSaving(col.id);
-    await saveItem(entityType, entityId, col.id);
+    setError(null);
+    const ok = await saveItem(entityType, entityId, col.id);
     setSaving(null);
+    if (!ok) { setError(`Couldn't save to “${col.name}”. Please try again.`); return; }
     onSaved(col.id);
   };
 
@@ -66,9 +71,17 @@ export function SaveToCollectionSheet({
     const name = newName.trim();
     if (!name) return;
     setCreateLoading(true);
+    setError(null);
     const col = await createCollection(name);
-    if (col) {
-      await saveItem(entityType, entityId, col.id);
+    if (!col) {
+      setError(`Couldn't create “${name}”. Please try again.`);
+    } else if (!(await saveItem(entityType, entityId, col.id))) {
+      // The collection exists now; show it so a retry is one tap on its row.
+      setCollections((prev) => [...prev, col]);
+      setCreating(false);
+      setNewName('');
+      setError(`Created “${col.name}” but couldn't save to it. Please try again.`);
+    } else {
       setCreating(false);
       setNewName('');
       onSaved(col.id);
@@ -103,6 +116,9 @@ export function SaveToCollectionSheet({
             contentContainerStyle={s.list}
             keyboardShouldPersistTaps="handled"
           >
+            {error ? (
+              <Text style={s.errorText} accessibilityRole="alert" testID="save-to-collection-error">{error}</Text>
+            ) : null}
             {collections.map((col) => (
               <Pressable
                 key={col.id}
@@ -251,6 +267,7 @@ const s = StyleSheet.create({
     paddingVertical: space.lg,
   },
   newText: { ...t.bodyStrong, color: color.deep, fontSize: 14 },
+  errorText: { ...t.small, color: color.ink, fontWeight: '600', paddingTop: space.sm },
   createBox: { gap: space.md, paddingVertical: space.md },
   createInput: {
     borderWidth: 1.5,

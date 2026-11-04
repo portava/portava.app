@@ -23,6 +23,7 @@ import {
   getCollectionItems,
   type Collection, type CollectionItem,
 } from '../src/services/collections';
+import { SavedPostsList } from '../src/components/SavedPostsList';
 import { withOptimisticRemoveBool } from '../src/utils/optimisticRemove';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../src/hooks/useNavBarCollapse';
@@ -417,6 +418,27 @@ function SavedPeopleEntry() {
   );
 }
 
+// ── Saved posts ───────────────────────────────────────────────────────────────
+// A post bookmark writes post_saves, which no collection lists, so a post the
+// user saved appeared nowhere on this screen. This row opens that list
+// (src/components/SavedPostsList).
+function SavedPostsEntry({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable
+      style={s.newCollectionRow}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel="Saved posts"
+      testID="saved-posts-entry"
+    >
+      <ImageIcon size={18} color={color.deep} />
+      <Text style={s.newCollectionText}>Saved posts</Text>
+      <View style={{ flex: 1 }} />
+      <ChevronRight size={16} color={color.mute} />
+    </Pressable>
+  );
+}
+
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export default function SavedScreen() {
@@ -424,6 +446,7 @@ export default function SavedScreen() {
   const [collections, setCollections]           = useState<Collection[]>([]);
   const [loading, setLoading]                   = useState(true);
   const [activeCollection, setActiveCollection] = useState<Collection | null>(null);
+  const [savedPostsOpen, setSavedPostsOpen]     = useState(false);
   const [createOpen, setCreateOpen]             = useState(false);
   const [renameTarget, setRenameTarget]         = useState<Collection | null>(null);
   const [removeError, setRemoveError]           = useState<string | null>(null);
@@ -474,7 +497,9 @@ export default function SavedScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      {activeCollection ? (
+      {savedPostsOpen ? (
+        <SavedPostsList onBack={() => setSavedPostsOpen(false)} />
+      ) : activeCollection ? (
         <CollectionItemsView
           collection={activeCollection}
           onBack={() => setActiveCollection(null)}
@@ -494,10 +519,11 @@ export default function SavedScreen() {
             >
               <AppHeader variant="detail" title="Saved" onBack={router.back} />
               <SavedPeopleEntry />
+              <SavedPostsEntry onPress={() => setSavedPostsOpen(true)} />
               <EmptyState
                 icon={Bookmark}
-                title="Nothing saved yet"
-                description="Save posts, places, events, and more — they'll appear here in collections."
+                title="No collections yet"
+                description="Saved posts and people are listed above. Save places, events, and more into collections — they'll appear here."
                 primaryAction={{ label: 'Create a collection', onPress: () => setCreateOpen(true) }}
               />
               <Text style={s.suggestLabel}>Starter ideas</Text>
@@ -528,6 +554,7 @@ export default function SavedScreen() {
                 <>
                   <AppHeader variant="detail" title="Saved" onBack={router.back} />
                   <SavedPeopleEntry />
+                  <SavedPostsEntry onPress={() => setSavedPostsOpen(true)} />
                   <Pressable style={s.newCollectionRow} onPress={() => setCreateOpen(true)}>
                     <FolderPlus size={18} color={color.deep} />
                     <Text style={s.newCollectionText}>New collection</Text>

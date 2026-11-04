@@ -33,7 +33,6 @@ import {
   QUICK_SIGNAL_CONTEXTS,
   VENUE_CATEGORIES,
   VENUE_LABELS,
-  VENUE_PROMPTS,
   VENUE_QUESTION_SETS,
   DEFAULT_VISIBILITY,
   PARTY_SIZE_BUCKETS,
@@ -140,13 +139,6 @@ export default function QuickSignalScreen() {
     () => (venue ? VENUE_QUESTION_SETS[venue].arrival : [contextQuestion(context)]),
     [venue, context],
   );
-
-  // §6 topics for this venue that aren't wired to a Phase-1 question yet.
-  const plannedTopics = useMemo(() => {
-    if (!venue) return [];
-    const covered = new Set(venueQuestions.map((q) => q.topic));
-    return VENUE_PROMPTS[venue].arrivalInside.filter((topic) => !covered.has(topic));
-  }, [venue, venueQuestions]);
 
   const singleQuick = !venue; // one prompt → success state after the send
 
@@ -288,18 +280,9 @@ export default function QuickSignalScreen() {
           ))}
         </View>
 
-        {plannedTopics.length > 0 ? (
-          <View style={styles.plannedWrap}>
-            <Text style={styles.plannedLabel}>More {venue ? VENUE_LABELS[venue].toLowerCase() : ''} signals soon</Text>
-            <View style={styles.plannedChips}>
-              {plannedTopics.map((topic) => (
-                <View key={topic} style={styles.plannedChip}>
-                  <Text style={styles.plannedChipText}>{topic}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-        ) : null}
+        {/* A "More … signals soon" row of chips that did nothing sat here: it
+            listed §6 topics with no question wired yet. Removed rather than
+            advertise signals nobody can send. */}
 
         <Text style={styles.privacyFootnote}>
           Sent as a structured report — no free text. Kept private by default; your exact location is never shared.
@@ -352,18 +335,5 @@ const styles = StyleSheet.create({
   },
   partyPrompt: { ...typography.cardTitle, color: color.ink },
   partyHint: { ...typography.caption, color: color.faint, lineHeight: 18 },
-  plannedWrap: { gap: space.sm },
-  plannedLabel: { ...typography.metadata, color: color.faint, textTransform: 'uppercase' },
-  plannedChips: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
-  plannedChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: color.haze,
-    borderStyle: 'dashed',
-    backgroundColor: color.paper,
-  },
-  plannedChipText: { ...typography.label, color: color.faint },
   privacyFootnote: { ...typography.caption, color: color.faint, lineHeight: 18 },
 });

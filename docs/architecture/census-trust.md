@@ -2874,7 +2874,7 @@ list already renders on place, trip, event and gem detail
 (`travel-buddy-standalone/app/trip/[id].tsx:856#<ReviewsSection`), the Worth-It vote row on place
 and gem detail (`travel-buddy-standalone/app/place/[id].tsx:426#<WorthItVoteRow entityId={canonicalPlace.id} entityType="place" />`),
 and host reviews on a profile's About tab
-(`travel-buddy-standalone/app/u/[username].tsx:1162#<HostReviewsSummary userId={profile.id} />`).
+(`travel-buddy-standalone/app/u/[username].tsx:1185#<HostReviewsSummary userId={profile.id} />`).
 What was wrong was what those lists did with blocks and with failure.
 
 ### 27.2 Server — a block holds on every reviews list

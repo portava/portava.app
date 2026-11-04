@@ -170,7 +170,10 @@ export async function saveItem(
         method: 'POST',
         headers,
       });
-      return res.ok;
+      // post_saves has no collection, and this branch used to return here and
+      // drop collectionId — so "Save to collection" on a post saved nothing
+      // into the collection. When one is chosen, also file it there below.
+      if (!res.ok || !collectionId) return res.ok;
     } catch {
       return false;
     }
@@ -206,6 +209,15 @@ export async function unsaveItem(
   // Posts use the dedicated post_saves table via /api/posts/:id/save
   if (entityType === 'post') {
     try {
+      // A post saved into a collection also has collection rows (saveItem).
+      // Clear those first, so an unsave never leaves the post listed in a
+      // collection; if this fails nothing has changed and the post stays saved.
+      const fromCollections = await fetch(`${apiBase()}/api/saves`, {
+        method: 'DELETE',
+        headers,
+        body: JSON.stringify({ entity_type: entityType, entity_id: entityId }),
+      });
+      if (!fromCollections.ok) return false;
       const res = await fetch(`${apiBase()}/api/posts/${encodeURIComponent(entityId)}/save`, {
         method: 'DELETE',
         headers,
@@ -273,5 +285,31 @@ export async function getSavedHashtags(): Promise<SavedHashtag[]> {
     return (body.hashtags ?? []) as SavedHashtag[];
   } catch {
     return [];
+  }
+}
+
+// ── Saved posts ───────────────────────────────────────────────────────────────
+
+/**
+ * The caller's saved post ids, newest first (GET /api/posts/saved-by-me, the
+ * post_saves table behind every post bookmark).
+ *
+ * A post save only reaches a collection when one is picked, and the Saved
+ * screen listed collections only, so a bookmarked post was nowhere to be
+ * found. Unlike fetchMySavedPostIds (a cache warm-up that may fail quietly),
+ * this reports a failed read, so the Saved screen can say "couldn't load"
+ * instead of showing an empty list.
+ */
+export async function getMySavedPostIds(): Promise<{ ok: true; postIds: string[] } | { ok: false }> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false };
+  const headers = await authHeaders();
+  if (!headers) return { ok: false };
+  try {
+    const res = await fetch(`${apiBase()}/api/posts/saved-by-me`, { headers });
+    if (!res.ok) return { ok: false };
+    const body = await res.json();
+    return { ok: true, postIds: Array.isArray(body?.postIds) ? (body.postIds as string[]) : [] };
+  } catch {
+    return { ok: false };
   }
 }
