@@ -272,8 +272,8 @@ function TripDetailScreen() {
     try {
       const link = await createInviteLink(id); // the button is the owner's; a failed link shares NOTHING (§79)
       if (!link) { Alert.alert('Could not create an invite link', 'Your invite link could not be created right now, so nothing was shared. Try again.'); return; }
-      // It used to fall back to canonicalUrl(`/trips/${id}`), silently: a page a friend cannot join a private trip through.
-      const inviteUrl = `travelbuddy://invite/${link.token}`;
+      // It used to fall back to canonicalUrl(`/trips/${id}`), silently: a page a friend cannot join a private trip through. And the travelbuddy:// link it then sent is not tappable in most chat apps and opens nothing without the app; the web link opens the app (universal link) or a page with an Open in Portava button.
+      const inviteUrl = canonicalUrl(`/invite/${encodeURIComponent(link.token)}`);
       const tripName = realTrip.title ?? realTrip.destinationCity ?? 'a trip';
       await Share.share({
         title: `Join my trip${realTrip.title ? ` — ${realTrip.title}` : ''}!`,
