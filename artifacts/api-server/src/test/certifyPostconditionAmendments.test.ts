@@ -288,9 +288,9 @@ const pos = (f: string) => ORDER.indexOf(f);
 const reasserting = (a: PostconditionAmendment) => a.reassertedBy ?? [...new Set(a.drops.map((d) => d.supersededBy!))];
 
 describe("B. every declaration in lib/postconditionAmendments.ts", () => {
-  it("anti-vacuity: the 36 blocks and 55 statements (33/52 measured on the 2026-10-14 rehearsal, + 2786:96 superseded by 3826, + 3924's two session-bound postconditions, 2026-10-24)", () => {
-    assert.equal(POSTCONDITION_AMENDMENTS.length, 36);
-    assert.equal(POSTCONDITION_AMENDMENTS.reduce((n, a) => n + a.drops.length, 0), 55);
+  it("anti-vacuity: the 37 blocks and 56 statements (33/52 measured on the 2026-10-14 rehearsal, + 2786:96 superseded by 3826, + 3924's two session-bound postconditions, 2026-10-24, + 3909:311 superseded by 3925)", () => {
+    assert.equal(POSTCONDITION_AMENDMENTS.length, 37);
+    assert.equal(POSTCONDITION_AMENDMENTS.reduce((n, a) => n + a.drops.length, 0), 56);
   });
 
   it("anti-vacuity for the count-pin rule (V-714 F4): it binds the 16 superseded kernel count statements (3826 superseded 2786's engine count)", () => {

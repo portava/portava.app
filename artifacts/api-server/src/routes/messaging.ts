@@ -59,7 +59,7 @@ import { resolveInteractionPermissions } from '../services/interactionPermission
 import { isKillSwitchEngaged } from '../lib/featureFlags.js';
 import { appStorageUrlInfo } from '../lib/mediaUrl.js';
 import { classifyMemoryMediaUrl } from '../services/memory/memoryMediaOrigin.js';
-import { messagingStopUnknownRefusal, refuseSendOverRate, refuseRestrictedSend, refuseRetainedTripThreadSend, resolveClientDiscriminator, refuseByGroupControls } from '../lib/telegraphThreadWrite.js';
+import { messagingStopUnknownRefusal, refuseSendOverRate, refuseRestrictedSend, refuseRetainedTripThreadSend, resolveClientDiscriminator, refuseByGroupControls, threadAcceptsWrites, THREAD_ARCHIVED_MESSAGE } from '../lib/telegraphThreadWrite.js';
 import { isUuid } from '../lib/followDecisions'; import { REPORT_REASON_CODES, reportSeverityFor, type ReportReasonCode } from '../lib/reportReasons'; import { refuseEditOnEncryptedThread } from '../services/telegraph/editE2eeGate';
 import {
   translateMessageForThread,
@@ -2798,7 +2798,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   // one. "We could not read the flag" is not "the flag is false".
   const { data: threadMeta, error: threadMetaErr } = await client
     .from('message_threads')
-    .select('is_e2ee')
+    .select('is_e2ee, status')
     .eq('id', threadId)
     .maybeSingle();
   if (threadMetaErr) {
@@ -2807,7 +2807,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
     return;
   }
-  const isE2ee = (threadMeta as any)?.is_e2ee === true; if (await refuseRestrictedSend(req, res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseRetainedTripThreadSend(res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseByGroupControls(res, client, getServiceClient() ?? client, threadId, user.id, { contribution: 'post', text: isE2ee ? null : bodyRaw })) return; // OD-TRUST-5: the restriction gate, the guard's own decision; census-trips §86: a retained-record-only member writes nothing into the trip's thread; §30A.12: a host's group controls (lane T-GRP)
+  if (!threadAcceptsWrites(threadMeta as { status?: unknown } | null)) { sendError(res, 'forbidden', THREAD_ARCHIVED_MESSAGE, { reason: 'TELEGRAPH_POLICY_THREAD_ARCHIVED' }); return; } const isE2ee = (threadMeta as any)?.is_e2ee === true; if (await refuseRestrictedSend(req, res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseRetainedTripThreadSend(res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseByGroupControls(res, client, getServiceClient() ?? client, threadId, user.id, { contribution: 'post', text: isE2ee ? null : bodyRaw })) return; // OD-TRUST-5: the restriction gate, the guard's own decision; census-trips §86: a retained-record-only member writes nothing into the trip's thread; §30A.12: a host's group controls (lane T-GRP)
 
   if (isE2ee) {
     // E2EE thread: ciphertext required, body must be absent.
@@ -3395,7 +3395,7 @@ router.post('/threads/:threadId/media', async (req, res) => {
 
   const { data: threadMetaForMedia, error: threadMetaForMediaErr } = await client
     .from('message_threads')
-    .select('is_e2ee')
+    .select('is_e2ee, status')
     .eq('id', threadId)
     .maybeSingle();
   if (threadMetaForMediaErr) {
@@ -3406,7 +3406,7 @@ router.post('/threads/:threadId/media', async (req, res) => {
     sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
     return;
   }
-  if ((threadMetaForMedia as any)?.is_e2ee === true) {
+  if (!threadAcceptsWrites(threadMetaForMedia as { status?: unknown } | null)) { sendError(res, 'forbidden', THREAD_ARCHIVED_MESSAGE, { reason: 'TELEGRAPH_POLICY_THREAD_ARCHIVED' }); return; } if ((threadMetaForMedia as any)?.is_e2ee === true) {
     sendError(res, 'e2ee_thread', 'Media messages are not supported on end-to-end encrypted threads');
     return;
   }

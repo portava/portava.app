@@ -197,7 +197,14 @@ describe("census-media §44.18.3 — 3365: post_media's client writes, 2158's en
     const [pre, post] = snaps(exec(`BEGIN;\n${TO_PRODUCTION_SHAPE()}\n${SNAPSHOT}\n${unwrapped(MIGRATION)}\n${SNAPSHOT}\nROLLBACK;`));
     assert.deepEqual(post.select, pre.select, "production shape: 3365 changes no SELECT");
     assert.deepEqual(post.policies, pre.policies);
-    assert.equal(treeNow.policies.length, 5, "post_media keeps its five policies");
+    // 2098's five permissive policies, and since 3925 (census-media §56.5) one RESTRICTIVE SELECT bound,
+    // post_media_select_post_readable_or_owner. Pinned by name and kind, not by count, so any other added
+    // policy (permissive or not) still fails here.
+    assert.deepEqual(treeNow.policies.map((p: unknown[]) => `${p[0]}:${p[2] ? "permissive" : "restrictive"}`), [
+      "post_media_owner_delete:permissive", "post_media_owner_insert:permissive", "post_media_owner_update:permissive",
+      "post_media_public_select:permissive", "post_media_select_post_readable_or_owner:restrictive",
+      "post_media_service_role_all:permissive",
+    ], "post_media keeps 2098's five policies plus 3925's restrictive read bound");
     assert.equal(scalar(`SELECT count(*) FROM public.post_media WHERE post_id = '${POST}'`), "0");
   });
 

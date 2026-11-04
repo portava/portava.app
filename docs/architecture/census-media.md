@@ -13761,11 +13761,11 @@ Four things follow from that output:
 skips, and `run-tests.sh` refuses a run with any skip. Each property is listed
 below.
 
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:251#it("G1-0`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:253#it("G1-0`
   3362 is in force, so the refusals below cannot be vacuous. Every column of
   posts is classified once. A new column turns this red until someone decides
   which side it goes.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:263#it("G1-1`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:265#it("G1-1`
   anon, a stranger and the author are each refused exactly the 35 withheld
   columns:
   - selected one statement per column;
@@ -13773,7 +13773,7 @@ below.
   - through `SELECT *`, `WHERE original_lat > 48` and `ORDER BY user_gps_lat`.
 
   The service role reads the same values, so a refusal is never "no row".
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:280#it("G1-2`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:282#it("G1-2`
   Each client role can read exactly the 40 granted columns, and the whole list
   in one SELECT. The inventory's reads also hold:
   - the live suite's anon feed read;
@@ -13781,22 +13781,22 @@ below.
   - the author's post_media INSERT, through the owner policy's WITH CHECK;
   - a stranger's INSERT, refused by row-level security rather than by a
     privilege.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:307#it("G1-3`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:309#it("G1-3`
   The rows are unchanged:
   - anon and a stranger see the public posts;
   - a follower also sees followers_only;
   - the author also sees their own hidden post
-    (`artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:312#assert.deepEqual(visible({ role: "anon" }, ids), [PUB, PEND].sort()`).
+    (`artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:314#assert.deepEqual(visible({ role: "anon" }, ids), [PUB].sort()`).
 
-  The pending delayed post is visible to all four. That is the row gap in
-  §44.7, pinned as today's behaviour. The policy catalog is byte-identical
+  Since 3925 (PR #802) the pending delayed post is visible to its author only,
+  which closes §44.7 item 1's row gap for posts. The policy catalog is byte-identical
   across rollback and re-apply, in a rolled-back transaction.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:332#it("G1-4`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:341#it("G1-4`
   The author reads their own hidden row's granted columns as before. Their own
   `original_lat` is refused to their client, and reaches them through the API's
   role, which reads all 75 columns. GET /posts/pending serves the owner
   `location_lat`, `location_lng` and `venue_name` that way.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:351#it("G1-5`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:360#it("G1-5`
   The rollback restores the table ACL to today's plus
   `anon=r/<owner>,authenticated=r/<owner>`, with no column ACL. 3362 re-applied
   on top reproduces today's catalog byte for byte. The database is left
@@ -14851,7 +14851,7 @@ a database, and run under `run-tests.sh`.
   - `artifacts/api-server/src/test/db/postMediaWriteBoundary.db.test.ts:192#it("G5-4` —
     SELECT (anon and authenticated each read 23 of 25) and the policies are
     unchanged on both shapes.
-  - `artifacts/api-server/src/test/db/postMediaWriteBoundary.db.test.ts:204#it("G5-5` —
+  - `artifacts/api-server/src/test/db/postMediaWriteBoundary.db.test.ts:211#it("G5-5` —
     byte-identical round trip on both shapes, and the ledger row deleted. On
     the tree, 3365 is a byte-identical no-op.
 - **G3-3 was updated on purpose.** It pinned pulse_geo_tags' GRANT ALL as
@@ -17688,3 +17688,38 @@ a 404 for another user, and no key of it reaches that user. Each post's items na
 3. **Next device build** adds D and E. E is required: without it the installed build's player latches on the bare ref
    before the signature arrives.
 4. **Signed-in check**: the owner plays `e4bbf335` on a device.
+
+### Correction (2026-10-24, media deletion lane) — account deletion left `posts.media_urls` uploads in the bucket; the postcard media DELETE ignored 2098's moderation pin
+
+*Branch `claude/fix-media-deletion-postcard-20261024`, cut from main `ffdf6428c`. **Built, waiting on release: NO ROW MOVES.**
+Server code counts only once deployed; nothing here is deployed. No migration, no database write.*
+
+**1. Account deletion and `posts.media_urls` (not graded by this census: §53.4 lists account media erasure among the
+rows with no requirement among the 450).** POST /posts wrote an upload's bare key into `posts.media_urls` and created no
+`post_media` row (the defect #795 fixes and 3924 backfills). `executeAccountDeletion` collected bytes from `post_media`
+only, so `tombstone_or_delete_posts` deleted the row, or blanked `media_urls` through `tombstone_post`, and left the upload
+behind. The same was true of its `.thumb.jpg` and `.feed.jpg` siblings and of a video's `.poster.jpg`. A new section-1
+step, `collect_post_media_url_paths`
+(`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts#async function collectPostUploadReferences(`),
+reads `media_urls` and `media_thumbnail_url` before any post row is touched. Every value goes through the existing
+`collectOwnedReference` guard: an external URL is skipped, and a key naming another owner, or one carrying `..`, is
+refused. `uploadSiblings` derives the server-written siblings only for `<the erased account's id>/<ms>.<ext>`. After #795,
+that function also adds the siblings for `post_media` rows, which name only `storage_path` and, at most, the poster. The
+removal set is de-duplicated, so a key named by both a row and `media_urls` is removed once. Retention is not expanded:
+nothing that was deleted before is kept now. Tests: `artifacts/api-server/src/test/accountDeletionPostMediaUrls.test.ts`
+(9 cases; red before the fix).
+
+**2. Postcard media DELETE and the moderation pin (MD269 examined, stays W).** 3909's `post_media_owner_delete` refuses
+an owner's DELETE of a `rejected` or `flagged` row. On the chain, `authenticated` holds no DELETE on `post_media` at all, so
+the only door is the service client. `DELETE /postcards/:id/media/:mediaId`
+(`artifacts/api-server/src/routes/postcards.ts#export function isModerationPinnedPostMedia(`) used to delete such a row,
+its object and its count. It now answers 409 before any write, for an owner and an admin alike. Moderators still remove
+files through `POST /admin/media/:id/moderate`. The DELETE is a compare-and-set on the status it read, so a verdict that
+lands mid-request is not deleted. A non-owner still gets 403 first. Tests: `artifacts/api-server/src/test/postcards.test.ts`
+"2098 moderation pin" (8 cases; 5 red before the fix), and
+`artifacts/api-server/src/test/db/postcardMediaDeletePin.db.test.ts`, which holds the route's predicate to the policy's
+answer for every status the chain's CHECK admits. MD269 does not move: its blocker is still the (a) owner rule and the
+missing classifier (§37.8.5).
+
+- NOT-GRADED: artifacts/api-server/src/test/accountDeletionPostMediaUrls.test.ts — the account-deletion tests for this correction; account media erasure has no requirement among this census's 450 (§53.4), and no row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/db/postcardMediaDeletePin.db.test.ts — the database parity test for this correction's postcard DELETE pin; it moves no row (MD269 stays W on its own blocker), and no verdict cites it.

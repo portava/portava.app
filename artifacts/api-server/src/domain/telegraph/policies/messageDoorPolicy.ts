@@ -341,3 +341,30 @@ export const KNOWN_WEAK_DOOR_CEILING = 0; // 4 → 2 on 2026-10-05 (lane T2: hig
 export function knownWeakDoors(): readonly MessageWriterDeclaration[] {
   return MESSAGE_WRITERS.filter((d) => d.writer === "user_door" && (d.missing?.length ?? 0) > 0);
 }
+
+/* ───────────────────────── the thread's own status ─────────────────────────
+ *
+ * Appended at the foot so every line cited above keeps its number.
+ *
+ * `message_threads.status` is 'active' or 'archived'. The capabilities
+ * projection (`conversationCapabilityPolicy.ts`) has always denied
+ * `canSendMessage` with TELEGRAPH_POLICY_THREAD_ARCHIVED when it is not
+ * 'active' — and until 2026-10-24 no door performed that refusal: the shared
+ * guard (`lib/telegraphThreadWrite.ts`) and the two inline doors in
+ * `routes/messaging.ts` never read the column, so send, forward, typed kinds,
+ * voice, share, coordination and the command door all wrote into an archived
+ * thread the projection said was closed. A refusal announced and never
+ * performed. The projection and every door now take this ONE predicate, so they
+ * cannot disagree about what "active" means: an absent status reads as active
+ * (the projection's rule since it was written; the column defaults to 'active').
+ *
+ * A safety send is refused here too, exactly as the projection refuses it: an
+ * archived thread is closed as a whole, like E2EE or non-membership, and is not
+ * one of the policy gates (restriction, the trip's record, group controls) that
+ * a safety send passes.
+ */
+export const THREAD_ARCHIVED_MESSAGE = "This conversation is archived. New messages cannot be sent into it.";
+
+export function threadAcceptsWrites(thread: { status?: unknown } | null | undefined): boolean {
+  return String(thread?.status ?? "active") === "active";
+}
