@@ -9,7 +9,7 @@ import { Users, Globe } from 'lucide-react-native';
 import { space, type as t } from '../../theme/tokens.ts';
 import { TG_AVATAR, TG_SPACING } from '../../theme/telegraphTokens.ts';
 import { useTelegraphTheme, useTelegraphStyles, type TelegraphPalette, type TelegraphScheme } from '../../features/telegraph/theme/telegraphTheme.ts';
-import { useHydratedMedia } from '../../services/mediaUrl.ts';
+import { useHydratedMedia } from '../../services/mediaUrl.ts'; import { avatarImageUri } from '../../lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97)
 
 // ── TelegraphAvatar ───────────────────────────────────────────────────────────
 
@@ -33,7 +33,7 @@ const GROUP_TILES: Readonly<Record<TelegraphScheme, { trip: string; circle: stri
 };
 
 /** Person / trip / circle avatar with an initial fallback. */
-export function TelegraphAvatar({ kind = 'single', uri, name, size = TG_AVATAR.row }: TelegraphAvatarProps) {
+export function TelegraphAvatar({ kind = 'single', uri: rawUri, name, size = TG_AVATAR.row }: TelegraphAvatarProps) { const uri = avatarImageUri(rawUri); // PRIV-FIX-3 (census-telegraph §97): Portava storage or nothing
   const { palette, styles: av } = useTelegraphTheme(makeAvatarStyles);
   const tiles = GROUP_TILES[palette.scheme];
   const r = kind === 'single' ? size / 2 : size * 0.3;

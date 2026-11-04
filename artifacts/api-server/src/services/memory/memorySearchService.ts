@@ -235,7 +235,7 @@ export type SearchServiceFailure =
   | "audience_unavailable";
 
 export type MemorySearchServiceResult =
-  | { readonly ok: true; readonly value: Extract<SearchResult, { ok: true }>["value"] & { readonly target: ResolvedTarget; /** §23 hits withheld from this reader at read time (H3-1). */ readonly audience_withheld_count: number } }
+  | { readonly ok: true; readonly value: Extract<SearchResult, { ok: true }>["value"] & { readonly target: ResolvedTarget; /** §23 hits withheld from this reader at read time (H3-1). */ readonly audience_withheld_count: number; /** census-highlights-memories §BU: FALSE only when the viewer's block state could not be read, so every person but the viewer was withheld from each hit's `people`, the people filter and the counts. A REAL block is never signalled. */ readonly people_complete: boolean } }
   | { readonly ok: false; readonly reason: SearchServiceFailure; readonly detail: string; readonly retryable: boolean };
 
 function refuse(reason: SearchServiceFailure, detail: string, retryable = false): MemorySearchServiceResult {
@@ -410,7 +410,7 @@ export async function runMemorySearch(
     return refuse("registry_unavailable", prepared.detail, prepared.retryable);
   }
 
-  const input: SearchMemoriesInput = {
+  const blockState = { unreadable: false }; const input: SearchMemoriesInput = { // §BU: blockState is set by viewerPeopleWithholder below
     ownerId: target.scope.owner_id,
     viewerId,
     namespace: target.namespace,
@@ -424,7 +424,7 @@ export async function runMemorySearch(
     semanticQuery: request.query ?? null,
     limit: request.limit,
     scope: target.scope,
-    now,
+    now, withholdPeople: viewerPeopleWithholder(client, viewerId, blockState), // census-highlights-memories §BU: the owner's own "mine" timeline names people too, and GET /memories/:id hides a person blocked in either direction from the owner (participantRungFor rule 1), so the search asks the same question, per read, BEFORE the people filter, ranking and counts; unreadable ⇒ every person but the viewer withheld
   };
 
   const result = await searchMemories(client, input);
@@ -472,10 +472,10 @@ export async function runMemorySearch(
       return row ? canReadMemory(sc, row, viewerId, "public_feed") : Promise.resolve(false);
     }));
     const cleared = result.value.hits.filter((_h, i) => verdicts[i]);
-    return { ok: true, value: { ...result.value, hits: cleared, target, audience_withheld_count: result.value.hits.length - cleared.length } };
+    return { ok: true, value: { ...result.value, hits: cleared, target, audience_withheld_count: result.value.hits.length - cleared.length, people_complete: !blockState.unreadable } };
   }
 
-  return { ok: true, value: { ...result.value, target, audience_withheld_count: 0 } };
+  return { ok: true, value: { ...result.value, target, audience_withheld_count: 0, people_complete: !blockState.unreadable } };
 }
 
 /* ============================================================================

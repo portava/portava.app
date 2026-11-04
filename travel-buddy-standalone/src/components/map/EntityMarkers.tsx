@@ -12,7 +12,7 @@
  */
 import React, { useMemo, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { CachedImage } from '../CachedImage.tsx';
+import { CachedImage } from '../CachedImage.tsx'; import { avatarImageUri } from '../../lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97): an avatar is Portava storage or nothing
 // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
 const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'); } catch { return {}; } })();
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -360,8 +360,8 @@ function FriendMarker({ entity, onPress, onLongPress }: { entity: MapEntity; onP
           (treatment === 'stale' || treatment === 'unknown') && pin.avatarWrapStale,
         ]}
       >
-        {avatarUrl ? (
-          <CachedImage source={{ uri: avatarUrl }} style={pin.friendImg} fallbackLabel="" />
+        {avatarImageUri(avatarUrl) ? (
+          <CachedImage source={{ uri: avatarImageUri(avatarUrl) ?? undefined }} style={pin.friendImg} fallbackLabel="" />
         ) : (
           <View style={[pin.friendFallback, { backgroundColor: cfg.color }]}>
             <Heart size={11} color="#fff" />

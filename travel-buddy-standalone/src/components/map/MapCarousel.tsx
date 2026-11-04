@@ -31,7 +31,7 @@ import {
   NativeSyntheticEvent,
   NativeScrollEvent,
 } from 'react-native';
-import { CachedImage } from '../CachedImage.tsx';
+import { CachedImage } from '../CachedImage.tsx'; import { avatarImageUri } from '../../lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97): an avatar is Portava storage or nothing
 import { Avatar } from '../ui/Avatar.tsx';
 import Animated, {
   useAnimatedScrollHandler,
@@ -523,8 +523,8 @@ function FriendCardBody({ obj }: { obj: MapObject }) {
     <>
       <View style={cs.topRow}>
         <View style={[cs.avatarWrap, { borderColor: cfg.color }]}>
-          {p?.avatarUrl
-            ? <CachedImage source={{ uri: p.avatarUrl }} style={cs.avatarImg} fallbackLabel="" />
+          {avatarImageUri(p?.avatarUrl)
+            ? <CachedImage source={{ uri: avatarImageUri(p?.avatarUrl) ?? undefined }} style={cs.avatarImg} fallbackLabel="" />
             : (
               <View style={[cs.avatarFallback, { backgroundColor: cfg.color }]}>
                 <Heart size={14} color="#fff" />

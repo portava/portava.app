@@ -240,7 +240,7 @@ describe("site A: prior avatar/cover — 'could not read it' is not 'there wasn'
 
   it("POSITIVE CONTROL: a readable prior avatar is still cleaned up", async () => {
     install({ rows: { profiles: [profilesRow({ avatar_url: OLD })] } });
-    const res = await call("PATCH", "/me/profile", { avatarUrl: "https://cdn.example/new.jpg" });
+    const res = await call("PATCH", "/me/profile", { avatarUrl: "profile-media/avatars/" + ME + "/new.jpg" }); // PRIV-FIX-3: own upload only
     assert.equal(res.status, 200);
     assert.deepEqual(
       removedPaths, ["avatars/" + ME + "/old.jpg"],
@@ -258,7 +258,7 @@ describe("site A: prior avatar/cover — 'could not read it' is not 'there wasn'
       // #1 = account_status ban gate, #2 = the prior-media capture.
       fail: (ctx, n) => (ctx.table === "profiles" && n === 2 ? READ_ERROR : null),
     });
-    const res = await call("PATCH", "/me/profile", { avatarUrl: "https://cdn.example/new.jpg" });
+    const res = await call("PATCH", "/me/profile", { avatarUrl: "profile-media/avatars/" + ME + "/new.jpg" }); // PRIV-FIX-3: own upload only
 
     // (1) fail-OPEN is correct here and must not move: deleting on a guess
     //     destroys the wrong object, which is unrecoverable.

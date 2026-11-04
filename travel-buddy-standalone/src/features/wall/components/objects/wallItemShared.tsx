@@ -14,7 +14,7 @@
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
-import { CachedImage } from '../../../../components/CachedImage.tsx';
+import { CachedImage } from '../../../../components/CachedImage.tsx'; import { avatarImageUri } from '../../../../lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97): an avatar is Portava storage or nothing
 import { router } from 'expo-router';
 import {
   MapPin,
@@ -331,8 +331,8 @@ export function ActorByline({
   return (
     <View style={s.byline} accessible accessibilityRole="header">
       <View style={s.avatar}>
-        {actor?.avatarUrl ? (
-          <CachedImage source={{ uri: actor.avatarUrl }} style={s.avatarImg} />
+        {avatarImageUri(actor?.avatarUrl) ? (
+          <CachedImage source={{ uri: avatarImageUri(actor?.avatarUrl) ?? undefined }} style={s.avatarImg} />
         ) : (
           <Text style={s.avatarInitials}>{initialsOf(name)}</Text>
         )}

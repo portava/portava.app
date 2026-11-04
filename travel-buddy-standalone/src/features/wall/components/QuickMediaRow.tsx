@@ -11,7 +11,7 @@
 
 import React from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
-import { CachedImage } from '../../../components/CachedImage.tsx';
+import { CachedImage } from '../../../components/CachedImage.tsx'; import { avatarImageUri } from '../../../lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97): an avatar is Portava storage or nothing
 import { color, space, radius, type as t, avatar } from '../../../theme/tokens.ts';
 
 export interface QuickMediaEntry {
@@ -61,8 +61,8 @@ export function QuickMediaRow({
           testID={`wall-quick-media-${entry.id}`}
         >
           <View style={[s.ring, entry.isSelf && s.ringSelf]}>
-            {entry.avatarUrl ? (
-              <CachedImage source={{ uri: entry.avatarUrl }} style={s.avatarImg} />
+            {avatarImageUri(entry.avatarUrl) ? (
+              <CachedImage source={{ uri: avatarImageUri(entry.avatarUrl) ?? undefined }} style={s.avatarImg} />
             ) : (
               <Text style={s.initials}>{entry.isSelf ? '+' : initialsOf(entry.label)}</Text>
             )}

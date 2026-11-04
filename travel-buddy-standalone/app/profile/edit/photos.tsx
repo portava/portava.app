@@ -14,7 +14,7 @@
  * so a "Remove" action is not supported by the service and is omitted.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, Image, ActivityIndicator, Pressable, Alert, StyleSheet } from 'react-native';
+import { View, Text, Image, ActivityIndicator, Pressable, Alert, StyleSheet } from 'react-native'; import { avatarImageUri } from '../../../src/lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97): an avatar is Portava storage or nothing
 import { Camera, ImagePlus } from 'lucide-react-native';
 import { renderAvatarImage, renderCoverImage, MAX_ORIGINAL_BYTES, ImageStripFailedError } from '../../../src/lib/imageRender';
 import {
@@ -202,7 +202,7 @@ export default function PhotosScreen() {
     }
   }, [avatarUri, coverUri, isDirty]);
 
-  const avatarSource = avatarUri ?? avatarUrl ?? null;
+  const avatarSource = avatarUri ?? avatarImageUri(avatarUrl) ?? null; // PRIV-FIX-3: the picked local file, or the stored avatar if it is Portava storage
   const coverSource  = coverUri  ?? coverUrl  ?? null;
   const busy = saveState === 'saving';
 

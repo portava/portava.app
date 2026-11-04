@@ -6,7 +6,7 @@
  * Always use these functions instead of ad-hoc slicing/coalescing so that
  * every surface shows the same thing for the same user.
  */
-
+import { avatarImageUri } from '../lib/avatarImageUri.ts'; // PRIV-FIX-3: resolveAvatarUrl below is storage-or-nothing (replaces a blank line, so no cited line moves)
 export interface IdentityInput {
   displayName?: string | null;
   name?: string | null;
@@ -59,7 +59,7 @@ export function formatHandle(username: string | null | undefined): string | null
  */
 export function resolveAvatarUrl(url: string | null | undefined): string | null {
   if (!url || !url.trim()) return null;
-  return url;
+  return avatarImageUri(url); // PRIV-FIX-3 (census-telegraph §97): Portava storage or nothing — an outside host is never handed to an image loader
 }
 
 /**
