@@ -50,14 +50,14 @@
  * the fact in a table with a longer life. A count in a log line carries what an
  * operator needs; who was in the crew is exactly what this job exists to forget.
  *
- * ── WHY THERE IS NO FEATURE FLAG ─────────────────────────────────────────────
- * The same reason lib/sensingRetentionScheduler has none, stated again rather
- * than inherited. 2984 seeds no flag, seeding one is an owner decision, and the
- * thing a flag would protect against does not exist here: the rows this DELETEs
- * are already invisible to every reader, so there is no behaviour to roll back
- * to. A flag would only add a way to leave expired personal data in place.
+ * ── THE FLAG (3952, 2026-10-24), WHICH REPLACED "NO FEATURE FLAG" ───────────
+ * This header used to argue for no flag. The lead ruled otherwise (2026-10-23):
+ * no ruling sets a crew's expires_at as a retention period; then the owner (2026-10-24): do
+ * not expand retention without authorization. So `layover_crew_expiry_enabled` (3952, seeded
+ * TRUE) keeps production's deletion at expiry; only an explicit FALSE stops it (OFF = retention
+ * extended, only by explicit owner action). Every reader hides an expired crew (census-layover §84).
  *
- * WHAT GATES IT INSTEAD is the schema — but READ THE NEXT PARAGRAPH BEFORE
+ * WHAT GATES IT once the flag is ON is the schema — but READ THE NEXT PARAGRAPH BEFORE
  * RELYING ON THAT, because the obvious reading of it is wrong about production.
  * `crewTablesPresent` probes before every pass, and a probe that fails for ANY
  * reason — table missing, database unreachable, permission refused, socket
@@ -182,7 +182,7 @@ export type LayoverCrewExpiryOutcome = "swept" | "idle" | "refused" | "failed";
 
 export type LayoverCrewExpiryReason =
   /** The process holds no service-role client. */
-  | "no_client"
+  | "no_client" | "disabled" // disabled: layover_crew_expiry_enabled (3952) is explicitly FALSE (the owner extended retention); no statement was issued
   /** 2984 is not applied to this database — no statement was issued. */
   | "tables_absent"
   /** The bounded id read was refused. Nothing was deleted. */
@@ -254,7 +254,7 @@ async function runLayoverCrewExpirySweepImpl(
   const db = auditedLayoverClient("client" in opts && opts.client !== undefined ? opts.client : getServiceClient());
   if (!db) return refused("no_client");
 
-  if (!(await crewTablesPresent(db))) return refused("tables_absent");
+  if ((await readFlagState(db, "layover_crew_expiry_enabled")) === "off") return refused("disabled"); if (!(await crewTablesPresent(db))) return refused("tables_absent"); // 3952: only an explicit FALSE stops deletion (OFF = retention extended, only by explicit owner action); TRUE, absent and unreadable delete. Read BEFORE the probe
 
   const limit = opts.batchSize ?? LAYOVER_CREW_EXPIRY_BATCH_SIZE;
   const cutoff = opts.now.toISOString();
@@ -297,7 +297,7 @@ async function runLayoverCrewExpirySweepImpl(
     return { outcome: "idle", reason: null, deleted: 0, complete: true };
   }
 
-  const del = await db.from(CREW_TABLE).delete().in("id", ids);
+  const del = await db.from(CREW_TABLE).delete().in("id", ids).lt("expires_at", cutoff).select("id"); // census-layover §84: re-check the expiry on the DELETE (a crew whose expiry moved forward stays), and select so the count is the database's
   if (del?.error) {
     logger.warn(
       { err: del.error, due: ids.length },
@@ -309,7 +309,7 @@ async function runLayoverCrewExpirySweepImpl(
   // What the database CONFIRMED, not what was asked for. A delete that matched
   // fewer rows than it targeted (a concurrent sweep, a cascade from a deleted
   // session) deleted fewer rows, and the count must say so.
-  const confirmed = Array.isArray(del?.data) ? del.data.length : ids.length;
+  const confirmed = Array.isArray(del?.data) ? del.data.length : 0; // never the attempted ids: an unconfirmed DELETE removed nothing we can count (§84)
 
   logger.info(
     { deleted: confirmed, complete: ids.length < limit },
@@ -417,7 +417,7 @@ export function startLayoverCrewExpiryScheduler(): void {
       startupDelayMs: STARTUP_DELAY_MS,
       intervalMs: LAYOVER_CREW_EXPIRY_INTERVAL_MS,
       batchSize: LAYOVER_CREW_EXPIRY_BATCH_SIZE,
-      gate: "layover_crews must exist in this database (migration 2984)",
+      gate: "layover_crew_expiry_enabled not explicitly FALSE (3952, seeded TRUE; read each pass) and layover_crews present (2984)",
     },
     "LayoverCrewExpiryScheduler scheduled (no-op wherever migration 2984 is not applied)",
   );
@@ -441,3 +441,9 @@ export function stopLayoverCrewExpiryScheduler(): void {
 
 import { auditedLayoverClient, withLayoverSystemAudit } from './layoverServiceAudit.js';
 export function runLayoverCrewExpirySweep(...args: Parameters<typeof runLayoverCrewExpirySweepImpl>): ReturnType<typeof runLayoverCrewExpirySweepImpl> { return withLayoverSystemAudit('layover:crew-expiry', () => runLayoverCrewExpirySweepImpl(...args)); }
+// 3952 (census-layover §84, corrected 2026-10-24 on the owner's directive "Do NOT expand retention without
+// authorization"): this sweep deleted at `expires_at` on production before 3952 existed, so deletion is what an unknown
+// state must keep doing. ONLY an explicit FALSE stops it: OFF = retention extended, only by explicit owner action. TRUE
+// (the seed), an absent row and an unreadable flag all keep production's behaviour. The four-state reader keeps
+// "absent" and "unreadable" from ever being mistaken for the owner's OFF.
+import { readFlagState } from "./capability/schemaCapability.js"; // 3952 (census-layover §84); at the foot so no cited line moves

@@ -413,7 +413,7 @@ export async function loadTrendContext(sc: any, placeIds: readonly string[]): Pr
     const places = await sc.from("discovery_places")
       .select("id, submitted_by, city, neighborhood, lat, lng, created_at, category, place_type")
       .in("id", ids);
-    if (places?.error || !Array.isArray(places?.data)) return null;
+    if (places?.error || !Array.isArray(places?.data)) return null; const canonical = await loadCanonicalContextRows(sc, ids, places.data as ContextPlaceRow[]); if (canonical === null) return null;  // §133: the served `places` rows, only under 3920's flag
     let memberships: ContextMembershipRow[] = [];
     const ct = await sc.from("content_trails").select("trail_id, source_id").eq("source_type", "place").in("source_id", ids);
     if (ct?.error) {
@@ -425,7 +425,7 @@ export async function loadTrendContext(sc: any, placeIds: readonly string[]): Pr
       const ok = new Set((live.data as Array<{ id: string }>).map((t) => t.id));
       memberships = (ct.data as ContextMembershipRow[]).filter((m) => ok.has(m.trail_id));
     }
-    return buildPlaceTrendContext(places.data as ContextPlaceRow[], memberships);
+    return buildPlaceTrendContext([...(places.data as ContextPlaceRow[]), ...canonical], memberships);
   } catch {
     // resolves-not-throws-ok: a throw is a failed read, reported as null.
     return null;
@@ -469,3 +469,4 @@ async function postConvergenceOption(
       { recentMs: TREND_V2_RECENT_MS, midMs: TREND_V2_MID_MS, priorMs: TREND_V2_PRIOR_MS }),
   };
 }
+import { loadCanonicalContextRows } from "./discoveryTrendCanonicalContext.js";  // census-discovery §133 (DV-28): the served places in the v2 context

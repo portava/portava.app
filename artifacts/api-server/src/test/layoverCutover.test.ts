@@ -47,7 +47,7 @@ const REAL_SNAPSHOT = join(API_ROOT, "src", "lib", "capability", "snapshots", "2
 const REAL_MEASUREMENT = join(API_ROOT, "src", "lib", "capability", "layover-cutover-measurement.json");
 /** Sentinel for "remove this key" in a crafted measurement, distinct from any real value. */
 const DELETE_KEY = Symbol.for("layoverCutover.deleteKey") as unknown as unknown;
-const REAL_APPLIED = join(API_ROOT, "src", "lib", "capability", "production-applied-migrations.json");
+const REAL_APPLIED = join(API_ROOT, "src", "test", "fixtures", "layoverCutoverPreCutoverApplied.json"); // 2026-10-24: the frozen PRE-cutover record (2411 unapplied); the live record now has 2411 applied, which the checker reports as CUTOVER COMPLETE (last case)
 
 /**
  * Today as `YYYY-MM-DD`, from the same clock the checker ages a measurement
@@ -129,7 +129,7 @@ function run(env: NodeJS.ProcessEnv = {}, args: string[] = []): Run {
   const r = spawnSync(process.execPath, ["--import", "tsx/esm", CHECKER, ...args], {
     cwd: API_ROOT,
     encoding: "utf8",
-    env: { ...process.env, ...env },
+    env: { ...process.env, LAYOVER_CUTOVER_APPLIED: REAL_APPLIED, ...env },
     timeout: 180_000,
     maxBuffer: 64 * 1024 * 1024,
   });
@@ -139,9 +139,16 @@ function run(env: NodeJS.ProcessEnv = {}, args: string[] = []): Run {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("layover cutover checker — the real tree", () => {
-  it("CONTROL — the real tree, no override, and the ratchet is green", () => {
+  it("CONTROL — the real tree, no override: 2411 is applied (2026-10-21), and the checker says CUTOVER COMPLETE and exits 0", () => {
+    const r = spawnSync(process.execPath, ["--import", "tsx/esm", CHECKER], { cwd: API_ROOT, encoding: "utf8", timeout: 180_000, maxBuffer: 64 * 1024 * 1024 });
+    assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+    assert.match(r.stdout, /CUTOVER COMPLETE: 2411_layover_recommendation_rec_key_backfill is recorded as applied to production \(version 20261021170248/);
+    assert.doesNotMatch(r.stdout, /VERDICT:/, "a completed cutover is not graded");
+  });
+
+  it("pre-cutover control — the frozen record (2411 unapplied): all seven conditions are evaluated and the ratchet is green", () => {
     const r = spawnSync(process.execPath, ["--import", "tsx/esm", CHECKER], {
-      cwd: API_ROOT, encoding: "utf8", timeout: 180_000, maxBuffer: 64 * 1024 * 1024,
+      cwd: API_ROOT, encoding: "utf8", timeout: 180_000, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, LAYOVER_CUTOVER_APPLIED: REAL_APPLIED },
     });
     assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
     // A silent pass proves nothing: all seven conditions must be printed…
@@ -165,7 +172,7 @@ describe("layover cutover checker — the real tree", () => {
     assert.match(r.stdout, /VERDICT: NOT SAFE TO APPLY\. Blocked by: NON_VACUITY\./);
   });
 
-  it("CONTROL — --verdict on the real tree exits 1 and names the blocker", () => {
+  it("pre-cutover control — --verdict on the frozen record exits 1 and names the blocker", () => {
     const { code, out } = run({}, ["--verdict"]);
     assert.equal(code, 1, out);
     assert.match(out, /NOT SAFE TO APPLY/);
@@ -182,7 +189,7 @@ describe("layover cutover checker — the real tree", () => {
     assert.doesNotMatch(out, /NO-GO {2}REVERSIBILITY/);
   });
 
-  it("CONTROL — --report on the real tree exits 0 and prints the evidence for every GO", () => {
+  it("pre-cutover control — --report on the frozen record exits 0 and prints the evidence for every GO", () => {
     const { code, out } = run({}, ["--report"]);
     assert.equal(code, 0, out);
     assert.match(out, /index layover_recs_session_key_uidx — created by APPLIED 2410_layover_recommendation_identity/);
@@ -647,12 +654,11 @@ describe("condition 5 — ORDERING_COLLISION", () => {
     assert.match(out, /PREDECESSOR NOT APPLIED/);
   });
 
-  it("FAILS when 2411 is already recorded as applied — there is no decision left", () => {
+  it("REPORTS COMPLETE when 2411 is recorded as applied — there is no decision left, and it says so in every mode", () => {
     const applied = realApplied();
     applied.migrations.push({ version: "20260909000000", name: "2411_layover_recommendation_rec_key_backfill" });
-    const { code, out } = run({ LAYOVER_CUTOVER_APPLIED: writeJson("ord-done", "a.json", applied) });
-    assert.notEqual(code, 0, out);
-    assert.match(out, /ALREADY recorded as applied/);
+    const p = writeJson("ord-done", "a.json", applied);
+    for (const args of [[], ["--verdict"], ["--report"]]) { const { code, out } = run({ LAYOVER_CUTOVER_APPLIED: p }, args); assert.equal(code, 0, out); assert.match(out, /CUTOVER COMPLETE: 2411_layover_recommendation_rec_key_backfill is recorded as applied to production \(version 20260909000000/); assert.doesNotMatch(out, /VERDICT:/); }
   });
 
   it("FAILS a classification that has gone stale", () => {

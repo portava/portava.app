@@ -155,7 +155,7 @@ function main(): number {
   console.log(`  measurement ${MEASUREMENT}`);
   console.log("");
 
-  const report = evaluateCutover(paths);
+  const done = cutoverRecordedApplied(APPLIED); if (done) return reportCutoverDone(done); const report = evaluateCutover(paths); // 2026-10-24: once 2411 is recorded as applied there is no cutover left to grade (foot of file)
 
   if (report.fatal.length > 0) {
     for (const f of report.fatal) console.error(`  CANNOT EVALUATE: ${f}`);
@@ -231,3 +231,31 @@ function main(): number {
 }
 
 process.exit(main());
+
+// ── 2026-10-24 (capability refresh): THE CUTOVER IS DONE ─────────────────────
+// 2411 was applied to production on 2026-10-21 17:02:48 UTC through the ledger
+// (its sha256 equals this tree's file), and production-applied-migrations.json now
+// records it. Until then this checker answered "is it safe to apply 2411 NOW?",
+// and its ratchet FAILED on "already recorded as applied" so that the day the
+// record moved, somebody had to decide what the checker becomes. This is that
+// decision: the question is closed, and the checker says so and exits 0 in every
+// mode rather than grading a cutover that has already happened. The seven
+// conditions are not deleted — layoverCutover.test.ts still exercises every one
+// against the frozen pre-cutover record (src/test/fixtures/
+// layoverCutoverPreCutoverApplied.json), so the logic stays proven for the next
+// data cutover that borrows it.
+import { readFileSync as readAppliedRecord } from "node:fs";
+
+function cutoverRecordedApplied(appliedPath: string): { version: string } | null {
+  let list: Array<{ version?: unknown; name?: unknown }> = [];
+  try { list = (JSON.parse(readAppliedRecord(appliedPath, "utf8")) as { migrations?: typeof list }).migrations ?? []; } catch { return null; }
+  const hit = list.find((m) => m.name === MIGRATION_BASENAME);
+  return hit && typeof hit.version === "string" ? { version: hit.version } : null;
+}
+
+function reportCutoverDone(done: { version: string }): number {
+  console.log(`CUTOVER COMPLETE: ${MIGRATION_BASENAME} is recorded as applied to production (version ${done.version}, ${APPLIED}).`);
+  console.log("  There is no cutover left to grade, so no verdict is given and nothing is ratcheted.");
+  console.log(`  (${CUTOVER_FLAG} was NOT read from, or written to, any database by this check.)`);
+  return 0;
+}

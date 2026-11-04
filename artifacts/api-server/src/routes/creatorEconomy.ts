@@ -94,3 +94,26 @@ router.get("/creator-economy/me/earnings", asyncHandler(async (req, res) => {
 }));
 
 export default router;
+
+// ── census-discovery §134 (DC-23): `11` §6's fourth read, payout eligibility ──
+//
+// Appended below `export default router` so no cited line moves; a registration
+// here still runs at module evaluation, before any importer mounts the router.
+//
+// `07` §4 names a progression (Explorer … Creator Partner) and six inputs
+// eligibility "can consider", and sets no threshold. The thresholds are the
+// owner's (W10D-B5), so this read answers what is TRUE today: eligibility is
+// UNDECIDED, nothing is payable, and it says which decision is pending. It reads
+// no input, scores nothing and invents no rule. Behind the same gate as the other
+// three reads: with `creator_attribution_enabled` OFF it is `feature_disabled`.
+// When B5 is ruled, the answer below is where the rule plugs in.
+import { creatorLedgerEnabled } from "../services/creators/CreatorAttributionService.js";
+import { payoutEligibilityAnswer } from "../services/creators/creatorPayoutEligibility.js";
+
+router.get("/creator-economy/me/payout-eligibility", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient() ?? auth.client;
+  if (!(await creatorLedgerEnabled(sc))) { sendCreatorRefusal(res, "disabled"); return; }
+  res.json({ payoutEligibility: payoutEligibilityAnswer() });
+}));

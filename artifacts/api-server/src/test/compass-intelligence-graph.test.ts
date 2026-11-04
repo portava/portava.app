@@ -55,7 +55,7 @@ import {
   type CityWorldModel,
   initCityTimezonePersistence,
   sweepCityTimezoneTable,
-  _resetCityTimezoneStateForTest,
+  _resetCityTimezoneStateForTest, GRAPH_BEHAVIOR_VIEW, graphBehaviorObservationsOf,
 } from "../compass/CompassGraphEngine.js";
 import { SEED_CITIES, getPopularCities } from "../lib/popularCities.js";
 import { canonicalCityKey } from "../lib/canonicalLocations.js";
@@ -77,14 +77,14 @@ function likeToRegex(pattern: string): RegExp {
 }
 
 function makeFakeClient(store: Record<string, Row[]> = {}) {
-  function tbl(name: string): Row[] { if (name === "user_stamps" || name === "plan_checkins") stageEarnedPresenceInPlace(store); // H4, wave 5 (stampPresenceView.ts): a presence stamp this suite stages as earned gets its trip and that trip's check-in; HEAD read neither
+  function tbl(name: string): Row[] { if (name === GRAPH_BEHAVIOR_VIEW) return graphBehaviorObservationsOf(store.rank_events ?? []) as Row[]; /* census-discovery §133 (DV-51): 3921's view over this store's rank_events */ if (name === "user_stamps" || name === "plan_checkins") stageEarnedPresenceInPlace(store); // H4, wave 5 (stampPresenceView.ts): a presence stamp this suite stages as earned gets its trip and that trip's check-in; HEAD read neither
     if (!store[name]) store[name] = [];
     return store[name]!;
   }
 
   function builder(tableName: string) {
     const filters: Array<(r: Row) => boolean> = [];
-    let _limit: number | null = null;
+    let _limit: number | null = null; let _range: [number, number] | null = null;
     let _lastWritten: Row[] | null = null;
     let _order: { key: string; asc: boolean } | null = null;
     let _delete = false;
@@ -98,7 +98,7 @@ function makeFakeClient(store: Record<string, Row[]> = {}) {
           return asc ? av - bv : bv - av;
         });
       }
-      if (_limit !== null) out = out.slice(0, _limit);
+      if (_range !== null) out = out.slice(_range[0], _range[1] + 1); if (_limit !== null) out = out.slice(0, _limit);
       return out;
     }
 
@@ -130,7 +130,7 @@ function makeFakeClient(store: Record<string, Row[]> = {}) {
             return b;
           };
         }
-        if (prop === "limit") return (n: number) => { _limit = n; return b; };
+        if (prop === "limit") return (n: number) => { _limit = n; return b; }; if (prop === "range") return (a: number, z: number) => { _range = [a, z]; return b; };
         if (prop === "eq")  return (k: string, v: unknown) => { filters.push((r) => r[k] === v); return b; };
         if (prop === "neq") return (k: string, v: unknown) => { filters.push((r) => r[k] !== v); return b; };
         if (prop === "in")  return (k: string, v: unknown[]) => { filters.push((r) => v.includes(r[k] as never)); return b; };

@@ -331,6 +331,6 @@ describe("check:production-drift at HEAD (credential-free)", () => {
       env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" },
     });
     assert.equal(run.status, 0, run.stdout + run.stderr);
-    assert.match(run.stdout, /✓ No unrecorded production drift\. [1-9][0-9]* table\(s\) on the ratchet/);
+    assert.match(run.stdout, /✓ No unrecorded production drift\. [0-9]+ table\(s\) on the ratchet/); // 2026-10-24: the capability refresh emptied the ratchet (every declared table is in production), so zero is now an honest count
   });
 });

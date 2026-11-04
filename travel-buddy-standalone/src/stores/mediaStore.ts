@@ -98,7 +98,7 @@ interface MediaStoreContextValue {
   /** Read gems-specific state. */
   getGemsModeState: () => GemsModeState;
   /** Partial-update gems-specific state (areaMode, category, cursor, activeItemId). */
-  setGemsModeState: (state: Partial<GemsModeState>) => void;
+  setGemsModeState: (state: Partial<GemsModeState>) => void; /** census-media MD286/MD419/MD427 (2026-10-24): true once the saved mode is restored (or one was picked); until then `selectedMode` is only the loading default, so nothing mode-dependent may mount on it. */ restored: boolean;
 }
 
 const MediaStoreContext = createContext<MediaStoreContextValue>({
@@ -107,7 +107,7 @@ const MediaStoreContext = createContext<MediaStoreContextValue>({
   getModeState: () => DEFAULT_MODE_STATE,
   setModeState: () => {},
   getGemsModeState: () => DEFAULT_GEMS_STATE,
-  setGemsModeState: () => {},
+  setGemsModeState: () => {}, restored: true,
 });
 
 // ── AsyncStorage key ──────────────────────────────────────────────────────────
@@ -150,7 +150,7 @@ export function MediaStoreProvider({
   // selectedMode and modeStates are kept in separate useState calls so
   // setModeState updates don't trigger re-renders of the mode selector.
   const [selectedMode, setSelectedMode] = useState<MediaMode>(defaultMode);
-  const [modeStates, setModeStates] = useState<AllModeState>(makeAllModeState);
+  const [modeStates, setModeStates] = useState<AllModeState>(makeAllModeState); const [restored, setRestored] = useState(false); // the render-side twin of restoredRef
 
   // Track whether we have restored from AsyncStorage yet.
   const restoredRef = useRef(false);
@@ -164,7 +164,7 @@ export function MediaStoreProvider({
     const restore = (candidate: MediaMode) => {
       if (cancelled || restoredRef.current) return;
       restoredRef.current = true;
-      setSelectedMode(pickValidMode(candidate, enabledModes));
+      setSelectedMode(pickValidMode(candidate, enabledModes)); setRestored(true); // same batch: no commit sees restored with the loading default
     };
 
     AsyncStorage.getItem(STORAGE_KEY)
@@ -201,7 +201,7 @@ export function MediaStoreProvider({
 
   const setMode = useCallback((mode: MediaMode) => {
     restoredRef.current = true;
-    setSelectedMode(mode);
+    setSelectedMode(mode); setRestored(true);
     AsyncStorage.setItem(STORAGE_KEY, mode).catch(() => {});
   }, []);
 
@@ -236,8 +236,8 @@ export function MediaStoreProvider({
   );
 
   const value = useMemo<MediaStoreContextValue>(
-    () => ({ selectedMode, setMode, getModeState, setModeState, getGemsModeState, setGemsModeState }),
-    [selectedMode, setMode, getModeState, setModeState, getGemsModeState, setGemsModeState],
+    () => ({ selectedMode, setMode, getModeState, setModeState, getGemsModeState, setGemsModeState, restored }),
+    [selectedMode, setMode, getModeState, setModeState, getGemsModeState, setGemsModeState, restored],
   );
 
   return (
