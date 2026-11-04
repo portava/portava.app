@@ -105,14 +105,27 @@ interface State {
  * judges them with, in the SAME zone as the fixture's trip. Not a
  * reimplementation of the formatting: if `todayInTimezone` ever changes how it
  * resolves a date, the fixture moves with it instead of drifting apart.
+ *
+ * ── AND A DAY IS A CALENDAR DAY, NOT 24 HOURS ───────────────────────────────
+ *
+ * The second version stepped `NOW_MS + days * 24h` and formatted the result in
+ * the trip's zone. A local day is 25 hours long on a DST fall-back, so from
+ * the first hour of that day `now + 24h` is STILL that day: at 2026-10-24T23:30Z
+ * Lisbon reads 00:30 WEST on the 25th, and 24 hours later reads 23:30 WET on
+ * the 25th. "Tomorrow" was today, the trip read `active`, and every PR's CI
+ * went red. So the trip zone is consulted ONCE, for today's date, and the
+ * offsets are whole calendar days added to that date (UTC date arithmetic on
+ * a bare Y-M-D has no DST), exactly as `todayInTimezone` will judge them.
  */
-const DAY_MS = 24 * 60 * 60 * 1_000;
 /** Read ONCE so the two bounds cannot straddle a midnight between calls. */
 const NOW_MS = Date.now();
 /** The zone the fixture's trip is in, and therefore the zone its status is judged in. */
 const TRIP_TZ = "Europe/Lisbon";
-const dayOffset = (days: number): string =>
-  todayInTimezone(TRIP_TZ, new Date(NOW_MS + days * DAY_MS));
+const TODAY_IN_TRIP_TZ = todayInTimezone(TRIP_TZ, new Date(NOW_MS));
+const dayOffset = (days: number): string => {
+  const [y, m, d] = TODAY_IN_TRIP_TZ.split("-").map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d! + days)).toISOString().slice(0, 10);
+};
 
 function baseState(kernelOn: boolean): State {
   return {

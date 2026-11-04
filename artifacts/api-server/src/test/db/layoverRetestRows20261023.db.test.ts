@@ -267,7 +267,12 @@ describe("§83 — retest rows under production's 2026-10-23 flag state", { skip
     const tripId = randomUUID();
     const k = await db.query<any>(`SELECT public.trip_kernel_execute(jsonb_build_object('trip_id', '${tripId}', 'actor_user_id', '${u.id}', 'command_id', gen_random_uuid(), 'idempotency_key', 'create-${tripId}', 'type', 'CREATE_TRIP', 'payload', jsonb_build_object('title', 'Singapore', 'destination_city', 'Singapore', 'destination_country', 'SG'))) AS r`);
     assert.equal(k[0].r.ok, true, JSON.stringify(k[0].r));
-    const t0 = Math.floor(Date.now() / 60_000) * 60_000;
+    // Landed an hour ago, leaves in eight: typed as local wall times, so t0 steps BACK (never forward: the
+    // layover must already be under way) until none of them falls in a fall-back's repeated hour, where a
+    // wall time names two instants and the route can only pick one (layoverFlightConnections' 2026-10-24 bomb).
+    let t0 = Math.floor(Date.now() / 60_000) * 60_000;
+    while (!([["America/Los_Angeles", -17 * HOUR], ["Asia/Singapore", -HOUR], ["Asia/Singapore", 8 * HOUR], ["Europe/London", 22 * HOUR]] as const)
+      .every(([tz, k]) => unambiguousWall(tz, t0 + k))) t0 -= 15 * 60_000;
     const inbound = await app.call("POST", `/api/trips/${tripId}/flight-segments`, u, { flight: "SQ 0031", departureAirport: "SFO", arrivalAirport: "SIN", departureLocal: wall("America/Los_Angeles", t0 - 17 * HOUR), arrivalLocal: wall("Asia/Singapore", t0 - HOUR), bookingRef: "RET153" }, { "idempotency-key": `in-${tripId}` });
     assert.equal(inbound.status, 201, inbound.raw);
     const onward = await app.call("POST", `/api/trips/${tripId}/flight-segments`, u, { flight: "SQ 0322", departureAirport: "SIN", arrivalAirport: "LHR", departureLocal: wall("Asia/Singapore", t0 + 8 * HOUR), arrivalLocal: wall("Europe/London", t0 + 22 * HOUR), bookingRef: "RET153" }, { "idempotency-key": `out-${tripId}` });
@@ -325,4 +330,9 @@ function wall(tz: string, ms: number): string {
   const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
     .formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
   return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+}
+/** True when no OTHER instant shows the same minute on `tz`'s clock (DST offset changes are 30, 60 or 120 minutes). */
+function unambiguousWall(tz: string, ms: number): boolean {
+  const w = wall(tz, ms);
+  return [30, 60, 120].every((m) => wall(tz, ms - m * 60_000) !== w && wall(tz, ms + m * 60_000) !== w);
 }
