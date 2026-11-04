@@ -1,5 +1,5 @@
 {
-  "$comment": "The repository's record of what has been applied to PRODUCTION (travel-buddy, ajrurzioarfkagpuxfnb), taken from its supabase_migrations.schema_migrations. COMMIT AN ENTRY HERE IN THE SAME CHANGE THAT APPLIES THE MIGRATION. checkFlagSchemaPrerequisites compares the newest version here against the snapshot's productionMigrationWatermark and FAILS when this file is ahead -- that is how a stale snapshot is caught OFFLINE, with no live database access. Production DOES now have a schema_migration_ledger (created 2026-09-15) but it is not an inventory either -- it only carries rows for migrations applied through the ledger discipline, and the 2026-09-16 capture found three migrations applied to production at 07:56 UTC that wrote supabase_migrations rows and NO ledger row, plus five applied by us that wrote ledger rows and NO supabase_migrations row. Neither table is complete on its own, and migrations applied by hand through the Supabase dashboard write no row into supabase_migrations, so this file is necessarily a record of what WE applied, not proof of everything that is applied. It is a staleness tripwire, not an inventory. VERSIONS FOR MANUAL APPLIES: the five 2026-09-16 entries ran through execute_sql inside BEGIN/COMMIT with postcondition DO blocks, which writes a schema_migration_ledger row but not a supabase_migrations row, so their version strings here are their ledger applied_at instants rendered in the same YYYYMMDDHHMMSS shape -- derived from the database's own record of when they landed, not invented. 2026-09-16 AFTERNOON, three more entries, and their versions are LEDGER instants for the reason stated above: 2202_map_telemetry and 2222_map_telemetry_refusal_event both at 20260916141105 (one transaction -- 2222 amends 2202's payload guard, so they were applied together and share an applied_at), and 2256_media_intent_signals at 20260916151321. All three had CI ledger rows and no production table: 2202 carried a 'backfill' ledger row on production, which asserts only that the FILENAME existed when 2254 ran and never that the file ran, and 2256 carried no production row of any kind. The snapshot was refreshed in this same change to snapshots/20260916b-production-schema.json, so this file is not ahead of the capture. 2026-09-16 15:42, the port's FOUR-migration production apply set, applied from merged main 98fac66fc after the prerequisite counts were re-read and matched the runbook exactly (18/6/9/17/8/0/0) and the second writer was confirmed not to have moved. All four share the version 20260916154223, the ledger applied_at of the last of them: they ran as four separate transactions inside one minute and the ledger resolves to the second, so a shared version here is the honest rendering rather than four invented distinct instants. The snapshot was refreshed in the same change to snapshots/20260916c-production-schema.json, so this file is not ahead of the capture. 2026-09-16 17:37-17:42, FOUR more entries on two explicit owner decisions. 2470 completes MEDIA_CANONICAL (ORDER B: the flag was already TRUE and is untouched). 2315 + 2340 + 2480 stand up Sensing under SENSING_AUTH_POSTURE = anonymous_capable, Option B STAGED. 2481 is NOT listed and must never be applied under this posture: its CHECK makes attested- and unattested-device sessions unrepresentable. portava-ci still carries 2481 from an earlier Option A rehearsal, so CI and production genuinely differ here and CI is the one that is wrong for this posture. The snapshot was refreshed in the same change to snapshots/20260916d-production-schema.json, so this file is not ahead of the capture. 2026-09-16 20:13 - 2026-09-17 03:10, the TRIPS CHAIN: 41 further entries, every one a manual apply through execute_sql inside BEGIN/COMMIT with its own preconditions and postconditions, so their versions here are again their schema_migration_ledger applied_at instants in YYYYMMDDHHMMSS. Three pairs share a version because they shared a transaction minute and the ledger resolves to the second (2788/2790 at 20260916205754; 2789/2791/2792 at 20260916205844) -- a shared version is the honest rendering, not an invented distinct one. 2796 is NOT a spec migration: it repairs a latent privilege defect in 2784, whose booking-history trigger was not SECURITY DEFINER and so could never reach its own owner policies. This file was ahead of the capture between 2026-09-16 20:13 and this change, which is precisely the state checkFlagSchemaPrerequisites exists to refuse; snapshots/20260917-production-schema.json was captured in the same change and the pointer in snapshots/current.js moved with it. 2797/2798/2799 (recurring commitments) are NOT listed: they are rehearsed on portava-ci and have NOT been applied to production. 2026-09-20 19:46 - 19:56, FIVE entries that are a BACKFILL and are labelled one rather than presented as fresh work: 2996, 2997, 2800, 2840 and 2910 were applied to production that evening by someone other than this session, and NONE of them was recorded here. That is exactly the state this file exists to refuse, and the tripwire stayed silent through it for a reason worth writing down -- the tripwire only fires when this file is AHEAD of the snapshot, so a file that LAGS reality is invisible to it. The staleness was found by capturing production's table list and diffing it against baseline/20260917_production_tables.txt, which showed six tables (the 2910 Trails block) that no entry here accounted for. All five versions are their schema_migration_ledger applied_at instants, read from production, in the same YYYYMMDDHHMMSS shape as every manual apply above; 2800 and 2840 share 20260920195237 because they shared a transaction minute. A SIXTH object landed that evening, dead_check_vocabularies_2298, which wrote a supabase_migrations row and NO ledger row and corresponds to no file in src/migrations/; it is deliberately NOT listed, because inventing an entry for something this repository cannot name would be worse than the gap. 2026-09-21 07:52, TWO entries that ARE this session's work: 2963_memory_projector_place_lane_union and 2964_map_telemetry_disabled_discards, applied to production from merged main fd0b3a6f4 after both had been applied and certified on portava-ci by the merge of PR #511. They share the version 20260921075225 because their two ledger rows were inserted in one statement and the ledger resolves to the second. Both were applied through the Supabase Management API, which writes a supabase_migrations row (20260921074207 and 20260921074302); the LEDGER instant is used here anyway, because that is the convention every manual entry above follows and mixing two clocks in one column is how a version string stops meaning anything. snapshots/20260921-production-schema.json was captured in this same change, so this file is not ahead of the capture. 2026-09-22, THREE entries, and the first two are a BACKFILL labelled as one rather than presented as fresh work. 2400_telegraph_history_bound and 2966_telegraph_history_bound_close were applied to production at 05:42:29 UTC and neither was recorded here; they share the version 20260922054229 because they were applied in one transaction and the ledger resolves to the second. That is the LAGGING-FILE blind spot this file's 2026-09-20 note already describes: the tripwire only fires when this file is AHEAD of the snapshot, so a file that lags reality is invisible to it, and the gap was found the same way as last time — by capturing production's own catalogue and diffing it against the previous snapshot, which showed message_thread_members.visible_from_at and the table telegraph_member_visibility_window that no entry here accounted for. 2966 MUST NEVER BE REVERTED. A THIRD object in that same diff, stamp_definitions.evidences_presence from 2970, is deliberately NOT listed: production carries no schema_migration_ledger row for 2970, so this session cannot name the instant it landed, and inventing a version for it would be worse than the gap — the same rule applied to dead_check_vocabularies_2298 above. The capture records the column either way, because the capture reads production rather than this file. 2971_layover_discovery_mode_flag IS this session's work: it seeds the feature_flags row layover_discovery_mode_enabled FALSE so the audited toggle path (PATCH /api/admin/feature-flags via toggle_feature_flag_with_audit) can reach a gate that until now could only be enabled by a direct UPDATE writing no audit row. It was applied through the Supabase Management API, which wrote a supabase_migrations row under 20260922155640; the LEDGER instant 20260922155706 is used here anyway, for the reason the 2963/2964 note gives — mixing two clocks in one column is how a version string stops meaning anything — and snapshots/20260922-production-schema.json records the same instant as its watermark so this file is not ahead of the capture. The flag is seeded OFF and this change does not enable it.",
+  "$comment": "The repository's record of what has been applied to PRODUCTION (travel-buddy, ajrurzioarfkagpuxfnb), taken from its supabase_migrations.schema_migrations. COMMIT AN ENTRY HERE IN THE SAME CHANGE THAT APPLIES THE MIGRATION. checkFlagSchemaPrerequisites compares the newest version here against the snapshot's productionMigrationWatermark and FAILS when this file is ahead -- that is how a stale snapshot is caught OFFLINE, with no live database access. Production DOES now have a schema_migration_ledger (created 2026-09-15) but it is not an inventory either -- it only carries rows for migrations applied through the ledger discipline, and the 2026-09-16 capture found three migrations applied to production at 07:56 UTC that wrote supabase_migrations rows and NO ledger row, plus five applied by us that wrote ledger rows and NO supabase_migrations row. Neither table is complete on its own, and migrations applied by hand through the Supabase dashboard write no row into supabase_migrations, so this file is necessarily a record of what WE applied, not proof of everything that is applied. It is a staleness tripwire, not an inventory. VERSIONS FOR MANUAL APPLIES: the five 2026-09-16 entries ran through execute_sql inside BEGIN/COMMIT with postcondition DO blocks, which writes a schema_migration_ledger row but not a supabase_migrations row, so their version strings here are their ledger applied_at instants rendered in the same YYYYMMDDHHMMSS shape -- derived from the database's own record of when they landed, not invented. 2026-09-16 AFTERNOON, three more entries, and their versions are LEDGER instants for the reason stated above: 2202_map_telemetry and 2222_map_telemetry_refusal_event both at 20260916141105 (one transaction -- 2222 amends 2202's payload guard, so they were applied together and share an applied_at), and 2256_media_intent_signals at 20260916151321. All three had CI ledger rows and no production table: 2202 carried a 'backfill' ledger row on production, which asserts only that the FILENAME existed when 2254 ran and never that the file ran, and 2256 carried no production row of any kind. The snapshot was refreshed in this same change to snapshots/20260916b-production-schema.json, so this file is not ahead of the capture. 2026-09-16 15:42, the port's FOUR-migration production apply set, applied from merged main 98fac66fc after the prerequisite counts were re-read and matched the runbook exactly (18/6/9/17/8/0/0) and the second writer was confirmed not to have moved. All four share the version 20260916154223, the ledger applied_at of the last of them: they ran as four separate transactions inside one minute and the ledger resolves to the second, so a shared version here is the honest rendering rather than four invented distinct instants. The snapshot was refreshed in the same change to snapshots/20260916c-production-schema.json, so this file is not ahead of the capture. 2026-09-16 17:37-17:42, FOUR more entries on two explicit owner decisions. 2470 completes MEDIA_CANONICAL (ORDER B: the flag was already TRUE and is untouched). 2315 + 2340 + 2480 stand up Sensing under SENSING_AUTH_POSTURE = anonymous_capable, Option B STAGED. 2481 is NOT listed and must never be applied under this posture: its CHECK makes attested- and unattested-device sessions unrepresentable. portava-ci still carries 2481 from an earlier Option A rehearsal, so CI and production genuinely differ here and CI is the one that is wrong for this posture. The snapshot was refreshed in the same change to snapshots/20260916d-production-schema.json, so this file is not ahead of the capture. 2026-09-16 20:13 - 2026-09-17 03:10, the TRIPS CHAIN: 41 further entries, every one a manual apply through execute_sql inside BEGIN/COMMIT with its own preconditions and postconditions, so their versions here are again their schema_migration_ledger applied_at instants in YYYYMMDDHHMMSS. Three pairs share a version because they shared a transaction minute and the ledger resolves to the second (2788/2790 at 20260916205754; 2789/2791/2792 at 20260916205844) -- a shared version is the honest rendering, not an invented distinct one. 2796 is NOT a spec migration: it repairs a latent privilege defect in 2784, whose booking-history trigger was not SECURITY DEFINER and so could never reach its own owner policies. This file was ahead of the capture between 2026-09-16 20:13 and this change, which is precisely the state checkFlagSchemaPrerequisites exists to refuse; snapshots/20260917-production-schema.json was captured in the same change and the pointer in snapshots/current.js moved with it. 2797/2798/2799 (recurring commitments) are NOT listed: they are rehearsed on portava-ci and have NOT been applied to production. 2026-09-20 19:46 - 19:56, FIVE entries that are a BACKFILL and are labelled one rather than presented as fresh work: 2996, 2997, 2800, 2840 and 2910 were applied to production that evening by someone other than this session, and NONE of them was recorded here. That is exactly the state this file exists to refuse, and the tripwire stayed silent through it for a reason worth writing down -- the tripwire only fires when this file is AHEAD of the snapshot, so a file that LAGS reality is invisible to it. The staleness was found by capturing production's table list and diffing it against baseline/20260917_production_tables.txt, which showed six tables (the 2910 Trails block) that no entry here accounted for. All five versions are their schema_migration_ledger applied_at instants, read from production, in the same YYYYMMDDHHMMSS shape as every manual apply above; 2800 and 2840 share 20260920195237 because they shared a transaction minute. A SIXTH object landed that evening, dead_check_vocabularies_2298, which wrote a supabase_migrations row and NO ledger row and corresponds to no file in src/migrations/; it is deliberately NOT listed, because inventing an entry for something this repository cannot name would be worse than the gap. 2026-09-21 07:52, TWO entries that ARE this session's work: 2963_memory_projector_place_lane_union and 2964_map_telemetry_disabled_discards, applied to production from merged main fd0b3a6f4 after both had been applied and certified on portava-ci by the merge of PR #511. They share the version 20260921075225 because their two ledger rows were inserted in one statement and the ledger resolves to the second. Both were applied through the Supabase Management API, which writes a supabase_migrations row (20260921074207 and 20260921074302); the LEDGER instant is used here anyway, because that is the convention every manual entry above follows and mixing two clocks in one column is how a version string stops meaning anything. snapshots/20260921-production-schema.json was captured in this same change, so this file is not ahead of the capture. 2026-09-22, THREE entries, and the first two are a BACKFILL labelled as one rather than presented as fresh work. 2400_telegraph_history_bound and 2966_telegraph_history_bound_close were applied to production at 05:42:29 UTC and neither was recorded here; they share the version 20260922054229 because they were applied in one transaction and the ledger resolves to the second. That is the LAGGING-FILE blind spot this file's 2026-09-20 note already describes: the tripwire only fires when this file is AHEAD of the snapshot, so a file that lags reality is invisible to it, and the gap was found the same way as last time — by capturing production's own catalogue and diffing it against the previous snapshot, which showed message_thread_members.visible_from_at and the table telegraph_member_visibility_window that no entry here accounted for. 2966 MUST NEVER BE REVERTED. A THIRD object in that same diff, stamp_definitions.evidences_presence from 2970, is deliberately NOT listed: production carries no schema_migration_ledger row for 2970, so this session cannot name the instant it landed, and inventing a version for it would be worse than the gap — the same rule applied to dead_check_vocabularies_2298 above. The capture records the column either way, because the capture reads production rather than this file. 2971_layover_discovery_mode_flag IS this session's work: it seeds the feature_flags row layover_discovery_mode_enabled FALSE so the audited toggle path (PATCH /api/admin/feature-flags via toggle_feature_flag_with_audit) can reach a gate that until now could only be enabled by a direct UPDATE writing no audit row. It was applied through the Supabase Management API, which wrote a supabase_migrations row under 20260922155640; the LEDGER instant 20260922155706 is used here anyway, for the reason the 2963/2964 note gives — mixing two clocks in one column is how a version string stops meaning anything — and snapshots/20260922-production-schema.json records the same instant as its watermark so this file is not ahead of the capture. The flag is seeded OFF and this change does not enable it. REFRESH OF 2026-10-24 (the capability refresh; snapshots/20261024-production-schema.json): the 331 migrations public.schema_migration_ledger records as applied_by 'manual' after the 2026-09-22 entries (2998 on 2026-09-25, the 329 of the 2026-10-21 press, 3950 on 2026-10-24) are appended with their ledger applied_at as the version, in the shape described above, and each row's sha256 checksum was compared with this tree's file and matched. The 51 applied_by 'backfill' rows are NOT entries here (50 written 2026-10-23, and 3974's, written 2026-10-21 16:55:15 at the start of the press because 3974 never ran: 3979 superseded it): a backfill row records that the migration's objects were found present, not that anyone applied it, and their applied_at is when the row was written. The snapshot, not this file, is what shows them present. DELTA OF 2026-10-24 10:40 UTC (production moved after the refresh's capture; re-read read-only): THREE more facts. (1) 3911_memory_kernel_create_participants_and_canonical_fields was applied 2026-10-24 08:12:49 UTC (the ledger's 831st row, applied_by 'manual', after PR #784 merged as 9d5f6d481) and is listed with that applied_at as its version, 20261024081249; its sha256 equals this tree's file. It replaces the body of memory_kernel_execute and adds no table, column, function name, enum or flag, which is why the snapshot's three digests are unchanged. (2) 2970_stamp_definitions_evidences_presence IS NOW LISTED, at 20260921204203: production's ledger carries an applied_by 'manual' row for it, applied_at 2026-09-21 20:42:03 UTC, whose sha256 equals this tree's file, so the 2026-09-22 note above ('production carries no schema_migration_ledger row for 2970') no longer holds. The refresh missed it because it appended only the rows after the 2026-09-22 entries, and 2970's applied_at is earlier. (3) 3924_post_media_backfill_create_path_uploads WAS APPLIED 2026-10-24 09:59:00 UTC (the ledger's 832nd row) and is deliberately NOT listed: its file reaches this tree with PR #795, and an entry naming a file the tree does not hold is the gap the dead_check_vocabularies_2298 rule refuses. It inserts four post_media rows and changes no schema, and the snapshot's watermark is already its instant, so listing it when #795 lands does not put this file ahead of the capture. After the delta the ledger is 832 rows: this tree's 836 files minus the same five, plus 3924 (digest over filenames, matched).",
   "projectRef": "ajrurzioarfkagpuxfnb",
   "migrations": [
     {
@@ -507,6 +507,10 @@
       "name": "2950_input_assistance_telemetry_events"
     },
     {
+      "version": "20260921204203",
+      "name": "2970_stamp_definitions_evidences_presence"
+    },
+    {
       "version": "20260922054229",
       "name": "2400_telegraph_history_bound"
     },
@@ -517,6 +521,1334 @@
     {
       "version": "20260922155706",
       "name": "2971_layover_discovery_mode_flag"
+    },
+    {
+      "version": "20260925075412",
+      "name": "2998_story_retention"
+    },
+    {
+      "version": "20261021165519",
+      "name": "2121_source_registry"
+    },
+    {
+      "version": "20261021165540",
+      "name": "2123_canonical_event_families"
+    },
+    {
+      "version": "20261021165547",
+      "name": "2129_location_snapshot_purge_flag"
+    },
+    {
+      "version": "20261021165553",
+      "name": "2134_intel_stmt_triggers_dropped_before_campaign"
+    },
+    {
+      "version": "20261021165559",
+      "name": "2135_deletion_blocking_fks"
+    },
+    {
+      "version": "20261021165609",
+      "name": "2138_profiles_fk_convergence_prep"
+    },
+    {
+      "version": "20261021165616",
+      "name": "2139_shared_content_tombstones"
+    },
+    {
+      "version": "20261021165623",
+      "name": "2136_profiles_auth_users_convergence"
+    },
+    {
+      "version": "20261021165630",
+      "name": "2141_post_tombstones"
+    },
+    {
+      "version": "20261021165640",
+      "name": "2140_deletion_receipt"
+    },
+    {
+      "version": "20261021165652",
+      "name": "2200_memory_projection_exclude_deleted_profiles"
+    },
+    {
+      "version": "20261021165659",
+      "name": "2201_map_projection_flag"
+    },
+    {
+      "version": "20261021165706",
+      "name": "2205_memory_new_to_me_batch"
+    },
+    {
+      "version": "20261021165712",
+      "name": "2212_rent_buddy_country_snapshot"
+    },
+    {
+      "version": "20261021165718",
+      "name": "2213_memory_passport_controls"
+    },
+    {
+      "version": "20261021165725",
+      "name": "2214_memory_recaps"
+    },
+    {
+      "version": "20261021165733",
+      "name": "2216_map_observations"
+    },
+    {
+      "version": "20261021165739",
+      "name": "2218_crowd_flow"
+    },
+    {
+      "version": "20261021165744",
+      "name": "2223_map_media_evidence"
+    },
+    {
+      "version": "20261021165752",
+      "name": "2224_route_hop_signal"
+    },
+    {
+      "version": "20261021165803",
+      "name": "2251_hidden_gem_place_protection_index"
+    },
+    {
+      "version": "20261021165809",
+      "name": "2255_media_evidence_seam"
+    },
+    {
+      "version": "20261021165817",
+      "name": "2257_media_view_requests"
+    },
+    {
+      "version": "20261021165829",
+      "name": "2277_intel_outcomes_attribution"
+    },
+    {
+      "version": "20261021165845",
+      "name": "2278_intel_scoped_trust"
+    },
+    {
+      "version": "20261021165858",
+      "name": "2279_intel_historical_patterns"
+    },
+    {
+      "version": "20261021165908",
+      "name": "2280_intel_mission_lifecycle"
+    },
+    {
+      "version": "20261021165916",
+      "name": "2287_passport_telemetry_events"
+    },
+    {
+      "version": "20261021165929",
+      "name": "2289_discovery_ranking_modifiers_flag"
+    },
+    {
+      "version": "20261021165936",
+      "name": "2290_intelligence_graph_node_kinds"
+    },
+    {
+      "version": "20261021165943",
+      "name": "2292_intel_stmt_trigger_removal_ig_campaign"
+    },
+    {
+      "version": "20261021165949",
+      "name": "2293_purge_leaky_place_top_contributors"
+    },
+    {
+      "version": "20261021165956",
+      "name": "2294_event_passport_shares"
+    },
+    {
+      "version": "20261021170009",
+      "name": "2295_map_world_intelligence_flag"
+    },
+    {
+      "version": "20261021170016",
+      "name": "2300_phantom_feature_flag_rows"
+    },
+    {
+      "version": "20261021170024",
+      "name": "2302_plan_attendance_vocabulary"
+    },
+    {
+      "version": "20261021170032",
+      "name": "2304_rent_buddy_launch_control_identity"
+    },
+    {
+      "version": "20261021170039",
+      "name": "2305_rent_buddy_signal_writers"
+    },
+    {
+      "version": "20261021170046",
+      "name": "2306_search_signal_decay_flag_row"
+    },
+    {
+      "version": "20261021170051",
+      "name": "2308_wall_telemetry_events"
+    },
+    {
+      "version": "20261021170103",
+      "name": "2309_passport_stamp_type_vocabulary"
+    },
+    {
+      "version": "20261021170109",
+      "name": "2311_intel_claim_reviews"
+    },
+    {
+      "version": "20261021170120",
+      "name": "2320_memory_episode_provenance_spine"
+    },
+    {
+      "version": "20261021170136",
+      "name": "2325_telegraph_unsend_before_seen"
+    },
+    {
+      "version": "20261021170147",
+      "name": "2330_rent_buddy_money_atomicity"
+    },
+    {
+      "version": "20261021170159",
+      "name": "2331_creator_counter_atomicity"
+    },
+    {
+      "version": "20261021170207",
+      "name": "2332_money_grant_boundary"
+    },
+    {
+      "version": "20261021170219",
+      "name": "2333_derived_memory_and_consent_grant_boundary"
+    },
+    {
+      "version": "20261021170231",
+      "name": "2336_media_canonical_control_flags"
+    },
+    {
+      "version": "20261021170237",
+      "name": "2350_map_sensing_projection_flags"
+    },
+    {
+      "version": "20261021170242",
+      "name": "2360_discovery_buddy_launch_gate_flag"
+    },
+    {
+      "version": "20261021170248",
+      "name": "2411_layover_recommendation_rec_key_backfill"
+    },
+    {
+      "version": "20261021170254",
+      "name": "2570_intel_live_scope_admin_surface_flag"
+    },
+    {
+      "version": "20261021170300",
+      "name": "2600_event_start_transition_flag"
+    },
+    {
+      "version": "20261021170306",
+      "name": "2700_layover_certified_feasibility"
+    },
+    {
+      "version": "20261021170315",
+      "name": "2740_layover_presence_ladder_flag"
+    },
+    {
+      "version": "20261021170322",
+      "name": "2745_layover_recommendation_travel_provenance"
+    },
+    {
+      "version": "20261021170328",
+      "name": "2797_trip_commitment_recurrences"
+    },
+    {
+      "version": "20261021170337",
+      "name": "2798_trip_kernel_recurrence_family"
+    },
+    {
+      "version": "20261021170344",
+      "name": "2799_trip_snapshot_fold_recurrence_vocabulary"
+    },
+    {
+      "version": "20261021170349",
+      "name": "2801_wall_moments_flag"
+    },
+    {
+      "version": "20261021170356",
+      "name": "2802_telegraph_live_references_flag"
+    },
+    {
+      "version": "20261021170402",
+      "name": "2803_intel_safety_candidates_flag"
+    },
+    {
+      "version": "20261021170408",
+      "name": "2810_telegraph_message_kernel"
+    },
+    {
+      "version": "20261021170430",
+      "name": "2811_telegraph_message_side_tables"
+    },
+    {
+      "version": "20261021170443",
+      "name": "2812_telegraph_report_evidence"
+    },
+    {
+      "version": "20261021170452",
+      "name": "2813_telegraph_request_origin"
+    },
+    {
+      "version": "20261021170501",
+      "name": "2841_experience_session_flag"
+    },
+    {
+      "version": "20261021170508",
+      "name": "2850_discovery_live_rank_flag"
+    },
+    {
+      "version": "20261021170514",
+      "name": "2851_layover_live_intersection_flag"
+    },
+    {
+      "version": "20261021170520",
+      "name": "2870_profiles_verification_level_identity_vocabulary"
+    },
+    {
+      "version": "20261021170527",
+      "name": "2880_passport_stamps_place_vocabulary"
+    },
+    {
+      "version": "20261021170533",
+      "name": "2892_place_momentum"
+    },
+    {
+      "version": "20261021170554",
+      "name": "2893_rank_events_retire_writerless_surfaces"
+    },
+    {
+      "version": "20261021170601",
+      "name": "2901_rent_buddy_earnings_entries"
+    },
+    {
+      "version": "20261021170614",
+      "name": "2920_creator_attributions"
+    },
+    {
+      "version": "20261021170629",
+      "name": "2921_creator_earning_entries"
+    },
+    {
+      "version": "20261021170639",
+      "name": "2922_creator_attribution_flag"
+    },
+    {
+      "version": "20261021170647",
+      "name": "2930_creator_share_canonical_view"
+    },
+    {
+      "version": "20261021170654",
+      "name": "2940_trust_admin_actions_update_setting"
+    },
+    {
+      "version": "20261021170700",
+      "name": "2972_stamp_family_write_boundary"
+    },
+    {
+      "version": "20261021170710",
+      "name": "2973_security_definer_execute_boundary"
+    },
+    {
+      "version": "20261021170719",
+      "name": "2974_toggle_feature_flag_caller_guard"
+    },
+    {
+      "version": "20261021170728",
+      "name": "2975_highlights_permanent_lifetime"
+    },
+    {
+      "version": "20261021170735",
+      "name": "2977_layover_maturity_gate_flag"
+    },
+    {
+      "version": "20261021170741",
+      "name": "2981_layover_event_ingest_flag"
+    },
+    {
+      "version": "20261021170748",
+      "name": "2986_layover_sessions_fanout_indexes"
+    },
+    {
+      "version": "20261021170754",
+      "name": "2990_nearby_reachable_flag"
+    },
+    {
+      "version": "20261021170801",
+      "name": "2991_message_translations_confidence"
+    },
+    {
+      "version": "20261021170808",
+      "name": "2992_layover_decision_record_and_operational_tables"
+    },
+    {
+      "version": "20261021170827",
+      "name": "2993_highlight_command_boundary"
+    },
+    {
+      "version": "20261021170842",
+      "name": "2994_memory_relations_and_outbox_consumer"
+    },
+    {
+      "version": "20261021170855",
+      "name": "2999_trust_profiles_nullable_scores"
+    },
+    {
+      "version": "20261021170901",
+      "name": "3000_telegraph_unsend_authoritative"
+    },
+    {
+      "version": "20261021170909",
+      "name": "3001_highlight_kernel_admits_unhide"
+    },
+    {
+      "version": "20261021170916",
+      "name": "3002_intel_contribution_identity"
+    },
+    {
+      "version": "20261021170939",
+      "name": "3003_intel_identity_bridges"
+    },
+    {
+      "version": "20261021170948",
+      "name": "3004_sensing_presence_context_flag"
+    },
+    {
+      "version": "20261021170954",
+      "name": "3110_sensing_published_aggregates"
+    },
+    {
+      "version": "20261021171005",
+      "name": "3310_intel_consent_contributor_bridge"
+    },
+    {
+      "version": "20261021171014",
+      "name": "3311_intel_snapshot_input_provenance"
+    },
+    {
+      "version": "20261021171022",
+      "name": "3312_sensing_anon_contribution_features"
+    },
+    {
+      "version": "20261021171031",
+      "name": "3313_sensing_publication_flag"
+    },
+    {
+      "version": "20261021171041",
+      "name": "3314_memory_projection_claim_refs"
+    },
+    {
+      "version": "20261021171049",
+      "name": "3315_sensing_anon_surface_consent"
+    },
+    {
+      "version": "20261021171055",
+      "name": "3320_media_canonical_contract_constraints"
+    },
+    {
+      "version": "20261021171104",
+      "name": "3321_media_moderation_canonical_state"
+    },
+    {
+      "version": "20261021171112",
+      "name": "3338_media_processing_worker_flag"
+    },
+    {
+      "version": "20261021171122",
+      "name": "3340_media_tab_world_default_flag"
+    },
+    {
+      "version": "20261021171128",
+      "name": "3341_media_watch_context_overlay_flag"
+    },
+    {
+      "version": "20261021171134",
+      "name": "3342_media_watch_tap_to_play_flag"
+    },
+    {
+      "version": "20261021171143",
+      "name": "3343_media_watch_stage24_ranking_flag"
+    },
+    {
+      "version": "20261021171149",
+      "name": "3350_media_neighborhood_only_location_mode"
+    },
+    {
+      "version": "20261021171155",
+      "name": "3351_media_find_busier_flag"
+    },
+    {
+      "version": "20261021171201",
+      "name": "3352_media_perspective_vantage"
+    },
+    {
+      "version": "20261021171208",
+      "name": "3355_media_vision_provider_flag"
+    },
+    {
+      "version": "20261021171215",
+      "name": "3356_media_moderation_classifier_flag"
+    },
+    {
+      "version": "20261021171222",
+      "name": "3357_media_transcoder_flag"
+    },
+    {
+      "version": "20261021171227",
+      "name": "3358_media_captions_flag"
+    },
+    {
+      "version": "20261021171234",
+      "name": "3359_passport_postcard_cover_nullable"
+    },
+    {
+      "version": "20261021171243",
+      "name": "3360_intel_evidence_sealed_reference"
+    },
+    {
+      "version": "20261021171251",
+      "name": "3361_intel_evidence_sealed_reference_validate"
+    },
+    {
+      "version": "20261021171257",
+      "name": "3362_posts_client_column_grants"
+    },
+    {
+      "version": "20261021171305",
+      "name": "3363_place_copies_client_column_grants"
+    },
+    {
+      "version": "20261021171313",
+      "name": "3364_pulse_geo_tags_write_boundary"
+    },
+    {
+      "version": "20261021171321",
+      "name": "3365_post_media_write_boundary"
+    },
+    {
+      "version": "20261021171328",
+      "name": "3366_discovery_search_protected_zones_flag"
+    },
+    {
+      "version": "20261021171334",
+      "name": "3375_rank_events_schema_version_admitted"
+    },
+    {
+      "version": "20261021171346",
+      "name": "3376_discovery_recommendations_per_request"
+    },
+    {
+      "version": "20261021171400",
+      "name": "3380_content_trails_label_cap_serialised"
+    },
+    {
+      "version": "20261021171409",
+      "name": "3381_trail_lifecycle_transitions"
+    },
+    {
+      "version": "20261021171419",
+      "name": "3385_creator_share_ledger_includes_creator_entries"
+    },
+    {
+      "version": "20261021171427",
+      "name": "3386_creator_attribution_recommendation_link"
+    },
+    {
+      "version": "20261021171435",
+      "name": "3387_creator_ledger_integrity_and_audit"
+    },
+    {
+      "version": "20261021171454",
+      "name": "3390_discovery_rls_explicit_policies"
+    },
+    {
+      "version": "20261021171501",
+      "name": "3391_discovery_stop_condition_measurements"
+    },
+    {
+      "version": "20261021171508",
+      "name": "3395_discovery_dwell_telemetry_flag"
+    },
+    {
+      "version": "20261021171516",
+      "name": "3400_media_pending_upload_sweep_flag"
+    },
+    {
+      "version": "20261021171524",
+      "name": "3410_discovery_trend_snapshot_parity"
+    },
+    {
+      "version": "20261021171534",
+      "name": "3415_trail_proposal_serialised"
+    },
+    {
+      "version": "20261021171547",
+      "name": "3416_trail_relations_projection"
+    },
+    {
+      "version": "20261021171603",
+      "name": "3417_place_momentum_dismiss_excluded"
+    },
+    {
+      "version": "20261021171611",
+      "name": "3420_rank_events_outcome_receipts"
+    },
+    {
+      "version": "20261021171627",
+      "name": "3421_ranking_debug_samples_content_id_nullable"
+    },
+    {
+      "version": "20261021171633",
+      "name": "3422_tags_client_write_boundary"
+    },
+    {
+      "version": "20261021171643",
+      "name": "3435_place_momentum_feature_version"
+    },
+    {
+      "version": "20261021171651",
+      "name": "3436_trail_health_snapshot_provenance"
+    },
+    {
+      "version": "20261021171658",
+      "name": "3440_canonical_search_key_letter_fold"
+    },
+    {
+      "version": "20261021171707",
+      "name": "3441_trail_letter_fold_decompose_first"
+    },
+    {
+      "version": "20261021171717",
+      "name": "3450_discovery_surface_objectives_flag"
+    },
+    {
+      "version": "20261021171725",
+      "name": "3451_discovery_engagement_integrity_flag"
+    },
+    {
+      "version": "20261021171734",
+      "name": "3452_discovery_feature_families_flag"
+    },
+    {
+      "version": "20261021171741",
+      "name": "3453_discovery_intent_trip_terms_flags"
+    },
+    {
+      "version": "20261021171747",
+      "name": "3454_discovery_diversity_axes_flag"
+    },
+    {
+      "version": "20261021171754",
+      "name": "3455_discovery_for_you_pde_flag"
+    },
+    {
+      "version": "20261021171759",
+      "name": "3456_discovery_cache_a_ranked_flag"
+    },
+    {
+      "version": "20261021171807",
+      "name": "3460_discovery_search_protection_scope"
+    },
+    {
+      "version": "20261021171814",
+      "name": "3465_layover_consumer_flags"
+    },
+    {
+      "version": "20261021171819",
+      "name": "3466_layover_place_dwell"
+    },
+    {
+      "version": "20261021171829",
+      "name": "3467_cross_architecture_flags"
+    },
+    {
+      "version": "20261021171835",
+      "name": "3468_tag_permission_approval_required"
+    },
+    {
+      "version": "20261021171842",
+      "name": "3469_compass_graph_decay_flag"
+    },
+    {
+      "version": "20261021171850",
+      "name": "3470_discovery_stop_enforcement_flag"
+    },
+    {
+      "version": "20261021171857",
+      "name": "3475_discovery_trend_v2_flags"
+    },
+    {
+      "version": "20261021171903",
+      "name": "3476_discovery_trend_v2_store"
+    },
+    {
+      "version": "20261021171915",
+      "name": "3477_discovery_trend_v2_rebuild"
+    },
+    {
+      "version": "20261021171931",
+      "name": "3480_discovery_candidate_sources_flag"
+    },
+    {
+      "version": "20261021171937",
+      "name": "3481_discovery_exploration_inventory_flag"
+    },
+    {
+      "version": "20261021171944",
+      "name": "3482_discovery_cold_start_flag"
+    },
+    {
+      "version": "20261021171950",
+      "name": "3483_discovery_pipeline_stages_flags"
+    },
+    {
+      "version": "20261021172000",
+      "name": "3484_compass_city_confidence_provenance"
+    },
+    {
+      "version": "20261021172008",
+      "name": "3485_discovery_trail_exploration_flags"
+    },
+    {
+      "version": "20261021172016",
+      "name": "3486_trail_moderation_audit"
+    },
+    {
+      "version": "20261021172038",
+      "name": "3487_trail_member_exposures"
+    },
+    {
+      "version": "20261021172049",
+      "name": "3488_trail_content_suggestions"
+    },
+    {
+      "version": "20261021172100",
+      "name": "3490_discovery_serve_path_flags"
+    },
+    {
+      "version": "20261021172108",
+      "name": "3491_discovery_recommendations_output_kinds_serve_point"
+    },
+    {
+      "version": "20261021172115",
+      "name": "3495_place_cooccurrence_trail_projection"
+    },
+    {
+      "version": "20261021172126",
+      "name": "3496_discovery_w11x3_flags"
+    },
+    {
+      "version": "20261021172133",
+      "name": "3497_discovery_trend_post_convergence_stored"
+    },
+    {
+      "version": "20261021172143",
+      "name": "3500_discovery_surface_objective_rank_flags"
+    },
+    {
+      "version": "20261021172153",
+      "name": "3501_discovery_recommendations_retention"
+    },
+    {
+      "version": "20261021172204",
+      "name": "3502_highlights_permanent_visibility_owner_first"
+    },
+    {
+      "version": "20261021172211",
+      "name": "3503_client_sequence_privilege_boundary"
+    },
+    {
+      "version": "20261021172221",
+      "name": "3504_client_table_privilege_boundary"
+    },
+    {
+      "version": "20261021172232",
+      "name": "3505_scheduler_watermarks"
+    },
+    {
+      "version": "20261021172238",
+      "name": "3510_creator_ledger_erasure_policy_undecided"
+    },
+    {
+      "version": "20261021172252",
+      "name": "3513_layover_crowd_reports_flag"
+    },
+    {
+      "version": "20261021172259",
+      "name": "3520_user_stamps_client_column_grants"
+    },
+    {
+      "version": "20261021172307",
+      "name": "3530_rb_earnings_summary_nothing_collected"
+    },
+    {
+      "version": "20261021172315",
+      "name": "3560_creator_fatigue_increment_rpc"
+    },
+    {
+      "version": "20261021172328",
+      "name": "3561_compass_search_signal_log"
+    },
+    {
+      "version": "20261021172338",
+      "name": "3603_rb_earnings_summary_floor_commission"
+    },
+    {
+      "version": "20261021172346",
+      "name": "3620_layover_client_write_boundary"
+    },
+    {
+      "version": "20261021172358",
+      "name": "3621_layover_erasure_audit_pseudonym"
+    },
+    {
+      "version": "20261021172406",
+      "name": "3622_layover_post_session_pseudonymisation"
+    },
+    {
+      "version": "20261021172414",
+      "name": "3623_layover_snapshot_version_and_recommendation_snapshot"
+    },
+    {
+      "version": "20261021172424",
+      "name": "3624_layover_snapshot_compaction_flag"
+    },
+    {
+      "version": "20261021172431",
+      "name": "3632_layover_lifecycle_machine_flag"
+    },
+    {
+      "version": "20261021172436",
+      "name": "3633_layover_map_bands_flag"
+    },
+    {
+      "version": "20261021172445",
+      "name": "3640_layover_constraint_flags"
+    },
+    {
+      "version": "20261021172453",
+      "name": "3650_telegraph_unsend_blocked_reader_excluded"
+    },
+    {
+      "version": "20261021172502",
+      "name": "3651_nearby_proximity_observation_budget"
+    },
+    {
+      "version": "20261021172510",
+      "name": "3652_availability_signal_contract"
+    },
+    {
+      "version": "20261021172527",
+      "name": "3653_availability_client_reads_withheld"
+    },
+    {
+      "version": "20261021172536",
+      "name": "3654_telegraph_idempotent_send_and_sequence_resume"
+    },
+    {
+      "version": "20261021172542",
+      "name": "3655_telegraph_outbox_drain"
+    },
+    {
+      "version": "20261021172555",
+      "name": "3656_message_media_resumable_upload"
+    },
+    {
+      "version": "20261021172600",
+      "name": "3660_telegraph_dm_group_formation"
+    },
+    {
+      "version": "20261021172609",
+      "name": "3661_telegraph_group_controls"
+    },
+    {
+      "version": "20261021172618",
+      "name": "3662_telegraph_relationship_context_flag"
+    },
+    {
+      "version": "20261021172625",
+      "name": "3665_telegraph_forwarding_and_structured_schemas"
+    },
+    {
+      "version": "20261021172648",
+      "name": "3670_memory_deletion_dead_letters"
+    },
+    {
+      "version": "20261021172659",
+      "name": "3671_memory_resurfacing_preferences"
+    },
+    {
+      "version": "20261021172706",
+      "name": "3672_memory_item_visibility"
+    },
+    {
+      "version": "20261021172714",
+      "name": "3673_memory_corrections"
+    },
+    {
+      "version": "20261021172731",
+      "name": "3674_memory_graph_model"
+    },
+    {
+      "version": "20261021172754",
+      "name": "3675_memory_graph_backfill"
+    },
+    {
+      "version": "20261021172800",
+      "name": "3676_memory_graph_kernel"
+    },
+    {
+      "version": "20261021172807",
+      "name": "3677_highlight_lifecycle_events"
+    },
+    {
+      "version": "20261021172818",
+      "name": "3690_input_structured_values_and_previous_queries_flags"
+    },
+    {
+      "version": "20261021172825",
+      "name": "3691_input_telegraph_share_entity_and_paste_event_links_flags"
+    },
+    {
+      "version": "20261021172831",
+      "name": "3692_input_trip_actions_flag"
+    },
+    {
+      "version": "20261021172837",
+      "name": "3700_moderation_reports_resolver_columns_withheld"
+    },
+    {
+      "version": "20261021172845",
+      "name": "3701_map_telemetry_retention_30_days"
+    },
+    {
+      "version": "20261021172854",
+      "name": "3702_wall_telemetry_retention_30_days"
+    },
+    {
+      "version": "20261021172901",
+      "name": "3703_sensing_consent_grants"
+    },
+    {
+      "version": "20261021172910",
+      "name": "3704_compass_live_search_quota"
+    },
+    {
+      "version": "20261021172920",
+      "name": "3705_moderation_report_capture_and_action_link"
+    },
+    {
+      "version": "20261021172930",
+      "name": "3706_identity_verified_badge_flag"
+    },
+    {
+      "version": "20261021172936",
+      "name": "3720_trip_plan_privacy_scope_rls"
+    },
+    {
+      "version": "20261021172944",
+      "name": "3725_discovery_trend_post_owner_controls"
+    },
+    {
+      "version": "20261021172953",
+      "name": "3726_discovery_trend_post_latest_correction"
+    },
+    {
+      "version": "20261021173001",
+      "name": "3727_trip_plan_item_audience"
+    },
+    {
+      "version": "20261021173016",
+      "name": "3740_client_grant_excess_boundary"
+    },
+    {
+      "version": "20261021173024",
+      "name": "3741_trip_presence_current_security_invoker"
+    },
+    {
+      "version": "20261021173034",
+      "name": "3742_profiles_authority_columns_server_only"
+    },
+    {
+      "version": "20261021173046",
+      "name": "3743_telegraph_device_registry_revocation_links"
+    },
+    {
+      "version": "20261021173055",
+      "name": "3748_telegraph_ride_proposal_identity_unique"
+    },
+    {
+      "version": "20261021173103",
+      "name": "3753_location_share_purpose"
+    },
+    {
+      "version": "20261021173114",
+      "name": "3760_telegraph_thread_notification_policy"
+    },
+    {
+      "version": "20261021173122",
+      "name": "3761_telegraph_diagnostics_durable_audit"
+    },
+    {
+      "version": "20261021173131",
+      "name": "3762_profiles_open_to_meet_client_read_withheld"
+    },
+    {
+      "version": "20261021173139",
+      "name": "3763_trip_membership_thread_atomic"
+    },
+    {
+      "version": "20261021173146",
+      "name": "3768_trips_current_stage_and_home_timezone"
+    },
+    {
+      "version": "20261021173155",
+      "name": "3769_trip_events_home_timezone_minimised"
+    },
+    {
+      "version": "20261021173206",
+      "name": "3770_trip_hard_delete_thread_guard"
+    },
+    {
+      "version": "20261021173216",
+      "name": "3771_notification_devices_ios_time_sensitive_capable"
+    },
+    {
+      "version": "20261021173222",
+      "name": "3780_input_outcome_learning"
+    },
+    {
+      "version": "20261021173235",
+      "name": "3781_input_telemetry_selection_reversed"
+    },
+    {
+      "version": "20261021173243",
+      "name": "3782_input_memory_context_consent"
+    },
+    {
+      "version": "20261021173251",
+      "name": "3783_input_outcome_task_aggregate"
+    },
+    {
+      "version": "20261021173301",
+      "name": "3784_layover_ranking_mode_flag"
+    },
+    {
+      "version": "20261021173308",
+      "name": "3785_layover_map_budget_chips_flag"
+    },
+    {
+      "version": "20261021173315",
+      "name": "3786_layover_crew_abort_notify_flag"
+    },
+    {
+      "version": "20261021173322",
+      "name": "3792_layover_certified_verdict_admits_entry_unverified"
+    },
+    {
+      "version": "20261021173328",
+      "name": "3800_passport_place_stamps"
+    },
+    {
+      "version": "20261021173339",
+      "name": "3801_posts_release_timing_columns_withheld"
+    },
+    {
+      "version": "20261021173346",
+      "name": "3802_memory_narrative_ai_consent"
+    },
+    {
+      "version": "20261021173354",
+      "name": "3803_memory_type"
+    },
+    {
+      "version": "20261021173401",
+      "name": "3804_memory_place_occurrence_name"
+    },
+    {
+      "version": "20261021173410",
+      "name": "3813_memories_client_privileges_revoked"
+    },
+    {
+      "version": "20261021173417",
+      "name": "3814_memory_social_client_privileges_revoked"
+    },
+    {
+      "version": "20261021173426",
+      "name": "3820_rent_buddy_bookings_write_boundary"
+    },
+    {
+      "version": "20261021173436",
+      "name": "3821_payment_ledger"
+    },
+    {
+      "version": "20261021173526",
+      "name": "3822_payment_posting_and_balances"
+    },
+    {
+      "version": "20261021173538",
+      "name": "3823_payment_attribution_and_scoped_reads"
+    },
+    {
+      "version": "20261021173557",
+      "name": "3825_telegraph_message_link_previews"
+    },
+    {
+      "version": "20261021173610",
+      "name": "3900_layover_presence"
+    },
+    {
+      "version": "20261021173622",
+      "name": "3930_identity_verifications_provider_mode"
+    },
+    {
+      "version": "20261021173629",
+      "name": "3931_rent_buddy_payments"
+    },
+    {
+      "version": "20261021173639",
+      "name": "3932_retire_rent_buddy_kyc_override"
+    },
+    {
+      "version": "20261021173648",
+      "name": "3933_appeal_target_trust_restriction"
+    },
+    {
+      "version": "20261021173657",
+      "name": "3970_trip_private_anchor_shares"
+    },
+    {
+      "version": "20261021173706",
+      "name": "3971_trip_routes_api_spend_gate"
+    },
+    {
+      "version": "20261021173718",
+      "name": "3972_trip_private_anchor_rls_and_grant_lifecycle"
+    },
+    {
+      "version": "20261021173729",
+      "name": "3973_trip_routes_api_user_trip_shares"
+    },
+    {
+      "version": "20261021173742",
+      "name": "3975_trail_proposal_daily_allowance"
+    },
+    {
+      "version": "20261021173750",
+      "name": "3976_trip_events_private_place_minimised"
+    },
+    {
+      "version": "20261021173807",
+      "name": "3977_trail_review_before_visible"
+    },
+    {
+      "version": "20261021173824",
+      "name": "3978_route_stops_private_plan_item_door"
+    },
+    {
+      "version": "20261021173836",
+      "name": "3979_trip_kernel_admin_restore_participant_reissue"
+    },
+    {
+      "version": "20261021173843",
+      "name": "3980_media_derivative_jobs"
+    },
+    {
+      "version": "20261021173903",
+      "name": "3981_media_image_understanding_artifacts"
+    },
+    {
+      "version": "20261021173918",
+      "name": "3982_media_visual_index"
+    },
+    {
+      "version": "20261021173944",
+      "name": "3983_media_caption_manifest"
+    },
+    {
+      "version": "20261021173959",
+      "name": "3986_media_synthetic_dubbing"
+    },
+    {
+      "version": "20261021174016",
+      "name": "3987_media_caption_translation"
+    },
+    {
+      "version": "20261021174031",
+      "name": "3988_discovery_trend_protected_contributions"
+    },
+    {
+      "version": "20261021174039",
+      "name": "3989_creator_attribution_scan_cursor"
+    },
+    {
+      "version": "20261021174046",
+      "name": "3990_memory_snapshots"
+    },
+    {
+      "version": "20261021174108",
+      "name": "3991_memory_video_segments"
+    },
+    {
+      "version": "20261021174128",
+      "name": "3992_memory_import_batches"
+    },
+    {
+      "version": "20261021174145",
+      "name": "3993_owner_resurfacing_policy"
+    },
+    {
+      "version": "20261021174209",
+      "name": "3994_reported_review_audited_removal"
+    },
+    {
+      "version": "20261021174218",
+      "name": "3995_media_caption_translation_retained_outputs"
+    },
+    {
+      "version": "20261021174236",
+      "name": "3996_layover_crew_location_grants"
+    },
+    {
+      "version": "20261021174252",
+      "name": "3997_memory_visibility_policies_and_shared_experiences"
+    },
+    {
+      "version": "20261021174316",
+      "name": "3998_telegraph_conversation_snapshots"
+    },
+    {
+      "version": "20261021174333",
+      "name": "3999_memory_items_source_post"
+    },
+    {
+      "version": "20261021174346",
+      "name": "3901_telegraph_safety_notification_once_per_member"
+    },
+    {
+      "version": "20261021174354",
+      "name": "3902_place_best_of_updated_at_index"
+    },
+    {
+      "version": "20261021174400",
+      "name": "3903_project_user_memory_block_check_of_record"
+    },
+    {
+      "version": "20261021174407",
+      "name": "3904_memory_public_feed_block_check_of_record"
+    },
+    {
+      "version": "20261021174415",
+      "name": "3905_post_media_public_select_block_check_of_record"
+    },
+    {
+      "version": "20261021174427",
+      "name": "3906_event_waitlist_seat_under_event_lock"
+    },
+    {
+      "version": "20261021174445",
+      "name": "3826_trip_kernel_flight_segments"
+    },
+    {
+      "version": "20261021174455",
+      "name": "3827_layover_sessions_flight_connection"
+    },
+    {
+      "version": "20261021174505",
+      "name": "3828_layover_sessions_active_snapshot"
+    },
+    {
+      "version": "20261021174517",
+      "name": "3846_layover_compass_assistant_flag"
+    },
+    {
+      "version": "20261021174528",
+      "name": "3856_layover_routes_session_budget"
+    },
+    {
+      "version": "20261021174539",
+      "name": "3871_layover_recommendation_status_and_supersession"
+    },
+    {
+      "version": "20261021174551",
+      "name": "3872_layover_crew_plans"
+    },
+    {
+      "version": "20261021174607",
+      "name": "3873_layover_active_snapshot_compare_and_swap"
+    },
+    {
+      "version": "20261021174616",
+      "name": "3874_airport_curation_provenance_ttl"
+    },
+    {
+      "version": "20261021174634",
+      "name": "3875_layover_discovery_consents"
+    },
+    {
+      "version": "20261021174648",
+      "name": "3880_airport_time_band_calibration"
+    },
+    {
+      "version": "20261021174704",
+      "name": "3881_airport_sourced_timing"
+    },
+    {
+      "version": "20261021174711",
+      "name": "3885_layover_live_signals_flag"
+    },
+    {
+      "version": "20261021174718",
+      "name": "3890_layover_service_write_audit"
+    },
+    {
+      "version": "20261021174733",
+      "name": "3893_layover_safe_return_links"
+    },
+    {
+      "version": "20261021174750",
+      "name": "3894_layover_buddy_booking_links"
+    },
+    {
+      "version": "20261021174806",
+      "name": "3895_layover_route_subject_index"
+    },
+    {
+      "version": "20261021174819",
+      "name": "3896_layover_certified_computations_immutable"
+    },
+    {
+      "version": "20261021174827",
+      "name": "3897_layover_compass_replan_actions"
+    },
+    {
+      "version": "20261021174840",
+      "name": "3898_layover_experience_plan_versions"
+    },
+    {
+      "version": "20261021174853",
+      "name": "3899_layover_objective_evidence"
+    },
+    {
+      "version": "20261021174903",
+      "name": "3907_layover_activity_commitment"
+    },
+    {
+      "version": "20261021174913",
+      "name": "3908_layover_route_fanout"
+    },
+    {
+      "version": "20261024054251",
+      "name": "3950_layover_checkpoint_expiry_flag"
+    },
+    {
+      "version": "20261024081249",
+      "name": "3911_memory_kernel_create_participants_and_canonical_fields"
     }
   ]
 }

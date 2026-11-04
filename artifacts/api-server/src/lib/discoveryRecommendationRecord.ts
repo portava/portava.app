@@ -513,7 +513,7 @@ export const RANK_EVENTS_COLUMN_CLASSES: Readonly<Record<string, TelemetryFieldC
   recommendation_id: "exposure_token",
   schema_version:    "record_metadata",
   privacy_class:     "record_metadata",
-  retention_tier:    "record_metadata",
+  retention_tier:    "record_metadata", outcome_client_event_id: "record_metadata", // 3420 (rank_events_outcome_receipts): a random UUID the client mints once per outcome action and re-sends on retry, purely an idempotency key; no person or content, the same role as `id` (classified 2026-10-24, lead ruling)
 };
 
 /**

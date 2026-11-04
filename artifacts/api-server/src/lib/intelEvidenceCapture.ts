@@ -360,8 +360,8 @@ export async function attachMediaEvidence(
 // nothing else: resolveEvidenceMediaForContributor (the contributor's own
 // object, through the byte gate) and collectOwnEvidenceObjectKeys (account
 // deletion's search for the bytes). A third, rekeyLegacyEvidenceReferences,
-// reads only pre-seal plaintext rows, in order to seal them. No route calls
-// any of the three.
+// read only pre-seal plaintext rows, to seal them (retired with 3361, below).
+// No route calls either of the two that remain.
 //
 // THE RESIDUAL, STATED. The application holds the key, so the application can
 // open any reference. That is the same class of residual 3002 records for its
@@ -674,84 +674,84 @@ export async function collectOwnEvidenceObjectKeys(
   return { keys, unopenable };
 }
 
-// ── Reader 3: the remediation for rows written before the seal ──────────────
-
-/** The SECURITY DEFINER function migration 3360 adds and 3361 drops. */
-export const EVIDENCE_REKEY_RPC = "intel_evidence_rekey_reference";
-
-export interface LegacyEvidenceRekeyOutcome {
-  apply: boolean;
-  /** photo/video rows whose reference is not sealed. */
-  legacy: number;
-  /** Re-sealed by this run (always 0 on a dry run). */
-  rekeyed: number;
-  /** Not a key in our own storage, so nothing can be sealed. Needs a person. */
-  refused: number;
-  /** The RPC failed or found the row changed underneath it. Safe to re-run. */
-  failed: number;
-}
-
-/**
- * Re-seal every photo/video evidence row that still holds a plaintext key.
- *
- * DRY RUN unless `apply` is true: it then only counts. It never returns or logs
- * a reference, since every legacy value names an account. It READS EVERYTHING
- * FIRST and then writes, because each re-sealed row leaves the filtered set and
- * offset paging would otherwise skip rows. Each write goes through 3360's
- * function, which changes exactly one row, from exactly the value read, to a
- * sealed value. Throws before any write when the key is unavailable.
- *
- * NOT RUN against any database by the lane that wrote it.
- */
-export async function rekeyLegacyEvidenceReferences(
-  sc: any,
-  opts: { apply: boolean; pageSize?: number },
-): Promise<LegacyEvidenceRekeyOutcome> {
-  const pageSize = Math.max(1, Math.min(opts.pageSize ?? 500, 900));
-  const legacyRows: Array<{ id: string; observation_id: string; reference: string }> = [];
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await sc
-      .from("intel_evidence")
-      .select("id, observation_id, reference")
-      .in("evidence_kind", ["photo", "video"])
-      .not("reference", "is", null)
-      .not("reference", "like", `${EVIDENCE_REFERENCE_PREFIX}%`)
-      .order("id", { ascending: true })
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(`legacy evidence read failed: ${String(error.message ?? error)}`);
-    const rows = (data as any[]) ?? [];
-    for (const r of rows) {
-      if (typeof r?.reference === "string" && !isSealedEvidenceReference(r.reference)) {
-        legacyRows.push({ id: String(r.id), observation_id: String(r.observation_id ?? ""), reference: r.reference });
-      }
-    }
-    if (rows.length < pageSize) break;
-  }
-
-  const outcome: LegacyEvidenceRekeyOutcome = { apply: opts.apply, legacy: legacyRows.length, rekeyed: 0, refused: 0, failed: 0 };
-  if (!opts.apply || legacyRows.length === 0) return outcome;
-  if (!evidenceReferenceKeys()) {
-    throw new Error("INTEL_EVIDENCE_REFERENCE_KEY is unset or shorter than 32 characters; nothing was re-sealed");
-  }
-
-  for (const row of legacyRows) {
-    const ref = appStorageUrlInfo(row.reference);
-    const sealed = ref ? sealEvidenceReference(`${ref.bucket}/${ref.path}`, row.observation_id) : null;
-    if (!sealed || !sealed.ok) {
-      outcome.refused += 1;
-      continue;
-    }
-    const { data, error } = await sc.rpc(EVIDENCE_REKEY_RPC, {
-      p_evidence_id: row.id,
-      p_legacy_reference: row.reference,
-      p_sealed_reference: sealed.reference,
-    });
-    if (error || data !== true) outcome.failed += 1;
-    else outcome.rekeyed += 1;
-  }
-  return outcome;
-}
-
+// ── Reader 3, RETIRED 2026-10-24 with 3361 ──────────────────────────────────
+//
+// rekeyLegacyEvidenceReferences (and its operator CLI, src/scripts/rekeyIntelEvidenceReferences.ts) re-sealed
+// photo/video evidence rows written before 3360's seal, through 3360's SECURITY DEFINER function
+// intel_evidence_rekey_reference. 3361 then validated the constraint and DROPPED that function by design, and
+// both are applied to production (ledger, 2026-10-21): DV-70's catalog check records the function absent on
+// production and on portava-ci. The caller could therefore only ever fail, so it and the CLI were removed at
+// the 2026-10-24 capability refresh (lead ruling) rather than ledgered as a dead name. The SQL itself is still
+// exercised against a chain replay by src/test/db/intelEvidenceSealedReference.db.test.ts.
+//
+// The comment lines below are padding: documents cite this file by line, so the removal keeps every later
+// line where it was.
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
 // ═══════════════════════════════════════════════════════════════════════════
 // GATE 2b — WHOSE WORDS MAY KEEP A PHOTO (census-media §39; census-map §45.5)
 // ═══════════════════════════════════════════════════════════════════════════
