@@ -55,6 +55,7 @@ import { getMyProfile } from '../../src/services/profile';
 import { useSession } from '../../src/context/SessionContext';
 import { isSupabaseConfigured } from '../../src/lib/supabase';
 import { PortavaLogoMark, PortavaWordmark } from '../../src/components/brand/PortavaLogo';
+import { postAuthDestination } from '../../src/lib/postAuthRedirect.ts';
 import {
   LOGIN_BACKGROUNDS,
   BG_DISPLAY_DURATION_MS,
@@ -199,7 +200,7 @@ export default function SignIn() {
   // ── Redirect once authenticated (suppressed during any in-flight SSO request
   //    so the handler can make onboarding/tabs routing decisions itself) ───────
   useEffect(() => {
-    if (isAuthed && !busy && !oauthBusy) router.replace('/(tabs)');
+    if (isAuthed && !busy && !oauthBusy) router.replace(postAuthDestination() as any);
   }, [isAuthed, busy, oauthBusy]);
 
   // Ask whether sign-up is open each time the sign-up form is shown.
@@ -299,7 +300,7 @@ export default function SignIn() {
       } catch {
         // Non-fatal — if the profile check fails, proceed to tabs normally.
       }
-      router.replace('/(tabs)');
+      router.replace(postAuthDestination() as any);
     } catch (e: any) {
       setError(e?.message ?? 'Something went wrong.');
     } finally {
@@ -374,7 +375,7 @@ export default function SignIn() {
     } catch {
       // Non-fatal: if the check fails, proceed to tabs normally.
     }
-    router.replace('/(tabs)');
+    router.replace(postAuthDestination() as any);
   }
 
   async function handleAppleSignIn() {

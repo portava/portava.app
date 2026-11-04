@@ -15,6 +15,7 @@ import { DatePickerField } from '../../src/components/DatePickerField';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 import { bumpSocialVersion } from '../../src/hooks/useSocialVersion'; // for "Continue anyway" path
 import { useUsernameAvailability } from '../../src/hooks/useUsernameAvailability';
+import { postAuthDestination } from '../../src/lib/postAuthRedirect.ts';
 import {
   sanitizeUsername,
   USERNAME_MAX_LENGTH,
@@ -118,7 +119,7 @@ export default function Onboarding() {
       if (res.ok && res.data) {
         const p = res.data;
         if (p.displayName && p.username) {
-          router.replace('/(tabs)' as any);
+          router.replace(postAuthDestination() as any);
           return;
         }
         if (p.displayName) setDisplayName(p.displayName);
@@ -146,7 +147,7 @@ export default function Onboarding() {
       patch,
       onComplete: () => {
         setSaving(false);
-        router.replace('/(tabs)' as any);
+        router.replace(postAuthDestination() as any);
       },
       onError: (result) => {
         setSaving(false);
@@ -156,7 +157,7 @@ export default function Onboarding() {
           alert.message,
           [
             // "Continue anyway" also bumps so mounted hooks pick up @Portava.
-            { text: 'Continue anyway', onPress: () => { bumpSocialVersion(); router.replace('/(tabs)' as any); } },
+            { text: 'Continue anyway', onPress: () => { bumpSocialVersion(); router.replace(postAuthDestination() as any); } },
             { text: 'Retry', onPress: handleFinish },
           ],
         );

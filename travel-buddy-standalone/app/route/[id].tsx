@@ -94,8 +94,22 @@ export default function ActiveRouteScreen() {
     plan: fullPlan, loading, error,
     markArrived, skipStop,
     completedCount, totalCount, progressFraction, nextStop,
-    memberProgress,
+    memberProgress, refreshMembers,
   } = useRoutePlan({ planId: id ?? null });
+
+  // Arrived / skip: a failed save used to be an unhandled rejection, so the
+  // stop just stayed as it was with no word why.
+  const setStopStatus = useCallback(async (stopId: string, status: 'arrived' | 'skipped') => {
+    try {
+      if (status === 'arrived') await markArrived(stopId);
+      else await skipStop(stopId);
+    } catch (e) {
+      Alert.alert(
+        status === 'arrived' ? 'Could not mark arrived' : 'Could not skip stop',
+        (e as Error)?.message || 'Please try again.',
+      );
+    }
+  }, [markArrived, skipStop]);
 
   const { userId: currentUserId } = useSession();
   const navBarScrollHandler = useNavBarScrollHandler();
@@ -197,7 +211,7 @@ export default function ActiveRouteScreen() {
             `Skip "${nextStop.title}"?`,
             [
               { text: 'Cancel', style: 'cancel' },
-              { text: 'Skip', style: 'destructive', onPress: () => { void skipStop(nextStop.id); } },
+              { text: 'Skip', style: 'destructive', onPress: () => { void setStopStatus(nextStop.id, 'skipped'); } },
             ],
           );
         }
@@ -214,7 +228,7 @@ export default function ActiveRouteScreen() {
       default:
         Alert.alert('Route tip', label);
     }
-  }, [nextStop, skipStop]);
+  }, [nextStop, setStopStatus]);
 
   // Join/leave for trip members who are not the plan owner
   const handleJoinRoute = useCallback(async () => {
@@ -222,12 +236,15 @@ export default function ActiveRouteScreen() {
     setMembershipLoading(true);
     try {
       await joinRoutePlan(id);
+      // The button reads membership from the member list; re-read it so the
+      // button turns into "Leave Route" now, not at the next poll.
+      await refreshMembers();
     } catch (e) {
       Alert.alert('Could not join route', (e as Error).message ?? 'Please try again.');
     } finally {
       setMembershipLoading(false);
     }
-  }, [id]);
+  }, [id, refreshMembers]);
 
   const handleLeaveRoute = useCallback(async () => {
     if (!id) return;
@@ -240,6 +257,7 @@ export default function ActiveRouteScreen() {
           setMembershipLoading(true);
           try {
             await leaveRoutePlan(id);
+            await refreshMembers();
           } catch (e) {
             Alert.alert('Could not leave route', (e as Error).message ?? 'Please try again.');
           } finally {
@@ -248,7 +266,7 @@ export default function ActiveRouteScreen() {
         },
       },
     ]);
-  }, [id]);
+  }, [id, refreshMembers]);
 
   const [startingRoute, setStartingRoute] = useState(false);
 
@@ -518,10 +536,10 @@ export default function ActiveRouteScreen() {
                   </View>
                   {!isDone && !isSkipped && routeStarted ? (
                     <View style={styles.stopCardActions}>
-                      <Pressable style={styles.arrivedBtn} onPress={() => markArrived(stop.id)}>
+                      <Pressable style={styles.arrivedBtn} onPress={() => setStopStatus(stop.id, 'arrived')}>
                         <Text style={styles.arrivedBtnText}>Arrived</Text>
                       </Pressable>
-                      <Pressable style={styles.skipBtn} onPress={() => skipStop(stop.id)} hitSlop={8}>
+                      <Pressable style={styles.skipBtn} onPress={() => setStopStatus(stop.id, 'skipped')} hitSlop={8} accessibilityLabel="Skip stop">
                         <SkipForward size={13} color={color.mute} />
                       </Pressable>
                     </View>

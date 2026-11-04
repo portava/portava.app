@@ -692,7 +692,7 @@ export async function reactivateAccount(): Promise<ProfileResult<{ reactivated: 
   }
 }
 
-export async function requestAccountDeletion(): Promise<ProfileResult<{ requested: boolean }>> {
+export async function requestAccountDeletion(): Promise<ProfileResult<{ deletionScheduled: boolean; scheduledAt: string | null }>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
   const token = await freshToken();
   if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
@@ -700,6 +700,58 @@ export async function requestAccountDeletion(): Promise<ProfileResult<{ requeste
   try {
     const res = await fetch(`${apiBase()}/api/me/delete-request`, {
       method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message };
+    }
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+export interface DeletionRequestState {
+  pending: boolean;
+  scheduledAt: string | null;
+}
+
+/** Whether this account has a pending deletion request, and when it runs. */
+export async function getAccountDeletionRequest(): Promise<ProfileResult<DeletionRequestState>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/me/delete-request`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message };
+    }
+    const body = (await res.json()) as any;
+    return {
+      ok: true,
+      data: { pending: body?.pending === true, scheduledAt: typeof body?.scheduledAt === 'string' ? body.scheduledAt : null },
+    };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+/** Cancels a pending deletion request; the server makes the account active again. */
+export async function cancelAccountDeletion(): Promise<ProfileResult<{ cancelled: boolean }>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+
+  try {
+    const res = await fetch(`${apiBase()}/api/me/delete-request`, {
+      method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) {
