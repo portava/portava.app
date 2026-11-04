@@ -2871,7 +2871,7 @@ component tests in this repository; no database was read or written and no flag 
 TRUST-F13 is "read reviews for a place / trip / user, and vote on a place". The catalogue listed
 the five routes as having no client caller; measured at this tree that is **stale** — the reviews
 list already renders on place, trip, event and gem detail
-(`travel-buddy-standalone/app/trip/[id].tsx:856#<ReviewsSection`), the Worth-It vote row on place
+(`travel-buddy-standalone/app/trip/[id].tsx:864#<ReviewsSection`), the Worth-It vote row on place
 and gem detail (`travel-buddy-standalone/app/place/[id].tsx:426#<WorthItVoteRow entityId={canonicalPlace.id} entityType="place" />`),
 and host reviews on a profile's About tab
 (`travel-buddy-standalone/app/u/[username].tsx:1185#<HostReviewsSummary userId={profile.id} />`).

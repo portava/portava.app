@@ -64,6 +64,11 @@ export default function EditTrip() {
   const [placeOpen, setPlaceOpen] = useState(false);
   // Whether non-members can see the cover image (only meaningful for private/buddies trips).
   const [showHeaderPublicly, setShowHeaderPublicly] = useState(false);
+  // Owner-only: nothing in the app could switch these on, so both kept their
+  // `false` defaults and every "Request to join" was refused by the server.
+  const [isOwner, setIsOwner] = useState(false);
+  const [allowJoinRequests, setAllowJoinRequests] = useState(false);
+  const [showInDiscovery, setShowInDiscovery] = useState(false);
 
   // ── Multi-city ────────────────────────────────────────────────────────────
   const [multiCity, setMultiCity] = useState(false);
@@ -108,6 +113,9 @@ export default function EditTrip() {
       setCoverUrl(tr.coverUrl ?? null);
       setCoverMediaType(tr.coverMediaType ?? null);
       setShowHeaderPublicly(tr.showHeaderPublicly ?? false);
+      setIsOwner(tr.ownerId === userId);
+      setAllowJoinRequests(tr.allowJoinRequests);
+      setShowInDiscovery(tr.showInDiscovery);
       setLoading(false);
     }).catch(() => { setLoadError('Could not load trip.'); setLoading(false); });
   }, [id, live, userId]);
@@ -223,6 +231,9 @@ export default function EditTrip() {
         coverImageHeight: coverImageDims?.height ?? null,
         // Public trips always show header; private/buddies respect the toggle.
         showHeaderPublicly: visibility === 'public' ? true : showHeaderPublicly,
+        // Sent only by the owner — they are the owner's switches (a co-host
+        // reaching this screen does not see them).
+        ...(isOwner ? { allowJoinRequests, showInDiscovery } : {}),
       });
       if (!updated) { setError('Could not save changes. Try again.'); return; }
       router.replace(`/trip/${id}` as any);
@@ -232,7 +243,7 @@ export default function EditTrip() {
       setBusy(false);
       saveLock.current = false;
     }
-  }, [title, place, destBinding, live, id, startDate, endDate, visibility, tripNotes, coverUrl, coverMediaType, showHeaderPublicly]);
+  }, [title, place, destBinding, live, id, startDate, endDate, visibility, tripNotes, coverUrl, coverMediaType, coverImageDims, showHeaderPublicly, isOwner, allowJoinRequests, showInDiscovery]);
 
   if (!live) {
     return (
@@ -459,6 +470,45 @@ export default function EditTrip() {
               accessibilityLabel="Show cover image to non-members"
             />
           </View>
+        )}
+
+        {isOwner && (
+          <>
+            <View style={styles.toggleRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.toggleLabel}>Let people ask to join</Text>
+                <Text style={styles.toggleSub}>
+                  Travelers who find this trip can send a join request. You approve or decline each one.
+                </Text>
+              </View>
+              <Switch
+                value={allowJoinRequests}
+                onValueChange={setAllowJoinRequests}
+                trackColor={{ true: color.signal, false: color.haze }}
+                thumbColor={color.paperRaised}
+                accessibilityLabel="Let people ask to join"
+              />
+            </View>
+            {/* Discovery lists public trips only (the server requires
+                visibility = public as well), so the switch is offered there. */}
+            {visibility === 'public' && (
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.toggleLabel}>Show this trip in discovery</Text>
+                  <Text style={styles.toggleSub}>
+                    Lets other travelers come across this trip when they browse and search.
+                  </Text>
+                </View>
+                <Switch
+                  value={showInDiscovery}
+                  onValueChange={setShowInDiscovery}
+                  trackColor={{ true: color.signal, false: color.haze }}
+                  thumbColor={color.paperRaised}
+                  accessibilityLabel="Show this trip in discovery"
+                />
+              </View>
+            )}
+          </>
         )}
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}

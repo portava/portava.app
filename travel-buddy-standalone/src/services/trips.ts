@@ -303,7 +303,10 @@ export async function createTrip(input: CreateTripInput): Promise<TripRow | null
   return mapTrip(data);
 }
 
-export async function updateTrip(id: string, patch: Partial<CreateTripInput & { progress: number }>): Promise<TripRow | null> {
+// allowJoinRequests / showInDiscovery: PATCH /trips/:tripId has always taken
+// them, but nothing sent them, so both stayed at their `false` defaults and a
+// "Request to join" on any trip was refused ("does not accept join requests").
+export async function updateTrip(id: string, patch: Partial<CreateTripInput & { progress: number; allowJoinRequests: boolean; showInDiscovery: boolean }>): Promise<TripRow | null> {
   const token = await freshToken();
   if (!token) return null;
   const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -322,6 +325,8 @@ export async function updateTrip(id: string, patch: Partial<CreateTripInput & { 
   if (patch.tripNotes !== undefined) body.tripNotes = patch.tripNotes;
   if (patch.progress !== undefined) body.progress = patch.progress;
   if (patch.showHeaderPublicly !== undefined) body.showHeaderPublicly = patch.showHeaderPublicly;
+  if (patch.allowJoinRequests !== undefined) body.allowJoinRequests = patch.allowJoinRequests;
+  if (patch.showInDiscovery !== undefined) body.showInDiscovery = patch.showInDiscovery;
   const res = await fetch(`${apiBase}/api/trips/${id}`, {
     method: 'PATCH',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },

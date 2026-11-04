@@ -8474,7 +8474,7 @@ was written to any hosted database. Paths are repository-relative, as in §41.
    outcomes, and the sheet tickets its searches
    (`travel-buddy-standalone/src/components/layover/LayoverModeSheet.tsx:142#if (ticket !== searchTicket.current) return;`).
 4. **A layover started from a trip was not linked to it** (L267).
-   `travel-buddy-standalone/app/trip/[id].tsx:869#tripId={trip.id}`. Detection from the trip's segments
+   `travel-buddy-standalone/app/trip/[id].tsx:877#tripId={trip.id}`. Detection from the trip's segments
    (L169) is still unbuilt.
 5. **The crew card spun forever offline** (L294). `getLayoverCrew` had no `try`, so the rejection escaped
    a floated `refresh()`. The card now says "could not be loaded" with a retry, and only the newest of

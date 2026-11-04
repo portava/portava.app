@@ -6529,7 +6529,7 @@ faked network), not production.
 6. **The owner's failed read became the empty-state invitation** (post a Highlight).
    - The Passport dropped the hook's `unreadable` flag. Its Travel Highlights strip drew "Share travel moments as highlights" over Highlights the owner had posted.
    - The strip now says it could not load them and offers Try again (`travel-buddy-standalone/src/components/passport/PassportHighlightsStrip.tsx:126#passport-highlights-unreadable`).
-   - The Passport is wired line-neutrally (`travel-buddy-standalone/app/(tabs)/passport.tsx:296#highlightsUnreadable`).
+   - The Passport is wired line-neutrally (`travel-buddy-standalone/app/(tabs)/passport.tsx:300#highlightsUnreadable`).
 7. **A deleted or moderator-removed Story could be resurrected as a Highlight.**
    - `POST /stories/:id/save-to-highlight` selected `state` and never read it.
    - It now answers `not_found` before any write. The fix is one line, and line-neutral (`artifacts/api-server/src/routes/stories.ts:878#state === "deleted"`).

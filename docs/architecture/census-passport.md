@@ -180,7 +180,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Surface | V | Evidence |
 | --- | --- | --- | --- |
-| P2 | Passport Home | C | `travel-buddy-standalone/app/(tabs)/passport.tsx` — identity card (`:723#<PassportIdentityCard`), stats row, quick links (`:52#PassportQuickLinks`), home previews (`:53#PassportHomePreviews`). *(Corrected 2026-09-27, verdict unmoved: the path is spelled out so it cannot resolve to the repo-root mock; the identity card moved from 719 to 723, and 52 and 53 still hold the two imports.)* |
+| P2 | Passport Home | C | `travel-buddy-standalone/app/(tabs)/passport.tsx` — identity card (`:727#<PassportIdentityCard`), stats row, quick links (`:52#PassportQuickLinks`), home previews (`:53#PassportHomePreviews`). *(Corrected 2026-09-27, verdict unmoved: the path is spelled out so it cannot resolve to the repo-root mock; the identity card moved from 719 to 723, and 52 and 53 still hold the two imports.)* |
 | P3 | Stamps | C | `services/passport/UnifiedStampService.ts` + `src/components/passport/PassportStampCollection.tsx`, `src/components/stamps/StampDetailModal.tsx`. |
 | P4 | Journeys | C | `services/passport/PassportJourneyService.ts`; `src/features/passport/JourneysScreen.tsx`; route `app/passport/journeys.tsx`. |
 | P5 | Memories | C | `services/passport/PassportMemoryService.ts`; `src/components/MemoriesTab.tsx`; viewer path now real (P77/F3 below). |

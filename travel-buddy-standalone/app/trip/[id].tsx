@@ -12,9 +12,9 @@ import { useNextBestAction } from '../../src/hooks/useNextBestAction';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet'; import { TripLayoverConnectionsCard } from '../../src/features/trips/layover/TripLayoverConnectionsCard.tsx'; // census-layover L267 / L11: the trip's flights, its connections and their layover status
 import type { ReadinessRead, ReadinessSummary } from '../../src/services/tripIntel';
 import {
-  TripHero, TodayNextUp, SavedIdeas, TripSavedPlacesSection,
-  CompassTripBrief, CompassBriefErrorBoundary, TripStamps, TripPostsSection,
-  TripCrewSection, TripCircle, TripMapPreview,
+  TripHero, TodayNextUp, TripSavedPlacesSection,
+  CompassTripBrief, CompassBriefErrorBoundary, TripPostsSection,
+  TripCrewSection, TripMapPreview,
 } from '../../src/components/TripPage';
 import { ActiveSafeReturnCard } from '../../src/components/safeReturn/ActiveSafeReturnCard';
 import { TripHeartbeatCard } from '../../src/components/compass/TripHeartbeatCard';
@@ -176,6 +176,7 @@ function TripDetailScreen() {
   // re-render (or the user scrolling away) does not yank them back.
   const planSectionY = useRef<number>(0);
   const focusHandled = useRef(false); const sectionY = useRef<Record<string, number>>({}); const { isEnabled: flagOn } = useFeatureFlags(); const readinessFix = (category: string) => { const y = category === 'plan' || category === 'stay' || category === 'transport' ? planSectionY.current : sectionY.current[category]; if (y != null) pageScrollRef.current?.scrollTo({ y: Math.max(0, y - 16), animated: true }); }; // a readiness row scrolls to the section where that category is added (stay / transport: the plan's Add)
+  const scrollToPlan = useCallback(() => { pageScrollRef.current?.scrollTo({ y: Math.max(0, planSectionY.current - 16), animated: true }); }, []); // Today / Next Up's "View Plan": the plan is a section of this page (it used to push the Trips tab and leave the trip)
   useEffect(() => {
     if (focus !== 'plan' || !realTrip || focusHandled.current) return;
     focusHandled.current = true;
@@ -649,7 +650,7 @@ function TripDetailScreen() {
         {/* Planning prompts don't make sense once the trip has ended — derive
             from end date rather than the (possibly stale) stored status. */}
         {deriveTripDisplayStatus(trip.status, trip.endDate) !== 'completed' && (
-          <TodayNextUp nextUp={null} tripId={trip.id} action={nextBestAction} />
+          <TodayNextUp nextUp={null} tripId={trip.id} action={nextBestAction} onViewPlan={scrollToPlan} />
         )}
 
         {/* ── Gap-day nudge ── */}
@@ -701,23 +702,16 @@ function TripDetailScreen() {
           <EventsNearTripSection tripId={trip.id} />
         ) : null}
 
-        <SavedIdeas ideas={[]} tripId={trip.id} />
+        {/* A "Saved Ideas" section sat here, fed `ideas={[]}`: it always said
+            "Save places from the Discovery Wall…" directly above the real Saved
+            Places list below. Removed, as was a Trip Circle card hardwired to
+            "0 buddies" (the Find Your Circle banner further down is the real
+            entry) and a Trip Stamps card hardwired to "No stamps yet". */}
         <TripSavedPlacesSection tripId={trip.id} />{live && trip.id ? <View onLayout={(e: LayoutChangeEvent) => { sectionY.current.documents = e.nativeEvent.layout.y; }}><TripSharedContentSection tripId={trip.id} isHost={realTrip.ownerId === userId || memberRole === 'co_host'} /></View> : null}
 
         {live && trip.id ? (
           <NeighborhoodMatchSection tripId={trip.id} />
         ) : null}
-
-        {live && (
-          <TripCircle
-            cityCount={0}
-            inCity={[]}
-            suggested={[]}
-            currentUserId={userId}
-            tripId={trip.id}
-            city={trip.destinationCity ?? undefined}
-          />
-        )}
 
         {live && trip.id && (
           <Pressable
@@ -750,7 +744,7 @@ function TripDetailScreen() {
           </Pressable>
         )}
 
-        {/* Layover Mode entry — shown between TripCircle and CompassTripBrief */}{live && trip.id ? <TripLayoverConnectionsCard tripId={trip.id} /> : null}
+        {/* Layover Mode entry — shown between the circle banners and CompassTripBrief */}{live && trip.id ? <TripLayoverConnectionsCard tripId={trip.id} /> : null}
         <Pressable style={styles.layoverBanner} onPress={() => setLayoverOpen(true)}>
           <View style={styles.layoverBannerIcon}>
             <Plane size={18} color="#1565C0" />
@@ -783,7 +777,6 @@ function TripDetailScreen() {
         <CompassBriefErrorBoundary>
           <TripHeartbeatCard tripId={id} />
         </CompassBriefErrorBoundary>
-        <TripStamps stamps={[]} />
         <TripMapPreview tripId={trip.id} />
         {live && trip.id ? (
           <TripCrewSection tripId={trip.id} refreshKey={crewRefreshKey} />
@@ -850,7 +843,7 @@ function TripDetailScreen() {
             </View>
           </View>
         </Modal>
-        <TripPostsSection posts={[]} />
+        {live && trip.id ? <TripPostsSection tripId={trip.id} /> : null}
         {live && trip.id ? (
           <TripMemorySection
             tripId={trip.id}

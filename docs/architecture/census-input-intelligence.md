@@ -7255,7 +7255,7 @@ was not needed.
 from a mounted surface:
 - **Step 3.** No mounted field sends a session city.
 - **Step 4.** The one mounted field that sends a Trip is the Trip editor's destination picker
-  (`travel-buddy-standalone/app/trip/edit.tsx:489#sessionContext={{ tripId: id, surface: 'trip_edit' }}`).
+  (`travel-buddy-standalone/app/trip/edit.tsx:539#sessionContext={{ tripId: id, surface: 'trip_edit' }}`).
   It serves cities, which TripFit never marks
   (`artifacts/api-server/src/lib/inputAssistance/taskContext.ts:149#if (GEOGRAPHIC_TYPES.has(r.type)) return undefined;`).
   The mounted pickers show no gateway row on an empty field

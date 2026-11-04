@@ -5,7 +5,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { isVideoRef, derivedVideoPosterRef, VIDEO_POSTER_SUFFIX } from '../videoPosterRef.ts';
+import { isVideoRef, derivedVideoPosterRef, VIDEO_POSTER_SUFFIX, postTileStill } from '../videoPosterRef.ts';
 
 describe('isVideoRef', () => {
   it('recognises the video files the app uploads, in any case, with or without a query', () => {
@@ -32,5 +32,20 @@ describe('derivedVideoPosterRef', () => {
   it('is null for anything that is not a video', () => {
     assert.equal(derivedVideoPosterRef('post-media/u-1/a.jpg'), null);
     assert.equal(derivedVideoPosterRef(null), null);
+  });
+});
+
+describe('postTileStill', () => {
+  it('a photo post draws its media item (thumbnail first), else its first media_urls entry', () => {
+    assert.deepEqual(postTileStill({ media: [{ url: 'post-media/u/a.jpg', media_type: 'image', thumbnail_url: 'post-media/u/a.t.jpg' }] }), { uri: 'post-media/u/a.t.jpg', isVideo: false });
+    assert.deepEqual(postTileStill({ media: [], mediaUrls: ['post-media/u/b.jpg'] }), { uri: 'post-media/u/b.jpg', isVideo: false });
+  });
+  it('a video post draws a poster, never the video file', () => {
+    assert.deepEqual(postTileStill({ media: [{ url: 'post-media/u/v.mov', media_type: 'video', thumbnail_url: 'post-media/u/v.jpg' }] }), { uri: 'post-media/u/v.jpg', isVideo: true });
+    assert.deepEqual(postTileStill({ mediaUrls: ['post-media/u/v.mov'], mediaThumbnailUrl: 'post-media/u/p.jpg' }), { uri: 'post-media/u/p.jpg', isVideo: true });
+    assert.deepEqual(postTileStill({ mediaUrls: ['post-media/u/v.mov'] }), { uri: 'post-media/u/v.mov.poster.jpg', isVideo: true });
+  });
+  it('a text-only post has no still', () => {
+    assert.deepEqual(postTileStill({ media: [], mediaUrls: [] }), { uri: null, isVideo: false });
   });
 });
