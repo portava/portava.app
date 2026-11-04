@@ -154,6 +154,7 @@ hook in `src/lib/telegraphBroadcast.ts`.
 - `src/services/notifications/causalEvents.ts`
 - `src/services/notifications/essentialAttemptBudget.ts`
 - `src/services/notifications/planNotifications.ts`
+- `src/services/notifications/socialActivityNotifier.ts`
 
 `NotificationRouter` writes a `msg_type: 'system'` message into a thread, with the notification's own event type as the `subtype` — so the Telegraph subtype vocabulary is, in practice, the notification event vocabulary.
 
