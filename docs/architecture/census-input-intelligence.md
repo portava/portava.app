@@ -7144,7 +7144,7 @@ The same file proves:
 The client half is pinned at
 `travel-buddy-standalone/src/platform/input-assistance/services/__tests__/suggestBody.test.ts:105#window travels in the session context, unchanged`.
 Five mutants are killed. The conflict renders in the form's existing banner
-(`travel-buddy-standalone/app/trip/new.tsx:372#<CreationAssist`).
+(`travel-buddy-standalone/app/trip/new.tsx:389#<CreationAssist`).
 
 **G149: `C → W`, by the one grading rule.** The mismatch check needs the draft's city and country
 (`artifacts/api-server/src/lib/inputAssistance/creation.ts:349#declaresCheck(policy, 'city_country_mismatch') && city && country`).
@@ -7255,7 +7255,7 @@ was not needed.
 from a mounted surface:
 - **Step 3.** No mounted field sends a session city.
 - **Step 4.** The one mounted field that sends a Trip is the Trip editor's destination picker
-  (`travel-buddy-standalone/app/trip/edit.tsx:539#sessionContext={{ tripId: id, surface: 'trip_edit' }}`).
+  (`travel-buddy-standalone/app/trip/edit.tsx:542#sessionContext={{ tripId: id, surface: 'trip_edit' }}`).
   It serves cities, which TripFit never marks
   (`artifacts/api-server/src/lib/inputAssistance/taskContext.ts:149#if (GEOGRAPHIC_TYPES.has(r.type)) return undefined;`).
   The mounted pickers show no gateway row on an empty field

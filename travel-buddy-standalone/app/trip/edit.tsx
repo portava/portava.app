@@ -20,7 +20,7 @@ import { VideoThumbnail } from '../../src/components/ui/VideoThumbnail';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { formatDisplayDate, fromISODate } from '../../src/lib/dateTime/formatters';
 import type { Place } from '../../src/lib/location/placeTypes';
-import { resolveCanonicalPlace } from '../../src/lib/location/resolveCanonical';
+import { resolveCanonicalPlace } from '../../src/lib/location/resolveCanonical'; import { tripDestinationGeoForEdit } from '../../src/lib/tripDestinationGeo.ts';
 // Global Input Intelligence — Phase 2 (Geographic Core).
 import { registerGeographicFields, GEO_FIELD_IDS } from '../../src/platform/input-assistance/geographic/geoFields.ts';
 import {
@@ -49,7 +49,7 @@ export default function EditTrip() {
   const [title, setTitle] = useState('');
   const [place, setPlace] = useState<Place | null>(null);
   // §17/§53 — canonical binding captured when the destination is re-picked.
-  const [destBinding, setDestBinding] = useState<CanonicalPlaceBinding | null>(null);
+  const [destBinding, setDestBinding] = useState<CanonicalPlaceBinding | null>(null); const storedHasPoint = useRef(false); // lib/tripDestinationGeo.ts
   const [startDate, setStartDate] = useState<string | null>(null);
   const [endDate, setEndDate] = useState<string | null>(null);
   const [visibility, setVisibility] = useState<TripVisibility>('private');
@@ -105,7 +105,7 @@ export default function EditTrip() {
       // non-canonical destination (audit bug). The value is now canonically
       // resolved on save (see `save` below).
       setPlace(hydrateTripDestination(tr.destinationCity, tr.destinationCountry));
-      setDestBinding(null);
+      setDestBinding(null); storedHasPoint.current = tr.destinationLat != null && tr.destinationLng != null;
       setStartDate(tr.startDate ?? null);
       setEndDate(tr.endDate ?? null);
       setVisibility((tr.visibility as TripVisibility) ?? 'private');
@@ -234,6 +234,9 @@ export default function EditTrip() {
         // Sent only by the owner — they are the owner's switches (a co-host
         // reaching this screen does not see them).
         ...(isOwner ? { allowJoinRequests, showInDiscovery } : {}),
+        // The destination's point, canonical id and zone (lib/tripDestinationGeo.ts):
+        // the new pick's when it was picked again, else a missing point filled in.
+        ...tripDestinationGeoForEdit({ repicked: destBinding !== null || place.source !== 'legacy', storedHasPoint: storedHasPoint.current }, destBinding, dest),
       });
       if (!updated) { setError('Could not save changes. Try again.'); return; }
       router.replace(`/trip/${id}` as any);
