@@ -4,10 +4,10 @@
  *   GET  /api/threads/:id/receipts?messageIds=…   §7.3
  *   POST /api/threads/:id/messages/:id/unsend     §7.4
  *
- * §7.1's DELIVERED has no representation here on purpose. The server returns
- * `delivered: null` with a reason because nothing on this deployment produces a
- * delivery signal, and this module passes both through untouched rather than
- * collapsing them into a boolean the UI would then have to guess about.
+ * §7.1's DELIVERED (census T73): the server answers `delivered` from its §12 delivery cursors where the
+ * message kernel is in force — true, a measured false, or null with a reason when it could not say — and
+ * this module passes all three through untouched rather than collapsing null into a boolean the UI would
+ * then have to guess about.
  */
 import { isSupabaseConfigured } from '../../../lib/supabase.ts';
 import { freshToken } from '../../../services/apiToken.ts';
@@ -18,9 +18,9 @@ export type ReceiptStatus = 'SENT' | 'SEEN';
 export interface MessageReceipt {
   messageId: string;
   status: ReceiptStatus;
-  /** Always null. See `deliveredUnavailableReason`. */
-  delivered: null;
-  deliveredUnavailableReason: string;
+  /** census T73: true/false from the server's delivery cursors; null (with the reason) when it could not say. */
+  delivered: boolean | null;
+  deliveredUnavailableReason: string | null;
   seenBy: number;
   seenByUserIds: string[];
   recipientCount: number;

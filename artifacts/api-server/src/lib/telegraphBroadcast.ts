@@ -41,7 +41,7 @@ const BROADCAST_EVENT = "publish";
 /** Broadcast event name for cross-instance connection termination signals. */
 const TERMINATE_EVENT = "terminate";
 /** Versioned prefix so a schema change automatically invalidates old signatures. */
-const HMAC_CONTEXT = "telegraph-broadcast-v1";
+const HMAC_CONTEXT = "telegraph-broadcast-v2"; // v2 (#786 verifier): the signature now covers threadId and the payload — a v1 signature is invalid by construction
 
 /** Opaque identifier for this process instance. */
 const INSTANCE_ID: string = (() => {
@@ -72,7 +72,7 @@ function signPayload(
   event: TelegraphEvent,
   secret: string,
 ): string {
-  const canonical = `${instanceId}|${[...userIds].sort().join(",")}|${event.type}|${event.ts}`;
+  const canonical = `${instanceId}|${[...userIds].sort().join(",")}|${event.type}|${event.ts}|${event.threadId ?? ""}|${canonicalEventJson(event.payload ?? null)}`; // the payload drives a DB write (the delivered sink), so it is signed too
   return createHmac("sha256", secret).update(canonical).digest("hex");
 }
 
@@ -100,7 +100,7 @@ function verifySignature(
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface BroadcastPayload {
+export interface BroadcastPayload {
   /** Which instance produced this payload — receivers ignore their own. */
   sourceInstanceId: string;
   /** User IDs the event should be delivered to. */
@@ -399,4 +399,27 @@ function wireScopedTerminate(channel: any, secret: string): void {
         logger.warn({ err, userId }, "telegraphBroadcast: scoped terminate send threw");
       });
   });
+}
+
+// ── #786 verifier (census-telegraph T72/T73): the payload is part of the signature ──
+/**
+ * A canonical JSON of the event payload: keys sorted at every depth, JSON's own value rules (undefined
+ * dropped, as the wire drops it), so the same event signs identically before and after the realtime
+ * transport re-serialises it. Since batch 2 a remote `message.created` payload drives a database write
+ * (its `sequence` advances `delivered_sequence`), so a payload an attacker could alter in transit would
+ * otherwise write a cursor the signature never covered.
+ */
+export function canonicalEventJson(v: unknown): string {
+  return JSON.stringify(v, (_k, value) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.keys(value as Record<string, unknown>).sort().map((k) => [k, (value as Record<string, unknown>)[k]]))
+      : value);
+}
+
+/** Test seam: sign and verify exactly as the channel does. */
+export function _signBroadcastForTest(instanceId: string, userIds: string[], event: TelegraphEvent, serviceKey: string): string {
+  return signPayload(instanceId, userIds, event, deriveSecret(serviceKey));
+}
+export function _verifyBroadcastForTest(payload: BroadcastPayload, serviceKey: string): boolean {
+  return verifySignature(payload, deriveSecret(serviceKey));
 }

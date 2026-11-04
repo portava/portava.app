@@ -85,7 +85,7 @@ export interface SearchOptions {
   /** Only return these buckets. Empty/absent = all five. */
   buckets?: TelegraphSearchBucket[];
   /** §21's last line: rank structured objects above prose. */
-  preferStructured?: boolean;
+  preferStructured?: boolean; /** census-telegraph T431: the caller's declared capabilities; null/absent = served as stored. */ negotiation?: ClientCapabilities | null;
 }
 
 interface AuthorizedScope {
@@ -264,7 +264,7 @@ export async function searchConversations(
       subtype,
       msgType: String(row.msg_type ?? "text"),
       hasMedia: Boolean(row.media_url),
-    });
+    }); negotiateServed(hits[hits.length - 1]! as any, row, opts.negotiation ?? null, { body: ["snippet"], typeField: "msgType", subtypeField: "subtype", cleared: ["objectTitle"], falsified: ["hasMedia"] }); /* census-telegraph T431: a hit the client cannot draw is its sentence */
   }
 
   // §21's last line: structured objects rank above prose when asked for.
@@ -298,12 +298,12 @@ export async function askConversation(
   sc: SupabaseClient,
   viewerId: string,
   conversationId: string,
-  rawQuery: string,
+  rawQuery: string, negotiation: ClientCapabilities | null = null, // census-telegraph T431: the caller's declared capabilities
 ): Promise<{ structured: TelegraphSearchHit[]; prose: TelegraphSearchHit[]; result: TelegraphSearchResult }> {
   const result = await searchConversations(sc, viewerId, rawQuery, {
     conversationId,
     preferStructured: true,
-    limit: 40,
+    limit: 40, negotiation, // T431: a hit the client cannot draw is its sentence, and ranks as prose
   });
   const structured = result.hits.filter((h) => h.subtype !== null && STRUCTURED_SUBTYPES.has(h.subtype));
   const prose = result.hits.filter((h) => !(h.subtype !== null && STRUCTURED_SUBTYPES.has(h.subtype)));
@@ -359,3 +359,5 @@ async function cardRowsInScope(
     failed: false,
   };
 }
+
+import { negotiateServed } from "./telegraph/platformReadDecorations.js"; import type { ClientCapabilities } from "./telegraph/structuredSchemas.js"; // census-telegraph T431 (batch 4), at the foot so no cited line moves

@@ -22,7 +22,7 @@
  * endpoints. Thread access is gated ONLY by message_thread_members rows.
  */
 
-import { Router } from 'express'; import { decoratePlatformReads } from '../services/telegraph/platformReadDecorations.js'; import { notifyNewMessage, messageCausalEventId } from '../services/telegraph/messageNotifications.js'; // census-telegraph T256 (wave 5): the MESSAGE notification
+import { Router } from 'express'; import { decoratePlatformReads, decorateReactions } from '../services/telegraph/platformReadDecorations.js'; import { notifyNewMessage, messageCausalEventId } from '../services/telegraph/messageNotifications.js'; // census-telegraph T256 (wave 5): the MESSAGE notification
 import { isBlockedBetween } from '../lib/blockGuard.js';
 // Telegraph §22 — the six travel-scam families and link reputation, computed
 // for the recipient at read time. Pure; no I/O, no clock.
@@ -1696,7 +1696,7 @@ router.post('/threads/:threadId/read', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const boundOn = await historyBoundEnabled(sc);
+  const boundOn = await historyBoundEnabled(sc); const kernelOn = await messageKernelEnabled(sc); // census-telegraph T72: the threshold's sequence, where 2810 is in force
 
   const { data: membership, error: membershipErr } = await sc
     .from('message_thread_members')
@@ -1713,9 +1713,9 @@ router.post('/threads/:threadId/read', async (req, res) => {
   const previous = ((membership as any).last_read_at ?? null) as string | null;
 
   // The threshold: the newest message this member is entitled to have loaded.
-  let newestQuery = sc
-    .from('messages')
-    .select('id, sender_id, created_at')
+  let newestQuery = (kernelOn // two literal select lists, so check:write-path-columns resolves both (census-telegraph T72)
+    ? sc.from('messages').select('id, sender_id, created_at, sequence')
+    : sc.from('messages').select('id, sender_id, created_at'))
     .eq('thread_id', threadId)
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
@@ -1776,7 +1776,7 @@ router.post('/threads/:threadId/read', async (req, res) => {
     return;
   }
 
-  res.status(200).json({ ok: true, threadId, lastReadAt: threshold, advanced: true });
+  void advanceSeenSequence(sc, threadId, user.id, (newestWindowed[0] as any)?.sequence); res.status(200).json({ ok: true, threadId, lastReadAt: threshold, advanced: true }); // census-telegraph T72: seen_sequence follows the marker, forward only
 
   // Realtime: let other members update read receipts for this user. The
   // THRESHOLD is broadcast, not the wall clock — a receipt that named `now()`
@@ -2174,7 +2174,7 @@ router.get('/me/threads', async (req, res) => {
   // A failed read comes back `degraded`, and the field is then OMITTED rather
   // than sent as 0 — see the header of needsAction.ts for why zero is the one
   // answer that must never be guessed here.
-  const needsAction = await resolveNeedsAction(sc, { viewerId: user.id, threadIds });
+  const needsAction = await resolveNeedsAction(sc, { viewerId: user.id, threadIds }); const previewNegotiation = await structuredNegotiation(sc, req.headers as Record<string, unknown>); /* census-telegraph T431: the preview is negotiated as the thread page is (null while the flag is OFF) */
   if (needsAction.degraded) {
     req.log.warn({ userId: user.id }, 'me/threads: needs-action inputs unreadable — omitting the count rather than reporting zero');
   }
@@ -2219,7 +2219,7 @@ router.get('/me/threads', async (req, res) => {
         ...(previewTranslationsDegraded && lm.sender_id !== user.id
           ? { previewTranslationStatus: 'failed' as const }
           : {}),
-      };
+      }; negotiateServed(lastMessagePreview, lm, previewNegotiation, { body: ['body', 'displayBody'], typeField: 'msgType', subtypeField: 'subtype', cleared: ['previewTranslationStatus'], falsified: ['translated', 'showOriginalAlongside'] }); /* census-telegraph T431: a structured last message the client cannot draw previews as its sentence, never its stored body */
     }
 
     const isAiLastMessage = lm?.msg_type === 'ai_recommendation';
@@ -2658,7 +2658,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
   // set computed over an unreadable `blocks` table is a FLOOR, not the truth.
   // Shipping the booleans without it would hand a client a confident false and
   // recreate, one layer up, the exact defect §30A.16 forbids.
-  await decoratePlatformReads(sc, rows, messages as Array<Record<string, any>>, req.headers as Record<string, unknown>, req.log); const resolvedCapabilities = await resolveConversationCapabilities(sc, { // census-telegraph T429/T431 + T406/T407 (3665 flags, both seeded FALSE: OFF = page unchanged)
+  await decoratePlatformReads(sc, rows, messages as Array<Record<string, any>>, req.headers as Record<string, unknown>, req.log); await decorateReactions(sc, rows, messages as Array<Record<string, any>>, user.id, req.log); /* census T370 */ const resolvedCapabilities = await resolveConversationCapabilities(sc, { // census-telegraph T429/T431 + T406/T407 (3665 flags, both seeded FALSE: OFF = page unchanged)
     viewerId: user.id,
     conversationId: threadId,
   });
@@ -3774,7 +3774,7 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
   });
 
   // Realtime: notify other members the message body changed.
-  void publishToThread(
+  void publishMessageLifecycle( // census T154 (batch 3): the outbox announces the edit when fan-out is on
     sc,
     threadId,
     { type: 'message.updated', payload: { messageId, editedAt: now } },
@@ -3916,10 +3916,10 @@ router.get('/threads/:threadId/messages/:messageId/edits', async (req, res) => {
     messageId,
     threadId,
     senderId: (msg.sender_id as string | null) ?? null,
-    ...(await (async () => { const wl = await withholdLocationAcrossBlocks(sc, user.id, [msg]); const hide = wl.withheld.size > 0; const now = (await applySharedCardTruth(sc, user.id, [msg], { threadId, log: req.log })).rows[0]; return { /* census-telegraph T448: a card's current body is its source NOW; its old versions carry nothing from the source */ // PR-TREL-5: a location's history across a block is the placeholder, every version
+    ...negotiateEditHistory(await structuredNegotiation(sc, req.headers as Record<string, unknown>), msg as any, await (async () => { const wl = await withholdLocationAcrossBlocks(sc, user.id, [msg]); const hide = wl.withheld.size > 0; const now = (await applySharedCardTruth(sc, user.id, [msg], { threadId, log: req.log })).rows[0]; return { /* census-telegraph T448: a card's current body is its source NOW; its old versions carry nothing from the source */ // PR-TREL-5: a location's history across a block is the placeholder, every version
     currentBody: hide ? LOCATION_WITHHELD_BODY : ((now.body as string | null) ?? null),
     editedAt: (msg.edited_at as string | null) ?? null,
-    versions: orderEditsNewestFirst(((editRows ?? []) as any[]).map((e) => (hide ? { ...e, previous_body: LOCATION_WITHHELD_BODY } : isSharedCardRow(msg) ? { ...e, previous_body: withheldCardBody({ ...msg, body: e.previous_body }) } : e))) }; })()),
+    versions: orderEditsNewestFirst(((editRows ?? []) as any[]).map((e) => (hide ? { ...e, previous_body: LOCATION_WITHHELD_BODY } : isSharedCardRow(msg) ? { ...e, previous_body: withheldCardBody({ ...msg, body: e.previous_body }) } : e))) }; })()), /* census-telegraph T431: the current body and every version negotiated as the thread page is */
   });
 });
 
@@ -4341,7 +4341,7 @@ router.get('/me/saved-messages', async (req, res) => {
     }))
     .sort((a, b) => (a.savedAt < b.savedAt ? 1 : a.savedAt > b.savedAt ? -1 : 0));
 
-  res.status(200).json({ saved: items });
+  { const savedNegotiation = await structuredNegotiation(sc, req.headers as Record<string, unknown>); const savedRowById = new Map(savedCards.rows.map((r) => [r.id as string, r])); for (const it of items) { const r = savedRowById.get(it.messageId); if (r) negotiateServed(it, r as any, savedNegotiation, { body: ['body'], typeField: 'msgType', subtypeField: 'subtype', cleared: ['mediaUrl', 'mediaType', 'mediaThumbnailUrl'] }); } } /* census-telegraph T431: a saved structured message the client cannot draw is its sentence */ res.status(200).json({ saved: items });
 });
 
 // ── Report message ────────────────────────────────────────────────────────────
@@ -4489,3 +4489,7 @@ function messageReportReasonCode(raw: unknown): ReportReasonCode | null {
 // POST /threads/:threadId/messages — the reply quote in the sender's own 201,
 // built under the thread reader's rules. Declared at the tail so no cited line moves.
 import { replyQuoteForSender } from '../services/telegraph/replyQuote.js';
+
+import { messageKernelEnabled } from '../services/telegraphMessageKernel.js'; import { advanceSeenSequence } from '../lib/telegraphReceiptCursors.js'; // census-telegraph T72 (appended so every cited line keeps its number)
+import { publishMessageLifecycle } from '../lib/telegraphOutboxDrainScheduler.js'; // census T154 (batch 3), at the foot so no cited line moves
+import { negotiateEditHistory, negotiateServed, structuredNegotiation } from '../services/telegraph/platformReadDecorations.js'; // census-telegraph T431 (batch 4), at the foot so no cited line moves

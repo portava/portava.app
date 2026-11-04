@@ -53,7 +53,7 @@ export const CARD_BODY_READERS: Ledger = {
     why: "Helpers: the column list is the CALLER's; the caller that selects body (GET /me/threads) serves the withheld card body (withheldCardBody)." },
   "routes/telegraphCoordination.ts": { sites: 12, status: "exempt",
     why: "Reads only §8/§6.2 envelopes through parseCoordinationEnvelope / parseKindEnvelope, keyed on msg_type — a legacy card never parses as one; the catch-up names a card by kind and id only (catchUp.ts titleOf reads envelope payloads)." },
-  "routes/telegraphLifecycle.ts": { sites: 3, status: "exempt", why: "Receipts and the seen threshold: timestamps and ids; no body is returned." },
+  "routes/telegraphLifecycle.ts": { sites: 5, status: "exempt", why: "Receipts and the seen threshold: timestamps and ids; no body is returned. 5 since 8895ea228: two reads became a pair of literal-select chains (receipt cursors on/off), same rows, same exemption." },
   "routes/telegraphForward.ts": { sites: 1, status: "exempt", why: "forwardShapeOf refuses a legacy card ('other'); nothing is copied or served." },
   "services/telegraph/coordinationSessions.ts": { sites: 1, status: "exempt", why: "Coordination-session envelopes only." },
   "services/telegraph/sharedRideWrites.ts": { sites: 1, status: "exempt", why: "Ride proposal envelopes only." },

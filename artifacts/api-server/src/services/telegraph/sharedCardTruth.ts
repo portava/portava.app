@@ -448,12 +448,12 @@ export async function resolveSharedCards(
   }
   if (jobs.size === 0) return out;
 
-  const batched = coalescingClient(client as unknown as object, stats) as unknown as SupabaseClient;
+  const batched = coalescingClient(client as unknown as object, stats) as unknown as SupabaseClient; const capsFor = viewerCapabilityLookup(client, viewerId, log); /* census-telegraph T445: one capability read per conversation per call, only when a live card offers an action */
   await Promise.all(
     [...jobs.values()].map(async (job) => {
       let resolved: ResolvedShare | null = null;
       try {
-        [resolved] = await resolveShareProjections(batched, viewerId, job.threadId, [job.ref], log);
+        [resolved] = await resolveShareProjections(batched, viewerId, job.threadId, [job.ref], log); if (resolved) await narrowShareActions(capsFor, job.threadId, [resolved]); /* census-telegraph T445: offered only what THIS viewer may do here (never throws; fails closed) */
       } catch (err) {
         log?.error({ err, objectType: job.ref.objectType }, "shared card: source resolve threw — served as unavailable/unknown");
       }
@@ -579,3 +579,5 @@ function highlightReplyCard(): SharedCardSpec {
 
 /** The one sentence a highlight-reply row ever shows as its body — the producer writes nothing else a client prints. */
 export const HIGHLIGHT_REPLY_TEXT: string = SHARED_CARD_REGISTRY.highlight_reply.textForm!;
+
+import { narrowShareActions, viewerCapabilityLookup } from "./shareActionAuthority.js"; // census-telegraph T445 (appended at the foot so every cited line keeps its number)
