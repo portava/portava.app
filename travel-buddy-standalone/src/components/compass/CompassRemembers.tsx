@@ -56,13 +56,16 @@ export interface CompassRemembersProps {
   circles?:  CompassCircleOption[];
   /** Transient confirmation shown after a successful teach (e.g. "Remembered for Lisbon Crew"). */
   teachConfirmation?: string | null;
+  /** The list could not be read. Said as such, with a retry, never as "Nothing remembered". */
+  loadError?: boolean;
+  onRetry?: () => void;
   onTeach:   (statement: string, circleOwnerId?: string) => void;
   onEdit:    (memoryId: string, content: string) => void;
   onForget:  (memoryId: string) => void;
 }
 
 export function CompassRemembers({
-  memories, loading, teaching, scope, onScopeChange, circles, teachConfirmation, onTeach, onEdit, onForget,
+  memories, loading, teaching, scope, onScopeChange, circles, teachConfirmation, loadError, onRetry, onTeach, onEdit, onForget,
 }: CompassRemembersProps) {
   const [teachText, setTeachTextState] = useState('');
   // Ref mirror so the submit handler always sees the latest draft even if a
@@ -197,6 +200,15 @@ export function CompassRemembers({
 
       {loading ? (
         <ActivityIndicator size="small" color={color.signal} style={{ marginVertical: space.lg }} />
+      ) : loadError ? (
+        <View testID="memories-error" accessibilityRole="alert" style={{ gap: space.sm }}>
+          <Text style={styles.empty}>Your Compass memories could not be loaded. They are still saved.</Text>
+          {onRetry ? (
+            <Pressable onPress={onRetry} accessibilityRole="button" accessibilityLabel="Try loading memories again" hitSlop={8}>
+              <Text style={styles.retry}>Try again</Text>
+            </Pressable>
+          ) : null}
+        </View>
       ) : memories.length === 0 ? (
         <Text style={styles.empty} testID="memories-empty">
           {(scope ?? null) !== null
@@ -274,6 +286,7 @@ const styles = StyleSheet.create({
   filterChipText:       { ...t.small, color: color.mute },
   filterChipTextActive: { color: color.onInk, fontWeight: '700' },
   empty:        { ...t.small, color: color.mute, lineHeight: 19 },
+  retry:        { ...t.small, color: color.signal, fontWeight: '600' },
   memCard:      { backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, padding: space.md, gap: 6 },
   memMeta:      { ...t.stamp, fontFamily: 'Courier', color: color.signal },
   memContent:   { ...t.body, color: color.ink },
