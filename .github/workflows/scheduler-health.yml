@@ -54,19 +54,25 @@ jobs:
           set -euo pipefail
           body_file="$(mktemp)"
           # No --retry: curl retries on 503, and a 503 is the answer this run
-          # exists to report. --max-time allows for a cold start.
+          # exists to report. --max-time allows for a cold start. `-e` is
+          # suspended for this one call so a connection failure reaches the
+          # "did not answer" error below (curl still writes 000) instead of
+          # ending the step with no message; it is restored on the next line.
+          set +e
           code="$(
             curl --silent --show-error \
                  --max-time 90 \
                  --output "${body_file}" \
                  --write-out '%{http_code}' \
-                 "${APP_BASE_URL%/}/api/healthz/schedulers" || true
+                 "${APP_BASE_URL%/}/api/healthz/schedulers"
           )"
-          echo "HTTP ${code}"
+          curl_exit=$?
+          set -e
+          echo "HTTP ${code} (curl exit ${curl_exit})"
 
           if [ "${code}" = "000" ] || ! jq -e . "${body_file}" >/dev/null 2>&1; then
             echo "::error::the app did not answer with JSON (HTTP ${code}): timeout, DNS, or the deployment is not serving"
-            head -c 2000 "${body_file}" || true
+            head -c 2000 "${body_file}"
             exit 1
           fi
 
