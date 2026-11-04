@@ -397,7 +397,7 @@ export async function betaStatus(
     cfg === null
       ? { id: "3a", name: "configuration applied (beta-config.yml)", state: "UNKNOWN", detail: "could not list runs" }
       : lastCfg?.conclusion === "success"
-        ? { id: "3a", name: "configuration applied (beta-config.yml)", state: "PASS", detail: `run ${lastCfg.databaseId} succeeded (a dry run also succeeds: gate 3b and smoke check 5 are the proof)` }
+        ? { id: "3a", name: "configuration applied (beta-config.yml)", state: "PASS", detail: `run ${lastCfg.databaseId} succeeded (a dry run also succeeds: gate 3b, smoke check 5 for the client flags and gate 3c's applying run are the proof)` }
         : { id: "3a", name: "configuration applied (beta-config.yml)", state: "OPEN", detail: lastCfg ? `last run ${lastCfg.databaseId}: ${lastCfg.status}/${lastCfg.conclusion || "—"}` : "never dispatched", next: PROVISION_CMD },
   );
   const disable = auth?.status === 200 ? auth.body?.disable_signup : undefined;

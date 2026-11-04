@@ -357,13 +357,18 @@ Expect seven `PASS` lines:
 - health;
 - `signup-status` is exactly `{signupsEnabled:false, inviteOnly:true}`;
 - `401` without a token;
-- the Rent-a-Buddy booking stops are engaged: `GET /api/feature-flags` shows
-  `disable_rent_buddy_booking`, `disable_rab_bookings` and
-  `RENT_BUDDY_ADMIN_ONLY_MODE` all true and `rent_buddy_enabled` false;
+- Rent-a-Buddy is off and its booking stops are unpublished: `GET /api/feature-flags`
+  shows `rent_buddy_enabled` false and none of `disable_rent_buddy_booking`,
+  `disable_rab_bookings` or `RENT_BUDDY_ADMIN_ONLY_MODE`. Since
+  sec/public-surface (2026-11-04) the endpoint serves only the flags the app
+  reads (`CLIENT_FEATURE_FLAGS`, `artifacts/api-server/src/lib/clientFeatureFlags.ts`);
+  the stops are server-only, and that they are ENGAGED is shown by step 3's
+  flag read-back, not by this smoke (it prints this under `NOT CHECKED`);
 - the same response equals `scripts/src/beta-flag-policy.json` at the commit
-  you run it from (every policy-ON flag served true, every known flag at its
-  policy value): this proves step 3 applied THIS policy to the database the
-  API reads. After any policy edit, re-run step 3 or this check fails;
+  you run it from, on the client flags (every policy-ON client flag served
+  true, every served flag at its policy value, nothing else served): this
+  proves step 3 applied THIS policy to the database the API reads. After any
+  policy edit, re-run step 3 or this check fails;
 - portava-beta's public Auth settings report `disable_signup: true` (read with
   the `beta` profile's publishable key): this is what closes the app's own
   sign-up path, which the API cannot see;

@@ -34,7 +34,7 @@ app.use(helmet()); app.use(layoverServiceAuditContext);
 const _rawOrigins = process.env.ALLOWED_ORIGINS;
 const CORS_FALLBACK_ORIGINS = [
   "https://app.travel-buddy.io",
-  "https://www.travel-buddy.io",
+  "https://www.travel-buddy.io", "https://rumazi.com", "https://www.rumazi.com", // rumazi.com: production's live origin (.replit [userenv.production] EXPO_PUBLIC_API_BASE_URL)
   "https://portava.replit.app",
 ];
 const ALLOWED_ORIGINS: string[] = _rawOrigins
@@ -48,18 +48,14 @@ const ALLOWED_ORIGINS: string[] = _rawOrigins
       return CORS_FALLBACK_ORIGINS;
     })();
 
-// Auto-allow the Replit workspace dev domain and any port-mapped subdomains
-// (e.g. https://<id>.expo.kirk.replit.dev for the Expo web preview).
-// REPLIT_DEV_DOMAIN is only present in the Replit workspace, never in the
-// deployed production environment, so this is a dev-only convenience.
-//
-// REPLIT_DEV_DOMAIN has the form "<repl-id>.kirk.replit.dev". Port-mapped
-// artifact previews use sibling subdomains like "<repl-id>.expo.kirk.replit.dev",
-// so we derive the shared parent ("kirk.replit.dev") and allow any subdomain of it.
-const _replitDevDomain = process.env.REPLIT_DEV_DOMAIN;
-const _replitParentDomain = _replitDevDomain
-  ? _replitDevDomain.split(".").slice(1).join(".")
-  : null;
+// Replit workspace previews (the dev domain, its :port form, and port-mapped
+// siblings such as <repl-id>.expo.kirk.replit.dev) are allowed OUTSIDE
+// PRODUCTION ONLY (lib/corsOrigins.ts replitDevOriginAllowed). REPLIT_DEV_DOMAIN
+// is NOT a dev-only signal: production has it set (measured 2026-08-15,
+// docs/security/cors-dev-domain-allowlist-in-production.md), and its parent,
+// kirk.replit.dev, hosts other people's Repls. Production means NODE_ENV=production
+// or REPLIT_DEPLOYMENT present (lib/corsOrigins.ts isProductionRuntime), the rule
+// lib/paymentsMode.ts applies; the deployment's start script sets no NODE_ENV.
 
 app.use(
   cors({
@@ -67,23 +63,27 @@ app.use(
       // Requests with no Origin (mobile, curl, server) are always permitted.
       if (!origin) return callback(null, true);
       if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
-      // Allow the Replit workspace domain and any sibling/child subdomains
-      // (e.g. expo. prefix used by port-mapped artifact previews), including
-      // an explicit :<port> suffix on the dev domain itself (used to reach a
-      // non-artifact dev server bound to an extra exposed port, e.g. the
-      // travel-buddy-standalone web preview on :3000 — that origin string
-      // still starts with the dev domain but doesn't match the plain
-      // endsWith(parent) check above because of the trailing port).
-      if (
-        _replitParentDomain &&
-        (origin === `https://${_replitDevDomain}` ||
-          origin.startsWith(`https://${_replitDevDomain}:`) ||
-          origin.endsWith(`.${_replitParentDomain}`))
-      ) {
-        return callback(null, true);
-      }
+      if (replitDevOriginAllowed(origin)) return callback(null, true);
       callback(new Error(`Origin '${origin}' is not allowed by CORS policy`));
     },
+    // THE BEARER-ONLY RULE, written down because it is load-bearing.
+    //
+    // `credentials: true` is harmless only because authentication here is a
+    // Bearer token in the Authorization header (lib/http.ts requireUser and
+    // optionalUser) and this server sets and reads no cookies at all. A browser
+    // never attaches an Authorization header to a cross-origin request by
+    // itself, and an allowed origin cannot read a token another origin stored,
+    // so an allowed origin gains nothing it did not already hold.
+    //
+    // Cookie or session authentication removes that. Every origin allowed above
+    // (ALLOWED_ORIGINS, the fallback list, the workspace previews outside
+    // production) would become a credentialed cross-origin caller, and nothing
+    // in this file would change to prompt a re-read. So, BEFORE adding either:
+    // re-audit the allowlist, keep the preview rule off in production, and drop
+    // `credentials: true` unless a cookie actually needs it. (`cookie-parser` is
+    // a declared dependency of this package and is imported nowhere; keep it
+    // that way until that audit has happened.) The finding that motivated this:
+    // docs/security/cors-dev-domain-allowlist-in-production.md.
     credentials: true, exposedHeaders: ["Server-Timing"], // §17.4 / census-telegraph T239: a browser build may read the server's own share of a request (middlewares/telegraphObservability.ts stampServerTiming)
   }),
 );
@@ -127,7 +127,7 @@ app.post("/api/calls/webhook", callsWebhookRawParser, callsWebhookHandler);
 // Identity-verification webhook: raw body for future real-provider signature verification.
 // Registered before the global JSON parser so the raw body is preserved.
 app.post("/api/verification/webhook", verificationWebhookRawParser, verificationWebhookHandler); app.post("/api/payments/webhooks/:endpoint", paymentWebhookRawParser, paymentWebhookHandler); // payment-provider webhooks (lane B, 2026-10-05): RAW body for signature verification; import at the foot
-
+app.set("trust proxy", trustProxyFromEnv()); app.use(publicRateLimit()); // sec/public-surface (2026-11-04): req.ip is the CLIENT behind the proxy (lib/clientIp.ts), and every request below is counted per client address (lib/publicRateLimit.ts). AFTER the provider webhooks, so they are never limited; BEFORE the body parsers and every route. On what was a blank line, so every cited line keeps its number; imports at the foot
 // ── Body parsers ──────────────────────────────────────────────────────────────
 // Explicit 256 kb limit; the Express default is 100 kb but we make it
 // intentional and slightly larger to accommodate rich trip/plan payloads.
@@ -249,3 +249,8 @@ export default app;
 import { paymentWebhookRawParser, paymentWebhookHandler } from "./routes/rentABuddyPayments.js";
 
 import { layoverServiceAuditContext } from './lib/layoverServiceAudit.js';
+
+// ── Public surface (sec/public-surface, 2026-11-04) — appended at the foot so every cited line keeps its number ──
+import { trustProxyFromEnv } from "./lib/clientIp.js";
+import { publicRateLimit } from "./lib/publicRateLimit.js";
+import { replitDevOriginAllowed } from "./lib/corsOrigins.js";

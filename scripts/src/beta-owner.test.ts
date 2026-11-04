@@ -13,14 +13,15 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { BETA_AUTH_SETTINGS_URL, type SmokeFetch } from "./beta-smoke.js";
+import { BETA_AUTH_SETTINGS_URL, loadClientFeatureFlags, type SmokeFetch } from "./beta-smoke.js";
 import { APPLY_PENDING_JOB, AUDIT_STEP, betaStatus, boundaryCheckProblem, builtState, cfgRunKind, CERTIFY_STEP, DB_RUN_LIMITS, dbRunKind, formatGates, provisionBeta, PROVISION_CONFIRMATION, REBUILD_CMD, REPO, TOKEN_SECRET, type Exec, type ExecResult } from "./beta-owner.js";
 import { loadFlagPolicy, PROFILES_BOUNDARY_MARKER } from "./beta-config-core.js";
 import { REPO_ROOT } from "./beta-db-core.js";
 
 const KEY = "sb_publishable_test_beta_key";
 const BASE = "https://portava-beta.replit.app";
-const POLICY_FLAGS = Object.fromEntries(loadFlagPolicy().flags.map((e) => [e.flag, e.enabled]));
+const CLIENT_FLAGS = loadClientFeatureFlags(); // the public bundle serves only these (sec/public-surface)
+const POLICY_FLAGS = Object.fromEntries(loadFlagPolicy().flags.filter((e) => CLIENT_FLAGS.has(e.flag)).map((e) => [e.flag, e.enabled]));
 
 interface World {
   secrets: string[] | null;
