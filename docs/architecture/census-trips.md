@@ -4269,7 +4269,7 @@ scenario or replay test existed.
   trip and its events from a non-member (`:163#RLS`).
 - A CI job runs it on a `postgis/postgis:16-3.4` service container
   (`.github/workflows/ci.yml:778#api-server-local-db:`); the verdict job requires
-  it (`.github/workflows/ci.yml:1534-1543#ci-verdict:`). The same files sit in the ordinary `test` list and skip there without a
+  it (`.github/workflows/ci.yml:1538-1547#ci-verdict:`). The same files sit in the ordinary `test` list and skip there without a
   database, exactly as `tripKernelLive.test.ts` skips without credentials.
 
 **What it does not prove.** Drift. `docs/ci/BOOTSTRAP.md` §1's argument
