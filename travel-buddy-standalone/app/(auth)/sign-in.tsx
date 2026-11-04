@@ -56,7 +56,7 @@ import { useSession } from '../../src/context/SessionContext';
 import { isSupabaseConfigured } from '../../src/lib/supabase';
 import { getAuthProviderAvailability, type AuthProviderAvailability } from '../../src/services/authProviders';
 import { visibleSignInProviders } from '../../src/lib/signInProviders';
-import { buildCanSignInWithApple } from '../../src/lib/buildCapabilities';
+import { buildCanSignInWithApple, testBuildDiagnosticsLine } from '../../src/lib/buildCapabilities';
 import { PortavaLogoMark, PortavaWordmark } from '../../src/components/brand/PortavaLogo';
 import {
   LOGIN_BACKGROUNDS,
@@ -435,6 +435,8 @@ export default function SignIn() {
   const isSignin    = mode === 'signin';
   // Platform, build and backend must all be able to: src/lib/signInProviders.ts
   const socialProviders = visibleSignInProviders({ platform: Platform.OS, buildCanSignInWithApple: buildCanSignInWithApple(), backend: backendProviders });
+  // Test builds only (Personal Team): which backend this binary talks to, so a report from a phone can say.
+  const buildDiagnostics = testBuildDiagnosticsLine();
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -747,6 +749,9 @@ export default function SignIn() {
                 <Shield size={12} color="rgba(255,255,255,0.35)" />
                 <Text style={s.privacyText}>Your data is private and secure</Text>
               </View>
+            )}
+            {buildDiagnostics && (
+              <Text style={s.diagnosticsText} accessibilityLabel="Test build diagnostics">{buildDiagnostics}</Text>
             )}
           </View>
 
@@ -1074,6 +1079,13 @@ const s = StyleSheet.create({
   privacyText: {
     fontSize: 12,
     color: 'rgba(255,255,255,0.35)',
+  },
+  // Test-build diagnostics line (never rendered in store builds)
+  diagnosticsText: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.35)',
+    textAlign: 'center',
+    marginTop: 6,
   },
 
   // ── New to Portava card

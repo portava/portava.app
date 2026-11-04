@@ -44,6 +44,7 @@ describe('withPersonalTeam', () => {
     assert.equal(out.ios?.associatedDomains, undefined);
     assert.equal(out.ios?.usesAppleSignIn, false);
     assert.equal(out.extra?.signInWithApple, false, 'src/lib/buildCapabilities.ts hides the Apple button on this');
+    assert.equal(out.extra?.personalTeam, true, 'src/lib/buildCapabilities.ts shows the test-build diagnostics line on this');
     assert.deepEqual(out.extra?.eas, { projectId: 'keep' });
     assert.equal(out.ios?.bundleIdentifier, 'com.passporttravelbuddy.app');
     const names = (out.plugins ?? []).map((p) => (Array.isArray(p) ? p[0] : p));
@@ -73,6 +74,7 @@ describe('app.config.ts default export', () => {
       assert.ok((out.plugins ?? []).includes('expo-apple-authentication'));
       assert.equal((out as any).mods, undefined);
       assert.ok(!('signInWithApple' in (out.extra ?? {})), 'a store build leaves the key absent (reads as capable)');
+      assert.ok(!('personalTeam' in (out.extra ?? {})), 'a store build never shows the diagnostics line');
     } finally {
       if (saved === undefined) delete process.env.PORTAVA_PERSONAL_TEAM; else process.env.PORTAVA_PERSONAL_TEAM = saved;
     }

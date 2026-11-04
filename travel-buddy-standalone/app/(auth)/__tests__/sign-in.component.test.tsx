@@ -68,6 +68,8 @@ jest.mock('../../../src/services/authProviders', () => ({
 jest.mock('../../../src/lib/buildCapabilities', () => ({
   ...jest.requireActual('../../../src/lib/buildCapabilities'),
   buildCanSignInWithApple: jest.fn().mockReturnValue(true),
+  // Store build by default: no diagnostics line. The real one reads expo-constants and the inlined env.
+  testBuildDiagnosticsLine: jest.fn().mockReturnValue(null),
 }));
 
 // ── react-native-svg (simplified stub for test renderer) ─────────────────────
@@ -274,5 +276,26 @@ describe('SignIn screen — social buttons follow what the build and the backend
     await render(<SignIn />);
     expect(await screen.findByLabelText('Continue with Apple')).toBeTruthy();
     expect(screen.getByLabelText('Continue with Google')).toBeTruthy();
+  });
+});
+
+describe('SignIn screen — a test build names its backend; a store build shows nothing', () => {
+  const diagnostics = buildCapabilities.testBuildDiagnosticsLine as jest.Mock;
+
+  afterEach(() => {
+    diagnostics.mockReset().mockReturnValue(null);
+  });
+
+  it('store build: no diagnostics line', async () => {
+    await render(<SignIn />);
+    expect(screen.queryByLabelText('Test build diagnostics')).toBeNull();
+    expect(screen.queryByText(/Test build/)).toBeNull();
+  });
+
+  it('Personal Team build: the line says which deployment and API host the binary talks to', async () => {
+    diagnostics.mockReturnValue('Test build v1.4.2 · backend production (ajrurzioarfkagpuxfnb) · API rumazi.com');
+    await render(<SignIn />);
+    expect(await screen.findByLabelText('Test build diagnostics')).toBeTruthy();
+    expect(screen.getByText('Test build v1.4.2 · backend production (ajrurzioarfkagpuxfnb) · API rumazi.com')).toBeTruthy();
   });
 });

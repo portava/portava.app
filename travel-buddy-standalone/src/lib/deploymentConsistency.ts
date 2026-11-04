@@ -59,6 +59,12 @@ export interface DeploymentAddresses {
  * a path, port or trailing slash (verifier N7): the host `<ref>.supabase.co`
  * decides, not the URL's exact spelling. Anything else → null (not judged).
  */
+/** The known deployment a Supabase URL belongs to, by project ref; null when it is neither (not judged). */
+export function knownDeploymentFor(supabaseUrl: string | undefined): KnownDeployment | null {
+  const ref = supabaseRef(supabaseUrl);
+  return ref ? KNOWN_DEPLOYMENTS.find((d) => d.supabaseRef === ref) ?? null : null;
+}
+
 function supabaseRef(url: string | undefined): string | null {
   const host = hostOf(url);
   const m = host ? /^([a-z0-9]+)\.supabase\.co$/.exec(host) : null;

@@ -12,8 +12,27 @@
  */
 import Constants from 'expo-constants';
 import { canSignInWithAppleFrom, type BuildExtra } from './signInProviders.ts';
+import { isPersonalTeamBuildFrom, testBuildDiagnostics } from './buildDiagnostics.ts';
 
 /** The running binary's answer. */
 export function buildCanSignInWithApple(): boolean {
   return canSignInWithAppleFrom(Constants.expoConfig?.extra as BuildExtra);
+}
+
+/** True only in a Personal Team build (`extra.personalTeam: true`); store builds read false. */
+export function isPersonalTeamBuild(): boolean {
+  return isPersonalTeamBuildFrom(Constants.expoConfig?.extra as BuildExtra);
+}
+
+/**
+ * The one-line "which backend is this" the sign-in screen shows on a test
+ * build, or null (store builds). The env reads are literal so Expo inlines them.
+ */
+export function testBuildDiagnosticsLine(): string | null {
+  return testBuildDiagnostics({
+    personalTeam: isPersonalTeamBuild(),
+    supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,
+    apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL,
+    version: Constants.expoConfig?.version ?? undefined,
+  });
 }

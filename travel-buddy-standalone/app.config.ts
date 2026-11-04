@@ -63,8 +63,9 @@ export function withPersonalTeam(config: ExpoConfig): ExpoConfig {
     ...config,
     ios: { ...ios, usesAppleSignIn: false },
     plugins,
-    // Read by src/lib/buildCapabilities.ts: this binary cannot show the Apple sheet.
-    extra: { ...config.extra, signInWithApple: false },
+    // Read by src/lib/buildCapabilities.ts: this binary cannot show the Apple
+    // sheet, and it is a test build (the sign-in screen names its backend).
+    extra: { ...config.extra, signInWithApple: false, personalTeam: true },
   };
   // Belt and braces for the entitlement a plugin writes rather than the config declares (aps-environment).
   return configPlugins().withEntitlementsPlist(stripped, (c) => {
