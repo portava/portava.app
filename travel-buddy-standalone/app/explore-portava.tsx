@@ -54,7 +54,7 @@ interface DirectoryItem {
   /** True → nothing behind it yet: the row is left out of the directory. */
   disabled?: boolean;
   /** Listed only while this server feature flag is on. */
-  featureFlag?: string;
+  requiresLocalGuides?: boolean; // shown only while local_guides_enabled is on
 }
 
 interface DirectorySection {
@@ -88,7 +88,7 @@ export const SECTIONS: DirectorySection[] = [
       { key: 'map',            label: 'Map',             Icon: Map,      iconColor: '#2563EB', route: '/map?entry=unknown' },
       { key: 'places',         label: 'Places',          Icon: MapPin,   iconColor: '#059669', disabled: true },
       { key: 'hidden-gems',    label: 'Hidden Gems',     Icon: Gem,      iconColor: '#D97706', route: '/gems' },
-      { key: 'local-guide',    label: 'Become a Local Guide', Icon: Award, iconColor: '#4C8BF5', route: '/gems/become-guide', featureFlag: 'local_guides_enabled' },
+      { key: 'local-guide',    label: 'Become a Local Guide', Icon: Award, iconColor: '#4C8BF5', route: '/gems/become-guide', requiresLocalGuides: true },
       { key: 'events',         label: 'Events',          Icon: Calendar, iconColor: '#7C3AED', route: '/(tabs)/events' },
       { key: 'travelers',      label: 'Travelers',       Icon: Globe,    iconColor: '#0891B2', route: '/discover' },
       { key: 'neighborhoods',  label: 'Neighborhoods',   Icon: Home,     iconColor: '#27AE71', route: '/map?entry=unknown' },
@@ -294,7 +294,7 @@ export default function ExplorePortavaScreen() {
   // production, 2026-10-22): the row opened nothing but the (rent-a-buddy)
   // layout's "COMING SOON" gate, so it is not listed until the flag is on.
   const rentABuddyOn = useRentABuddyFlag().enabled;
-  const { isEnabled } = useFeatureFlags();
+  const localGuidesOn = useFeatureFlags().isEnabled('local_guides_enabled');
   // A `disabled` row has nothing behind it yet. It used to be drawn muted with
   // a "Coming soon" badge, which made a third of the directory read as
   // unfinished; such rows are now left out until they get a route.
@@ -302,10 +302,10 @@ export default function ExplorePortavaScreen() {
     () => SECTIONS
       .map((sec) => ({
         ...sec,
-        data: sec.data.filter((item) => !item.disabled && (rentABuddyOn || item.key !== 'rent-buddy') && (!item.featureFlag || isEnabled(item.featureFlag))),
+        data: sec.data.filter((item) => !item.disabled && (rentABuddyOn || item.key !== 'rent-buddy') && (localGuidesOn || !item.requiresLocalGuides)),
       }))
       .filter((sec) => sec.data.length > 0),
-    [rentABuddyOn, isEnabled],
+    [rentABuddyOn, localGuidesOn],
   );
 
   const handleItemPress = useCallback((item: DirectoryItem) => {
