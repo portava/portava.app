@@ -34,7 +34,7 @@ import { primaryIdentityText } from '../lib/displayIdentity.ts';
 import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
 import { OfficialBadge } from './OfficialBadge.tsx';
 import { MediaStampOverlay } from './StampOverlayBadge.tsx';
-import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
+import { VideoThumbnail } from './ui/VideoThumbnail.tsx'; import { FeedAutoplayVideo } from './media/FeedAutoplayVideo.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { navigateToProfile } from '../lib/navigateToProfile.ts';
 import { PostCard as SharedPostCard } from './cards/PostCard.tsx';
@@ -223,7 +223,7 @@ function FitBadge() {
 }
 
 /* ── Traveler Post ── */
-function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void; sessionId?: string | null }) {
+function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId, autoplayVideo = false }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void; sessionId?: string | null; /** The feed picked this card to play its video (lib/media/feedAutoplay.ts). */ autoplayVideo?: boolean }) {
   const { width } = useWindowDimensions();
   const chipVariant = resolveLocationChipVariant(item.locationVisibility, item.neighborhood);
   const chipLabel   = item.venueName ?? item.neighborhood ?? item.city;
@@ -409,11 +409,15 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
       {/* ── Immersive media frame ── */}
       <View style={[s.postMedia, { height: mediaHeight }]}>
         {showsVideo ? (
-          <VideoThumbnail
-            posterUri={videoPoster ?? null}
-            duration={item.media?.[0]?.duration_seconds ?? undefined}
-            style={StyleSheet.absoluteFill}
-          />
+          <>
+            <VideoThumbnail
+              posterUri={videoPoster ?? null}
+              duration={item.media?.[0]?.duration_seconds ?? undefined}
+              style={StyleSheet.absoluteFill}
+            />
+            {/* The card the feed picked plays its video, muted, over the poster (2026-11-04). */}
+            {autoplayVideo && firstMediaUrl ? <FeedAutoplayVideo uri={firstMediaUrl} /> : null}
+          </>
         ) : (
           // signedMediaUrl is pre-resolved via batchSignUrls (relay URL when flag
           // is ON, original URL when OFF). withStorageParams passes relay URLs
@@ -917,7 +921,7 @@ function PlaceRecommendationCard({ item }: { item: PulseFeedItem }) {
 }
 
 /* ── Unified renderer: switch on type ── */
-export function PulseFeedCard({ item, onDeleteSuccess, sessionId }: { item: PulseFeedItem; onDeleteSuccess?: () => void; sessionId?: string | null }) {
+export function PulseFeedCard({ item, onDeleteSuccess, sessionId, autoplayVideo = false }: { item: PulseFeedItem; onDeleteSuccess?: () => void; sessionId?: string | null; /** Play this card's video in place, muted (only a post card with a video has one). */ autoplayVideo?: boolean }) {
   const [whyId, setWhyId] = useState<string | null>(null);
   const [whyOpen, setWhyOpen] = useState(false);
 
@@ -938,7 +942,7 @@ export function PulseFeedCard({ item, onDeleteSuccess, sessionId }: { item: Puls
 
   let card: React.ReactNode;
   switch (item.type) {
-    case 'post':               card = <PostCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} sessionId={sessionId} />; break;
+    case 'post':               card = <PostCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} sessionId={sessionId} autoplayVideo={autoplayVideo} />; break;
     case 'question':           card = <QuestionCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} />; break;
     case 'plan':               card = <PlanCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} />; break;
     case 'hidden_gem':         card = <GemCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} sessionId={sessionId} />; break;

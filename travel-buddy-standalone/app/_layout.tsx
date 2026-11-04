@@ -407,7 +407,7 @@ function RootLayoutApp() { // the app; RootLayout (at the foot) renders it only 
                       <GeographicFieldsSetup />
                       <SensingCaptureSetup />
                       <MediaUploadResumeSetup />
-                      <MediaOfflineWarmupSetup />
+                      <MediaOfflineWarmupSetup /><PlaybackAudioModeSetup />
                       <CompassFrontloadSetup />
                       <WallAnalyticsSetup />
                       <StatusBar style="dark" />
@@ -483,6 +483,18 @@ function MediaOfflineWarmupSetup() {
 }
 import { useFeatureFlags } from '../src/context/FeatureFlagsContext';
 import { installMediaOfflineWarmup } from '../src/services/media/mediaOfflineDevice';
+
+/**
+ * Video and sound play through the iPhone's ringer switch, out of the speaker.
+ * Without this the session ran on expo-av's default (Ambient), so a phone on
+ * silent played every video with no sound — src/services/audio/playbackAudioMode.ts.
+ * Defined at the tail with its import, for the same reason as the setups above.
+ */
+function PlaybackAudioModeSetup() {
+  useEffect(() => { void applyPlaybackAudioMode(); }, []);
+  return null;
+}
+import { applyPlaybackAudioMode } from '../src/services/audio/playbackAudioMode';
 
 // ── Deployment consistency gate ─────────────────────────────────────────────
 // Appended at the foot so every line the censuses cite keeps its number; ES

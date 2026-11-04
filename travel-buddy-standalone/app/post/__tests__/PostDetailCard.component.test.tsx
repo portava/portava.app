@@ -307,13 +307,23 @@ describe('PostDetailCard — Edited label on re-focus', () => {
     // Override useFocusEffect on the mocked expo-router module so we can
     // capture and re-trigger the fetch callback without a real navigator.
     const routerMod = require('expo-router');
+    // EVERY focus callback on the screen is kept (the video's focus gate
+    // registers one too, 2026-11-04), so a second focus re-runs them all.
+    const registered = new Set<() => void>();
+    fireFocus = () => { registered.forEach((run) => run()); };
     focusSpy = jest.spyOn(routerMod, 'useFocusEffect').mockImplementation(
       (cb: () => (() => void) | void) => {
-        // Store so the test can fire a second focus event.
-        fireFocus = () => { cb(); };
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        const latest = React.useRef(cb);
+        latest.current = cb;
         // Fire once on mount to replicate the initial screen-enter behaviour.
         // eslint-disable-next-line react-hooks/rules-of-hooks
-        React.useEffect(() => { cb(); }, []);
+        React.useEffect(() => {
+          const run = () => { latest.current(); };
+          registered.add(run);
+          run();
+          return () => { registered.delete(run); };
+        }, []);
       },
     );
   });

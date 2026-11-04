@@ -495,6 +495,20 @@ export function HighlightViewer({
             }}
             onEnded={() => goNextRef.current()}
             onError={() => setVideoError(true)} // QA round 2, bug 11
+            // Browsers refuse autoPlay WITH sound until the viewer has interacted
+            // with the page (Safari nearly always), which left the highlight on a
+            // still frame. When that happens, play it muted instead; the speaker
+            // button turns the sound on (2026-11-04).
+            onCanPlay={(e: React.SyntheticEvent<HTMLVideoElement>) => {
+              const el = e.currentTarget;
+              if (!el.paused || paused) return;
+              el.play().catch((err: { name?: string } | undefined) => {
+                if (err?.name !== 'NotAllowedError') return;
+                el.muted = true;
+                setIsMuted(true);
+                el.play().catch(() => {});
+              });
+            }}
           />
         ) : isVideo ? (
           <Video
