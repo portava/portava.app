@@ -619,3 +619,33 @@ it for an App Store review/release or promote it out of the internal track: it t
 `src/constants/__tests__/easBetaProfile.test.ts` fails if `beta-store`'s values ever differ from `beta`'s, name
 production, stop being a store build, or submit to anything but the Android internal track. The app's startup
 check applies to both profiles.
+
+## Local build with a Personal Team (no Developer Program)
+
+A free Apple ID can sign an app for your own iPhone from Xcode (a "Personal Team"), with no
+Developer Program membership. The install expires after 7 days, works only on devices you
+plug in, and cannot carry three capabilities this app declares: Sign in with Apple, universal
+links (associated domains) and push notifications. `app.config.ts` removes all three when
+`PORTAVA_PERSONAL_TEAM=1` is set; the app treats each as unavailable at runtime. Never set
+the variable in EAS.
+
+Needs a Mac with Xcode 16.1 or newer (`sudo xcode-select -s /Applications/Xcode.app`),
+CocoaPods, Node, pnpm, and Rust with the iOS targets (`scripts/eas-install-rust.sh` installs
+them on macOS; `pod install` then builds the OpenMLS static library through
+`vendor/expo-openmls/scripts/build-ios.sh`). On the iPhone: Settings → Privacy & Security →
+Developer Mode on.
+
+```bash
+cd travel-buddy-standalone
+pnpm install
+bash scripts/eas-install-rust.sh
+cp .env.example .env            # fill in the EXPO_PUBLIC_* values for the backend you test against
+PORTAVA_PERSONAL_TEAM=1 npx expo prebuild --platform ios --clean
+PORTAVA_PERSONAL_TEAM=1 npx expo run:ios --device --configuration Release
+```
+
+If the build stops at "requires a development team", open `ios/Portava.xcworkspace`, add your
+Apple ID under Xcode → Settings → Accounts, choose your Personal Team under Signing &
+Capabilities, and run again (or Product → Run from Xcode with the phone selected). After the
+first install, trust the app under Settings → General → VPN & Device Management. Rebuild the
+same way whenever the 7 days run out.

@@ -122,6 +122,15 @@ export interface ScreenCaptureMention {
 }
 
 /**
+ * The hosted privacy policy's "Encryption honesty" paragraph
+ * (travel-buddy-standalone/server/templates/privacy-policy.html). It mentions a
+ * screenshot only to say encryption CANNOT stop a recipient taking one — a
+ * disclaimer, which is the opposite of the guarantee §30A.9 forbids.
+ */
+export const PRIVACY_POLICY_ENCRYPTION_HONESTY =
+  "End-to-end encryption protects message content from us and from anyone who compromises our servers. It does not hide who you message or when (we need that to deliver), and it cannot protect a device that is itself compromised or a screenshot taken by someone you message. Safety numbers in Telegraph let you verify your connection; if someone's safety number changes, verify before sharing anything sensitive.";
+
+/**
  * Closed list: every string in either tree that mentions screen capture. None
  * of them claims the app prevents or detects it.
  */
@@ -130,6 +139,11 @@ export const SCREEN_CAPTURE_MENTIONS: readonly ScreenCaptureMention[] = [
     text: "A transferred screenshot is not a ticket. Buy through the venue or the official reseller.",
     tree: "client",
     why: "Ticket-scam advice in the message safety banner: a screenshot is the thing a scammer sends, not something the app blocks.",
+  },
+  {
+    text: PRIVACY_POLICY_ENCRYPTION_HONESTY,
+    tree: "client",
+    why: "The privacy policy's encryption-honesty paragraph: it says encryption cannot protect against a screenshot a recipient takes — a disclaimer of protection, not a promise of it.",
   },
   {
     text: "screenshot",
@@ -268,6 +282,7 @@ export const REVIEWED_CLAIM_SHAPED_COPY: readonly { readonly text: string; reado
   { text: "Off — your signals won't contribute, and capture stays disabled until you turn this on. On: ${offered.summary}", why: "Intelligence-prompt setting: the app's own collection stays off — not screen capture." },
   { text: "Live intel capture is currently turned off, so no prompts appear. These preferences are saved and take effect if it’s enabled.", why: "Intelligence capture switched off — the app's own collection." },
   { text: "Portava can take a coarse loudness and rhythm reading to tell whether a place is lively. It measures a level only — no audio is recorded, kept or sent — and it is off until you turn it on here, separately from the microphone used for calls and video.", why: "The microphone-permission explanation for ambient-loudness sensing: what the app itself records (nothing), not a promise about anyone copying a conversation." },
+  { text: PRIVACY_POLICY_ENCRYPTION_HONESTY, why: "The hosted privacy policy's encryption-honesty paragraph: 'protects' and 'cannot protect' are about what end-to-end encryption does and does not cover, and the screenshot clause disclaims protection against one rather than promising it." },
   ...reviewedRouteMessages()];
 
 /**
