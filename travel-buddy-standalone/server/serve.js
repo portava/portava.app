@@ -4,6 +4,7 @@
  * Serves the output of build.js (static-build/) with two special routes:
  * - GET / or /manifest with expo-platform header → platform manifest JSON
  * - GET / without expo-platform → landing page HTML
+ * - GET /privacy (or /privacy-policy) → the hosted privacy policy (templates/privacy-policy.html)
  * Everything else falls through to static file serving from ./static-build/.
  *
  * Node.js built-ins (http, fs, path), plus `qrcode`, loaded only when /qr-code.png is first asked for.
@@ -15,6 +16,7 @@ const path = require("path");
 
 const STATIC_ROOT = path.resolve(__dirname, "..", "static-build");
 const TEMPLATE_PATH = path.resolve(__dirname, "templates", "landing-page.html");
+const PRIVACY_TEMPLATE_PATH = path.resolve(__dirname, "templates", "privacy-policy.html");
 const basePath = (process.env.BASE_PATH || "/").replace(/\/+$/, "");
 
 const MIME_TYPES = {
@@ -380,6 +382,24 @@ function serveStaticFile(urlPath, res) {
   res.end(content);
 }
 
+let privacyPolicyHtml = null; // read once, on first request (the file is static and ships with the server)
+function servePrivacyPage(req, res) {
+  if (privacyPolicyHtml === null) {
+    try {
+      privacyPolicyHtml = fs.readFileSync(PRIVACY_TEMPLATE_PATH, "utf-8");
+    } catch {
+      privacyPolicyHtml = "";
+    }
+  }
+  if (!privacyPolicyHtml) {
+    res.writeHead(404);
+    res.end("Not Found");
+    return;
+  }
+  res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" });
+  res.end(req.method === "HEAD" ? undefined : privacyPolicyHtml);
+}
+
 function createRequestHandler(landingPageTemplate, appName, renderQrPng = renderLandingQrPng) {
   return (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host}`);
@@ -412,6 +432,16 @@ function createRequestHandler(landingPageTemplate, appName, renderQrPng = render
     }
   }
 
+  // The stores ask for a public privacy policy URL (App Store Connect "Privacy
+  // Policy URL", Play Console "Privacy policy"). It lives beside the landing page
+  // so the URL sits on the same host as the share pages and association files.
+  if (
+    (pathname === "/privacy" || pathname === "/privacy/" || pathname === "/privacy-policy") &&
+    (req.method === "GET" || req.method === "HEAD")
+  ) {
+    return servePrivacyPage(req, res);
+  }
+
   let decodedPathname = pathname;
   try {
     decodedPathname = decodeURIComponent(pathname);
@@ -438,6 +468,7 @@ module.exports = {
   fetchProfileCard,
   serveProfileSharePage,
   createRequestHandler,
+  servePrivacyPage,
   escapeHtml,
   serveAppleAppSiteAssociation,
   serveAssetLinks,
