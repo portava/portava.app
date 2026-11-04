@@ -19,7 +19,7 @@ import { FEED_FOCUS_TTL_MS } from '../src/hooks/usePosts';
 import { AppHeader } from '../src/components/ui/AppHeader';
 import { color, space, radius, shadow, type as t } from '../src/theme/tokens';
 import {
-  getCollections, createCollection, deleteCollection, updateCollection,
+  readCollections, createCollection, deleteCollection, updateCollection,
   getCollectionItems,
   type Collection, type CollectionItem,
 } from '../src/services/collections';
@@ -445,6 +445,7 @@ export default function SavedScreen() {
   const navBarScrollHandler = useNavBarScrollHandler();
   const [collections, setCollections]           = useState<Collection[]>([]);
   const [loading, setLoading]                   = useState(true);
+  const [loadFailed, setLoadFailed]             = useState(false);
   const [activeCollection, setActiveCollection] = useState<Collection | null>(null);
   const [savedPostsOpen, setSavedPostsOpen]     = useState(false);
   const [createOpen, setCreateOpen]             = useState(false);
@@ -465,9 +466,11 @@ export default function SavedScreen() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const cols = await getCollections();
-    setCollections(cols);
-    lastLoadedAt.current = Date.now();
+    const read = await readCollections();
+    setCollections(read.data);
+    setLoadFailed(!read.ok);
+    // Only a successful read counts as fresh: a failed one is retried on the next focus.
+    if (read.ok) lastLoadedAt.current = Date.now();
     setLoading(false);
   }, []);
 
@@ -511,6 +514,21 @@ export default function SavedScreen() {
               <AppHeader variant="detail" title="Saved" onBack={router.back} />
               <View style={s.center}><ActivityIndicator color={color.signal} /></View>
             </View>
+          ) : loadFailed && collections.length === 0 ? (
+            <ScrollView
+              contentContainerStyle={s.emptyState}
+              onScroll={navBarScrollHandler}
+              scrollEventThrottle={16}
+            >
+              <AppHeader variant="detail" title="Saved" onBack={router.back} />
+              <SavedPeopleEntry />
+              <SavedPostsEntry onPress={() => setSavedPostsOpen(true)} />
+              {/* Not the empty state: its starter chips would make duplicates of collections that exist. */}
+              <View testID="collections-load-error">
+                <ErrorState message="Your collections could not be loaded. They are still saved." onRetry={() => void load()} />
+              </View>
+              <NavBarFiller />
+            </ScrollView>
           ) : collections.length === 0 ? (
             <ScrollView
               contentContainerStyle={s.emptyState}

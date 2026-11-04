@@ -12,7 +12,7 @@ import {
 import { Bookmark, FolderPlus, Check, X } from 'lucide-react-native';
 import type { EntityType, Collection } from '../services/collections.ts';
 import {
-  getCollections, createCollection, saveItem,
+  readCollections, createCollection, saveItem,
 } from '../services/collections.ts';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
@@ -41,12 +41,14 @@ export function SaveToCollectionSheet({
   const [newName, setNewName]           = useState('');
   const [createLoading, setCreateLoading] = useState(false);
   const [error, setError]               = useState<string | null>(null);
+  const [loadFailed, setLoadFailed]     = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const cols = await getCollections();
-      setCollections(cols);
+      const read = await readCollections();
+      setCollections(read.data);
+      setLoadFailed(!read.ok);
     } finally {
       setLoading(false);
     }
@@ -118,6 +120,12 @@ export function SaveToCollectionSheet({
           >
             {error ? (
               <Text style={s.errorText} accessibilityRole="alert" testID="save-to-collection-error">{error}</Text>
+            ) : null}
+            {/* A failed read is not "you have no collections": say so, and keep the new-collection row. */}
+            {loadFailed ? (
+              <Pressable onPress={() => void load()} accessibilityRole="button" accessibilityLabel="Try loading your collections again" testID="save-to-collection-load-error">
+                <Text style={s.errorText}>Your collections could not be loaded. Tap to try again.</Text>
+              </Pressable>
             ) : null}
             {collections.map((col) => (
               <Pressable

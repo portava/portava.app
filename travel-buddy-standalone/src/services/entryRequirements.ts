@@ -41,16 +41,27 @@ export interface TripEntryTraveler {
   lastVerifiedAt?: string | null;
 }
 
-export async function listMyPassports(): Promise<TravelerPassport[]> {
-  if (!isSupabaseConfigured || !apiBase()) return [];
+export type PassportsRead = { ok: true; data: TravelerPassport[] } | { ok: false; data: [] };
+
+/**
+ * The caller's saved passports, saying whether the read happened: a failed
+ * read is not "No passports yet" (whose one action is Add passport).
+ */
+export async function readMyPassports(): Promise<PassportsRead> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
   try {
     const res = await authedFetch(`${apiBase()}/api/me/passports`);
-    if (!res.ok) return [];
+    if (!res.ok) return { ok: false, data: [] };
     const json = await res.json();
-    return (json.passports ?? []) as TravelerPassport[];
+    return { ok: true, data: (json.passports ?? []) as TravelerPassport[] };
   } catch {
-    return [];
+    return { ok: false, data: [] };
   }
+}
+
+/** The passports alone, for pickers that list what they have. */
+export async function listMyPassports(): Promise<TravelerPassport[]> {
+  return (await readMyPassports()).data;
 }
 
 export async function addPassport(input: {

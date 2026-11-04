@@ -57,17 +57,24 @@ export interface SavedHashtag {
 
 // ── Collections CRUD ──────────────────────────────────────────────────────────
 
-export async function getCollections(): Promise<Collection[]> {
-  if (!isSupabaseConfigured || !apiBase()) return [];
+export type CollectionsRead = { ok: true; data: Collection[] } | { ok: false; data: [] };
+
+/**
+ * The caller's collections, saying whether the read happened. It used to
+ * answer a failed read with [] — so the Saved screen said "No collections yet"
+ * and offered starter chips that made duplicates of collections that exist.
+ */
+export async function readCollections(): Promise<CollectionsRead> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
   const headers = await authHeaders();
-  if (!headers) return [];
+  if (!headers) return { ok: false, data: [] };
   try {
     const res = await fetch(`${apiBase()}/api/users/me/collections`, { headers });
-    if (!res.ok) return [];
+    if (!res.ok) return { ok: false, data: [] };
     const body = await res.json();
-    return (body.collections ?? []) as Collection[];
+    return { ok: true, data: (body.collections ?? []) as Collection[] };
   } catch {
-    return [];
+    return { ok: false, data: [] };
   }
 }
 
