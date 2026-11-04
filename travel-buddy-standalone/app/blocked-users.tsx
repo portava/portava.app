@@ -11,6 +11,7 @@ import {
 import { useFocusEffect, router } from 'expo-router';
 import { ShieldOff } from 'lucide-react-native';
 import { AppHeader } from '../src/components/ui/AppHeader';
+import { ErrorState } from '../src/components/ui/ErrorState';
 import { Avatar } from '../src/components/ui/Avatar';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { getBlockList, unblockUser } from '../src/services/blocks';
@@ -22,12 +23,16 @@ export default function BlockedUsersScreen() {
   const [users, setUsers] = useState<BlockedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [unblocking, setUnblocking] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const navBarScrollHandler = useNavBarScrollHandler();
 
   const load = useCallback(async () => {
     setLoading(true);
     const res = await getBlockList();
+    // A failed read used to say "No blocked accounts", which reads as if your
+    // blocks were gone. They are not: the list just did not load.
     if (res.ok && res.data) setUsers(res.data);
+    setLoadFailed(!res.ok);
     setLoading(false);
   }, []);
 
@@ -62,6 +67,10 @@ export default function BlockedUsersScreen() {
       {loading ? (
         <View style={s.center}>
           <ActivityIndicator color={color.signal} />
+        </View>
+      ) : loadFailed && users.length === 0 ? (
+        <View style={s.center} testID="blocked-users-load-error">
+          <ErrorState message="Your blocked accounts could not be loaded. Everyone you blocked is still blocked." onRetry={() => { void load(); }} />
         </View>
       ) : users.length === 0 ? (
         <View style={s.center}>

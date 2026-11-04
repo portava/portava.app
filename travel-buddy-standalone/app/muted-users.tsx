@@ -6,6 +6,7 @@ import {
 import { useFocusEffect, router } from 'expo-router';
 import { VolumeX } from 'lucide-react-native';
 import { AppHeader } from '../src/components/ui/AppHeader';
+import { ErrorState } from '../src/components/ui/ErrorState';
 import { Avatar } from '../src/components/ui/Avatar';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import { getMuteList, unmuteUser } from '../src/services/mutes';
@@ -23,13 +24,15 @@ export default function MutedUsersScreen() {
   const [users, setUsers] = useState<MutedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [unmuting, setUnmuting] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const navBarScrollHandler = useNavBarScrollHandler();
 
   const load = useCallback(async () => {
     setLoading(true);
     const res = await getMuteList();
+    // A failed read used to empty the list and say "No muted accounts".
     if (res.ok && res.data) setUsers(res.data);
-    else setUsers([]);
+    setLoadFailed(!res.ok);
     setLoading(false);
   }, []);
 
@@ -65,6 +68,10 @@ export default function MutedUsersScreen() {
       {loading ? (
         <View style={s.center}>
           <ActivityIndicator color={color.signal} />
+        </View>
+      ) : loadFailed && users.length === 0 ? (
+        <View style={s.center} testID="muted-users-load-error">
+          <ErrorState message="Your muted accounts could not be loaded. Everyone you muted is still muted." onRetry={() => { void load(); }} />
         </View>
       ) : users.length === 0 ? (
         <View style={s.center}>
