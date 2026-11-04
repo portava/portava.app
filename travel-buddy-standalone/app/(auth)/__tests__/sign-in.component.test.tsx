@@ -58,6 +58,18 @@ jest.mock('../../../src/services/profile', () => ({
   getMyProfile: jest.fn().mockResolvedValue({ ok: true, data: { displayName: 'Test', username: 'test' } }),
 }));
 
+// ── Provider availability (build + backend) ───────────────────────────────────
+// The real getAuthProviderAvailability reads GET /auth/v1/settings; the real
+// buildCanSignInWithApple reads expo-constants. Both are swapped per test below.
+jest.mock('../../../src/services/authProviders', () => ({
+  ...jest.requireActual('../../../src/services/authProviders'),
+  getAuthProviderAvailability: jest.fn().mockResolvedValue({ apple: true, google: true, email: true }),
+}));
+jest.mock('../../../src/lib/buildCapabilities', () => ({
+  ...jest.requireActual('../../../src/lib/buildCapabilities'),
+  buildCanSignInWithApple: jest.fn().mockReturnValue(true),
+}));
+
 // ── react-native-svg (simplified stub for test renderer) ─────────────────────
 jest.mock('react-native-svg', () => {
   const React = require('react');
@@ -116,6 +128,8 @@ jest.mock('../../../constants/loginBackgrounds', () => ({
 // ─────────────────────────────────────────────────────────────────────────────
 
 import SignIn from '../sign-in';
+import * as authProviders from '../../../src/services/authProviders';
+import * as buildCapabilities from '../../../src/lib/buildCapabilities';
 
 describe('SignIn screen — redesign smoke test', () => {
   it('renders PortavaLogoMark', async () => {
@@ -222,5 +236,43 @@ describe('SignIn screen — invite-only sign-up', () => {
     await fireEvent.changeText(screen.getByLabelText('Password'), 'long-enough');
     await fireEvent.press(screen.getByText('Create Account'));
     expect(auth.signUp).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('SignIn screen — social buttons follow what the build and the backend can do', () => {
+  const availability = authProviders.getAuthProviderAvailability as jest.Mock;
+  const buildApple = buildCapabilities.buildCanSignInWithApple as jest.Mock;
+
+  beforeEach(() => {
+    availability.mockReset().mockResolvedValue({ apple: true, google: true, email: true });
+    buildApple.mockReset().mockReturnValue(true);
+  });
+
+  it('Apple off in Supabase (production on 2026-11-04): no Apple button, Google stays', async () => {
+    availability.mockResolvedValue({ apple: false, google: true, email: true });
+    await render(<SignIn />);
+    expect(await screen.findByLabelText('Continue with Google')).toBeTruthy();
+    expect(screen.queryByLabelText('Continue with Apple')).toBeNull();
+  });
+
+  it('Google off in Supabase: no Google button, Apple stays', async () => {
+    availability.mockResolvedValue({ apple: true, google: false, email: true });
+    await render(<SignIn />);
+    expect(await screen.findByLabelText('Continue with Apple')).toBeTruthy();
+    expect(screen.queryByLabelText('Continue with Google')).toBeNull();
+  });
+
+  it('a build without the Apple entitlement (Personal Team): no Apple button even with the backend on', async () => {
+    buildApple.mockReturnValue(false);
+    await render(<SignIn />);
+    expect(await screen.findByLabelText('Continue with Google')).toBeTruthy();
+    expect(screen.queryByLabelText('Continue with Apple')).toBeNull();
+  });
+
+  it('no answer from the backend (fail-open): both buttons', async () => {
+    availability.mockResolvedValue(null);
+    await render(<SignIn />);
+    expect(await screen.findByLabelText('Continue with Apple')).toBeTruthy();
+    expect(screen.getByLabelText('Continue with Google')).toBeTruthy();
   });
 });

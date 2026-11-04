@@ -54,6 +54,9 @@ import { signInWithApple, signInWithGoogle } from '../../src/services/ssoAuth';
 import { getMyProfile } from '../../src/services/profile';
 import { useSession } from '../../src/context/SessionContext';
 import { isSupabaseConfigured } from '../../src/lib/supabase';
+import { getAuthProviderAvailability, type AuthProviderAvailability } from '../../src/services/authProviders';
+import { visibleSignInProviders } from '../../src/lib/signInProviders';
+import { buildCanSignInWithApple } from '../../src/lib/buildCapabilities';
 import { PortavaLogoMark, PortavaWordmark } from '../../src/components/brand/PortavaLogo';
 import {
   LOGIN_BACKGROUNDS,
@@ -185,6 +188,9 @@ export default function SignIn() {
   // ── New visual state ────────────────────────────────────────────────────────
   // TODO: wire rememberMe to a persistent session preference when auth supports it
   const [rememberMe, setRememberMe] = useState(false);
+  // Which social providers Supabase has switched on: null until answered, and
+  // null hides nothing (src/services/authProviders.ts is fail-open).
+  const [backendProviders, setBackendProviders] = useState<AuthProviderAvailability | null>(null);
 
   // Background rotation
   const bgCurrentRef  = useRef(0);
@@ -212,6 +218,14 @@ export default function SignIn() {
     });
     return () => { alive = false; };
   }, [mode]);
+
+  // Ask Supabase which sign-in providers are enabled (once per process), so the
+  // screen never offers a button the backend would refuse.
+  useEffect(() => {
+    let alive = true;
+    getAuthProviderAvailability().then((p) => { if (alive) setBackendProviders(p); });
+    return () => { alive = false; };
+  }, []);
 
   // Honour ?mode=forgot-password deep links (e.g. from the expired reset screen)
   useEffect(() => {
@@ -419,6 +433,8 @@ export default function SignIn() {
 
   const isForgot    = mode === 'forgot-password' || mode === 'forgot-username';
   const isSignin    = mode === 'signin';
+  // Platform, build and backend must all be able to: src/lib/signInProviders.ts
+  const socialProviders = visibleSignInProviders({ platform: Platform.OS, buildCanSignInWithApple: buildCanSignInWithApple(), backend: backendProviders });
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -536,10 +552,10 @@ export default function SignIn() {
             {/* Social buttons — signin only */}
             {isSignin && (
               <>
-                {/* Apple sign-in — iOS only
-                    Android: Apple web OAuth not implemented; button hidden.
-                    See completion report for why and how to add it later. */}
-                {Platform.OS === 'ios' && (
+                {/* Apple sign-in — iOS only, and only when this build carries the
+                    entitlement and Supabase has the provider on (socialProviders).
+                    Android: Apple web OAuth not implemented; button hidden. */}
+                {socialProviders.apple && (
                   <Pressable
                     style={[s.socialBtn, (busy || !!oauthBusy) && s.socialBtnDisabled]}
                     onPress={handleAppleSignIn}
@@ -556,21 +572,23 @@ export default function SignIn() {
                   </Pressable>
                 )}
 
-                {/* Google sign-in — iOS and Android */}
-                <Pressable
-                  style={[s.socialBtn, (busy || !!oauthBusy) && s.socialBtnDisabled]}
-                  onPress={handleGoogleSignIn}
-                  disabled={busy || !!oauthBusy}
-                  accessibilityRole="button"
-                  accessibilityLabel="Continue with Google"
-                  accessibilityState={{ busy: oauthBusy === 'google' }}
-                >
-                  {oauthBusy === 'google'
-                    ? <ActivityIndicator size="small" color="#4285F4" style={{ width: 20, height: 20 }} />
-                    : <View style={s.googleG}><Text style={s.googleGText}>G</Text></View>
-                  }
-                  <Text style={s.socialBtnText}>Continue with Google</Text>
-                </Pressable>
+                {/* Google sign-in — iOS and Android, while Supabase has the provider on */}
+                {socialProviders.google && (
+                  <Pressable
+                    style={[s.socialBtn, (busy || !!oauthBusy) && s.socialBtnDisabled]}
+                    onPress={handleGoogleSignIn}
+                    disabled={busy || !!oauthBusy}
+                    accessibilityRole="button"
+                    accessibilityLabel="Continue with Google"
+                    accessibilityState={{ busy: oauthBusy === 'google' }}
+                  >
+                    {oauthBusy === 'google'
+                      ? <ActivityIndicator size="small" color="#4285F4" style={{ width: 20, height: 20 }} />
+                      : <View style={s.googleG}><Text style={s.googleGText}>G</Text></View>
+                    }
+                    <Text style={s.socialBtnText}>Continue with Google</Text>
+                  </Pressable>
+                )}
 
                 {/* OR divider */}
                 <View style={s.orRow}>
