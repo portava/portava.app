@@ -485,7 +485,7 @@ async function toggleFlagHandler(req: any, res: any): Promise<void> {
     p_flag:          req.params.flag,
     p_new_enabled:   parsed.data.enabled,
     p_changed_by_id: userId,
-  });
+  }); invalidateFeatureFlagCache(); // whatever the outcome (an errored write may still have committed): lib/hotPathCache.ts
 
   if (rpcErr) {
     if (rpcErr.code === "42883") {
@@ -528,3 +528,6 @@ router.patch("/admin/visuals/feature-flags/:flag",  asyncHandler(toggleFlagHandl
 export default router;
 
 import { refuseHiddenInertFlag } from "../lib/hiddenInertFlags.js";
+
+// lib/hotPathCache.ts: every flag write above ends this instance's remembered flag rows (other instances: within 15s). At the foot so no cited line moves.
+import { invalidateFeatureFlagCache } from "../lib/hotPathCache.js";

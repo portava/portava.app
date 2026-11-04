@@ -13,11 +13,11 @@
  */
 export async function isFlagEnabled(sc: any, flag: string): Promise<boolean> {
   try {
-    const { data, error } = await sc
+    const { data, error } = await readFlagRowThroughCache(sc, flag, "enabled", () => sc
       .from("feature_flags")
       .select("enabled")
       .eq("flag", flag)
-      .maybeSingle();
+      .maybeSingle());
     if (error) return false;
     return Boolean((data as any)?.enabled);
   } catch {
@@ -54,11 +54,11 @@ export async function isFlagEnabled(sc: any, flag: string): Promise<boolean> {
  */
 export async function isKillSwitchEngaged(sc: any, flag: string): Promise<boolean> {
   try {
-    const { data, error } = await sc
+    const { data, error } = await readFlagRowThroughCache(sc, flag, "enabled", () => sc
       .from("feature_flags")
       .select("enabled")
       .eq("flag", flag)
-      .maybeSingle();
+      .maybeSingle());
     if (error) return true; // state unknown → treat as stopped
     return Boolean((data as any)?.enabled);
   } catch {
@@ -75,11 +75,11 @@ export async function getFlagRow(
   flag: string,
 ): Promise<{ enabled: boolean; metadata: Record<string, unknown> | null } | null> {
   try {
-    const { data, error } = await sc
+    const { data, error } = await readFlagRowThroughCache(sc, flag, "enabled, metadata", () => sc
       .from("feature_flags")
       .select("enabled, metadata")
       .eq("flag", flag)
-      .maybeSingle();
+      .maybeSingle());
     if (error || !data) return null;
     return {
       enabled:  Boolean((data as any).enabled),
@@ -201,11 +201,11 @@ export async function engagedRabBookingKillSwitch(sc: any): Promise<string> {
  */
 export async function readFlagState(sc: any, flag: string): Promise<"on" | "off" | "unknown"> {
   try {
-    const { data, error } = await sc
+    const { data, error } = await readFlagRowThroughCache(sc, flag, "enabled", () => sc
       .from("feature_flags")
       .select("enabled")
       .eq("flag", flag)
-      .maybeSingle();
+      .maybeSingle());
     if (error) return "unknown";
     return (data as any)?.enabled === true ? "on" : "off";
   } catch {
@@ -242,3 +242,38 @@ export const RESTRICTIVE_WHEN_ON_FLAGS = [
   /** ON: a host's group controls (mute, host-only posting, media/link, slow mode) refuse sends (Telegraph §30A.12, 3661). */
   "telegraph_group_controls_enabled",
 ] as const;
+
+// ── The remembered row (lib/hotPathCache.ts) ──────────────────────────────────
+//
+// Appended at the foot: lines above are cited by line. isFlagEnabled,
+// isKillSwitchEngaged, readFlagState and getFlagRow each make exactly the read
+// they always made, as the thunk passed here; what changed is that a read which
+// SUCCEEDED through the one service client is remembered for FLAG_ROW_TTL_MS
+// (15s), keyed by (columns, flag), and answered from memory until then. Each
+// reader then applies its own polarity to that answer exactly as before.
+//
+// A read that ERRORED or THREW is never remembered and is handed back (or
+// rethrown) untouched, so every failure still reaches the reader's own failure
+// branch: isFlagEnabled / getFlagRow still answer off, readFlagState still
+// answers "unknown", and isKillSwitchEngaged still ENGAGES — on every failed
+// read, not once per TTL. A remembered row is an answer the database gave less
+// than 15s ago; an error is never turned into one.
+//
+// Busted by invalidateFeatureFlagCache() after every flag write the API makes
+// (lib/hotPathCache.ts lists them); a write anywhere else is seen within 15s.
+async function readFlagRowThroughCache(sc: any, flag: string, columns: string, read: () => any): Promise<any> {
+  if (!isHotPathCacheableClient(sc)) return read();
+  const key = flagRowCacheKey(columns, flag);
+  const remembered = rememberedFlagRow(key);
+  if (remembered) return { data: remembered.row, error: null };
+  const generation = flagCacheGeneration();
+  const answer = await read();
+  const data = answer && typeof answer === "object" ? answer.data : undefined;
+  // Only the two shapes maybeSingle() answers on success: a row object, or null for no row.
+  if (answer && typeof answer === "object" && answer.error == null && (data === null || (typeof data === "object" && !Array.isArray(data)))) {
+    rememberFlagRow(key, data, generation);
+  }
+  return answer;
+}
+
+import { flagCacheGeneration, flagRowCacheKey, isHotPathCacheableClient, rememberFlagRow, rememberedFlagRow } from "./hotPathCache.js";

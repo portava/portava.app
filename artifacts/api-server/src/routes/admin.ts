@@ -799,7 +799,7 @@ router.patch("/admin/feature-flags/:flag", async (req, res) => {
     p_flag:          req.params.flag,
     p_new_enabled:   parsed.data.enabled,
     p_changed_by_id: userId,
-  });
+  }); invalidateFeatureFlagCache(); // whatever the outcome (an errored write may still have committed): lib/hotPathCache.ts
 
   if (rpcErr) {
     if (rpcErr.code === "42883") {
@@ -929,7 +929,7 @@ router.patch("/admin/feature-flags/:flag/metadata", async (req, res) => {
     p_flag:          flag,
     p_metadata:      parsed.data.metadata,
     p_changed_by_id: userId,
-  });
+  }); invalidateFeatureFlagCache(); // whatever the outcome (an errored write may still have committed): lib/hotPathCache.ts
 
   if (rpcErr) {
     if (rpcErr.code === "42883") {
@@ -1139,7 +1139,7 @@ router.patch("/admin/safe-return/config", async (req, res) => {
       p_flag:          key,
       p_new_enabled:   enabled,
       p_changed_by_id: admin.userId,
-    });
+    }); invalidateFeatureFlagCache(); // whatever the outcome (an errored write may still have committed): lib/hotPathCache.ts
     if (rpcErr && rpcErr.code === "42883") {
       req.log.error({ flag: key, pgCode: rpcErr.code }, "toggle_feature_flag_with_audit missing — apply migration 0119");
       res.status(503).json({
@@ -3745,3 +3745,6 @@ router.post("/admin/moderation/reports/:id/review", async (req, res) => {
 });
 
 export default router;
+
+// lib/hotPathCache.ts: every flag write above ends this instance's remembered flag rows (other instances: within 15s). At the foot so no cited line moves.
+import { invalidateFeatureFlagCache } from "../lib/hotPathCache.js";

@@ -300,7 +300,7 @@ router.put("/admin/ranking/flags/:key", asyncHandler(async (req, res) => {
   const { error: updateErr } = await sc
     .from("feature_flags")
     .update({ enabled, updated_at: new Date().toISOString() })
-    .eq("flag", flagKey);
+    .eq("flag", flagKey); invalidateFeatureFlagCache(); // whatever the outcome (an errored write may still have committed): lib/hotPathCache.ts
 
   if (updateErr) {
     sendError(res, "db_error", updateErr.message);
@@ -584,3 +584,6 @@ router.get("/admin/ranking/debug-samples", asyncHandler(async (req, res) => {
 }));
 
 export default router;
+
+// lib/hotPathCache.ts: every flag write above ends this instance's remembered flag rows (other instances: within 15s). At the foot so no cited line moves.
+import { invalidateFeatureFlagCache } from "../lib/hotPathCache.js";
