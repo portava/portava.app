@@ -15,9 +15,17 @@
  *
  * PROPERTIES
  *   M0  on the replayed chain, 3909's own postconditions hold: every object's fingerprint equals production's.
+ *       SINCE 3925 (census-media §56.5) the chain end carries a sixth post_media policy, the RESTRICTIVE
+ *       post_media_select_post_readable_or_owner, so 3909's "exactly 2098's five" statement is superseded
+ *       (declared in lib/postconditionAmendments.ts, 3909:311). M0 runs the block as certify sends it on a
+ *       whole-chain run (that statement dropped, the declaration's re-assertion in its place), checks the
+ *       as-written block fails ONLY on that statement and names exactly 3925's policy as the extra one, and,
+ *       with 3925's post_media policy removed inside a rolled-back transaction (the state 3909 left), runs
+ *       the postconditions as written.
  *   M1  re-running 3909's body on that shape is a strict no-op: no catalog row it could touch is rewritten.
  *   M2  on portava-ci's shape the body creates the ledger, the three functions, the trigger and the four
- *       policies, drops post_media_owner_write, and the same postconditions then hold.
+ *       policies, drops post_media_owner_write, and the same postconditions then hold. portava-ci's shape is
+ *       the one 3909 met, before 3925 (which sorts after it): the setup removes 3925's post_media policy too.
  *   M3  the design works: a rejected verdict lands in the ledger and outlives the row's moderation_status; the
  *       owner can no longer attach that storage key, while a fresh key of theirs is admitted as pending.
  *   M4  post_media_path_is_moderated answers only about the caller's own keys, and anon cannot call it;
@@ -30,6 +38,8 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HAVE_DB, exec, psql, rows, scalar, seedUser, deleteUser } from "./localDb.js";
+import { amendBlock, postconditionBlocks } from "../../scripts/lib/migrationSqlBlocks.js";
+import { POSTCONDITION_AMENDMENTS } from "../../scripts/lib/postconditionAmendments.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS = resolve(__dir, "../../migrations");
@@ -42,6 +52,29 @@ const BODY = (() => {
   return FILE.slice(b + "\nBEGIN;\n".length, c);
 })();
 const POSTCONDITIONS = FILE.slice(FILE.indexOf("\nCOMMIT;\n") + "\nCOMMIT;\n".length);
+/** 3925 (census-media §56.5): the RESTRICTIVE read policy it adds to post_media, after 3909. */
+const POLICY_3925 = "post_media_select_post_readable_or_owner";
+const DROP_3925 = `DROP POLICY ${POLICY_3925} ON public.post_media;`;
+/**
+ * 3909's postconditions as certify:migrations stage 4 sends them at the chain end: each block amended by its
+ * declaration in lib/postconditionAmendments.ts, followed by that declaration's re-assertion.
+ */
+const AMENDED_POSTCONDITIONS = (() => {
+  const file = "3909_post_media_moderation_design_codified.sql";
+  const decls = POSTCONDITION_AMENDMENTS.filter((a) => a.file === file);
+  assert.equal(decls.length, 1, "anti-vacuity: 3909:311 is declared superseded by 3925");
+  assert.deepEqual(decls[0]!.drops.map((d) => d.supersededBy), ["3925_unreleased_posts_hidden_from_non_authors.sql"]);
+  const blocks = postconditionBlocks(FILE);
+  assert.ok(blocks.some((b) => b.firstLine === decls[0]!.blockLine), "the declared block is one of 3909's postcondition blocks");
+  return blocks.map((b) => {
+    const d = decls.find((a) => a.blockLine === b.firstLine);
+    if (!d) return b.text;
+    const r = amendBlock(FILE, b, d.drops);
+    if (!r.ok) throw new Error(`3909:${b.firstLine}: ${r.reason}`);
+    assert.ok(d.reassert, "the declaration carries an inline re-assertion");
+    return `${r.text}\n${d.reassert}`;
+  }).join("\n");
+})();
 /** 0103's post_media_owner_write, verbatim, schema-qualified the way portava-ci resolved it. */
 const OWNER_WRITE_0103 = (() => {
   const s = readFileSync(resolve(MIGRATIONS, "0103_post_media.sql"), "utf8");
@@ -96,7 +129,18 @@ describe("3909 — production's 2098 post_media moderation design, codified", { 
   });
 
   it("M0 — on the replayed chain every 2098 object matches production's fingerprint", () => {
-    exec(POSTCONDITIONS);
+    // At the chain end, as certify sends it: the five-name pin dropped, the six-name re-assertion in its place.
+    exec(AMENDED_POSTCONDITIONS);
+    // As written, the block fails on the five-name pin and nowhere else: the only extra policy is 3925's.
+    const asWritten = psql(`BEGIN;\n${POSTCONDITIONS}\nROLLBACK;`);
+    assert.notEqual(asWritten.status, 0, "anti-vacuity: 3925 is in force at the chain end, so the five-name pin fails");
+    assert.match(asWritten.stderr,
+      /POSTCONDITION FAILED \(3909\): post_media's policies are \[post_media_owner_delete,post_media_owner_insert,post_media_owner_update,post_media_public_select,post_media_select_post_readable_or_owner,post_media_service_role_all\], not 2098's five\./,
+      asWritten.stderr);
+    // The state 3909 left (3925's post_media policy removed, rolled back): the postconditions as written hold.
+    exec(`BEGIN;\n${DROP_3925}\n${POSTCONDITIONS}\nROLLBACK;`);
+    assert.equal(scalar(`SELECT count(*) FROM pg_policy WHERE polrelid = 'public.post_media'::regclass AND polname = '${POLICY_3925}'`), "1",
+      "the rolled-back transaction left 3925's policy in place");
     assert.equal(scalar(`SELECT count(*) FROM pg_policy WHERE polrelid = 'public.post_media'::regclass AND polname = 'post_media_owner_write'`), "0");
   });
 
@@ -121,6 +165,7 @@ describe("3909 — production's 2098 post_media moderation design, codified", { 
       DROP FUNCTION public.post_media_path_is_moderated(text, uuid);
       DROP FUNCTION public.post_media_path_is_owned(text, uuid);
       DROP TABLE public.post_media_moderation_ledger;
+      ${DROP_3925}
       ${OWNER_WRITE_0103}`;
     const policies = `SELECT 'policies=' || string_agg(polname, ',' ORDER BY polname) FROM pg_policy WHERE polrelid = 'public.post_media'::regclass;`;
     const out = exec(`BEGIN;\n${setup}\n${policies}\nSELECT 'ledger=' || coalesce(to_regclass('public.post_media_moderation_ledger')::text, 'absent');\n${BODY}\n${POSTCONDITIONS}\n${policies}\nROLLBACK;`);

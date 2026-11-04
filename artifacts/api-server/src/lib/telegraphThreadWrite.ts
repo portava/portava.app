@@ -28,7 +28,7 @@
  *   6. §22's adaptive send rate limit, LAST, so a send refused by 1–5 never
  *      spends the sender's allowance. See `sendRateRefusal` at the end of file.
  */
-import type { SupabaseClient } from "@supabase/supabase-js"; import { sendLimiterId, type SendBucket } from "../domain/telegraph/policies/messageDoorPolicy.js";
+import type { SupabaseClient } from "@supabase/supabase-js"; import { sendLimiterId, threadAcceptsWrites, THREAD_ARCHIVED_MESSAGE, type SendBucket } from "../domain/telegraph/policies/messageDoorPolicy.js";
 import { getServiceClient } from "./supabase.js"; import { checkSendRateLimit, SEND_LIMITS, SEND_WINDOW_MS } from "../domain/telegraph/policies/sendRateLimit.js";
 import { isKillSwitchEngaged } from "./featureFlags.js"; import { checkRateLimit } from "./rateLimit.js";
 import { isBlockedBetween } from "./blockGuard.js"; import { sendError } from "./http.js"; import { readRetainedAccess, RETAINED_ACCESS_UNCHECKABLE_MESSAGE } from "./tripRetainedRecordGuard.js"; import { RETAINED_RECORD_ONLY_MESSAGE } from "./tripTrustGate.js";
@@ -150,16 +150,16 @@ export async function guardTelegraphThreadWrite(
 
   const { data: meta, error: metaErr } = await client
     .from("message_threads")
-    .select("is_e2ee, thread_type, trip_id, circle_owner_id")
+    .select("is_e2ee, status, thread_type, trip_id, circle_owner_id")
     .eq("id", threadId)
     .maybeSingle();
-  if (metaErr) {
-    return {
-      ok: false,
-      code: "degraded_unavailable",
-      message: "We could not verify this conversation right now. Please try again shortly.",
-    };
-  }
+  if (metaErr) return { ok: false, code: "degraded_unavailable", message: "We could not verify this conversation right now. Please try again shortly." };
+  // 3b. The thread's own status: an archived thread takes no write — the refusal
+  // the capabilities projection has always announced (canSendMessage), and the
+  // same predicate (messageDoorPolicy.threadAcceptsWrites). Safety included:
+  // an archived thread is closed as a whole, like E2EE or non-membership. Read
+  // after the block gate, so a blocked sender's refusal is unchanged.
+  if (!threadAcceptsWrites(meta as { status?: unknown } | null)) return { ok: false, code: "forbidden", message: THREAD_ARCHIVED_MESSAGE, reason: "TELEGRAPH_POLICY_THREAD_ARCHIVED" };
   if ((meta as any)?.is_e2ee === true) {
     return {
       ok: false,
@@ -283,7 +283,7 @@ export async function sendRateRefusal(
  */
 export function sendThreadWriteRefusal(
   res: Parameters<typeof sendError>[0],
-  refusal: { code: ThreadWriteRefusal; message: string; retryAfterMs?: number },
+  refusal: { code: ThreadWriteRefusal; message: string; retryAfterMs?: number; reason?: TelegraphReason },
 ): void {
   if (refusal.code === "rate_limited") {
     res.setHeader("Retry-After", String(Math.max(1, Math.ceil((refusal.retryAfterMs ?? 0) / 1000))));
@@ -292,7 +292,7 @@ export function sendThreadWriteRefusal(
     res.status(403).json({ error: "trip_record_read_only", message: refusal.message });
     return;
   }
-  sendError(res, refusal.code, refusal.message);
+  sendError(res, refusal.code, refusal.message, refusal.reason === "TELEGRAPH_POLICY_THREAD_ARCHIVED" ? { reason: refusal.reason } : undefined); // the archived refusal names itself, as the text door and the projection do; every other refusal is byte-identical to before
 }
 
 /**
@@ -363,7 +363,7 @@ export async function refuseSendOverRate(
 }
 
 /** Re-exported so the text door takes its whole door policy from one module. */
-export { resolveClientDiscriminator } from "../domain/telegraph/policies/messageDoorPolicy.js";
+export { resolveClientDiscriminator, threadAcceptsWrites, THREAD_ARCHIVED_MESSAGE } from "../domain/telegraph/policies/messageDoorPolicy.js";
 
 /* ─────────────────────── the restriction gate, for the inline doors ───────────────────────
  *

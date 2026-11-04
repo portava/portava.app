@@ -225,6 +225,7 @@ function makeClient() {
     const filters: Array<(r: any) => boolean> = [];
     let patch: any = null;
     let del = false;
+    let returning = false; // delete().select() returns the deleted rows, as PostgREST does
     const rows = () => {
       const src =
         table === "feature_flags" ? Object.entries(state.flags).map(([flag, enabled]) => ({ flag, enabled })) :
@@ -240,13 +241,14 @@ function makeClient() {
       }
       if (del) {
         const keep = (r: any) => !filters.every((f) => f(r));
+        const removed = rows().map((r) => ({ ...r }));
         if (table === "post_media") state.postMedia = state.postMedia.filter(keep);
-        return { data: null, error: null };
+        return { data: returning ? removed : null, error: null };
       }
       return { data: rows(), error: null };
     };
     const b: any = {
-      select() { return b; },
+      select() { if (del) returning = true; return b; },
       update(p: any) { patch = p; return b; },
       delete() { del = true; return b; },
       eq(c: string, v: any) { filters.push((r) => r[c] === v); return b; },

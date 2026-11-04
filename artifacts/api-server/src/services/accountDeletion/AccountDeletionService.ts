@@ -78,7 +78,7 @@
  * The inventory, so the next person does not have to rediscover it:
  *
  *   COLLECTED (section 1), row-deleting step named alongside:
- *     post_media.storage_path / thumbnail_storage_path / feed_storage_path
+ *     post_media.storage_path / thumbnail_storage_path / feed_storage_path (+ its upload siblings); posts.media_urls / media_thumbnail_url (+ siblings) → tombstone_or_delete_posts — see collectPostUploadReferences, at the tail
  *     media_assets.storage_path / thumbnail_path        → delete_media_assets
  *     profiles.avatar_url / cover_photo_url             → anonymise_profile
  *     memory_items.media_url                            → delete_memory_items
@@ -536,13 +536,13 @@ export async function executeAccountDeletion(
             // thumbnail. It was never collected here, so every feed variant a user
             // ever generated survived their deletion in the private post-media
             // bucket. Same table, same row, same query: one more column.
-            if (row.feed_storage_path) storageTargets.push({ bucket, path: row.feed_storage_path });
+            if (row.feed_storage_path) storageTargets.push({ bucket, path: row.feed_storage_path }); if (bucket === POST_MEDIA_BUCKET && row.storage_path) for (const sibling of uploadSiblings(row.storage_path, userId)) storageTargets.push({ bucket, path: sibling }); // 2026-10-24: the .thumb/.feed/.poster objects a row may not name (#795's create-path rows name storage_path and at most the poster) — this user's own upload layout only, see uploadSiblings
           }
           // The count this step reports is ROWS read, as it always was.
           return rows.length;
         },
       ),
-  );
+  ); await collectPostUploadReferences(sc, userId, steps, warnings, storageTargets); // 2026-10-24: uploads named only by posts.media_urls / media_thumbnail_url (no post_media row before #795) — section 1, before tombstone_or_delete_posts blanks or deletes the row
 
   // The ONE collection read that is not paged, and the reason is structural
   // rather than an oversight: it is a single row addressed by primary key
@@ -812,10 +812,10 @@ export async function executeAccountDeletion(
 
   // ── 2. Delete the storage objects ─────────────────────────────────────────
   if (storageTargets.length > 0) {
-    const byBucket = new Map<string, string[]>();
+    const byBucket = new Map<string, string[]>(); const seenTargets = new Set<string>(); // 2026-10-24: one object named twice (a post_media row and a media_urls entry for the same upload, mid-#795) is removed once
     for (const t of storageTargets) {
       if (!byBucket.has(t.bucket)) byBucket.set(t.bucket, []);
-      byBucket.get(t.bucket)!.push(t.path);
+      const targetKey = `${t.bucket}\u0000${t.path}`; if (!seenTargets.has(targetKey)) { seenTargets.add(targetKey); byBucket.get(t.bucket)!.push(t.path); }
     }
     for (const [bucket, paths] of byBucket) {
       const ok = await step(steps, `delete_storage:${bucket}`, async () => {
@@ -1590,3 +1590,108 @@ export async function anonymiseLayoverObjectiveSources(sc: any, userId: string):
   if ((code === "42P01" || code === "PGRST205") && /\blayover_objective_facts\b/.test(message)) return;
   must(result, "anonymise layover objective curator");
 }
+
+// ── Post uploads named only by posts.media_urls (2026-10-24) ─────────────────
+//
+// THE DEFECT. 2083 made post_media canonical for uploads, but POST /posts kept
+// writing an upload's bare key (`post-media/<uid>/<ms>.<ext>`) into
+// posts.media_urls and creating NO post_media row — fixed going forward, and
+// backfilled by migration 3924, in #795. collect_post_media_paths never saw
+// those objects, so tombstone_or_delete_posts deleted the row (or blanked
+// media_urls through tombstone_post) and the bytes stayed in the private
+// bucket. Same class as intel_evidence and the four client-supplied columns
+// in the header: row-complete, object-incomplete.
+//
+// posts.media_thumbnail_url is client-supplied in the same request and names a
+// thumbnail of the same upload, so it is collected beside it.
+//
+// BEFORE AND AFTER #795. Before it lands this is the only collector that sees
+// these uploads. After it (and 3924), media_urls holds external references
+// only — skipped by the guard — and collect_post_media_paths reads the rows;
+// both feed the one removal set, which section 2 de-duplicates. Either way the
+// upload's .thumb.jpg / .feed.jpg / .poster.jpg siblings are derived, because
+// neither shape of record names them all.
+//
+// GUARDS. Both columns are client-supplied on main, so every value goes
+// through collectOwnedReference: an external URL is skipped, a key naming
+// another owner or carrying `..` is refused. No status filter: a soft-deleted
+// or tombstoned post's uploads go too, exactly as its post_media rows' do.
+// Paged like every other set-returning read in section 1.
+async function collectPostUploadReferences(
+  sc: any,
+  userId: string,
+  steps: DeletionStepResult[],
+  warnings: string[],
+  targets: Array<{ bucket: string; path: string }>,
+): Promise<boolean> {
+  return pagedCollectStep(
+    steps,
+    warnings,
+    { name: "collect_post_media_url_paths", subject: "post upload", noun: "references" },
+    (readAll) =>
+      readAll(
+        () =>
+          sc
+            .from("posts")
+            .select("media_urls, media_thumbnail_url")
+            .eq("author_id", userId)
+            .order("id", { ascending: true }),
+        (rows) => {
+          let found = 0;
+          for (const row of rows) {
+            // An array: one bad element drops only itself (as reviews.photos).
+            const urls = Array.isArray(row?.media_urls) ? row.media_urls : [];
+            for (const ref of urls) {
+              if (collectOwnedUpload(ref, userId, targets)) found += 1;
+            }
+            if (collectOwnedReference(row?.media_thumbnail_url, userId, targets)) found += 1;
+          }
+          return found;
+        },
+      ),
+  );
+}
+
+/**
+ * ── The objects ONE general upload writes, beyond the one it names ──────────
+ *
+ * POST /media/upload (routes/posts.ts) stores an upload at `<uid>/<ms>.<ext>`
+ * and, beside it, `<uid>/<ms>.thumb.jpg` and `<uid>/<ms>.feed.jpg`; a video may
+ * later get `<uid>/<ms>.<ext>.poster.jpg` (routes/mediaVideoPoster.ts, through
+ * lib/mediaPosterPath). The client is handed only the first key, so a record
+ * that names the upload — a posts.media_urls entry, or a post_media row written
+ * by #795's create path (storage_path, and the poster only if it existed then)
+ * — does not name the rest.
+ *
+ * Returned ONLY for a path in exactly that server-written layout whose first
+ * segment is the account being erased. Anything else — another user's key, a
+ * client-writable `memories/` or `stories/` prefix, a derivative itself — gets
+ * no siblings, so this can never widen a removal past this user's own uploads.
+ * A sibling that was never written is a no-op for storage.remove().
+ */
+export function uploadSiblings(path: string, userId: string): string[] {
+  const m = GENERAL_UPLOAD_PATH.exec(typeof path === "string" ? path : "");
+  if (!m || m[1]!.toLowerCase() !== String(userId).toLowerCase()) return [];
+  const base = `${m[1]}/${m[2]}`;
+  const out = [`${base}.thumb.jpg`, `${base}.feed.jpg`];
+  if (GENERAL_UPLOAD_VIDEO_EXT.test(m[3]!)) out.push(posterPathFor(path));
+  return out;
+}
+const GENERAL_UPLOAD_PATH =
+  /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/([0-9]{10,16})\.([a-z0-9]{2,5})$/i;
+const GENERAL_UPLOAD_VIDEO_EXT = /^(mp4|mov|webm)$/i;
+
+/** collectOwnedReference, plus the upload's siblings when it landed in post-media. */
+function collectOwnedUpload(
+  raw: unknown,
+  userId: string,
+  targets: Array<{ bucket: string; path: string }>,
+): boolean {
+  if (!collectOwnedReference(raw, userId, targets)) return false;
+  const last = targets[targets.length - 1]!;
+  if (last.bucket === POST_MEDIA_BUCKET) {
+    for (const sibling of uploadSiblings(last.path, userId)) targets.push({ bucket: POST_MEDIA_BUCKET, path: sibling });
+  }
+  return true;
+}
+import { posterPathFor } from "../../lib/mediaPosterPath.js";
