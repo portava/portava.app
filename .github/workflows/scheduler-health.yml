@@ -1,0 +1,93 @@
+# Asks the deployed app whether its background jobs are running, and fails
+# when they are not. Needs no secret: GET /api/healthz/schedulers is public and
+# carries counters and timestamps only.
+#
+# WHY THIS FILE EXISTS. Every background job is a timer inside the API process,
+# and nothing outside the process ever asked whether those timers were firing.
+# /api/healthz/schedulers answers that question (503 when a job is failing or
+# stale, and since lib/schedulerHeartbeat.ts, 503 for thirty minutes after any
+# stop of the whole process longer than ten minutes). This workflow is the
+# thing that asks, and a failed scheduled run emails the repository owner.
+#
+# WHAT IT IS NOT: a keep-awake ping. GitHub delays and drops scheduled runs.
+# Measured on this repository: story-retention.yml's "hourly" cron ran 154 times
+# between 2026-10-03 and 2026-11-04, 4.8 a day, with gaps of 1.9 to 10.7 hours
+# (median 5.0), and the daily crons in live-db.yml and clean-build-proof.yml
+# start 4.3 to 9.6 hours late. A Replit Autoscale
+# container stops after fifteen idle minutes, so no GitHub schedule can keep it
+# running. Keeping the jobs running is a hosting decision; see
+# docs/ops/scheduler-hosting.md. Each run here does wake a sleeping container,
+# and that is a side effect, not the design.
+#
+# While the app is still on Autoscale with no traffic, most runs will find a
+# container that was asleep and fail on the heartbeat's stop. That failure is
+# true: the jobs were not running.
+#
+# On a PUBLIC repository GitHub disables a scheduled workflow after 60 days with
+# no repository activity. Re-enable it from the Actions tab if that happens.
+
+name: Scheduler health
+
+on:
+  schedule:
+    # Twice an hour, off the top of the hour (GitHub's busiest minute).
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduler-health
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: GET /api/healthz/schedulers
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ask the app
+        env:
+          APP_BASE_URL: ${{ vars.PORTAVA_APP_BASE_URL || 'https://rumazi.com' }}
+        run: |
+          set -euo pipefail
+          body_file="$(mktemp)"
+          # No --retry: curl retries on 503, and a 503 is the answer this run
+          # exists to report. --max-time allows for a cold start.
+          code="$(
+            curl --silent --show-error \
+                 --max-time 90 \
+                 --output "${body_file}" \
+                 --write-out '%{http_code}' \
+                 "${APP_BASE_URL%/}/api/healthz/schedulers" || true
+          )"
+          echo "HTTP ${code}"
+
+          if [ "${code}" = "000" ] || ! jq -e . "${body_file}" >/dev/null 2>&1; then
+            echo "::error::the app did not answer with JSON (HTTP ${code}): timeout, DNS, or the deployment is not serving"
+            head -c 2000 "${body_file}" || true
+            exit 1
+          fi
+
+          {
+            echo '### Scheduler health'
+            echo
+            jq -r '
+              "- HTTP \("'"${code}"'"), overall: **\(.overall)**",
+              "- reports on: \(.reportsOn)",
+              "- failing \(.failingCount), stale \(.staleCount), never ran \(.neverRanCount), unknown \(.unknownCount)",
+              "- no trace at all if stopped: \(.coverage.unobservableCount) scheduler(s)",
+              "",
+              (.jobs[] | select(.job == "schedulerHeartbeat") | "**schedulerHeartbeat** \(.status): \(.detail // "")"),
+              "",
+              (.jobs[] | select(.status == "failing" or .status == "stale") | "- \(.job): \(.status), \(.consecutiveFailures) failure(s), last success \(.lastSuccessAt // "never"). \(.detail // "")")
+            ' "${body_file}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          jq -r '.jobs[] | select(.status == "failing" or .status == "stale") | "::error::\(.job) is \(.status): \(.detail // "no detail")"' "${body_file}" | cut -c1-1000
+
+          if [ "${code}" != "200" ]; then
+            echo "::error::/api/healthz/schedulers answered ${code} (overall: $(jq -r .overall "${body_file}")). See the run summary."
+            exit 1
+          fi

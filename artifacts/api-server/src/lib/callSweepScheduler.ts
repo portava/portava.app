@@ -37,15 +37,15 @@ let _timer: ReturnType<typeof setTimeout> | null = null; let _generation = 0; //
 let _consecutiveFailures = 0;
 
 /** Consecutive failed sweeps, and the last failure — for tests and health. */
-export function callSweepFailureState(): { consecutiveFailures: number; lastError: string | null } {
-  return { consecutiveFailures: _consecutiveFailures, lastError: _lastError };
+export function callSweepFailureState(): { consecutiveFailures: number; lastError: string | null; lastRunAt: string | null } {
+  return { consecutiveFailures: _consecutiveFailures, lastError: _lastError, lastRunAt: _lastRunAt };
 }
-let _lastError: string | null = null;
+let _lastError: string | null = null; let _lastRunAt: string | null = null; // the last sweep that COMPLETED; a failed tick is not a run (GET /healthz/schedulers)
 
 /** Test seam: forget the failure history (does not touch the timer). */
 export function _resetCallSweepFailureState(): void {
   _consecutiveFailures = 0;
-  _lastError = null;
+  _lastError = null; _lastRunAt = null;
 }
 
 /** Escalate once the failure looks sustained rather than transient. */
@@ -73,7 +73,7 @@ export async function runCallSweepTick(
       return { ok: false, error: new Error("no supabase client available for call sweep") };
     }
     _consecutiveFailures = 0;
-    _lastError = null;
+    _lastError = null; _lastRunAt = new Date().toISOString();
     return { ok: true, result };
   } catch (err) {
     recordFailure(String((err as any)?.message ?? err));
