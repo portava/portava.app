@@ -1,6 +1,6 @@
 /**
  * blockerIdsComplete — GET /me/blocker-ids answers with EVERY account that
- * blocked the caller, or refuses; never a silent prefix (census-media §54;
+ * blocked the caller, or refuses; never a silent prefix (census-media §57;
  * B58 lane POSTS-LIKERS, BLOCKS-2's "found, not fixed" item 2).
  *
  * ── THE DEFECT ──────────────────────────────────────────────────────────────

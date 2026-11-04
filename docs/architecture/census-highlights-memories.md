@@ -10174,6 +10174,7 @@ CORRECT% is 109 / 266 = 41.0 %.
 - NOT-GRADED: artifacts/api-server/src/test/blockGateFailClosedRoutes.test.ts — §BQ.2 item 6 names a fixture change in another lane's suite; no row here rests on it
 - NOT-GRADED: artifacts/api-server/src/test/engagement.test.ts — §BQ.3 names it as a neighbour run green; no row here rests on it
 - NOT-GRADED: artifacts/api-server/src/test/engagementLikerRosterUnreadable.test.ts — §BQ.3 names it as a neighbour run green; no row here rests on it
+- NOT-GRADED: artifacts/api-server/src/scripts/BLOCK_READ_CATCHES.json — §BQ's #729 note cites the block-read catch baseline; it is check machinery, census-telegraph's guard, and no row here rests on it
 - NOT-GRADED: artifacts/api-server/src/test/exclusionFailClosedRoutes.test.ts — §BQ.3 names it as a neighbour run green; no row here rests on it
 - NOT-GRADED: artifacts/api-server/src/test/memoryRetrievalSearch.test.ts — §BQ.3 names it as a neighbour run green; the engine's own suite, unchanged by §BQ
 

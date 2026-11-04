@@ -1,6 +1,6 @@
 /**
  * postLikersGate — may this viewer list who liked a post, or a comment on one?
- * (census-media §54; B58 lane POSTS-LIKERS, from verifier V-739's adjacent finding)
+ * (census-media §57; B58 lane POSTS-LIKERS, from verifier V-739's adjacent finding)
  *
  * ── THE DEFECT ──────────────────────────────────────────────────────────────
  * GET /engagement/likes gated `post_like`, `post_reaction` and `comment_like`

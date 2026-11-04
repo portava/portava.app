@@ -2,7 +2,7 @@
  * engagementPostLikersReadGate — GET /api/engagement/likes for a POST (`post_like`,
  * `post_reaction`) or a COMMENT (`comment_like`) answers whether the likers may be
  * listed with the post's OWN read decision plus the block check
- * POST /posts/:postId/like makes (census-media §54; B58 lane POSTS-LIKERS, from
+ * POST /posts/:postId/like makes (census-media §57; B58 lane POSTS-LIKERS, from
  * verifier V-739's adjacent finding).
  *
  * ── THE DEFECT ──────────────────────────────────────────────────────────────

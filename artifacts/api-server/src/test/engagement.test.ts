@@ -4,7 +4,7 @@
  * Covers:
  *   - 401 when no auth token
  *   - 400 for invalid targetType / targetId / empty reactionType
- *   - a post the viewer cannot READ: the post's own 404 (census-media §54); 403 for private memory etc.
+ *   - a post the viewer cannot READ: the post's own 404 (census-media §57); 403 for private memory etc.
  *   - 200 success with users array, nextCursor, hasMore
  *   - Viewer excluded from their own results
  *   - Block filtering (both directions excluded)
@@ -306,7 +306,7 @@ describe('GET /api/engagement/likes — input validation', () => {
 });
 
 describe('GET /api/engagement/likes — access control', () => {
-  it('returns the post\'s own 404 when post is private and viewer is not the author (census-media §54; was 403)', async () => {
+  it('returns the post\'s own 404 when post is private and viewer is not the author (census-media §57; was 403)', async () => {
     const { status, data } = await get(
       url({ targetType: 'post_like', targetId: PRIVATE_POST_ID }),
       TOKEN_VIEWER,
@@ -339,7 +339,7 @@ describe('GET /api/engagement/likes — access control', () => {
     assert.equal(status, 200);
   });
 
-  it('comment_like returns the comment\'s own 404 when parent post is private (census-media §54; was 403)', async () => {
+  it('comment_like returns the comment\'s own 404 when parent post is private (census-media §57; was 403)', async () => {
     // Attach the comment to the private post
     postsComments[0] = { id: COMMENT_ID, post_id: PRIVATE_POST_ID, deleted_at: null };
     _setTestClient(buildFakeClient() as any, true);

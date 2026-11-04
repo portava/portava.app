@@ -105,7 +105,7 @@ function makeFakeClient(state: FakeState = {}) {
       eq(col: string, val: any)           { filters.push((r) => r[col] === val); return b; },
       neq(col: string, val: any)          { filters.push((r) => r[col] !== val); return b; },
       in(col: string, vals: any[])        { filters.push((r) => vals.includes(r[col])); return b; },
-      gt(col: string, val: any)           { filters.push((r) => r[col] > val); return b; }, // GET /me/blocker-ids walks by key (census-media §54)
+      gt(col: string, val: any)           { filters.push((r) => r[col] > val); return b; }, // GET /me/blocker-ids walks by key (census-media §57)
       is(col: string, val: any)           { filters.push((r) => val === null ? r[col] == null : r[col] === val); return b; },
       or(_filter: string)                 { return b; },
       limit(_n: number)                   { return b; },

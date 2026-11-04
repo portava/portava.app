@@ -59,7 +59,7 @@ import ogRouter from "../routes/og.js";
 const ME      = "aaaaaaaa-0000-4000-a000-000000000001";
 const FRIEND  = "bbbbbbbb-0000-4000-a000-000000000002"; // never blocked
 const BLOCKED = "cccccccc-0000-4000-a000-000000000003"; // ME blocked them
-const POST    = "dddddddd-0000-4000-a000-000000000004"; const MY_POST = "dddddddd-0000-4000-a000-0000000000d4"; // ME's own post (census-media §54): the likers gate reads no block for a post's author
+const POST    = "dddddddd-0000-4000-a000-000000000004"; const MY_POST = "dddddddd-0000-4000-a000-0000000000d4"; // ME's own post (census-media §57): the likers gate reads no block for a post's author
 const STORY   = "eeeeeeee-0000-4000-a000-000000000005";
 const TRIP    = "ffffffff-0000-4000-a000-000000000006";
 const MY_STORY = "99999999-0000-4000-a000-000000000007"; // owned by ME — viewers list
@@ -401,7 +401,7 @@ describe("shape 3: a wholly block-scoped roster refuses rather than leak or lie"
 
   it("blocks unreadable: GET /engagement/likes refuses", async () => {
     setup(["blocks"]);
-    assertRefused(await get(`/engagement/likes?targetType=post_like&targetId=${MY_POST}`), "engagement/likes"); // the ROSTER's refusal: on anyone else's post the post gate now refuses first, with the post's 404 (census-media §54, held in engagementPostLikersReadGate.test.ts)
+    assertRefused(await get(`/engagement/likes?targetType=post_like&targetId=${MY_POST}`), "engagement/likes"); // the ROSTER's refusal: on anyone else's post the post gate now refuses first, with the post's 404 (census-media §57, held in engagementPostLikersReadGate.test.ts)
   });
 
   it("healthy: GET /circles/:id/invitable-users omits only the blocked user", async () => {

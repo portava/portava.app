@@ -20,7 +20,7 @@
  *
  * Access control per targetType:
  *   post_like / post_reaction  — reads content_stamps; GET /posts/:postId's own read + a block either way (its 404),
- *                                then public OR author OR trip member (census-media §54, lib/postLikersGate.ts)
+ *                                then public OR author OR trip member (census-media §57, lib/postLikersGate.ts)
  *   comment_like               — same as the comment's parent post
  *   highlight_like             — the Highlight's own engagement gate, then owner OR public (§BQ)
  *   memory_like                — GET /memories/:id's own read decision, then owner OR public (§BQ)
@@ -32,7 +32,7 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js"; import { answerPostLikersRefusal, decidePostLikersAccess } from "../lib/postLikersGate.js"; // census-media §54: on this line, so no cited line moves
+import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js"; import { answerPostLikersRefusal, decidePostLikersAccess } from "../lib/postLikersGate.js"; // census-media §57: on this line, so no cited line moves
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { readBlockExclusions, isExcluded, sendExclusionsUnavailable } from "../lib/exclusionSet.js"; import { canReadMemory, isBlocked } from "../services/memory/memoryReadPolicy.js"; import { decideHighlightViewAccess } from "./highlights.js"; // §BQ: one line, so cited lines hold
 
@@ -53,7 +53,7 @@ type TargetType = typeof VALID_TYPES[number];
 // ── Access control helpers ─────────────────────────────────────────────────────
 
 async function checkPostAccess(sc: any, viewerId: string, postId: string): Promise<boolean> {
-  // census-media §54 (B58 lane POSTS-LIKERS, verifier V-739's adjacent finding). This WAS: the author, or
+  // census-media §57 (B58 lane POSTS-LIKERS, verifier V-739's adjacent finding). This WAS: the author, or
   // `visibility === "public"`, or any `trip_members` row for a trip_only post — over a `posts` read that excluded
   // only `status = 'deleted'`, bound no error, and read no `blocks`. POST /posts/:postId/like refuses a pair blocked
   // in EITHER direction with the post's own 404; the likers of the same post were listed to that same viewer (and
@@ -219,7 +219,7 @@ router.get("/engagement/likes", asyncHandler(async (req, res) => {
   if (!sc) {
     sendError(res, "server_not_configured", "Service not available");
     return;
-  } if (await answerPostLikersRefusal(req, res, sc, user.id, targetType as string, targetId)) return; // census-media §54: a post's or comment's own read refusal (its 404, or 503) first
+  } if (await answerPostLikersRefusal(req, res, sc, user.id, targetType as string, targetId)) return; // census-media §57: a post's or comment's own read refusal (its 404, or 503) first
 
   const accessible = await checkAccess(sc, user.id, targetType as TargetType, targetId);
   if (accessible === "unreadable") {
