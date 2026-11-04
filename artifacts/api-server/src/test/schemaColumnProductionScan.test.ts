@@ -144,7 +144,7 @@ const UNRESOLVED_REFERENCE_CEILING: Readonly<Record<string, number>> = {
   "src/lib/media/jobs/queue.ts": 1,
   "src/lib/mediaAssets.ts": 1,
   "src/lib/memoryCommandBus.ts": 1,
-  "src/lib/moderationReportSnapshots.ts": 2,
+  "src/lib/moderationReportSnapshots.ts": 2, "src/lib/personalDataExport.ts": 1, // the "Download your data" export reads each table its registry names; personalDataExport.test.ts X9 checks every table and column against the production baseline
   "src/lib/postCounters.ts": 2,
   "src/lib/rentBuddyLaunchControls.ts": 1,
   "src/lib/schemaDriftCheck.ts": 2,

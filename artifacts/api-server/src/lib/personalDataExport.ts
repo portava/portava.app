@@ -73,8 +73,8 @@ const SECTIONS: ExportSection[] = [
   { key: "highlights", label: "Your highlights", table: "highlights", owners: ["owner_id"], orderBy: ["id"] },
   { key: "memories", label: "Your memories", table: "memories", owners: ["owner_id"], orderBy: ["id"] },
   { key: "postcards", label: "Your passport postcards", table: "passport_postcards", owners: ["user_id"], orderBy: ["id"], omit: ["stamp_revoked_by"], omitWhy: STAFF },
-  { key: "passportStamps", label: "Your passport stamps", table: "passport_stamps", owners: ["user_id"], orderBy: ["id"] },
-  { key: "earnedStamps", label: "Stamps you earned", table: "user_stamps", owners: ["user_id"], orderBy: ["id"], omit: ["awarded_by_admin_id"], omitWhy: STAFF },
+  { key: "passportStamps", label: "Passport stamp records on your account, as stored", table: "passport_stamps", owners: ["user_id"], orderBy: ["id"] },
+  { key: "earnedStamps", label: "Stamp records on your account, as stored (revoked ones included)", table: "user_stamps", owners: ["user_id"], orderBy: ["id"], omit: ["awarded_by_admin_id"], omitWhy: STAFF },
   { key: "hiddenGems", label: "Hidden gems you submitted", table: "hidden_gems", owners: ["submitted_by"], orderBy: ["id"], omit: ["guide_verified_by", "report_count"], omitWhy: "who verified it, and how many times other people reported it, is not your data to take" },
 
   // ── People ──────────────────────────────────────────────────────────────

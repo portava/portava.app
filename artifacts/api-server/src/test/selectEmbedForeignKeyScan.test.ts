@@ -70,7 +70,7 @@ const UNRESOLVED_SELECT_CEILING: Readonly<Record<string, number>> = {
   "src/lib/capability/schemaCapability.ts": 1,
   "src/lib/contentOwner.ts": 1,
   "src/lib/feedReads.ts": 4,
-  "src/lib/moderationReportSnapshots.ts": 2,
+  "src/lib/moderationReportSnapshots.ts": 2, "src/lib/personalDataExport.ts": 1, // the "Download your data" export reads each table its registry names; personalDataExport.test.ts X9 checks every table and column against the production baseline (no embeds)
   "src/lib/schemaDriftCheck.ts": 1,
   "src/routes/rentABuddy.ts": 1,
   "src/scripts/seed-demo-buddies.ts": 1,
