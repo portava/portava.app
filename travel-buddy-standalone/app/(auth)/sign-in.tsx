@@ -56,7 +56,7 @@ import { useSession } from '../../src/context/SessionContext';
 import { isSupabaseConfigured } from '../../src/lib/supabase';
 import { getAuthProviderAvailability, type AuthProviderAvailability } from '../../src/services/authProviders';
 import { visibleSignInProviders } from '../../src/lib/signInProviders';
-import { buildCanSignInWithApple, testBuildDiagnosticsLine } from '../../src/lib/buildCapabilities';
+import { buildCanSignInWithApple, testBuildBrowserSignInClosedLine, testBuildDiagnosticsLine } from '../../src/lib/buildCapabilities';
 import { PortavaLogoMark, PortavaWordmark } from '../../src/components/brand/PortavaLogo';
 import {
   LOGIN_BACKGROUNDS,
@@ -418,7 +418,15 @@ export default function SignIn() {
     setOauthBusy('google');
     try {
       const result = await signInWithGoogle();
-      if (result.cancelled) return;   // user dismissed — silent
+      if (result.cancelled) {
+        // Store builds stay silent, as before: a cancel is the person's own choice.
+        // A test build says how the browser session ended, because a redirect the
+        // backend refuses (return address not on its allow-list) shows the website
+        // in the sheet and ends exactly here, with nothing to report.
+        const closed = testBuildBrowserSignInClosedLine('Google', result.browserOutcome ?? 'cancel', result.redirectTo ?? 'travelbuddy://auth/callback');
+        if (closed) setNotice(closed);
+        return;
+      }
       if (!result.userId || result.error) {
         setError(result.error ?? 'Google sign-in failed. Please try again.');
         return;

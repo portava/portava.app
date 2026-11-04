@@ -54,3 +54,33 @@ export function testBuildDiagnostics(input: BuildDiagnosticsInput): string | nul
   const version = input.version?.trim() ? ` v${input.version.trim()}` : '';
   return `Test build${version} · backend ${backend} · API ${api}`;
 }
+
+export interface BrowserSignInClosedInput {
+  /** `extra.personalTeam` as the binary recorded it; only this build shows the line. */
+  personalTeam: boolean;
+  /** "Google": the provider whose browser session ended. */
+  provider: string;
+  /** How WebBrowser.openAuthSessionAsync said the session ended: 'cancel' or 'dismiss'. */
+  outcome: string;
+  /** The return address the session was waiting for (travelbuddy://auth/callback on a device). */
+  redirectTo: string;
+}
+
+/**
+ * The line a TEST build shows when a browser sign-in ends without ever
+ * returning to the app, or null for every other build.
+ *
+ * On iOS a redirect the backend refuses (the return address is not on its
+ * allow-list) sends the browser to the Site URL instead: the sheet shows the
+ * website, the person closes it, and the session ends as 'cancel'. The screen
+ * treats a cancel as the person's own choice and shows nothing, which on the
+ * first Personal Team build read as "google sign in doesnt work" with no error
+ * to report. Store builds keep that silence; a test build names the outcome
+ * and the address, so the next report says which of the two it was.
+ */
+export function testBuildBrowserSignInClosed(input: BrowserSignInClosedInput): string | null {
+  if (!input.personalTeam) return null;
+  const outcome = input.outcome.trim() || 'cancel';
+  return `${input.provider} sign-in closed without returning to the app (browser result: ${outcome}). ` +
+    `If the sheet showed the website instead of coming back here, the backend's redirect allow-list is missing ${input.redirectTo}.`;
+}

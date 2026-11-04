@@ -70,6 +70,15 @@ jest.mock('../../../src/lib/buildCapabilities', () => ({
   buildCanSignInWithApple: jest.fn().mockReturnValue(true),
   // Store build by default: no diagnostics line. The real one reads expo-constants and the inlined env.
   testBuildDiagnosticsLine: jest.fn().mockReturnValue(null),
+  // Store build by default: a Google browser session that closes without returning says nothing.
+  testBuildBrowserSignInClosedLine: jest.fn().mockReturnValue(null),
+}));
+
+// ── Browser / native sign-in (Google, Apple) ──────────────────────────────────
+// The real signInWithGoogle opens a browser session; each test below says how it ended.
+jest.mock('../../../src/services/ssoAuth', () => ({
+  ...jest.requireActual('../../../src/services/ssoAuth'),
+  signInWithGoogle: jest.fn().mockResolvedValue({ userId: null, error: null, cancelled: true }),
 }));
 
 // ── react-native-svg (simplified stub for test renderer) ─────────────────────
@@ -132,6 +141,7 @@ jest.mock('../../../constants/loginBackgrounds', () => ({
 import SignIn from '../sign-in';
 import * as authProviders from '../../../src/services/authProviders';
 import * as buildCapabilities from '../../../src/lib/buildCapabilities';
+import * as ssoAuth from '../../../src/services/ssoAuth';
 
 describe('SignIn screen — redesign smoke test', () => {
   it('renders PortavaLogoMark', async () => {
@@ -297,5 +307,46 @@ describe('SignIn screen — a test build names its backend; a store build shows 
     await render(<SignIn />);
     expect(await screen.findByLabelText('Test build diagnostics')).toBeTruthy();
     expect(screen.getByText('Test build v1.4.2 · backend production (ajrurzioarfkagpuxfnb) · API rumazi.com')).toBeTruthy();
+  });
+});
+
+describe('SignIn screen — a Google browser session that closes without returning to the app', () => {
+  const google = ssoAuth.signInWithGoogle as jest.Mock;
+  const closedLine = buildCapabilities.testBuildBrowserSignInClosedLine as jest.Mock;
+  const closed = { userId: null, error: null, cancelled: true, browserOutcome: 'cancel', redirectTo: 'travelbuddy://auth/callback' };
+  const line =
+    'Google sign-in closed without returning to the app (browser result: cancel). ' +
+    "If the sheet showed the website instead of coming back here, the backend's redirect allow-list is missing travelbuddy://auth/callback.";
+
+  afterEach(() => {
+    google.mockReset().mockResolvedValue({ userId: null, error: null, cancelled: true });
+    closedLine.mockReset().mockReturnValue(null);
+  });
+
+  it('store build: a cancel stays silent, no error and no notice', async () => {
+    google.mockResolvedValue(closed);
+    await render(<SignIn />);
+    await fireEvent.press(await screen.findByLabelText('Continue with Google'));
+    expect(await screen.findByLabelText('Continue with Google')).toBeTruthy();
+    expect(screen.queryByText(/sign-in closed/)).toBeNull();
+    expect(screen.queryByText(/failed/)).toBeNull();
+    expect(closedLine).toHaveBeenCalledWith('Google', 'cancel', 'travelbuddy://auth/callback');
+  });
+
+  it('Personal Team build: the notice names the browser result and the return address, not an error', async () => {
+    google.mockResolvedValue(closed);
+    closedLine.mockReturnValue(line);
+    await render(<SignIn />);
+    await fireEvent.press(await screen.findByLabelText('Continue with Google'));
+    expect(await screen.findByText(line)).toBeTruthy();
+    expect(screen.queryByText(/failed/)).toBeNull();
+  });
+
+  it('a cancel without browser details (Apple-style result) still asks the build with the defaults', async () => {
+    google.mockResolvedValue({ userId: null, error: null, cancelled: true });
+    await render(<SignIn />);
+    await fireEvent.press(await screen.findByLabelText('Continue with Google'));
+    expect(await screen.findByLabelText('Continue with Google')).toBeTruthy();
+    expect(closedLine).toHaveBeenCalledWith('Google', 'cancel', 'travelbuddy://auth/callback');
   });
 });

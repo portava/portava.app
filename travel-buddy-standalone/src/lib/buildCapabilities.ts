@@ -12,7 +12,7 @@
  */
 import Constants from 'expo-constants';
 import { canSignInWithAppleFrom, type BuildExtra } from './signInProviders.ts';
-import { isPersonalTeamBuildFrom, testBuildDiagnostics } from './buildDiagnostics.ts';
+import { isPersonalTeamBuildFrom, testBuildBrowserSignInClosed, testBuildDiagnostics } from './buildDiagnostics.ts';
 
 /** The running binary's answer. */
 export function buildCanSignInWithApple(): boolean {
@@ -35,4 +35,12 @@ export function testBuildDiagnosticsLine(): string | null {
     apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL,
     version: Constants.expoConfig?.version ?? undefined,
   });
+}
+
+/**
+ * The line a test build shows when a browser sign-in (Google) ends without
+ * returning to the app, or null (store builds stay silent, as before).
+ */
+export function testBuildBrowserSignInClosedLine(provider: string, outcome: string, redirectTo: string): string | null {
+  return testBuildBrowserSignInClosed({ personalTeam: isPersonalTeamBuild(), provider, outcome, redirectTo });
 }

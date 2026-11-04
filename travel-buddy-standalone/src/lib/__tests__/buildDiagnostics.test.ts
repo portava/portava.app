@@ -3,11 +3,13 @@
  *
  * WHAT WOULD TURN THIS RED: show the line for a store build and the first case
  * fails; name the backend by URL instead of by known deployment and the
- * production case fails.
+ * production case fails; say nothing on a test build when a Google browser
+ * session closes without returning, or say it on a store build, and the
+ * browser-closed cases fail.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { isPersonalTeamBuildFrom, testBuildDiagnostics } from '../buildDiagnostics.ts';
+import { isPersonalTeamBuildFrom, testBuildBrowserSignInClosed, testBuildDiagnostics } from '../buildDiagnostics.ts';
 import { KNOWN_DEPLOYMENTS } from '../deploymentConsistency.ts';
 
 const production = KNOWN_DEPLOYMENTS.find((d) => d.name === 'production')!;
@@ -52,5 +54,26 @@ describe('isPersonalTeamBuildFrom', () => {
     assert.equal(isPersonalTeamBuildFrom({}), false);
     assert.equal(isPersonalTeamBuildFrom(undefined), false);
     assert.equal(isPersonalTeamBuildFrom(null), false);
+  });
+});
+
+describe('testBuildBrowserSignInClosed', () => {
+  const redirectTo = 'travelbuddy://auth/callback';
+
+  it('a store build stays silent: a cancel is the person\'s own choice', () => {
+    assert.equal(testBuildBrowserSignInClosed({ personalTeam: false, provider: 'Google', outcome: 'cancel', redirectTo }), null);
+  });
+
+  it('a Personal Team build names the provider, the browser result and the return address the backend must allow', () => {
+    assert.equal(
+      testBuildBrowserSignInClosed({ personalTeam: true, provider: 'Google', outcome: 'cancel', redirectTo }),
+      'Google sign-in closed without returning to the app (browser result: cancel). ' +
+        "If the sheet showed the website instead of coming back here, the backend's redirect allow-list is missing travelbuddy://auth/callback.",
+    );
+    assert.match(testBuildBrowserSignInClosed({ personalTeam: true, provider: 'Google', outcome: 'dismiss', redirectTo })!, /browser result: dismiss\)/);
+  });
+
+  it('a blank browser result reads as cancel rather than as an empty parenthesis', () => {
+    assert.match(testBuildBrowserSignInClosed({ personalTeam: true, provider: 'Google', outcome: '  ', redirectTo })!, /browser result: cancel\)/);
   });
 });
