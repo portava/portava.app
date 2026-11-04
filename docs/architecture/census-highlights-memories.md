@@ -10285,7 +10285,7 @@ H262: `memoryCompassTools.test.ts` (`artifacts/api-server/src/test/memoryCompass
 H33: `artifacts/api-server/src/test/memoryCompassTools.test.ts:1041#§3.6 / §28.7 (H33)`,
 `artifacts/api-server/src/test/wellKnownShare.test.ts:812#never finer than the owner's`,
 `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:884#never finer than its owner's ceiling`,
-`artifacts/api-server/src/test/memoryActions.test.ts:733#§3.6 / §28.7 (H33)`.
+`artifacts/api-server/src/test/memoryActions.test.ts:737#§3.6 / §28.7 (H33)`.
 
 | mutant | result |
 | --- | --- |

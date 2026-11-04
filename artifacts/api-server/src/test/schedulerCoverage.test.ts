@@ -145,7 +145,7 @@ describe("what the coverage count says", () => {
     // 46 invisible -> 45.
     assert.equal(cov.persisted, 13); // 12 -> 13 (release 4 merge): startMemoryOutboxScheduler writes its `memoryOutboxDrain` job_health row (census-highlights-memories §CC, H161). 11 -> 12: rankingDebugSamplePurge (§133). 9 -> 10 at the merge of main (63 / 16 / 9 / 45) with lane L-DATA (census-layover L261): startLayoverAuditRetentionScheduler, already reported, also writes job_health for its snapshot-compaction phase; no scheduler gained or lost a trace, so 45 holds
     assert.equal(cov.unobservable.length, 44); // 45 -> 44 (release 4 merge, census-highlights-memories §CC, H161): the Memory outbox drain now reports. 44 -> 45: startLayoverPresenceExpiryScheduler (census-layover L196), see the started line
-    assert.equal(cov.started, cov.unobservable.length + 23, "21 reported + 12 durable overlap on 10 rows");
+    assert.equal(cov.started, cov.unobservable.length + 24, "22 reported + 13 durable overlap on 11 rows"); // 23 -> 24 (release 4 merge): memoryOutboxDrain reports and writes job_health, so the overlap grows by one too
   });
 
   /**
