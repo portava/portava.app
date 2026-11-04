@@ -89,7 +89,7 @@ class Q implements PromiseLike<Result> {
     return this;
   }
 
-  private rows(): Row[] { if (this.table === "user_stamps" || this.table === "plan_checkins") stageEarnedPresenceInPlace(this.store as any); return (this.store[this.table] ??= []); } // H4, wave 5 (stampPresenceView.ts): a presence stamp staged as earned gets its trip and check-in; HEAD read neither
+  private rows(): Row[] { if (this.table === engine.GRAPH_BEHAVIOR_VIEW) return engine.graphBehaviorObservationsOf(this.store.rank_events ?? []) as Row[]; /* census-discovery §133 (DV-51): 3921's view over this store's rank_events */ if (this.table === "user_stamps" || this.table === "plan_checkins") stageEarnedPresenceInPlace(this.store as any); return (this.store[this.table] ??= []); } // H4, wave 5 (stampPresenceView.ts): a presence stamp staged as earned gets its trip and check-in; HEAD read neither
 
   private run(): Result {
     const t = this.table;
@@ -489,7 +489,7 @@ describe("DV-51 guards — bounded, positive, fail-visible, weight-neutral, idem
       assert.equal(mine[1], build[1], `${table}: the reconcile selects different columns from the build`);
       assert.equal(mine[2].replace(/\s+/g, ""), build[2].replace(/\s+/g, ""), `${table}: the reconcile filters differently from the build`);
     }
-    assert.deepEqual([...engine.GRAPH_SOURCE_TABLES], ["user_stamps", "trips", "events", "compass_outcome_events", "rank_events", "circles", "memories"]);
+    assert.deepEqual([...engine.GRAPH_SOURCE_TABLES], ["user_stamps", "trips", "events", "compass_outcome_events", "graph_behavior_observations", "circles", "memories"]); assert.equal(engine.GRAPH_BEHAVIOR_VIEW, "graph_behavior_observations");
   });
 
   it("the first build over an empty graph retires nothing", async () => {

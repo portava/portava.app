@@ -1,28 +1,4 @@
 {
-  "$comment": "Names production HAS that the frozen capture (lib/capability/snapshots/current.ts) does not record, each OBSERVED in production's own catalog after the capture was taken. Read ONLY by test/helpers/schemaColumnScan.ts (productionSchema), which grades against the capture PLUS these. This is NOT a capture and must not grow into one: a capture is every table, column and function, digest-verified by production; an observation is the handful of names a read-only catalog query found present, with the query, the date and the evidence. SHRINK-ONLY: schemaColumnProductionScan.test.ts fails when a capture that current.ts names already holds an observed name (delete the observation at that refresh), and when an observed name is not declared by the migration it is attributed to. When production is re-captured, this file empties.",
-  "observations": [
-    {
-      "observedOn": "2026-10-17",
-      "by": "the wave-5 lead, read-only, against production travel-buddy (ajrurzioarfkagpuxfnb): the catalog check colscan/catalog-check.sql that the wave-5 column scan wrote for every name it graded absent (306 names; 303 came back absent, these 3 present)",
-      "present": ["column stories.deleted_at", "table story_purge_queue", "column job_health.last_success_at"],
-      "migration": "2998_story_retention",
-      "ledgerRow": {
-        "table": "public.schema_migration_ledger",
-        "filename": "2998_story_retention.sql",
-        "applied_by": "manual",
-        "checksum": "4ae37d9e1b0be400455733ce1ddce1536bcd1246b17cdd58349f1b173369b9f7",
-        "readOn": "2026-10-17",
-        "source": "prod-apply-packet-20261017/inputs/prod-ledger-20261017.json (three read-only SELECTs of public.schema_migration_ledger via the Supabase MCP)"
-      },
-      "why": "2998 was applied to production by hand after the 2026-09-22 capture and never recorded in production-applied-migrations.json (docs/migrations.md said 'Not applied', from a read of 2026-09-23; corrected in place 2026-10-17). The repository already knew: scripts/checkProductionDrift.ts's story_purge_queue note records it applied to production on 2026-09-25 and a read-only catalog query of 2026-10-03 finding the table. The ledger row's checksum equals sha256 of the repository's 2998 file bytes, and the three names 2998 adds that code reads are in the catalog, so the scan treats them as present. Before this observation the scan ledgered them class B and three of their sites UNGATED (lib/mediaAccess.ts ownerDeletedThisStory, routes/storyArchive.ts, services/stories/storyRetention.ts) — live defects that production does not have.",
-      "columnsOf": {
-        "story_purge_queue": {
-          "from": "2998_story_retention",
-          "observed": false,
-          "why": "The catalog check graded the TABLE (a column of a missing table is graded at the table), so its 14 columns were not individually observed. They are taken from 2998's CREATE TABLE, the only SQL in the repository that creates this table, under a ledger row whose checksum is that file's bytes. Settle: select count(*) from information_schema.columns where table_schema='public' and table_name='story_purge_queue';  -- expect 14"
-        }
-      },
-      "settle": "select 'stories.deleted_at' as name, exists(select 1 from information_schema.columns where table_schema='public' and table_name='stories' and column_name='deleted_at') union all select 'story_purge_queue', to_regclass('public.story_purge_queue') is not null union all select 'job_health.last_success_at', exists(select 1 from information_schema.columns where table_schema='public' and table_name='job_health' and column_name='last_success_at');  -- expect true on all three"
-    }
-  ]
+  "$comment": "Names production HAS that the frozen capture (lib/capability/snapshots/current.ts) does not record, each OBSERVED in production's own catalog after the capture was taken. Read ONLY by test/helpers/schemaColumnScan.ts (productionSchema), which grades against the capture PLUS these. This is NOT a capture and must not grow into one: a capture is every table, column and function, digest-verified by production; an observation is the handful of names a read-only catalog query found present, with the query, the date and the evidence. SHRINK-ONLY: schemaColumnProductionScan.test.ts fails when a capture that current.ts names already holds an observed name (delete the observation at that refresh), and when an observed name is not declared by the migration it is attributed to. When production is re-captured, this file empties. RETIRED 2026-10-24: the one observation (2026-10-17, 2998's stories.deleted_at, story_purge_queue and job_health.last_success_at) was deleted at the capability refresh, because snapshots/20261024-production-schema.json records all three names itself. The list is empty, not gone: the next name production holds that a capture predates goes here, with its query, date and evidence.",
+  "observations": []
 }

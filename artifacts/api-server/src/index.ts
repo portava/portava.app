@@ -42,7 +42,7 @@ import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js"; import 
 import { startPlaceCollectionsWorker } from "./lib/places/placeCollectionsWorker.js";
 import { startCompassSearchDecayFlushScheduler } from "./lib/compassSearchDecayFlushScheduler.js";
 import { startAccountDeletionScheduler } from "./lib/accountDeletionScheduler.js";
-import { startStoryRetentionScheduler } from "./lib/storyRetentionScheduler.js"; import { startDiscoveryServeLogRetentionScheduler } from "./lib/discoveryServeLogRetentionScheduler.js"; // census-discovery §120
+import { startStoryRetentionScheduler } from "./lib/storyRetentionScheduler.js"; import { startDiscoveryServeLogRetentionScheduler } from "./lib/discoveryServeLogRetentionScheduler.js"; import { startRankingDebugSamplePurgeScheduler } from "./lib/rankingDebugSamplePurgeScheduler.js"; // census-discovery §120; §133 (DV-52) the flag-gated debug-sample purge
 import { startLocationSnapshotPurgeScheduler } from "./lib/locationSnapshotPurgeScheduler.js";
 import { startIntelRetentionScheduler } from "./lib/intelRetentionScheduler.js";
 import { startSensingRetentionScheduler } from "./lib/sensingRetentionScheduler.js";
@@ -244,7 +244,7 @@ app.listen(port, (err) => {
   // and the tick records the failure. Reordering those two calls would let the
   // engagement purge delete viewers, reactions and replies on a database with
   // no purge ledger behind it. Keep enqueue first.
-  startStoryRetentionScheduler(); startDiscoveryServeLogRetentionScheduler(); // census-discovery §120 (3501): hourly purge of public.recommendations rows past the owner's 30-day TESTING retention (created_at), bounded batches, reported at /healthz/schedulers
+  startStoryRetentionScheduler(); startDiscoveryServeLogRetentionScheduler(); startRankingDebugSamplePurgeScheduler(); // census-discovery §133 (DV-52): the hourly purge of debug samples, OFF unless ranking_debug_samples_purge_enabled (3922) is TRUE — no retention ruling recorded; census-discovery §120 (3501): hourly purge of public.recommendations rows past the owner's 30-day TESTING retention (created_at), bounded batches, reported at /healthz/schedulers
   startInviteSlotReconciler();
   startInviteSlotSweeper();
   // Reload coordinate-learned city timezones so a restart doesn't reset

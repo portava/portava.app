@@ -78,6 +78,32 @@ function wall(tz: string, ms: number): string {
   return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
 }
 const minute = (ms: number) => Math.floor(ms / 60_000) * 60_000;
+
+/**
+ * Every (zone, offset from t0) this file types as an airport-local wall time.
+ * A wall time read off an instant always EXISTS, but on a DST fall-back it is
+ * AMBIGUOUS: 01:30 in London on 2026-10-25 is both 00:30Z (BST) and 01:30Z
+ * (GMT), and the server can only pick one. With t0 = now + 5 min, any run
+ * whose t0 + offset fell in a repeated hour got the other instant back and
+ * failed P1/P3/P4/P7b by exactly one hour (CI, every PR, 2026-10-24 ~23:00Z).
+ * A test of the conversion must not type a local time that has two answers.
+ */
+const TYPED_WALL_TIMES: ReadonlyArray<readonly [string, number]> = [
+  ["America/Los_Angeles", -9 * H],
+  ["Europe/London", H], ["Europe/London", 1.5 * H], ["Europe/London", 2 * H], ["Europe/London", 3 * H],
+  ["Europe/London", 7 * H], ["Europe/London", 8.5 * H],
+];
+/** True when no OTHER instant shows the same minute on `tz`'s clock (offset changes are 30, 60 or 120 minutes). */
+function unambiguousWall(tz: string, ms: number): boolean {
+  const w = wall(tz, ms);
+  return [30, 60, 120].every((m) => wall(tz, ms - m * 60_000) !== w && wall(tz, ms + m * 60_000) !== w);
+}
+/** The first minute at or after `from` (in 15-minute steps) at which every typed wall time has exactly one instant. */
+function unambiguousT0(from: number): number {
+  let t = minute(from);
+  while (!TYPED_WALL_TIMES.every(([tz, k]) => unambiguousWall(tz, t + k))) t += 15 * 60_000;
+  return t;
+}
 const iso = (ms: number) => new Date(ms).toISOString();
 
 async function createTrip(db: PressedDb, owner: PressedUser, members: PressedUser[] = []): Promise<string> {
@@ -108,11 +134,26 @@ async function enterFlights(app: App, user: PressedUser, tripId: string, t0: num
 const sessionRow = async (db: PressedDb, id: string) => (await db.query<any>(`SELECT * FROM public.layover_sessions WHERE id = '${id}'`))[0];
 const segmentRow = async (db: PressedDb, id: string) => (await db.query<any>(`SELECT * FROM public.trip_transport_segments WHERE id = '${id}'`))[0];
 
+describe("B1-F — the test clock never types an ambiguous local time", () => {
+  it("C1 the guard recognises the repeated hour and moves t0 past it; an ordinary t0 is left alone", () => {
+    assert.equal(unambiguousWall("Europe/London", Date.parse("2026-10-25T00:30:00Z")), false, "01:30 BST, repeated as 01:30 GMT");
+    assert.equal(unambiguousWall("Europe/London", Date.parse("2026-10-25T01:30:00Z")), false, "01:30 GMT, the repeat");
+    assert.equal(unambiguousWall("America/Los_Angeles", Date.parse("2026-11-01T08:30:00Z")), false);
+    assert.equal(unambiguousWall("Europe/London", Date.parse("2026-10-25T02:30:00Z")), true);
+    for (const now of ["2026-10-24T23:30:00Z", "2026-10-24T17:00:00Z", "2026-11-01T00:00:00Z", "2027-03-28T00:30:00Z", "2027-10-30T23:59:00Z"]) {
+      const t = unambiguousT0(Date.parse(now) + 5 * 60_000);
+      assert.ok(t >= Date.parse(now) + 5 * 60_000 && t - Date.parse(now) < 12 * H, now);
+      for (const [tz, k] of TYPED_WALL_TIMES) assert.ok(unambiguousWall(tz, t + k), `${now}: ${tz} ${wall(tz, t + k)}`);
+    }
+    assert.equal(unambiguousT0(Date.parse("2026-07-01T12:00:00Z")), Date.parse("2026-07-01T12:00:00Z"));
+  });
+});
+
 describe("B1-F flight data and connections — PRESSED (3826/3827/3828 + flags ON)", { skip: PRESSED_SKIP_REASON }, () => {
   let db: PressedDb; let app: App;
   let ana: PressedUser, bob: PressedUser, cy: PressedUser, eve: PressedUser;
   const seeds: Record<string, boolean | "absent"> = {};
-  const t0 = minute(Date.now()) + 5 * 60_000;
+  const t0 = unambiguousT0(Date.now() + 5 * 60_000);
   let anaTrip = "", anaIn: any, anaOut: any, anaSession = "";
   let bobTrip = "", bobIn: any, bobOut: any, bobSession = "", cySession = "";
 
@@ -421,7 +462,7 @@ describe("B1-F flight data and connections — PRESSED (3826/3827/3828 + flags O
 
   it("P13 L21 (3828) — the active snapshot and its confidence band follow the newest persisted computation", async () => {
     await db.setFlags({ layover_decision_persistence_enabled: true });
-    const t1 = minute(Date.now()) + 5 * 60_000;
+    const t1 = unambiguousT0(Date.now() + 5 * 60_000);
     const trip = await createTrip(db, eve);
     const { inbound, onward } = await enterFlights(app, eve, trip, t1);
     const s = await app.call("POST", `/api/trips/${trip}/layover-connections`, eve, { arrivalSegmentId: inbound.id, departureSegmentId: onward.id });
@@ -459,7 +500,7 @@ describe("B1-F — the flags OFF: nothing new answers, nothing new is written, t
 
   it("O1 every new route refuses feature_disabled and writes nothing; the disruption route carries no flightSegment", async () => {
     const trip = await createTrip(db, ana);
-    const t0 = minute(Date.now()) + 5 * 60_000;
+    const t0 = unambiguousT0(Date.now() + 5 * 60_000);
     const add = await app.call("POST", `/api/trips/${trip}/flight-segments`, ana, { flight: "BA1", departureAirport: "LHR", arrivalAirport: "EDI", departureLocal: wall("Europe/London", t0 + H), arrivalLocal: wall("Europe/London", t0 + 2 * H) });
     assert.equal(add.status, 404, add.raw);
     assert.equal(add.body.error, "feature_disabled");
