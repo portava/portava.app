@@ -15923,3 +15923,26 @@ An independent verifier re-checked the 28 moves first drafted here. It found 23 
 - **§83.4.** The draft edited that section's NOT-GRADED line in place, against APPEND-ONLY. That edit is reverted, and the withdrawal is recorded here instead:
 
 - WITHDRAWN NOT-GRADED: artifacts/api-server/src/test/db/tripMembershipThreadAtomic.db.test.ts — §83.4 declared it NOT-GRADED; P.2 above cites it on T319's verdict row, so a verdict now rests on it and CENSUS_SCOPE watches it.
+
+## §98 — #754 (lane BLOCKS-2, 2026-10-14) brought onto main 2026-11-04. NO ROW MOVES
+
+#754 found that the whole-list block readers were cut at `db-max-rows` and that
+postgrest-js resolves `{ data: null, error: null }` for an empty-bodied 404 or
+2xx. Main fixed the first itself before #754 landed: T220c and T220d above read
+every whole list by key through `lib/feedReads.ts`'s `readWhole`, which refuses a
+page that is not a row list and a page that repeats a row. So #754's own reader
+(`pagedBlockRows`, `BLOCK_LIST_CEILING`) was NOT taken, nor its edits to
+`lib/blocks.ts`, `lib/blockGuard.ts` and the two Compass files; main's text stands.
+
+Taken: `lib/keysetRead.ts`, which main still walked with `data ?? []`, so an
+empty-bodied page ended the walk and passed the rows read so far off as the set.
+It now refuses a page that is not a row list and a cursor the server ignored
+(`artifacts/api-server/src/lib/keysetRead.ts:52#if (!Array.isArray(data)) return { ok: false, error: new Error("keyset read: a page was not a row list") };`).
+`GET /me/blocker-ids` (#758) and the other keyset callers read through it.
+
+`src/test/blockListKeysetPaging.test.ts` is kept as a behavioural suite over the
+REAL client against main's readers (whole at 0 to 2,500 rows and under a 400-row
+cap, unreadable on a failed, aborted or empty-bodied later page, mutual blocks,
+the group and direction reads, the Compass profile); its pins on #754's own
+round-trip counts and ceiling were dropped because they described a reader that
+never landed.
