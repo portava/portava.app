@@ -153,6 +153,7 @@ hook in `src/lib/telegraphBroadcast.ts`.
 - `src/services/notifications/RealtimeActivityService.ts`
 - `src/services/notifications/causalEvents.ts`
 - `src/services/notifications/essentialAttemptBudget.ts`
+- `src/services/notifications/gemApprovalNotifier.ts`
 - `src/services/notifications/planNotifications.ts`
 - `src/services/notifications/socialActivityNotifier.ts`
 

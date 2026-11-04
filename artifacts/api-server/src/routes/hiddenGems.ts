@@ -30,7 +30,7 @@
  *          LLM calls (Compass): protected gems excluded entirely.
  */
 import { Router } from "express";
-import { randomUUID } from "node:crypto"; import { recordGemContributionSignal, recordGemAcceptedSignal, recordGemArrivalIfAttributable } from "../lib/mediaAnalytics.js";
+import { randomUUID } from "node:crypto"; import { recordGemContributionSignal, recordGemAcceptedSignal, recordGemArrivalIfAttributable } from "../lib/mediaAnalytics.js"; import { notifyGemApproved } from "../services/notifications/gemApprovalNotifier.js";
 import { z } from "zod";
 import { requireUser, sendError, canEditPlan, optionalUserFromToken } from "../lib/http.js"; import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js"; import { textOfPayload } from "../domain/telegraph/policies/groupControlsPolicy.js";
 import { getServiceClient } from "../lib/supabase.js"; import { canSeePlanItemLocation, PLAN_ITEM_PRIVACY_COLUMNS } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js";
@@ -1526,7 +1526,7 @@ router.post("/admin/hidden-gems/:id/verify", async (req, res) => {
   // Fetch gem's submitter before recording the verification (needed for stamp award).
   const { data: gemRow } = await sc
     .from("hidden_gems")
-    .select("submitted_by, city, country")
+    .select("submitted_by, city, country, status, name")
     .eq("id", req.params.id)
     .maybeSingle();
 
@@ -1540,7 +1540,7 @@ router.post("/admin/hidden-gems/:id/verify", async (req, res) => {
 
   // census-media §21 — §44 "Contribution … accepted", attributed to the submitter.
   if (parsed.data.result === "approved" && gemRow && (gemRow as any).submitted_by) {
-    recordGemAcceptedSignal(sc, { submitterId: String((gemRow as any).submitted_by), gemId: req.params.id });
+    recordGemAcceptedSignal(sc, { submitterId: String((gemRow as any).submitted_by), gemId: req.params.id }); if ((gemRow as any).status === "pending") void notifyGemApproved(sc, String((gemRow as any).submitted_by), req.params.id, (gemRow as any).name ?? null, req.log); // the submitter was told "it'll appear once approved", and then never told
   }
 
   // Fire-and-forget: award hidden_gem_explorer stamp to the submitter on approval.

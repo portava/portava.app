@@ -534,7 +534,7 @@ export const TEMPLATES: NotificationTemplate[] = [
     defaultPriority: 'normal',
     defaultChannels: ['in_app', 'push'],
     title: () => 'Place approved!',
-    body: ({ placeName }) => `${placeName ?? 'Your submission'} is now visible to the community`,
+    body: ({ placeName }) => `${placeName ?? 'Your submission'} is now visible to the community`, actionUrl: ({ gemId }) => gemId ? `/gems/${gemId}` : '/gems', // the gem's own page (app/gems/[id].tsx)
   }),
   tpl({
     eventType: 'hidden_gems.nearby_gem',
