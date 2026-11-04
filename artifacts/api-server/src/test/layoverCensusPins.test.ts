@@ -25,10 +25,10 @@
  *         constraint and names that member, under production's flag state.
  *   L181  `reconcile` reaches a traveller only through
  *   L197  `GET`/`POST /airport/sessions/:id/observations`, and both refuse
- *         unless `layover_crowd_reports_enabled` is ON. 3513 seeds that flag
- *         and is not applied in production, so production serves neither:
- *         the C both rows were given at census §41 (when the only gate was
- *         `airport_mode_enabled`) does not hold at HEAD.
+ *         unless `layover_crowd_reports_enabled` is ON. 3513 seeds that flag,
+ *         and it was applied in production 2026-10-21 with the flag ON, so
+ *         production serves both (re-pinned 2026-10-24; until then this pinned
+ *         them closed). Re-deriving L181/L197/L82 is the lane's next pass.
  *
  * Loopback: binds 127.0.0.1 (run unsandboxed). No production or remote
  * database is touched; the snapshot and the ledger are files in this tree.
@@ -89,7 +89,7 @@ let tables: Record<string, any[]> = {};
 function stage(extraFlags: Array<{ flag: string; enabled: boolean }> = []) {
   const now = Date.now();
   tables = {
-    feature_flags: [...productionFlagRows(), ...extraFlags],
+    feature_flags: [...productionFlagRows().filter((r) => !extraFlags.some((e) => e.flag === r.flag)), ...extraFlags], // an extra row REPLACES production's row of the same name
     airport_profiles: [airportRow()],
     layover_sessions: [OWNER, EARLY, MIDDLE].map((u) =>
       sessionRow({ id: SESSION_OF[u], user_id: u, departure_time: new Date(now + DEPARTS_IN_H[u]! * 3_600_000).toISOString() }),
@@ -223,51 +223,45 @@ describe("census-layover L232 — §21.1 crew mixed departures, over the real ro
 
 // ── L181 / L197 ──────────────────────────────────────────────────────────────
 
-describe("census-layover L181/L197 — the crowd-report channel is CLOSED in production's recorded state", () => {
-  it("PRECONDITIONS: 3513 is not applied, so the channel's flag row does not exist in production", () => {
-    assert.equal(
-      appliedInProduction("3513"), false,
-      `3513 is now recorded as applied in ${LEDGER_FILE}. L181/L197's W reason (and L82's) is discharged: refresh the snapshot, re-derive the three rows (they may return to C), and update this pin.`,
-    );
-    assert.equal(
-      Object.prototype.hasOwnProperty.call(SNAPSHOT.flags, LAYOVER_CROWD_REPORTS_FLAG), false,
-      `${LAYOVER_CROWD_REPORTS_FLAG} is present in ${PRODUCTION_SNAPSHOT_FILENAME} (=${String(SNAPSHOT.flags[LAYOVER_CROWD_REPORTS_FLAG])}). Re-derive L181/L197/L82 against its value and update this pin.`,
-    );
-    assert.equal(SNAPSHOT.flags.airport_mode_enabled, true, "control: the refusal below must not be the router's own gate");
+describe("census-layover L181/L197 — the crowd-report channel is OPEN in production's recorded state (3513 applied 2026-10-21, flag ON)", () => {
+  // Re-pinned at the 2026-10-24 capability refresh. Until then this block pinned the channel CLOSED (3513 unapplied, no
+  // flag row), and its first case said what to do the day that changed: "re-derive the three rows (they may return to C),
+  // and update this pin". The record moved, so the pin moves with it. Re-deriving L181/L197/L82 is the layover lane's
+  // next census pass; this suite now states what a production traveller is served TODAY, and goes red when that changes.
+  it("PRECONDITIONS: 3513 is recorded as applied, and the channel's flag row is present and ON in production", () => {
+    assert.equal(appliedInProduction("3513"), true, `3513 is no longer recorded as applied in ${LEDGER_FILE}. Re-derive L181/L197/L82 and update this pin.`);
+    assert.equal(SNAPSHOT.flags[LAYOVER_CROWD_REPORTS_FLAG], true, `${LAYOVER_CROWD_REPORTS_FLAG} is not ON in ${PRODUCTION_SNAPSHOT_FILENAME} (=${String(SNAPSHOT.flags[LAYOVER_CROWD_REPORTS_FLAG])}). Re-derive L181/L197/L82 against its value and update this pin.`);
+    assert.equal(SNAPSHOT.flags.airport_mode_enabled, true, "control: the router's own gate is open too");
   });
 
-  it("GET /observations — the ONLY production caller of reconcileAirportFact — refuses, and serves no reading", async () => {
+  it("GET /observations — the ONLY production caller of reconcileAirportFact — serves a reconciled reading", async () => {
     stage();
     const r = await request("GET", observationsPath, OWNER);
-    assert.equal(r.status, 503, `the reconciled reading was served in production's flag state — L181 would be reachable: ${r.raw}`);
-    assert.equal(r.body.error, "degraded_unavailable");
-    assert.equal(r.body.facts, undefined, "a closed channel published a facts list");
+    assert.equal(r.status, 200, `the reconciled reading is refused in production's flag state — L181 is not reachable: ${r.raw}`);
+    assert.ok(Array.isArray(r.body.facts) && r.body.facts.length > 0, "an open channel published no reading");
   });
 
-  it("POST /observations — the ONLY production writer of airport_fact_observations — refuses, and writes nothing", async () => {
+  it("POST /observations — the ONLY production writer of airport_fact_observations — accepts a traveller report and stores it", async () => {
     stage();
     const r = await request("POST", observationsPath, OWNER, aReport());
-    assert.equal(r.status, 503, `a traveller report was accepted in production's flag state — L197's table would be populated: ${r.raw}`);
-    assert.equal(r.body.error, "degraded_unavailable");
-    assert.deepEqual(tables[OBSERVATION_TABLE], [], "the closed channel wrote to airport_fact_observations");
+    assert.equal(r.status, 200, `a traveller report is refused in production's flag state — L197's table is not populated: ${r.raw}`);
+    assert.equal(tables[OBSERVATION_TABLE].length, 1, "the open channel stored nothing");
   });
 
-  it("CONTROL: in the same production state, the rest of Layover serves — the refusal is the crowd gate, not the router", async () => {
+  it("CONTROL: in the same production state, the rest of Layover serves too", async () => {
     stage();
     const r = await request("GET", crewPath(OWNER), OWNER);
     assert.equal(r.status, 200, r.raw);
     assert.equal(r.body.ok, true);
   });
 
-  it("CONTROL: 3513's seed row (enabled TRUE) is exactly what opens both routes — the press, not code, moves these rows", async () => {
-    // What production would look like the day 3513 is applied. If this ever
-    // fails, the rows need more than the press and the W reason must say what.
-    stage([{ flag: LAYOVER_CROWD_REPORTS_FLAG, enabled: true }]);
+  it("CONTROL: the flag, not code, is what opens both routes — with it OFF they refuse and nothing is stored", async () => {
+    stage([{ flag: LAYOVER_CROWD_REPORTS_FLAG, enabled: false }]);
     const post = await request("POST", observationsPath, OWNER, aReport());
-    assert.equal(post.status, 200, `with 3513 applied the report is still refused: ${post.raw}`);
-    assert.equal(tables[OBSERVATION_TABLE].length, 1, "with 3513 applied the report still reaches no store");
+    assert.equal(post.status, 503, `with the flag OFF the report is accepted: ${post.raw}`);
+    assert.deepEqual(tables[OBSERVATION_TABLE], [], "with the flag OFF the report reached the store");
     const get = await request("GET", observationsPath, OWNER);
-    assert.equal(get.status, 200, `with 3513 applied the reading is still refused: ${get.raw}`);
-    assert.ok(Array.isArray(get.body.facts) && get.body.facts.length > 0, "with 3513 applied no reconciled reading is served");
+    assert.equal(get.status, 503, `with the flag OFF the reading is served: ${get.raw}`);
+    assert.equal(get.body.facts, undefined, "a closed channel published a facts list");
   });
 });

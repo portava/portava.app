@@ -162,3 +162,30 @@ const UNKNOWN_WORDS: Record<string, string> = {
 export function unknownWords(unknowns: string[]): string {
   return unknowns.map((u) => UNKNOWN_WORDS[u] ?? u.replace(/_/g, ' ')).join('; ');
 }
+
+// ── census-layover L153: the traveller records the gate they see ─────────────
+//
+// POST /trips/:tripId/flight-segments/:segmentId/status (routes/layoverConnections.ts) records an observation on the
+// Trips flight as source 'traveller' (the kernel refuses a user claiming to be a feed) and re-plans that traveller's
+// OWN linked layover; the layover's offline bundle then caches the gate with who recorded it and when. The owner
+// approved the traveller as a producer of flight facts on 2026-10-18. Nothing here decides anything: the value is sent
+// as typed (trimmed) and the server's answer is shown.
+
+export interface GateEntry { departureGate: string }
+
+/** What is wrong with a gate before it is sent, in words; null when it can be sent (the server's limit is 32). */
+export function gateEntryProblem(e: GateEntry): string | null {
+  const g = e.departureGate.trim();
+  if (g.length === 0) return 'Enter the gate shown on the departure board, e.g. B4.';
+  if (g.length > 32) return 'A gate is at most 32 characters.';
+  return null;
+}
+
+/** Record the departure gate the traveller sees for one of their trip's flights. */
+export function recordTripFlightGate(tripId: string, segmentId: string, e: GateEntry): Promise<ApiWrite<{ outcome: unknown }>> {
+  return sendTripWrite<{ outcome: unknown }>(
+    'POST',
+    `/api/trips/${encodeURIComponent(tripId)}/flight-segments/${encodeURIComponent(segmentId)}/status`,
+    { departureGate: e.departureGate.trim() },
+  );
+}

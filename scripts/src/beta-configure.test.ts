@@ -75,6 +75,8 @@ const RENT_A_BUDDY = /^(rent_buddy|RENT_BUDDY|wall_rab|discovery_buddy)/;
 const POST_SNAPSHOT_SEEDED_TRUE = new Map<string, { on: boolean; why: string }>([
   ["layover_crowd_reports_enabled", { on: true, why: "3513 seeds it TRUE as production's default; lead decision 2026-10-06" }],
   ["discovery_serve_log_retention_enabled", { on: false, why: "3501 seeds it TRUE, but its 30-day period (Q11(a)) awaits legal review; held OFF, so beta's serve log is unbounded" }],
+  ["layover_presence_expiry_enabled", { on: true, why: "3952 seeds it TRUE: production deleted expired presence at expires_at with no flag before 3952, and the owner's 2026-10-24 directive forbids expanding retention without authorization (census-layover §84); OFF = retention extended, only by explicit owner action" }],
+  ["layover_crew_expiry_enabled", { on: true, why: "3952 seeds it TRUE: production deleted expired crews at expires_at with no flag before 3952, and the owner's 2026-10-24 directive forbids expanding retention without authorization (census-layover §84); OFF = retention extended, only by explicit owner action" }],
 ]);
 const DECISION_GATED = [
   "layover_presence_intents_enabled", "discovery_dwell_telemetry_enabled", "discovery_trending_api_enabled",
@@ -258,7 +260,7 @@ describe("beta-flag-policy.json — every flag the beta database will hold, deci
     }
     const on = policy.flags.filter((e) => e.enabled).map((e) => e.flag).sort();
     assert.deepEqual(on, [...expected].sort(), "the ON set changed: re-read the rationale and the lead's review before updating this rule");
-    assert.equal(on.length, 107, "pinned count (lead decision 2026-10-06; D2-RES 2026-10-09): 6 safety controls + 100 production-TRUE flags + 1 newer seeded-TRUE flag");
+    assert.equal(on.length, 109, "pinned count (lead decision 2026-10-06; D2-RES 2026-10-09; owner directive 2026-10-24 for 3952): 6 safety controls + 100 production-TRUE flags + 3 newer seeded-TRUE flags (3513's crowd reports, 3952's two expiry sweeps)");
     for (const f of EXCEPTIONS.keys()) assert.equal(byFlag.get(f)?.enabled ?? false, false, `${f}: ${EXCEPTIONS.get(f)}`);
     assert.equal(byFlag.get("COMPASS_FALLBACK_MODE_ENABLED")?.enabled, false, "production reads FALSE");
   });
@@ -1208,8 +1210,8 @@ describe("after a RESET rebuild — beta-config brings every chain-seeded flag t
   it("the starting state is the case to prove: chain-seeded flags arrive ON, one of them OFF in the policy", () => {
     for (const f of Object.keys(rebuilt)) assert.ok(f in ff.chainSeeded, `${f} is left by the chain, so the snapshot leaves it to the chain`);
     const on = Object.keys(rebuilt).filter((f) => rebuilt[f]).sort();
-    assert.deepEqual(on, ["discovery_serve_log_retention_enabled", "layover_crowd_reports_enabled", "map_telemetry_retention_enabled"],
-      "pinned 2026-10-14 (3501, 3513, 2960): a chain file that turns a flag on moves this — decide it in the policy");
+    assert.deepEqual(on, ["discovery_serve_log_retention_enabled", "layover_crew_expiry_enabled", "layover_crowd_reports_enabled", "layover_presence_expiry_enabled", "map_telemetry_retention_enabled"],
+      "pinned 2026-10-24 (3501, 3513, 2960, 3952): a chain file that turns a flag on moves this — decide it in the policy"); // 3952 (census-layover §84): both expiry sweeps seeded TRUE, keeping production's deletion at expiry
     assert.deepEqual(on.filter((f) => byFlag.get(f)?.enabled === false), ["discovery_serve_log_retention_enabled"]);
     // Every policy flag reaches the database: the chain seeds it, or it is pre-baseline (copied by the snapshot or created by b2).
     for (const e of policy.flags) assert.ok(e.flag in rebuilt || definitions.has(e.flag), `${e.flag} would be missing after a rebuild`);

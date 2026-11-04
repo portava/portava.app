@@ -239,6 +239,10 @@ export const OUT_OF_SCOPE: readonly { file: string; why: string }[] = [
     file: "lib/deletion/graph.ts",
     why: "the account-deletion table graph: foreign-key reachability between tables, not the intelligence graph. It must be able to name money tables in order to delete from them.",
   },
+  {
+    file: "lib/rankingDebugSamplePurgeScheduler.ts",
+    why: "census-discovery §133 (DV-52): the hourly caller of purge_old_ranking_debug_samples(), behind its own flag. It deletes stored debug samples older than seven days; it scores, orders and reads no ranking input. \"ranking\" is the table's name, not its role.",
+  },
 ];
 
 // ── allowlist ─────────────────────────────────────────────────────────────────

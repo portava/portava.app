@@ -101,10 +101,52 @@
  * constant moves. That is the whole refresh.
  */
 /** The capture every reader should grade against. Change this on a refresh. */
-export const PRODUCTION_SNAPSHOT_FILENAME = "20260922-production-schema.json";
+export const PRODUCTION_SNAPSHOT_FILENAME = "20261104-production-schema.json"; // REFRESH OF 2026-11-04: see the note at the end of this file
 
 /** Resolved against this directory, which is where the captures live. */
 export const PRODUCTION_SNAPSHOT_URL = new URL(
   PRODUCTION_SNAPSHOT_FILENAME,
   import.meta.url,
 );
+
+/**
+ * REFRESH OF 2026-10-24 05:55 UTC, the current one, re-verified 10:40 UTC (census drive 2026-10-23, the approved
+ * capability refresh; written at the END of this file so the lines above, which documents cite, do not move). Taken
+ * after the 2026-10-21 production press (329 migrations applied through schema_migration_ledger, each row's sha256 equal
+ * to this tree's file; the press also wrote a backfill row for 3974, which never ran), the 2026-10-23 backfill rows (50
+ * migrations recorded as present but not applied by the ledger discipline) and 3950 (2026-10-24 05:42:51). 642 tables
+ * and views (624 base tables), 447 functions, 69 enums, 383 flags (304 enabled).
+ *
+ * Built as a proven DELTA on the 09-22 capture, the same argument as every capture before it: production digested its
+ * own catalogue per initial letter and per table, only the differing tables' column lists were taken (from a chain
+ * replay where they matched production's per-table digest, from production where they did not), and production then
+ * recomputed all three digests and returned exactly the three the new file records.
+ *
+ * Re-verified at 10:40:31 UTC, after 3911 (08:12:49, a new body for memory_kernel_execute) and 3924 (09:59:00, four
+ * post_media rows): production recomputed the same three digests and the same counts, so no recorded object changed,
+ * and the watermark moved to 3924's ledger instant.
+ *
+ * The capture records objects that no migration in this tree declares, as production has them rather than leaving
+ * them out: media_upload_sessions, media_upload_chunks and commit_media_upload_chunk; three columns each on media_assets
+ * and user_deletion_requests; and the dormant journey-shadow programme (9 tables, 35 functions, and six columns on
+ * location_sessions and user_location_preferences). census-media's 2026-10-24 note lists them with their catalogue
+ * definitions. Codifying them is an owner decision.
+ *
+ * The unapplied set, read from the ledger itself (832 rows = this tree's 836 files minus five, plus 3924, whose file
+ * arrives with PR #795; digest over the filenames): 2481, 3601 and 3602 (held) and 3909 and 3910 (codifications of
+ * objects production already holds out of band). The 09-22 capture was NOT overwritten: a capture describes one
+ * instant, a new instant gets a new file, and the constant above moves. That is the whole refresh.
+ */
+
+/**
+ * REFRESH OF 2026-11-04 06:41 UTC, the current one (release 2, PR #811; written at the END of this file so the lines
+ * above do not move). Taken after 3951 (2026-10-24 12:43:48, one nullable column on layover_certified_computations and
+ * one flag seeded FALSE) and release 2's 3925, 3926 and 3941 (2026-11-04 06:13:42, policies and column grants only,
+ * which the capture's method does not record). 642 tables and views (624 base tables), 447 functions, 69 enums,
+ * 384 flags (304 enabled).
+ *
+ * Built as a proven DELTA on the 10-24 capture: the whole catalogue was re-read and diffed name by name, the delta is
+ * exactly 3951's two objects, and production then recomputed all three digests (plus the enums and base-table digests)
+ * and returned exactly the values the new file records. The ledger is 836 rows: this tree's 841 files minus the same
+ * five (2481, 3601, 3602, 3909, 3910). The 10-24 capture was NOT overwritten.
+ */

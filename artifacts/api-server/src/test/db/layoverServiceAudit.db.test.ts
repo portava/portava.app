@@ -41,7 +41,7 @@ describe('atomic scoped Layover service audit',{skip:PRESSED_SKIP_REASON},()=>{
  });
  it('A6 the actual presence worker deletes expired rows under a named system scope',async()=>{
   await db.exec(`INSERT INTO public.layover_presence(session_id,user_id,intents,available_from,available_until,expires_at) VALUES('${sid}','${owner.id}','{food}',now()-interval '3 hours',now()-interval '1 hour',now()-interval '1 hour')`);
-  const result=await runLayoverPresenceExpirySweep({client:db.client,now:new Date()});assert.equal(result.outcome,'swept');assert.equal(result.deleted,1);
+  await db.setFlag('layover_presence_expiry_enabled',true); const result=await runLayoverPresenceExpirySweep({client:db.client,now:new Date()}); /* 3952: the owner's press, ON for this case */assert.equal(result.outcome,'swept');assert.equal(result.deleted,1);
   const rows=await db.query<any>(`SELECT * FROM public.layover_service_write_audit WHERE table_name='layover_presence' AND operation='DELETE'`);assert.equal(rows.length,1);assert.equal(rows[0].system_actor,'layover:presence-expiry');assert.equal(rows[0].actor_user_id,null);
  });
  it('A7 the running retention tick expires old records even after auditing is disabled',async()=>{
