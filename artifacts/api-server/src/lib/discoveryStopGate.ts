@@ -54,7 +54,7 @@ import { refreshDiscoveryStopMeasurements } from "./discoveryStopMeasurements.js
 const TTL_MS = 30_000;
 
 /** Per client object: the last measurement refresh, the cached manual-stop read and the last halt log. */
-interface ClientGateState { refreshedAt: number; kill: { value: boolean; at: number } | null; loggedAt: number }
+interface ClientGateState { refreshedAt: number; kill: { value: boolean; at: number; epoch?: number } | null; loggedAt: number } // epoch: featureFlagWriteEpoch() when read (foot)
 const _state = new WeakMap<object, ClientGateState>();
 const NO_CLIENT: ClientGateState = { refreshedAt: -Infinity, kill: null, loggedAt: -Infinity };
 
@@ -101,8 +101,8 @@ export async function discoveryStopHalt(sc: unknown, opts: { measure?: boolean }
     let halt: DiscoveryStopHalt = null;
     if (evaluateStopConditions().tripped.length > 0) halt = "stop_condition";
     else {
-      if (!s.kill || nowMs - s.kill.at >= TTL_MS) {
-        s.kill = { value: await isKillSwitchEngaged(sc, "disable_discovery_pde"), at: nowMs };
+      if (!s.kill || nowMs - s.kill.at >= TTL_MS || s.kill.epoch !== featureFlagWriteEpoch()) {
+        s.kill = { epoch: featureFlagWriteEpoch(), value: await isKillSwitchEngaged(sc, "disable_discovery_pde"), at: nowMs };
       }
       if (s.kill.value) halt = "kill_switch_engaged";
     }
@@ -121,3 +121,10 @@ export async function discoveryStopHalt(sc: unknown, opts: { measure?: boolean }
 export async function unlessDiscoveryStopped(sc: unknown, flagOn: boolean, opts: { measure?: boolean } = {}): Promise<boolean> {
   return flagOn && (await discoveryStopHalt(sc, opts)) === null;
 }
+
+// The one service client is built once per process (lib/supabase.ts), so the
+// per-client state above now lives its full TTL_MS instead of one request. A
+// flag write through the API on this instance advances featureFlagWriteEpoch()
+// (lib/hotPathCache.ts), which ends the cached manual-stop read at once, as a
+// fresh client per request used to. Appended at the foot: lines above are cited.
+import { featureFlagWriteEpoch } from "./hotPathCache.js";

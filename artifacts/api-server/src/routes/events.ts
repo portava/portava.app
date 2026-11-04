@@ -7491,8 +7491,8 @@ function sendLockedAcceptUnconfirmed(req: any, res: any, eventId: string, err: u
 
 // ── Pass 12 C2 (independent verification, 2026-10-18): the probe's memo is process-wide ──
 //
-// It was keyed on the client object, and getServiceClient() builds a NEW client on every call (lib/supabase.ts:20, no
-// cache) and every door takes its own: in production the memo lived one request, so the probe was sent on every
+// It was keyed on the client object, and getServiceClient() built a NEW client on every call (lib/supabase.ts:20, no
+// cache then; one per process since the hot-path pass, lib/supabase.ts "The one service client") and every door took its own: in production the memo lived one request, so the probe was sent on every
 // promotion door and every accept request, not once per TTL. Every supabase-js client carries the URL it was built
 // for (`supabaseUrl`), and every client this API builds is the one service client at SUPABASE_URL (lib/supabase.ts's
 // single createClient call, pinned by handRolledAuthAccountState.test.ts), so the verdict is kept per URL for the

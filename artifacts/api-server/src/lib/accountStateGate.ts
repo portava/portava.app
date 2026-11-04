@@ -66,7 +66,7 @@
  *   active / deactivated / pending_deletion / no profile row → served.
  *
  * A token issued BEFORE the ban is refused the same way: nothing here trusts the
- * token beyond its identity, and the state is read on every request.
+ * token beyond its identity, and the state is read on every request (an unrestricted answer is kept <=30s: lib/hotPathCache.ts).
  */
 import type { Request, Response } from "express";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
@@ -376,7 +376,7 @@ export async function optionalUserFromToken(
   let data: any;
   let error: any;
   try {
-    ({ data, error } = await client.auth.getUser(token));
+    ({ data, error } = await verifiedBearerUser(client, token)); // auth.getUser, remembered per lib/hotPathCache.ts (foot of this file)
   } catch (err) {
     if (opts.authThrowIsAnonymous) return null;
     throw err;
@@ -396,7 +396,7 @@ export async function optionalUserFromToken(
  * getGatedUser cannot drift apart.
  */
 async function admitVerifiedOptionalUser(client: SupabaseClient, user: User, log?: any): Promise<User | null> {
-  const read = await resolveAccountRestriction(client, user.id);
+  const read = await resolveGateAccountRestriction(client, user.id); // resolveAccountRestriction; an unrestricted answer is remembered <=30s (foot of this file)
   if (read.state === "unavailable") {
     log?.error?.(
       { userId: user.id, reason: read.reason },
@@ -433,7 +433,7 @@ export async function getGatedUser(
   token: string,
   opts: { log?: any } = {},
 ): Promise<{ data: { user: User | null }; error: any }> {
-  const { data, error } = await client.auth.getUser(token);
+  const { data, error } = await verifiedBearerUser(client, token); // auth.getUser, remembered per lib/hotPathCache.ts (foot of this file)
   if (isAuthUserBannedError(error)) throw new AccountRestrictedError(AUTH_BANNED_REFUSAL.reason, AUTH_BANNED_REFUSAL.message);
   if (error || !data?.user) return { data: { user: null }, error: error ?? null }; if (isRevokedDeviceSession(data.user, token)) { await endRevokedSession(client, token); return { data: { user: null }, error: { message: REVOKED_DEVICE_MESSAGE, code: "session_not_found", status: 403, name: "AuthApiError" } }; } // §30A.7 T401 (a 4xx AuthApiError: routes/discovery.ts authServiceUnreachable reads a status-less error as an auth OUTAGE)
   const user = await admitVerifiedOptionalUser(client, data.user as User, opts.log);
@@ -467,7 +467,7 @@ export async function requireUserFromToken(
   client: SupabaseClient,
   token: string,
 ): Promise<User | null> {
-  const { data, error } = await client.auth.getUser(token);
+  const { data, error } = await verifiedBearerUser(client, token); // auth.getUser, remembered per lib/hotPathCache.ts (foot of this file)
   if (error || !data?.user) {
     if (isAuthUserBannedError(error)) sendTokenRefusal(res, error);
     else sendError(res, "unauthenticated", "Invalid token");
@@ -492,7 +492,7 @@ export async function enforceAccountState(
   client: SupabaseClient,
   userId: string,
 ): Promise<boolean> {
-  const read = await resolveAccountRestriction(client, userId);
+  const read = await resolveGateAccountRestriction(client, userId); // resolveAccountRestriction; an unrestricted answer is remembered <=30s (foot of this file)
   if (read.state === "unavailable") {
     (req as any).log?.error?.(
       { userId, reason: read.reason },
@@ -571,3 +571,81 @@ export function watchAccountRestriction(
 
 // TV-4b (lane B, 2026-10-06): the structured part of a restricted account's 403 (OD-TRUST-4). Imported at the foot so every cited line keeps its number.
 import { restrictionGuidance } from "./restrictedAccountAccess.js";
+
+// ---------------------------------------------------------------------------
+// The hot path: what this instance remembers (lib/hotPathCache.ts)
+// ---------------------------------------------------------------------------
+// Appended at the foot so every cited line above keeps its number. The four
+// getUser sites (requireUser in lib/http.ts, optionalUserFromToken, getGatedUser,
+// requireUserFromToken) verify through verifiedBearerUser, and the three request
+// gates (requireUser, admitVerifiedOptionalUser, enforceAccountState) read the
+// account state through resolveGateAccountRestriction. The long-lived stream's
+// re-check (watchAccountRestriction) and every non-gate caller of
+// resolveAccountRestriction still read the database every time.
+//
+// Every branch above is unchanged and still runs on every request: a remembered
+// verification is handed to the same `isRevokedDeviceSession` check, and a
+// remembered account state is the one answer that was going to be served
+// anyway. Nothing here can remember a failure; lib/hotPathCache.ts says what is
+// kept, for how long, and the cross-instance bound.
+
+/**
+ * `client.auth.getUser(token)`, with the same answer shape and the same throws,
+ * answered from memory when lib/hotPathCache.ts holds a fresh verification of
+ * this exact token (by sha256) made through the one service client. Stored only
+ * when `getUser` answered a user and no error, for a token whose `exp` leaves
+ * more than the margin and whose session is not revoked. A verification that
+ * finds its token's session REVOKED forgets everything remembered about that
+ * user (this is the path that ends the session in GoTrue): another token of the
+ * same session, remembered before the revocation, must not outlive it here.
+ */
+export async function verifiedBearerUser(client: SupabaseClient, token: string): Promise<{ data: { user: User | null }; error: any }> {
+  const cacheable = isHotPathCacheableClient(client);
+  if (cacheable) {
+    const remembered = rememberedVerifiedUser(token);
+    if (remembered) return { data: { user: remembered }, error: null };
+  }
+  const generation = authCacheGeneration();
+  const answer: any = await client.auth.getUser(token);
+  if (cacheable && answer && typeof answer === "object" && !answer.error && answer.data?.user) {
+    const user = answer.data.user as User;
+    if (isRevokedDeviceSession(user, token)) invalidateUserAuthCache(user.id);
+    else rememberVerifiedUser(token, user, generation);
+  }
+  return answer;
+}
+
+/**
+ * resolveAccountRestriction for the request gates: answered from memory only
+ * when this user's state was last read readable, unrestricted and `active`
+ * through the one service client less than ACCOUNT_STATE_TTL_MS ago, and only
+ * such an answer is stored. Unreadable, banned, suspended, deleted, deactivated
+ * and pending_deletion are read every time, so every refusal and every 503 is
+ * exactly as fresh as it was before.
+ */
+export async function resolveGateAccountRestriction(
+  client: SupabaseClient,
+  userId: string,
+  now: Date = new Date(),
+): Promise<AccountRestrictionRead> {
+  const cacheable = isHotPathCacheableClient(client);
+  if (cacheable && isAccountStateRememberedActive(userId)) { // the cache keeps time by Date.now(), as every cache in lib/hotPathCache.ts does
+    return { state: "ok", accountStatus: "active", restriction: { kind: "none" } };
+  }
+  const generation = authCacheGeneration();
+  const read = await resolveAccountRestriction(client, userId, now);
+  if (cacheable && read.state === "ok" && read.restriction.kind === "none" && read.accountStatus === "active") {
+    rememberAccountStateActive(userId, generation);
+  }
+  return read;
+}
+
+import {
+  authCacheGeneration,
+  invalidateUserAuthCache,
+  isAccountStateRememberedActive,
+  isHotPathCacheableClient,
+  rememberAccountStateActive,
+  rememberVerifiedUser,
+  rememberedVerifiedUser,
+} from "./hotPathCache.js";

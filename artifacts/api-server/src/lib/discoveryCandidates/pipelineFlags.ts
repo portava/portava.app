@@ -69,7 +69,7 @@ export function anyPipelineFlag(f: PipelineFlags): boolean {
 }
 
 const FLAG_TTL_MS = 30_000;
-const cache = new WeakMap<object, { flags: PipelineFlags; at: number }>();
+const cache = new WeakMap<object, { flags: PipelineFlags; at: number; epoch: number }>(); // epoch: featureFlagWriteEpoch() when read (foot)
 
 /** Test hook: forget one client's cached flags (or every client's, by dropping the map's keys). */
 export function invalidatePipelineFlagCache(sc?: object | null): void {
@@ -79,8 +79,8 @@ export function invalidatePipelineFlagCache(sc?: object | null): void {
 /** Read the eight flags in one query. Never throws; any failure is ALL OFF. */
 export async function loadPipelineFlags(sc: any, nowMs: number = Date.now()): Promise<PipelineFlags> {
   if (!sc || typeof sc !== "object") return { ...PIPELINE_FLAGS_OFF };
-  const hit = cache.get(sc);
-  if (hit && nowMs - hit.at < FLAG_TTL_MS && nowMs >= hit.at) return stopped(sc, { ...hit.flags });
+  const hit = cache.get(sc); const epoch = featureFlagWriteEpoch();
+  if (hit && nowMs - hit.at < FLAG_TTL_MS && nowMs >= hit.at && hit.epoch === epoch) return stopped(sc, { ...hit.flags });
   let on = new Set<string>();
   try {
     const { data, error } = await sc
@@ -103,7 +103,7 @@ export async function loadPipelineFlags(sc: any, nowMs: number = Date.now()): Pr
     outputKinds:          on.has(DISCOVERY_OUTPUT_KINDS_FLAG),
     graphReadingProvenance: on.has(COMPASS_CITY_CONFIDENCE_WINDOWED_READS_FLAG),
   };
-  cache.set(sc, { flags, at: nowMs });
+  cache.set(sc, { flags, at: nowMs, epoch });
   return stopped(sc, { ...flags });
 }
 
@@ -113,3 +113,9 @@ import { discoveryStopHalt } from "../discoveryStopGate.js";
 async function stopped(sc: unknown, flags: PipelineFlags): Promise<PipelineFlags> {
   return Object.values(flags).some(Boolean) && (await discoveryStopHalt(sc)) !== null ? { ...PIPELINE_FLAGS_OFF } : flags;
 }
+
+// The one service client is built once per process (lib/supabase.ts), so the
+// per-client cache above now lives its full FLAG_TTL_MS instead of one request.
+// A flag write through the API on this instance advances featureFlagWriteEpoch()
+// (lib/hotPathCache.ts), which ends every entry read before it. Appended: lines above are cited.
+import { featureFlagWriteEpoch } from "../hotPathCache.js";

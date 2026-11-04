@@ -80,19 +80,19 @@ export async function outboxFanoutInForce(sc: any): Promise<boolean> {
   // A 5-second per-client cache (V-TR F4): every message door asks this after its insert, and the drainer
   // asks it every pass. One cached answer per process keeps the doors and this drainer AGREEING inside the
   // process (both read the same entry), and costs the hot send path two flag reads per 5 s, not per send.
-  const now = Date.now();
+  const now = Date.now(); const epoch = featureFlagWriteEpoch(); // a flag write on this instance ends the entry (lib/hotPathCache.ts)
   const hit = sc && typeof sc === "object" ? _fanoutCache.get(sc) : undefined;
-  if (hit && now - hit.at < FANOUT_FLAG_TTL_MS) return hit.on;
+  if (hit && now - hit.at < FANOUT_FLAG_TTL_MS && hit.epoch === epoch) return hit.on;
   const [fanout, kernel] = await Promise.all([
     isFlagEnabled(sc, "telegraph_outbox_fanout_enabled"),
     isFlagEnabled(sc, "telegraph_message_kernel_enabled"),
   ]);
   const on = fanout && kernel;
-  if (sc && typeof sc === "object") _fanoutCache.set(sc, { on, at: now });
+  if (sc && typeof sc === "object") _fanoutCache.set(sc, { on, at: now, epoch });
   return on;
 }
 const FANOUT_FLAG_TTL_MS = 5_000;
-const _fanoutCache = new WeakMap<object, { on: boolean; at: number }>();
+const _fanoutCache = new WeakMap<object, { on: boolean; at: number; epoch: number }>();
 /** Test seam. */
 export function _resetOutboxFanoutCache(sc?: object): void { if (sc) _fanoutCache.delete(sc); }
 
@@ -343,3 +343,9 @@ export function startTelegraphOutboxDrainScheduler(): void {
 export function stopTelegraphOutboxDrainScheduler(): void {
   _generation += 1; if (_timer !== null) { clearTimeout(_timer); _timer = null; }
 }
+
+// The one service client is built once per process (lib/supabase.ts): the
+// fan-out cache above is now the per-process answer its comment describes, and
+// ends on featureFlagWriteEpoch() (lib/hotPathCache.ts) when the API writes a
+// flag on this instance. Appended at the foot: lines above are cited by line.
+import { featureFlagWriteEpoch } from "./hotPathCache.js";
