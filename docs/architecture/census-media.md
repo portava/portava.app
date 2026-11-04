@@ -17896,7 +17896,7 @@ written to production or `portava-ci`, and no flag was changed. `head_commit` is
   - Mutants: removing both gates turns C1 and C2 red; removing only `restored` (the flags-only gate of a0951915) turns C2 red (mounts: expected 0, received 1).
   - It bears on MD286, MD419 and MD427, which all asked that the tab not open into the paging feed.
 - **Ownership isolation, pinned where a gap was (server tests).**
-  - `artifacts/api-server/src/test/mediaVideoTransport.test.ts:550#it("ISOLATION (census-media, 2026-10-24): a stranger c`
+  - `artifacts/api-server/src/test/mediaVideoTransport.test.ts:552#it("ISOLATION (census-media, 2026-10-24): a stranger c`
     covers a stranger trying to assemble, abandon or delete another user's upload. All three are refused 403, no
     object of the owner's is touched, and the row remains.
   - Two mutants are killed: the slot ownership check removed (3 cases red), and the media delete's owner check made
