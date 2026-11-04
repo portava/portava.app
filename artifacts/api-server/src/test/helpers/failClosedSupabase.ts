@@ -128,7 +128,7 @@ export interface FakeClientSpec {
    * `{ data: null, error: null }`: a double that answers a stored procedure it
    * knows nothing about is exactly the failure this file exists to prevent.
    */
-  rpc?: Record<string, (args: any) => { data: unknown; error: unknown }>;
+  rpc?: Record<string, (args: any) => { data: unknown; error: unknown }>; /** Evaluate `.or("…")` (PostgREST eq/neq/in/is terms and nested and()/or()); off by default, where `.or` is ignored. */ evaluateOr?: boolean;
 }
 
 const DEFAULT_ERROR: FakeDbError = { message: "connection terminated unexpectedly", code: "57P01" };
@@ -219,7 +219,7 @@ export function makeFailClosedClient(spec: FakeClientSpec): any {
       function matched(): Record<string, any>[] {
         if (hidden(table)) return [];
         let out = (rows[table] ?? []).filter((r) =>
-          filters.every((f) => applyOp(readColumn(r, f.col), f.op, f.val)),
+          filters.every((f) => (f.op === "__or" ? (f.val as (row: Record<string, any>) => boolean)(r) : applyOp(readColumn(r, f.col), f.op, f.val))),
         );
         if (orderCol) {
           out = [...out].sort((a, b) => {
@@ -338,7 +338,7 @@ export function makeFailClosedClient(spec: FakeClientSpec): any {
         is(col: string, val: unknown)  { filters.push({ col, op: "is",  val }); return builder; },
         not(col: string, op: string, val: unknown) { filters.push({ col, op: `not.${op}`, val }); return builder; },
         filter(col: string, op: string, val: unknown) { filters.push({ col, op, val }); return builder; },
-        or() { return builder; },
+        or(expr?: string) { if (spec.evaluateOr && typeof expr === "string") filters.push({ col: "", op: "__or", val: orPredicate(`or(${expr})`) }); return builder; },
         order(col: string, opts?: { ascending?: boolean }) {
           orderCol = col; orderAsc = opts?.ascending !== false; return builder;
         },
@@ -415,3 +415,26 @@ export const noopLog = {
   debug: () => {},
   child: () => noopLog,
 };
+
+/**
+ * A PostgREST logic expression (`or(a.eq.1,and(b.eq.2,c.in.(3,4)))`) as a row
+ * predicate, for `evaluateOr` clients. Added 2026-11-04 so a test can seed a
+ * `blocks` row between two OTHER people without the shared two-party read
+ * (`lib/blockGuard.ts`, one `.or()` over both directions) seeing it.
+ */
+function orPredicate(t: string): (r: Record<string, any>) => boolean {
+  const logic = t.match(/^(and|or)\((.*)\)$/s);
+  if (logic) {
+    const parts: string[] = []; let depth = 0, cur = "";
+    for (const ch of logic[2]) { if (ch === "(") depth++; if (ch === ")") depth--; if (ch === "," && depth === 0) { parts.push(cur); cur = ""; continue; } cur += ch; }
+    if (cur) parts.push(cur);
+    const preds = parts.map(orPredicate);
+    return logic[1] === "and" ? (r) => preds.every((p) => p(r)) : (r) => preds.some((p) => p(r));
+  }
+  const m = t.match(/^([a-zA-Z_][\w>-]*)\.(eq|neq|in|is)\.(.*)$/s);
+  if (!m) throw new Error(`failClosedSupabase: unsupported .or() term "${t}"`);
+  const [, col, op, raw] = m;
+  if (op === "in") { const vals = raw.replace(/^\(|\)$/g, "").split(",").map((v) => v.replace(/^"|"$/g, "")); return (r) => vals.includes(String(readColumn(r, col))); }
+  if (op === "is") return (r) => (raw === "null" ? readColumn(r, col) == null : String(readColumn(r, col)) === raw);
+  return (r) => applyOp(readColumn(r, col), op, raw);
+}
