@@ -65,7 +65,7 @@ interface State {
   errorTables?: string[];
   /** Fail reads of one table only when the query filters on this value (e.g. one thread id). */
   errorWhere?: { table: string; value: string };
-  blockedTarget?: boolean;
+  blockedTarget?: boolean; /** The target thread's own message_threads.status is 'archived'. */ archivedTarget?: boolean;
 }
 
 function msg(id: string, thread: string, sender: string, extra: Record<string, unknown> = {}) {
@@ -84,7 +84,7 @@ function fixture(state: State): Record<string, any[]> {
     ],
     message_threads: [
       { id: SRC_THREAD, is_e2ee: false, thread_type: "group" },
-      { id: TGT_THREAD, is_e2ee: false, thread_type: "direct" },
+      { id: TGT_THREAD, is_e2ee: false, thread_type: "direct", ...(state.archivedTarget ? { status: "archived" } : {}) },
       { id: E2EE_THREAD, is_e2ee: true, thread_type: "direct" },
     ],
     message_thread_members: [
@@ -528,5 +528,20 @@ describe("T406 — the new audience's thread read carries the provenance word an
     await decoratePlatformReads(c as any, [{ id: M_TEXT }], out, {});
     assert.equal(out[0]!.forwardContext, "unavailable");
     assert.equal(out[0]!.forwarded, undefined);
+  });
+});
+
+// Appended at the foot so every line the census cites above keeps its number.
+describe("an archived target thread (message_threads.status) — the shared guard's gate 3b", () => {
+  it("takes no forward: 403 with the refusal canSendMessage announces, named; the forward transaction never runs", async () => {
+    // Red before the guard read message_threads.status (main at ffdf6428c): this answered 201 and wrote the copy.
+    const c = useState({ archivedTarget: true });
+    const before = c._db.messages!.length;
+    const r = await forward(BOB, M_ALLOW);
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.reason, "TELEGRAPH_POLICY_THREAD_ARCHIVED");
+    assert.equal(c._rpc.length, 0, "the forward transaction never ran");
+    assert.equal(c._db.messages!.length, before);
+    assert.equal(c._db.message_forwards!.length, 0);
   });
 });
