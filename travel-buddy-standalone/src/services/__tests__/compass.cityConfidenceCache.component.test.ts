@@ -8,9 +8,8 @@
  *   - _clearCityConfidenceCache forces a refetch
  *
  * Run via:
- *   node --import tsx/esm --test src/services/__tests__/compass.cityConfidenceCache.test.ts
+ *   npx jest src/services/__tests__/compass.cityConfidenceCache.component.test.ts
  */
-import { describe, it, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 process.env.EXPO_PUBLIC_SUPABASE_URL ??= 'https://test.supabase.co';
@@ -40,11 +39,11 @@ globalThis.fetch = ((url: string) => {
   return Promise.resolve(new Response(JSON.stringify(confidenceBody(city)), { status: 200 }));
 }) as typeof fetch;
 
-after(() => { globalThis.fetch = realFetch; });
+afterAll(() => { globalThis.fetch = realFetch; });
 
 describe('fetchCityConfidence cache', () => {
-  before(async () => {
-    const mod = await import('../compass.ts');
+  beforeAll(async () => {
+    const mod = require('../compass.ts');
     fetchCityConfidence = mod.fetchCityConfidence;
     _clearCityConfidenceCache = mod._clearCityConfidenceCache;
     _setTestAuthToken = mod._setTestAuthToken;

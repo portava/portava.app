@@ -20,10 +20,10 @@
  * consumer distinguished it. That is the sentence above, exactly.
  *
  * Named *.component.test.tsx so it runs under jest: the node:test runner cannot
- * import discovery.ts → supabase.ts → react-native (see KNOWN_BROKEN in
- * scripts/run-node-tests.mjs, which is why the sibling
- * discovery.searchSignal.test.ts never runs). It renders nothing; it exercises
- * the service directly.
+ * import discovery.ts → supabase.ts → react-native (the sibling
+ * discovery.searchSignal test never ran as a node:test file for that reason; it
+ * runs under jest as discovery.searchSignal.component.test.ts since 2026-11-04).
+ * It renders nothing; it exercises the service directly.
  *
  * Run with: pnpm test:component
  */

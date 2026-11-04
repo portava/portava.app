@@ -6,10 +6,8 @@
  * unnecessary refreshSession() call.
  *
  * Run with:
- *   node --import tsx/esm --test \
- *     src/services/__tests__/apiToken.freshToken.test.ts
+ *   npx jest src/services/__tests__/apiToken.freshToken.component.test.ts
  */
-import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { freshToken, _setTestSupabase, _resetTestSupabase } from '../apiToken.ts';
 

@@ -2,7 +2,7 @@
  * PostcardComposer — video duration gate (unit layer).
  *
  * Run with:
- *   node --import tsx/esm --test src/components/__tests__/PostcardComposer.duration.test.ts
+ *   npx jest src/components/__tests__/PostcardComposer.duration.component.test.ts
  *
  * ## What is tested
  *
@@ -40,7 +40,6 @@
  * the pure-function layer.
  */
 
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateMedia } from '../../services/media.ts';
 import { VIDEO_MAX_DURATION_SECONDS } from '../../constants/mediaLimits.ts';

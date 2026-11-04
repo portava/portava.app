@@ -8,9 +8,8 @@
  * actually wired through it).
  *
  * Run:
- *   node --import tsx --test src/services/__tests__/onboardingSaveAlert.partialSave.test.ts
+ *   npx jest src/services/__tests__/onboardingSaveAlert.partialSave.component.test.ts
  */
-import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { _setTestAuthToken, updateMyProfile } from '../profile.ts';
 import {
@@ -73,8 +72,8 @@ describe('buildOnboardingSaveAlert — partial save copy', () => {
 
 describe('onboarding screen actually routes through the tested alert builder', () => {
   it('onboarding.tsx imports buildOnboardingSaveAlert from profileSaveFlow', async () => {
-    const { readFileSync } = await import('node:fs');
-    const { join } = await import('node:path');
+    const { readFileSync } = require('node:fs');
+    const { join } = require('node:path');
     const src = readFileSync(join('app', '(auth)', 'onboarding.tsx'), 'utf8');
     assert.ok(
       src.includes('buildOnboardingSaveAlert') && src.includes('services/profileSaveFlow'),

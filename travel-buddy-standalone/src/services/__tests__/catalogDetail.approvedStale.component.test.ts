@@ -11,10 +11,8 @@
  *
  * Run:
  *   cd travel-buddy-standalone
- *   node --import tsx/esm --test \
- *     src/services/__tests__/catalogDetail.approvedStale.test.ts
+ *   npx jest src/services/__tests__/catalogDetail.approvedStale.component.test.ts
  */
-import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { CURRENT_STYLE_VERSION } from '../adminStamps.ts';
 import { _setTestSupabase, _resetTestSupabase } from '../apiToken.ts';
@@ -63,6 +61,7 @@ function mockFetch(status: number, body: unknown): typeof fetch {
     ({
       ok: status >= 200 && status < 300,
       status,
+      headers: new Headers(), // adminApi reads content-length to spot an empty 204
       json: async () => body,
     }) as unknown as Response;
 }

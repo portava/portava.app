@@ -12,9 +12,8 @@
  *  - Confirm duration unit stays in seconds (not multiplied to ms)
  *
  * Run:
- *   node --import tsx/esm --test src/hooks/__tests__/useMessageMediaPicker.validation.test.ts
+ *   npx jest src/hooks/__tests__/useMessageMediaPicker.validation.component.test.ts
  */
-import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateMedia } from '../../services/media.ts';
 import type { PickedMedia } from '../../services/media.ts';

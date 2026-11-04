@@ -5,9 +5,8 @@
  * follows the traveler's clock even without a saved timezone.
  *
  * Run via:
- *   node --import tsx/esm --test src/services/__tests__/compass.tzOffsetSurfaces.test.ts
+ *   npx jest src/services/__tests__/compass.tzOffsetSurfaces.component.test.ts
  */
-import { describe, it, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 process.env.EXPO_PUBLIC_SUPABASE_URL ??= 'https://test.supabase.co';
@@ -24,7 +23,7 @@ globalThis.fetch = ((url: string, init?: RequestInit) => {
   return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
 }) as typeof fetch;
 
-after(() => { globalThis.fetch = realFetch; });
+afterAll(() => { globalThis.fetch = realFetch; });
 
 // +0 normalizes -0 (UTC devices) so strict equality doesn't trip on sign.
 const expected = -new Date().getTimezoneOffset() + 0;
@@ -36,8 +35,8 @@ function assertQueryOffset(url: string) {
 }
 
 describe('Compass surfaces send tzOffsetMinutes', () => {
-  before(async () => {
-    compass = await import('../compass.ts');
+  beforeAll(async () => {
+    compass = require('../compass.ts');
   });
 
   beforeEach(() => {
@@ -53,10 +52,10 @@ describe('Compass surfaces send tzOffsetMinutes', () => {
   // the section call below still does.
   it('the full feed is retired: no fetchCompassFeed, and no client source calls GET /compass/feed', async () => {
     assert.equal((compass as Record<string, unknown>).fetchCompassFeed, undefined);
-    const { readFileSync, readdirSync, statSync } = await import('node:fs');
-    const path = await import('node:path');
+    const { readFileSync, readdirSync, statSync } = require('node:fs');
+    const path = require('node:path');
     const { join } = path;
-    const root = join(import.meta.dirname, '../../..');
+    const root = join(__dirname, '../../..');
     const offenders: string[] = [];
     const walk = (dir: string) => {
       for (const name of readdirSync(dir)) {

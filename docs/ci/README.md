@@ -1246,12 +1246,12 @@ silently checking for the wrong thing.
 It prints these limits on every run, in the log and in the job summary, so a
 green result cannot be mistaken for "every test in this tree runs":
 
-- **The `KNOWN_BROKEN` list in `scripts/run-node-tests.mjs`** — 30 unique files
-  excluded from node:test discovery with recorded reasons (the
-  `react-native@0.81.5` esbuild wall, `expo-modules-core` native requirements).
-  They do not run either. Growth there is caught by the node:test **discovery
-  floor of 142** in `ci.yml`, which drops when an entry is added — not by this
-  guard.
+- **The `KNOWN_BROKEN` list in `scripts/run-node-tests.mjs`** — empty since
+  2026-11-04: its 25 files (the `react-native@0.81.5` esbuild wall, three in Jest
+  syntax) ran in no runner and are now `*.component.test.ts` files under jest.
+  A file listed there would not run either. Growth there is caught by the node:test
+  **discovery floor of 142** in `ci.yml`, which drops when an entry is added — not
+  by this guard.
 - **Other jest `testPathIgnorePatterns` entries** (currently
   `src/services/__tests__/fsqPhotoLookup.test.ts`, which *is* run by
   `run-node-tests.mjs`, so it is not orphaned).

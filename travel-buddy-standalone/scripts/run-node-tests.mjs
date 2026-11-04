@@ -63,63 +63,15 @@ if ((ksvGuard.status ?? 1) !== 0) {
 
 // Known-broken node:test files, excluded from the run. Fix and remove.
 //
-// Transform-failed (react-native@0.81.5 esbuild syntax incompatibility) and
-// native-module tests (expo-modules-core@3.0.30 requires native runtime) —
-// all introduced by the sign-in / E2EE tasks before this one.
-const KNOWN_BROKEN = [
-  // react-native@0.81.5 esbuild "Unexpected typeof" — cannot run in Node
-  'src/components/__tests__/LivePulseRail.test.ts',
-  'src/components/__tests__/MemoryComposer.duration.test.ts',
-  'src/components/__tests__/PostcardComposer.duration.test.ts',
-  'src/hooks/__tests__/useMessageMediaPicker.validation.test.ts',
-  'src/components/__tests__/LivePulseRail.test.ts',
-  'src/services/__tests__/adminCatalogAuditMalformed.test.ts',
-  'src/services/__tests__/media.upload.test.ts',
-  'src/services/__tests__/apiToken.freshToken.test.ts',
-  'src/services/__tests__/catalogDetail.approvedStale.test.ts',
-  'src/services/__tests__/catalogDetail.archivedVersions.test.ts',
-  'src/services/__tests__/catalogDetail.earnNullUserId.test.ts',
-  'src/services/__tests__/catalogDetail.lastError.test.ts',
-  'src/services/__tests__/compassAskStream.test.ts',
-  'src/services/__tests__/compass.cityConfidenceCache.test.ts',
-  'src/services/__tests__/compass.homeTzOffset.test.ts',
-  'src/services/__tests__/compass.reportViewed.test.ts',
-  'src/services/__tests__/compass.tzOffsetSurfaces.test.ts',
-  // discovery.ts → supabase.ts → SecureStoreAdapter → react-native esbuild "Unexpected typeof"
-  'src/services/__tests__/friends.sendAutoAccept.test.ts',
-  'src/services/__tests__/onboardingSaveAlert.partialSave.test.ts',
-  'src/services/__tests__/profilePartialSave.test.ts',
-  // react-native@0.81.5 esbuild "Unexpected typeof" via discovery.ts → supabase.ts → SecureStoreAdapter
-  'src/services/__tests__/discovery.searchSignal.test.ts',
-  'src/services/__tests__/profileSaveFlow.partialSave.test.ts',
-  // standalone-only files that hit the same esbuild "Unexpected typeof" wall
-  'src/components/__tests__/LivePulseRail.test.ts',
-  'src/services/__tests__/media.upload.test.ts',
-  'src/services/__tests__/places.getCanonicalPlace.test.ts',
-  // react-native@0.81.5 esbuild "Unexpected typeof" — cannot run via tsx in Node
-  'src/components/__tests__/LivePulseRail.test.ts',
-  'src/services/__tests__/media.upload.test.ts',
-  // react-native@0.81.5 esbuild "Unexpected typeof" via apiToken.ts → supabase.ts
-  // → secureStore.ts → expo-secure-store (same wall as apiToken.freshToken.test.ts)
-  'src/services/__tests__/places.getCanonicalPlace.test.ts',
-  // auth.ts imports supabase.ts → SecureStoreAdapter → react-native (esbuild "Unexpected typeof")
-  // Uses Jest syntax (jest.mock/describe/expect) — run via `pnpm test:component`
-  'src/services/__tests__/auth.requestPasswordReset.test.ts',
-  // getPublicPostcards → profile.ts → apiToken.ts → supabase.ts → SecureStoreAdapter
-  // → react-native (esbuild "Unexpected typeof"). Uses Jest syntax — run via `pnpm test:component`
-  'src/services/__tests__/postcardWall.blockGate.test.ts',
-  // discovery.ts → supabase.ts → SecureStoreAdapter → react-native esbuild "Unexpected typeof"
-  'src/services/__tests__/discovery.searchSignal.test.ts',
-  // Jest-syntax (describe/it/expect) test — not converted to node:test yet
-  'src/lib/__tests__/stampRarity.test.ts',
-  // expo-modules-core@3.0.30 requires native sweet/setUpJsLogger.fx — not in Node
-  // secureStore.e0 was here. Removed 2026-08-29: it is now
-  // src/lib/__tests__/secureStore.e0.component.test.ts and runs under jest via
-  // `pnpm test:component`. Being in this list AND not matching the component
-  // pattern meant it executed in neither runner — see the note above KNOWN_BROKEN.
-  // discovery.ts → supabase.ts → SecureStoreAdapter → react-native (esbuild "Unexpected typeof")
-  'src/services/__tests__/discovery.searchSignal.test.ts',
-];
+// Empty since 2026-11-04. The 25 files that were here (react-native's
+// "Unexpected typeof" under tsx, and three written in Jest syntax) matched
+// neither runner, so none of them had ever run. They are now
+// *.component.test.ts files that run under jest (`pnpm test:component`), where
+// react-native transforms. Seven had gone stale while unrun (a fake response
+// with no headers, a duration limit that moved, an env var set after the module
+// read it) and were brought up to date; none hid a product bug. A new file that
+// can't run under Node belongs under jest the same way, not in this list.
+const KNOWN_BROKEN = [];
 
 const ROOTS = ['src', 'server'];
 

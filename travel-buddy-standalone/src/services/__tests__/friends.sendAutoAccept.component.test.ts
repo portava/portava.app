@@ -8,9 +8,8 @@
  * friends state instead of showing "Request Sent".
  *
  * Run:
- *   node --import tsx/esm --test src/services/__tests__/friends.sendAutoAccept.test.ts
+ *   npx jest src/services/__tests__/friends.sendAutoAccept.component.test.ts
  */
-import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveSendFriendRequestOutcome } from '../friends.ts';
 

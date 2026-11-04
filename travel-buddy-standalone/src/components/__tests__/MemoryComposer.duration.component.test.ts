@@ -2,11 +2,11 @@
  * MemoryComposer — video duration gate (unit layer).
  *
  * Run with:
- *   node --import tsx/esm --test src/components/__tests__/MemoryComposer.duration.test.ts
+ *   npx jest src/components/__tests__/MemoryComposer.duration.component.test.ts
  *
  * ## What is tested
  *
- * MemoriesTab.handleSave() enforces a 30-second limit on videos posted as
+ * MemoriesTab.handleSave() enforces a duration limit on videos posted as
  * memories. The relevant code path passes `{ surface: 'memory' }` and
  * `duration` to `uploadMedia`, which calls `validateMedia` internally:
  *
@@ -16,41 +16,44 @@
  *   );
  *
  * The gate is driven by `validateMedia` from services/media.ts, which reads
- * VIDEO_MAX_DURATION_SECONDS.memory (= 30) from constants/mediaLimits.ts.
+ * VIDEO_MAX_DURATION_SECONDS.memory from constants/mediaLimits.ts.
  *
  * Testing `validateMedia` directly with surface: 'memory' covers:
- *   1. Over-limit video (31 s) → ok: false, upload would be blocked.
- *   2. Under-limit video (29 s) → ok: true, asset accepted.
- *   3. The rejection message mentions the 30-second limit.
+ *   1. Over-limit video (limit + 1 s) → ok: false, upload would be blocked.
+ *   2. Under-limit video (limit − 1 s) → ok: true, asset accepted.
+ *   3. The rejection message names the limit.
  *   4. Duration absent (undefined/null) → ok: true (skip when metadata absent).
- *   5. Surface isolation — memory limit (30 s) is tighter than postcard (60 s).
+ *   5. Surface isolation — the memory limit is tighter than postcard's.
  *   6. MIME fallback — absent mimeType on a video asset normalises to 'video/mp4'.
  *
  * No React Native renderer is needed — all scenarios are exercised through
  * the pure-function layer.
  */
 
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateMedia } from '../../services/media.ts';
 import { VIDEO_MAX_DURATION_SECONDS } from '../../constants/mediaLimits.ts';
 
-const MEMORY_LIMIT = VIDEO_MAX_DURATION_SECONDS.memory; // 30
+// Derived, not hard-coded: the memory limit has moved (30 s, now 45 s), and a
+// literal here went stale while this file sat unrun in KNOWN_BROKEN.
+const MEMORY_LIMIT = VIDEO_MAX_DURATION_SECONDS.memory;
+const OVER = MEMORY_LIMIT + 1;
+const UNDER = MEMORY_LIMIT - 1;
 
-// ── Over-limit video (31 s) ───────────────────────────────────────────────────
+// ── Over-limit video ───────────────────────────────────────────────────────────
 
 describe('MemoryComposer.handleSave — over-limit video', () => {
-  it('validateMedia returns ok: false for a 31-second video on surface memory', () => {
+  it('validateMedia returns ok: false for a video one second over the memory limit', () => {
     const result = validateMedia(
-      { uri: 'file:///tmp/video.mp4', mimeType: 'video/mp4', type: 'video', duration: 31 },
+      { uri: 'file:///tmp/video.mp4', mimeType: 'video/mp4', type: 'video', duration: OVER },
       { surface: 'memory' },
     );
-    assert.equal(result.ok, false, 'expected validation to fail for 31-second video');
+    assert.equal(result.ok, false, `expected validation to fail for a ${OVER}-second video`);
   });
 
-  it('the rejection message mentions the 30-second memory duration limit', () => {
+  it('the rejection message names the memory duration limit', () => {
     const result = validateMedia(
-      { uri: 'file:///tmp/video.mp4', mimeType: 'video/mp4', type: 'video', duration: 31 },
+      { uri: 'file:///tmp/video.mp4', mimeType: 'video/mp4', type: 'video', duration: OVER },
       { surface: 'memory' },
     );
     assert.equal(result.ok, false);
@@ -63,7 +66,7 @@ describe('MemoryComposer.handleSave — over-limit video', () => {
 
   it('the kind is too_large (upload would be blocked with the duration message)', () => {
     const result = validateMedia(
-      { uri: 'file:///tmp/video.mp4', mimeType: 'video/mp4', type: 'video', duration: 31 },
+      { uri: 'file:///tmp/video.mp4', mimeType: 'video/mp4', type: 'video', duration: OVER },
       { surface: 'memory' },
     );
     assert.equal(result.ok, false);
@@ -80,27 +83,27 @@ describe('MemoryComposer.handleSave — over-limit video', () => {
   });
 });
 
-// ── Under-limit video (29 s) ──────────────────────────────────────────────────
+// ── Under-limit video ──────────────────────────────────────────────────────────
 
 describe('MemoryComposer.handleSave — under-limit video', () => {
-  it('validateMedia returns ok: true for a 29-second video on surface memory', () => {
+  it('validateMedia returns ok: true for a video one second under the memory limit', () => {
     const result = validateMedia(
-      { uri: 'file:///tmp/video.mp4', mimeType: 'video/mp4', type: 'video', duration: 29 },
+      { uri: 'file:///tmp/video.mp4', mimeType: 'video/mp4', type: 'video', duration: UNDER },
       { surface: 'memory' },
     );
-    assert.equal(result.ok, true, 'expected 29-second video to pass validation');
+    assert.equal(result.ok, true, `expected a ${UNDER}-second video to pass validation`);
   });
 
-  it('a 29-second video produces no error kind (asset would be accepted)', () => {
+  it('an under-limit video produces no error kind (asset would be accepted)', () => {
     const result = validateMedia(
-      { uri: 'file:///tmp/video.mp4', mimeType: 'video/mp4', type: 'video', duration: 29 },
+      { uri: 'file:///tmp/video.mp4', mimeType: 'video/mp4', type: 'video', duration: UNDER },
       { surface: 'memory' },
     );
     assert.equal(result.ok, true);
     assert.ok(!('kind' in result), 'ok result must have no kind field');
   });
 
-  it('a video at exactly the limit (30 s) also passes', () => {
+  it('a video at exactly the limit also passes', () => {
     const result = validateMedia(
       { uri: 'file:///tmp/video.mp4', mimeType: 'video/mp4', type: 'video', duration: MEMORY_LIMIT },
       { surface: 'memory' },
@@ -135,23 +138,23 @@ describe('MemoryComposer.handleSave — duration absent (metadata missing)', () 
 // ── Surface isolation — memory limit does not bleed into other surfaces ────────
 
 describe('MemoryComposer duration gate — surface isolation', () => {
-  it('a 31-second video passes on the postcard surface (limit 60 s)', () => {
+  it('a video over the memory limit still passes on the postcard surface', () => {
     const result = validateMedia(
-      { uri: 'file:///tmp/video.mp4', mimeType: 'video/mp4', type: 'video', duration: 31 },
+      { uri: 'file:///tmp/video.mp4', mimeType: 'video/mp4', type: 'video', duration: OVER },
       { surface: 'postcard' },
     );
-    assert.equal(result.ok, true, '31 s is under the 60 s postcard limit');
+    assert.equal(result.ok, true, `${OVER} s is under the ${VIDEO_MAX_DURATION_SECONDS.postcard} s postcard limit`);
   });
 
-  it('a 31-second video fails only on the memory surface (limit 30 s)', () => {
+  it('the same video fails on the memory surface', () => {
     const result = validateMedia(
-      { uri: 'file:///tmp/video.mp4', mimeType: 'video/mp4', type: 'video', duration: 31 },
+      { uri: 'file:///tmp/video.mp4', mimeType: 'video/mp4', type: 'video', duration: OVER },
       { surface: 'memory' },
     );
     assert.equal(result.ok, false, 'should fail for memory surface');
   });
 
-  it('memory limit (30 s) is stricter than postcard (60 s) and event (120 s)', () => {
+  it('the memory limit is stricter than postcard and event', () => {
     assert.ok(
       VIDEO_MAX_DURATION_SECONDS.memory < VIDEO_MAX_DURATION_SECONDS.postcard,
       'memory must be shorter than postcard',
@@ -172,7 +175,7 @@ describe('MemoryComposer — MIME fallback for video assets', () => {
     // Simulating the fallback: absent mimeType on a video asset → 'video/mp4'.
     // validateMedia must then apply video rules (duration check), not image rules.
     const result = validateMedia(
-      { uri: 'file:///tmp/video.mp4', mimeType: 'video/mp4', type: 'video', duration: 31 },
+      { uri: 'file:///tmp/video.mp4', type: 'video', duration: OVER },
       { surface: 'memory' },
     );
     // If treated as video, duration check fires → ok: false.
@@ -184,7 +187,7 @@ describe('MemoryComposer — MIME fallback for video assets', () => {
     // image assets never have duration — the fallback must not accidentally
     // classify them as video and trigger a spurious duration rejection.
     const result = validateMedia(
-      { uri: 'file:///tmp/photo.jpg', mimeType: 'image/jpeg', type: 'image' },
+      { uri: 'file:///tmp/photo.jpg', type: 'image' },
       { surface: 'memory' },
     );
     assert.equal(result.ok, true, 'image asset must pass without a duration check');

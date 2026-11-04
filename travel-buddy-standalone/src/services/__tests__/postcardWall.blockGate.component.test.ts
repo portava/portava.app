@@ -33,14 +33,14 @@
  * "viewer blocked target" would then fail — confirming the test is not a
  * tautology.
  *
- * NOTE: this file uses Jest syntax (not node:test) and is excluded from
- * run-node-tests.mjs's KNOWN_BROKEN list — importing getPublicPostcards pulls
- * in profile.ts -> apiToken.ts -> supabase.ts -> SecureStoreAdapter ->
- * react-native, which esbuild/tsx cannot transform outside Jest's own
- * transform pipeline ("Unexpected typeof" in react-native's Flow-typed
- * index.js). Same wall as auth.requestPasswordReset.test.ts.
+ * NOTE: this file uses Jest syntax and runs under jest (pnpm test:component) —
+ * importing getPublicPostcards pulls in profile.ts -> apiToken.ts ->
+ * supabase.ts -> SecureStoreAdapter -> react-native, which esbuild/tsx cannot
+ * transform outside Jest's own transform pipeline ("Unexpected typeof" in
+ * react-native's Flow-typed index.js). It used to be named *.test.ts, so it
+ * matched neither runner and never ran.
  *
- * Run with: npx jest --forceExit --testPathPattern="postcardWall.blockGate"
+ * Run with: npx jest src/services/__tests__/postcardWall.blockGate.component.test.ts
  */
 
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
@@ -90,7 +90,7 @@ describe('postcard wall — viewer blocked target (direction: iBlockedThem)', ()
 
     expect(result.ok).toBe(true);
     if (!result.ok) return; // type-narrow, never reached
-    expect(result.sentinel).toBe<PostcardsSentinel>('blocked');
+    expect(result.sentinel).toBe('blocked' satisfies PostcardsSentinel);
   });
 
   it('returns an empty postcard list (not the real grid) for viewer-blocked-target', async () => {
@@ -117,7 +117,7 @@ describe('postcard wall — target blocked viewer (direction: theyBlockedMe)', (
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.sentinel).toBe<PostcardsSentinel>('blocked');
+    expect(result.sentinel).toBe('blocked' satisfies PostcardsSentinel);
   });
 
   it('returns an empty postcard list (not the real grid) for target-blocked-viewer', async () => {
@@ -192,7 +192,7 @@ describe('postcard wall — bare blocked sentinel (no direction field)', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.sentinel).toBe<PostcardsSentinel>('blocked');
+    expect(result.sentinel).toBe('blocked' satisfies PostcardsSentinel);
   });
 });
 

@@ -7,10 +7,8 @@
  *  3. HTTP 200 with valid body → returns parsed CanonicalPlace envelope
  *
  * Run with:
- *   node --import tsx/esm --test \
- *     src/services/__tests__/places.getCanonicalPlace.test.ts
+ *   npx jest src/services/__tests__/places.getCanonicalPlace.component.test.ts
  */
-import { describe, it, beforeEach, before } from 'node:test';
 import assert from 'node:assert/strict';
 
 process.env.EXPO_PUBLIC_API_BASE_URL    = 'http://test.local';
@@ -23,7 +21,7 @@ let tokenOverride: string | null = 'test-token';
 
 (globalThis as any).__fakeTokenOverride = () => tokenOverride;
 
-// Loaded lazily in before() — avoids top-level await in the CJS transform.
+// Loaded lazily in beforeAll() — avoids top-level await in the CJS transform.
 let getCanonicalPlace: (id: string) => Promise<unknown>;
 
 // ── Fetch mock ────────────────────────────────────────────────────────────────
@@ -72,10 +70,10 @@ const SAMPLE_PLACE = {
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 
-before(async () => {
+beforeAll(async () => {
   // The service reads freshToken from apiToken.ts. We need to stub the supabase
   // client so freshToken returns our token override without hitting real Supabase.
-  const { _setTestSupabase } = await import('../apiToken.ts');
+  const { _setTestSupabase } = require('../apiToken.ts');
   const fakeSupabase = {
     auth: {
       getSession: async () => ({
@@ -90,7 +88,7 @@ before(async () => {
   };
   _setTestSupabase(fakeSupabase as any);
 
-  ({ getCanonicalPlace } = await import('../places.ts'));
+  ({ getCanonicalPlace } = require('../places.ts'));
 });
 
 beforeEach(() => {

@@ -7,10 +7,9 @@
  *   - computeStatusLabel: inline copy of the server-side pure function
  *
  * No React rendering, no RNTL, no React Native imports.
- * Run: node --import tsx/esm --test src/components/__tests__/LivePulseRail.test.ts
+ * Run: npx jest src/components/__tests__/LivePulseRail.component.test.ts
  */
 
-import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import { buildSummaryText, filterItems } from "../LivePulseRail.machine.ts";

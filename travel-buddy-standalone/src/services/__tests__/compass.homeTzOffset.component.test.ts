@@ -4,13 +4,12 @@
  * traveler's clock, not the server's.
  *
  * Run via:
- *   node --import tsx/esm --test src/services/__tests__/compass.homeTzOffset.test.ts
+ *   npx jest src/services/__tests__/compass.homeTzOffset.component.test.ts
  */
-import { describe, it, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 // Env must be set before the service module (and its supabase import) loads,
-// so the module is imported lazily in the before() hook below.
+// so the module is imported lazily in the beforeAll() hook below.
 process.env.EXPO_PUBLIC_SUPABASE_URL ??= 'https://test.supabase.co';
 process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ??= 'test-anon-key';
 process.env.EXPO_PUBLIC_API_BASE_URL = 'http://api.test';
@@ -30,11 +29,11 @@ globalThis.fetch = ((url: string) => {
   );
 }) as typeof fetch;
 
-after(() => { globalThis.fetch = realFetch; });
+afterAll(() => { globalThis.fetch = realFetch; });
 
 describe('fetchCompassHome tzOffsetMinutes', () => {
-  before(async () => {
-    const mod = await import('../compass.ts');
+  beforeAll(async () => {
+    const mod = require('../compass.ts');
     fetchCompassHome = mod.fetchCompassHome;
     _setTestAuthToken = mod._setTestAuthToken;
   });

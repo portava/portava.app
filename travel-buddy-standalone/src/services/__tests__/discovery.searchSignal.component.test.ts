@@ -10,19 +10,17 @@
  *   3. The "for_you" category never fires the signal, even when emitSignal=true on page 1.
  *   4. emitSignal=false (the default) never fires the signal for any category or page.
  *
- * NOTE: This file is in KNOWN_BROKEN in scripts/run-node-tests.mjs because
- * discovery.ts → supabase.ts → SecureStoreAdapter → react-native triggers an
- * esbuild "Unexpected typeof" error under tsx/esm / Node.js.  The test logic is
- * correct and can be re-enabled once the react-native esbuild incompatibility is
- * resolved for this import chain.
+ * Runs under jest (pnpm test:component): discovery.ts → supabase.ts →
+ * SecureStoreAdapter → react-native cannot be transformed by tsx under plain
+ * Node ("Unexpected typeof"), so this file never ran while it was a node:test
+ * file listed in KNOWN_BROKEN.
  *
  * Run with:
- *   node --import tsx/esm --test src/services/__tests__/discovery.searchSignal.test.ts
+ *   npx jest src/services/__tests__/discovery.searchSignal.component.test.ts
  */
-import { describe, it, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
-// Env must be set before the module is imported (lazy via before()).
+// Env must be set before the module is imported (lazy via beforeAll()).
 process.env.EXPO_PUBLIC_API_BASE_URL = 'http://api.test';
 process.env.EXPO_PUBLIC_SUPABASE_URL ??= 'https://test.supabase.co';
 process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ??= 'test-anon-key';
@@ -76,7 +74,7 @@ globalThis.fetch = ((url: string, opts: RequestInit = {}) => {
   );
 }) as typeof fetch;
 
-after(() => { globalThis.fetch = realFetch; });
+afterAll(() => { globalThis.fetch = realFetch; });
 
 // ── Flush fire-and-forget promises ────────────────────────────────────────────
 // postSearchSignal() is fire-and-forget; a single macrotask tick drains it.
@@ -108,11 +106,11 @@ function signalCalls(): FetchCall[] {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('getDiscoveryPlaces — search signal', () => {
-  before(async () => {
-    const discoveryMod = await import('../discovery.ts');
+  beforeAll(async () => {
+    const discoveryMod = require('../discovery.ts');
     getDiscoveryPlaces = discoveryMod.getDiscoveryPlaces as typeof getDiscoveryPlaces;
 
-    const tokenMod = await import('../apiToken.ts');
+    const tokenMod = require('../apiToken.ts');
     _setTestSupabase = tokenMod._setTestSupabase;
     _resetTestSupabase = tokenMod._resetTestSupabase;
   });
@@ -122,7 +120,7 @@ describe('getDiscoveryPlaces — search signal', () => {
     _setTestSupabase(fakeSupabase);
   });
 
-  after(() => {
+  afterAll(() => {
     _resetTestSupabase();
   });
 

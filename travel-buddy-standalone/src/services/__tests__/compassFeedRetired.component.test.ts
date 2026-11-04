@@ -9,8 +9,8 @@
  * beside Home, not a missing screen. So the dead client function is removed,
  * and nothing in the client may call the whole feed.
  *
- * (compass.tzOffsetSurfaces.test.ts pins the other surfaces, but it is on
- * run-node-tests' KNOWN_BROKEN list, so it is not evidence; this runs under jest.)
+ * (compass.tzOffsetSurfaces.component.test.ts pins the other surfaces; it was
+ * on run-node-tests' KNOWN_BROKEN list until 2026-11-04 and now runs under jest too.)
  *
  * Run: npx jest src/services/__tests__/compassFeedRetired
  */

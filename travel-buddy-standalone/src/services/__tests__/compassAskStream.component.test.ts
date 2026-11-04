@@ -2,19 +2,24 @@
  * postCompassAskStream — SSE consumption, progressive message extraction,
  * done-event finalization, and non-streaming fallback.
  */
-import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import {
+
+// postCompassAskStream requires isSupabaseConfigured + apiBase(). Supabase's
+// config is read when lib/supabase.ts loads, so the env is set first and the
+// service is required after it (a static import is hoisted above these lines,
+// which left every stream case answering "not configured").
+process.env['EXPO_PUBLIC_API_BASE_URL'] = process.env['EXPO_PUBLIC_API_BASE_URL'] || 'http://test.local';
+process.env['EXPO_PUBLIC_SUPABASE_URL'] ??= 'https://test.supabase.co';
+process.env['EXPO_PUBLIC_SUPABASE_ANON_KEY'] ??= 'test-anon-key';
+
+const {
   extractPartialCompassMessage,
   finalizeCompassMessage,
   splitCompassSseBuffer,
   postCompassAskStream,
   _setTestAuthToken,
   _setTestStreamFetch,
-} from '../compass.ts';
-
-// postCompassAskStream requires isSupabaseConfigured + apiBase(); provide both.
-process.env['EXPO_PUBLIC_API_BASE_URL'] = process.env['EXPO_PUBLIC_API_BASE_URL'] || 'http://test.local';
+} = require('../compass.ts') as typeof import('../compass.ts');
 
 describe('extractPartialCompassMessage', () => {
   it('returns empty until the message field starts', () => {

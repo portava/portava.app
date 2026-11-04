@@ -9,9 +9,8 @@
  *
  * Run:
  *   cd travel-buddy-standalone
- *   node --import tsx --test src/services/__tests__/profilePartialSave.test.ts
+ *   npx jest src/services/__tests__/profilePartialSave.component.test.ts
  */
-import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { _setTestAuthToken, updateMyProfile } from '../profile.ts';
 

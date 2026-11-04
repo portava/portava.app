@@ -21,9 +21,8 @@
  *   5. notes fallback (`?? ''`) works when notes is null or absent
  *
  * Run:
- *   pnpm --dir travel-buddy-standalone test
+ *   npx jest src/services/__tests__/adminCatalogAuditMalformed.component.test.ts
  */
-import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { _setTestSupabase, _resetTestSupabase } from '../apiToken.ts';
 import { getAdminCatalogEntry } from '../adminStamps.ts';
@@ -47,7 +46,7 @@ function makeFakeSupabase(token: string) {
 // ── Screen rendering helpers (mirror what [catalogId].tsx does) ─────────────
 //
 // These extract the pure-JS side of the render so we can assert on them in a
-// node:test environment without React Native.
+// plain test without rendering the screen.
 
 /** Reproduces: new Date(a.created_at).toLocaleString() */
 function renderAuditDate(created_at: unknown): string {
@@ -71,6 +70,7 @@ function mockFetch(status: number, body: unknown): typeof fetch {
     ({
       ok: status >= 200 && status < 300,
       status,
+      headers: new Headers(), // adminApi reads content-length to spot an empty 204
       json: async () => body,
     }) as unknown as Response;
 }
@@ -105,12 +105,12 @@ function makeDetailResponse(auditOverrides: Record<string, unknown>[]) {
 describe('CatalogDetail audit — missing created_at', () => {
   let savedFetch: typeof fetch;
 
-  before(() => {
+  beforeAll(() => {
     savedFetch = globalThis.fetch;
     _setTestSupabase(makeFakeSupabase('fake-admin-token'));
   });
 
-  after(() => {
+  afterAll(() => {
     globalThis.fetch = savedFetch;
     _resetTestSupabase();
   });
@@ -156,12 +156,12 @@ describe('CatalogDetail audit — missing created_at', () => {
 describe('CatalogDetail audit — missing action', () => {
   let savedFetch: typeof fetch;
 
-  before(() => {
+  beforeAll(() => {
     savedFetch = globalThis.fetch;
     _setTestSupabase(makeFakeSupabase('fake-admin-token'));
   });
 
-  after(() => {
+  afterAll(() => {
     globalThis.fetch = savedFetch;
     _resetTestSupabase();
   });
@@ -211,12 +211,12 @@ describe('CatalogDetail audit — notes fallback', () => {
 describe('CatalogDetail audit — both created_at and action missing', () => {
   let savedFetch: typeof fetch;
 
-  before(() => {
+  beforeAll(() => {
     savedFetch = globalThis.fetch;
     _setTestSupabase(makeFakeSupabase('fake-admin-token'));
   });
 
-  after(() => {
+  afterAll(() => {
     globalThis.fetch = savedFetch;
     _resetTestSupabase();
   });

@@ -4,13 +4,12 @@
  * actually opened.
  *
  * Run via:
- *   node --import tsx/esm --test src/services/__tests__/compass.reportViewed.test.ts
+ *   npx jest src/services/__tests__/compass.reportViewed.component.test.ts
  */
-import { describe, it, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 // Env must be set before the service module (and its supabase import) loads,
-// so the module is imported lazily in the before() hook below.
+// so the module is imported lazily in the beforeAll() hook below.
 process.env.EXPO_PUBLIC_SUPABASE_URL ??= 'https://test.supabase.co';
 process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ??= 'test-anon-key';
 process.env.EXPO_PUBLIC_API_BASE_URL = 'http://api.test';
@@ -31,13 +30,13 @@ globalThis.fetch = ((url: string, opts: RequestInit = {}) => {
   return Promise.resolve(new Response(JSON.stringify({ recorded: true }), { status: 200 }));
 }) as typeof fetch;
 
-after(() => { globalThis.fetch = realFetch; });
+afterAll(() => { globalThis.fetch = realFetch; });
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 describe('reportCompassViewed', () => {
-  before(async () => {
-    const mod = await import('../compass.ts');
+  beforeAll(async () => {
+    const mod = require('../compass.ts');
     reportCompassViewed = mod.reportCompassViewed;
     _resetReportedOutcomes = mod._resetReportedOutcomes;
     _setTestAuthToken = mod._setTestAuthToken;

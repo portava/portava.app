@@ -9,9 +9,8 @@
  * handleUploadResult correctly routes { ok: true, url: null } to an error state.
  * These tests cover the producer side — the parse branch in uploadMedia itself.
  *
- * Run: node --import tsx/esm --test src/services/__tests__/media.upload.test.ts
+ * Run: npx jest src/services/__tests__/media.upload.component.test.ts
  */
-import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   uploadMedia,
@@ -28,7 +27,7 @@ const FAKE_MEDIA = { uri: FAKE_URI, mimeType: 'image/jpeg', fileSize: 100 };
 
 let savedFetch: typeof globalThis.fetch;
 
-before(() => {
+beforeAll(() => {
   savedFetch = globalThis.fetch;
   // Bypass isSupabaseConfigured (evaluated at module-load time before env vars).
   _setTestConfiguredOverride(true);
@@ -38,7 +37,7 @@ before(() => {
   process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
 });
 
-after(() => {
+afterAll(() => {
   globalThis.fetch = savedFetch;
   _setTestConfiguredOverride(null);
   _setTestTokenProvider(null);

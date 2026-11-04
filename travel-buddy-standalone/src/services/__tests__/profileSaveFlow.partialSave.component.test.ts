@@ -1,7 +1,7 @@
 /**
  * Edit-profile save-flow tests — main app
  *
- * The service-level contract (profilePartialSave.test.ts) guarantees that a
+ * The service-level contract (profilePartialSave.component.test.ts) guarantees that a
  * 200 + unsavedFields response becomes ok:false / errorKind:'partial_save'.
  * These tests close the loop on the SCREEN side: every edit-profile screen
  * routes its updateMyProfile result through resolveProfileSaveOutcome (or,
@@ -11,9 +11,8 @@
  *
  * Run:
  *   cd travel-buddy-standalone
- *   node --import tsx --test src/services/__tests__/profileSaveFlow.partialSave.test.ts
+ *   npx jest src/services/__tests__/profileSaveFlow.partialSave.component.test.ts
  */
-import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { _setTestAuthToken, updateMyProfile } from '../profile.ts';
 import {
@@ -119,8 +118,8 @@ describe('edit screens actually route through the tested save flow', () => {
   // Guards the wiring: if a screen stops using resolveProfileSaveOutcome /
   // classifyIdentitySaveFailure, the outcome tests above no longer cover it.
   it('every edit-profile screen imports the shared save-flow module', async () => {
-    const { readFileSync } = await import('node:fs');
-    const { join } = await import('node:path');
+    const { readFileSync } = require('node:fs');
+    const { join } = require('node:path');
     const screens: Array<[string, string]> = [
       ['about.tsx', 'resolveProfileSaveOutcome'],
       ['photos.tsx', 'resolveProfileSaveOutcome'],

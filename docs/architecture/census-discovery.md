@@ -13688,7 +13688,7 @@ After restoring: 9/9, 2/2 and 4/4. The mark-rule additions came later, on the in
 - **The cause is the Node major.** CI pins Node 24 (`.github/workflows/ci.yml:61#NODE_VERSION: '24'`), and this container runs v22.22.2.
   - `travel-buddy-standalone/package.json` declares no `"type"`, so under the registered `--import tsx/esm` its `.ts` files take the CommonJS path.
   - On Node 22, that path loads them through `require(esm)` with native type stripping. The chain fails: `ERR_REQUIRE_CYCLE_MODULE` on a direct import, and "does not provide an export named" inside the E2E graph.
-  - The client runner already records the same class and picks its loader by Node major for this reason (`travel-buddy-standalone/scripts/run-node-tests.mjs:191#const loader = nodeMajor >= 24 ? 'tsx/esm' : 'tsx';`).
+  - The client runner already records the same class and picks its loader by Node major for this reason (`travel-buddy-standalone/scripts/run-node-tests.mjs:143#const loader = nodeMajor >= 24 ? 'tsx/esm' : 'tsx';`).
 - **Measured here:**
   - The registered command under Node 24.21.0 (the official linux-x64 build, sha256-verified, in the lane's scratch directory): 13/13 pass.
   - The same command under Node 22.22.2: the file fails to load.
