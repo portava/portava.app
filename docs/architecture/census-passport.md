@@ -2136,7 +2136,7 @@ person could not see a collection, how much of it they had earned, or what stamp
   — two views: *Collections* (earned of total, a progress bar, "Complete") and *All stamps*
   (the active catalog grouped by category). Every state is a true one:
   `travel-buddy-standalone/app/stamp-collections.tsx:36#return r.disabled ? { state: 'disabled' } : { state: 'error' };`.
-  Entry: the Stamps screen header, `travel-buddy-standalone/app/stamps.tsx:115#router.push('/stamp-collections' as never)`.
+  Entry: the Stamps screen header, `travel-buddy-standalone/app/stamps.tsx:117#router.push('/stamp-collections' as never)`.
 
 ### 22.3 Tests, seen red, and mutations
 
