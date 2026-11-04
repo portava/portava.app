@@ -25,7 +25,7 @@ export const PERSONAL_TEAM_ENTITLEMENTS_DROPPED: readonly string[] = [
   'com.apple.developer.associated-domains',
 ];
 
-export function isPersonalTeamBuild(env: NodeJS.ProcessEnv = process.env): boolean {
+export function isPersonalTeamBuild(env: Readonly<Record<string, string | undefined>> = process.env): boolean {
   return /^(1|true|yes)$/i.test((env[PERSONAL_TEAM_ENV] ?? '').trim());
 }
 
