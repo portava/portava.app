@@ -778,7 +778,11 @@ jobs:
   api-server-local-db:
     name: api-server · kernel SQL executed on a throwaway database
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 25 was the budget when this job ran 190 suites; main's run on 28f6e2555
+    # already took 24m03s of it, and release 4 adds nine telegraph, highlights
+    # and video suites, so the run on bd8d6b197 was cancelled by the clock at
+    # 25m00s with the suites still green (229 of ~250 top-level tests done).
+    timeout-minutes: 40
     needs: preflight
     # scripts/local-db/up.sh restores baseline/20260819_baseline_structure.sql
     # and replays the canonical chain into THIS container, then
