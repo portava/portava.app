@@ -648,7 +648,7 @@ export default function GemDetailScreen() {
       <RouteBuilderSheet
         visible={builderVisible}
         onClose={() => setBuilderVisible(false)}
-        onRouteCreated={() => setBuilderVisible(false)}
+        onRouteCreated={(route) => { setBuilderVisible(false); router.push(`/route/${route.plan.id}` as any); }} // open it, as Discovery and the trip plan do
         initialStops={gem ? [{
           id:         gem.id,
           title:      gem.name,
