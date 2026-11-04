@@ -30,8 +30,10 @@
  *   G1-2  every column a client-role reader uses is still readable, exactly
  *         the granted set; post_media's policies, which read posts as the
  *         invoking role, still admit and still refuse the same rows.
- *   G1-3  the row policies are unchanged: who sees which post, and the policy
- *         catalog across a rollback and re-apply.
+ *   G1-3  the row policies are unchanged by 3362: who sees which post, and the
+ *         policy catalog across a rollback and re-apply. Since 3925 (census-media
+ *         §56.5) an unreleased post (PEND) is a row its author alone sees: the
+ *         §44.7 item 1 row gap this suite used to record is closed.
  *   G1-4  the owner reads their own rows' granted columns as before; the
  *         private columns reach them only through the API's role, which reads
  *         every column.
@@ -306,15 +308,17 @@ describe("census-media §44 — 3362: the columns of posts a client role may rea
 
   it("G1-3 — the row policies are unchanged: who sees which post, and the policy catalog", () => {
     const ids = [PUB, FOL, OWN, PEND];
-    // PEND is admitted to everyone: no posts policy reads post_status, so a delayed post whose
-    // author has not yet left the place is a visible ROW. 3362 narrows its COLUMNS only —
-    // census-media §44.7 item 1 records the row gap, which a column grant cannot close.
-    assert.deepEqual(visible({ role: "anon" }, ids), [PUB, PEND].sort(), "anon: the public posts only");
-    assert.deepEqual(visible({ role: "authenticated", uid: S }, ids), [PUB, PEND].sort(), "a stranger: the public posts only");
-    assert.deepEqual(visible({ role: "authenticated", uid: F }, ids), [PUB, FOL, PEND].sort(), "a follower: public + followers_only");
+    // PEND is a delayed post whose author has not yet left the place. 3362 narrows COLUMNS only;
+    // the row gap census-media §44.7 item 1 recorded (PEND admitted to everyone) is closed by 3925's
+    // RESTRICTIVE posts_select_released_or_author (§56.5): a non-author never sees an unreleased row.
+    assert.deepEqual(visible({ role: "anon" }, ids), [PUB].sort(), "anon: the released public posts only");
+    assert.deepEqual(visible({ role: "authenticated", uid: S }, ids), [PUB].sort(), "a stranger: the released public posts only");
+    assert.deepEqual(visible({ role: "authenticated", uid: F }, ids), [PUB, FOL].sort(), "a follower: released public + followers_only");
     assert.deepEqual(visible({ role: "authenticated", uid: A }, ids), [PUB, FOL, OWN, PEND].sort(), "the author: all four");
-    // On that pending row, what anon gets is the post, not where or whether the author still is.
-    assert.deepEqual(asOk({ role: "anon" }, `SELECT content FROM public.posts WHERE id = '${PEND}';`), ["g1 pending"]);
+    // On that pending row anon gets nothing at all; the author gets the post.
+    assert.deepEqual(asOk({ role: "anon" }, `SELECT content FROM public.posts WHERE id = '${PEND}';`), []);
+    assert.deepEqual(asOk({ role: "authenticated", uid: A }, `SELECT content FROM public.posts WHERE id = '${PEND}';`), ["g1 pending"]);
+    // The withheld columns stay refused by privilege, before any row is considered.
     for (const c of ["post_status", "location_privacy_mode", "location_name", "location_city", "original_lat", "publish_after_exit"]) {
       assertDenied({ role: "anon" }, `SELECT ${c} FROM public.posts WHERE id = '${PEND}';`);
     }
@@ -325,7 +329,12 @@ describe("census-media §44 — 3362: the columns of posts a client role may rea
     assert.equal(snaps.length, 3);
     assert.deepEqual(snaps[1].policies, snaps[0].policies, "the rollback changes no policy");
     assert.deepEqual(snaps[2].policies, snaps[0].policies, "3362 changes no policy");
-    assert.equal(snaps[0].policies.length, 5, "posts carries its five policies");
+    // The five permissive policies, and since 3925 its one RESTRICTIVE SELECT bound; pinned by name and
+    // kind, not by count, so any other added policy still fails here.
+    assert.deepEqual(snaps[0].policies.map((p: unknown[]) => `${p[0]}:${p[2] ? "permissive" : "restrictive"}`), [
+      "posts_delete:permissive", "posts_insert:permissive", "posts_select:permissive", "posts_select_policy:permissive",
+      "posts_select_released_or_author:restrictive", "posts_update:permissive",
+    ], "posts carries its five permissive policies plus 3925's restrictive read bound");
     assert.ok(snaps.every((s) => s.rls === true), "RLS stays enabled");
   });
 
