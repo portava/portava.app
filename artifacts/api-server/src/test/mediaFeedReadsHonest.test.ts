@@ -426,6 +426,32 @@ describe("Item actions (census-media §47)", () => {
     assert.equal(db.tables.posts.find((p) => p.id === P2)!.save_count, 1, "the cached counter follows the write");
   });
 
+  it("MA2b — DELETE /media/:id/save takes the post out of the viewer's collections too, and only theirs", async () => {
+    const spec = seed();
+    spec.tables.collections = [{ id: "col-v", owner_id: VIEWER }, { id: "col-o", owner_id: CREATOR }];
+    spec.tables.collection_items = [
+      { id: "ci-1", collection_id: "col-v", entity_type: "post", entity_id: P1 },
+      { id: "ci-2", collection_id: "col-o", entity_type: "post", entity_id: P1 },
+    ];
+    use(spec);
+    const r = await call("DELETE", `/media/${P1}/save`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.saved, false);
+    assert.deepEqual(db.tables.collection_items.map((i: any) => i.id), ["ci-2"], "the post stays only in someone else's collection");
+    assert.ok(!db.tables.post_saves.some((ps: any) => ps.user_id === VIEWER && ps.post_id === P1));
+  });
+
+  it("MA2c — DELETE /media/:id/save with the collections read failing: refused, and the save is kept", async () => {
+    const spec = seed({ failReads: { collections: true } });
+    spec.tables.collections = [{ id: "col-v", owner_id: VIEWER }];
+    spec.tables.collection_items = [{ id: "ci-1", collection_id: "col-v", entity_type: "post", entity_id: P1 }];
+    use(spec);
+    const r = await call("DELETE", `/media/${P1}/save`);
+    assert.equal(r.status, 500, JSON.stringify(r.body));
+    assert.ok(db.tables.post_saves.some((ps: any) => ps.user_id === VIEWER && ps.post_id === P1), "nothing is half-removed");
+    assert.equal(db.tables.collection_items.length, 1);
+  });
+
   it("MA3 — POST /media/:id/view with the posts read failing: db_error, never 404", async () => {
     const spec = seed({ failReads: { posts: true } });
     spec.tables.feature_flags.push({ flag: "MEDIA_RANKING_ENABLED", enabled: true });

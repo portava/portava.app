@@ -20,7 +20,7 @@ import { Router } from "express";
 import { z } from "zod"; import { isExcluded, readBlockExclusions, readPairExclusion } from "../lib/exclusionSet.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUser, sendError, isAcceptedTripMember } from "../lib/http.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { getServiceClient } from "../lib/supabase.js"; import { removeFromOwnCollections } from "../lib/collectionUnfile.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import {
   filterEligibleMediaCandidates,
@@ -2385,7 +2385,7 @@ router.delete("/media/:id/save", asyncHandler(async (req, res) => {
   if (mediaAccess === "unreadable") { sendError(res, "degraded_unavailable", "Could not check access to this item. Please try again."); return; } if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; } // census-media §47
 
   if (mediaAccess.kind === "post") {
-    const { error } = await sc
+    const unfiled = await removeFromOwnCollections(sc, user.id, "post", id); if (!unfiled.ok) { req.log.error({ err: unfiled.error }, "collection unfile failed"); sendError(res, "db_error", unfiled.error); return; } const { error } = await sc // a saved post leaves its collections too (lib/collectionUnfile.ts)
       .from("post_saves")
       .delete()
       .eq("user_id", user.id)
