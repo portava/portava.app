@@ -24,7 +24,8 @@ test('P1 a bare private ref is never loadable; signed, file and same-origin URIs
   assert.equal(isLoadablePlaybackUri(SIGNED), true);
   assert.equal(isLoadablePlaybackUri('file:///var/mobile/clip.mov'), true);
   assert.equal(isLoadablePlaybackUri('ph://ABC/L0/001'), true);
-  assert.equal(isLoadablePlaybackUri('/api/media/file/post-media/u/a.mp4'), true, 'a same-origin path keeps its old behaviour');
+  assert.equal(isLoadablePlaybackUri('/api/media/adaptive/u/playback'), true, 'a same-origin path keeps its old behaviour');
+  assert.equal(isLoadablePlaybackUri('/api/media/file/post-media/u/a.mp4'), false, 'changed 2026-10-24: the relay needs a bearer token a player never sends, so a relay URL is a private ref to be signed (playbackUri.relay.test.ts E2)');
   assert.equal(isLoadablePlaybackUri('//cdn.example/a.mp4'), false);
   assert.equal(isLoadablePlaybackUri(''), false);
   assert.equal(isLoadablePlaybackUri(null), false);

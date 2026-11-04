@@ -486,7 +486,7 @@ function ViewerPage({ item, isActive, isMuted, postData }: ViewerPageProps) {
   const mediaUrl = postData?.mediaUrl
     ?? (item.mediaType === 'image' ? (item.thumbnailUrl ?? item.posterUrl) : null);
   const posterUrl = ((p: string | null | undefined) => (isVideoRef(p) ? derivedVideoPosterRef(p) : p ?? null))(postData?.posterUrl ?? item.posterUrl ?? item.thumbnailUrl); // 2026-10-24: a video file is never drawn as its own poster
-  const isVideo = postData?.isVideo === true || item.mediaType === 'video' || isVideoRef(mediaUrl); // 2026-10-24: any of the three says video — the full post's flag, the opening item's type, or a video FILE about to be shown (was: postData's flag alone whenever postData existed, so a .mov could reach <CachedImage>)
+  const isVideo = postData?.isVideo === true || item.mediaType === 'video' || isVideoRef(mediaUrl); const { resolved: hydratedVideo } = useHydratedMedia(isVideo ? [mediaUrl] : []); const videoSource = playbackUriState(isVideo ? mediaUrl : null, hydratedVideo); const playUri = videoSource.state === 'ready' ? videoSource.uri : null; /* 2026-10-24 every surface: a private video ref (bare or relay) is SIGNED here; only the signed URL reaches <Video> */ // 2026-10-24: any of the three says video — the full post's flag, the opening item's type, or a video FILE about to be shown (was: postData's flag alone whenever postData existed, so a .mov could reach <CachedImage>)
 
   return (
     <View
@@ -501,11 +501,11 @@ function ViewerPage({ item, isActive, isMuted, postData }: ViewerPageProps) {
           ) : null}
           <View style={tailStyles.spinnerBadge}><ActivityIndicator size="large" color={color.onInk} /></View>
         </View>
-      ) : isVideo && !isLoadablePlaybackUri(mediaUrl) ? (<View style={pg.loadingWrap} testID="mv-video-unloadable">{posterUrl ? <CachedImage source={{ uri: posterUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackLabel="" /> : null}</View>) : isVideo ? (
+      ) : isVideo && !isLoadablePlaybackUri(playUri) ? (<View style={pg.loadingWrap} testID="mv-video-unloadable">{posterUrl ? <CachedImage source={{ uri: posterUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackLabel="" /> : null}</View>) : isVideo ? (
         <>
-          <Video
+          <Video key={playUri as string}
             ref={videoRef}
-            source={{ uri: mediaUrl }}
+            source={{ uri: playUri as string }}
             style={pg.video}
             resizeMode={ResizeMode.COVER}
             shouldPlay={isActive}
@@ -907,4 +907,4 @@ function pageDotWindow(i: number, active: number, count: number) {
   if ((i === start && start > 0) || (i === end - 1 && end < count)) return PAGE_DOT_EDGE;
   return null;
 }
-import { isVideoRef, derivedVideoPosterRef } from '../../src/lib/media/videoPosterRef.ts'; import { isLoadablePlaybackUri } from '../../src/services/playbackUri.ts'; // 2026-10-24 video playback: the one ref rule
+import { isVideoRef, derivedVideoPosterRef } from '../../src/lib/media/videoPosterRef.ts'; import { isLoadablePlaybackUri, playbackUriState } from '../../src/services/playbackUri.ts'; import { useHydratedMedia } from '../../src/services/mediaUrl.ts'; // 2026-10-24 video playback: the one ref rule, and the one signing hook

@@ -89,11 +89,13 @@ jest.mock('../../../services/mediaFeed', () => ({
 // ── WatchVideoCell — capture isActive prop ────────────────────────────────────
 // NOTE: intentional stub — real video cell not under test; captures isActive.
 const mockCapturedIsActive: Record<string, boolean> = {};
+const mockCapturedSignWindow: Record<string, boolean | undefined> = {}; // 2026-10-25 (#808 finding 4)
 jest.mock('../WatchVideoCell.tsx', () => {
   const { View } = require('react-native');
   return {
-    WatchVideoCell: ({ id, isActive }: { id: string; isActive: boolean }) => {
+    WatchVideoCell: ({ id, isActive, inSignWindow }: { id: string; isActive: boolean; inSignWindow?: boolean }) => {
       mockCapturedIsActive[id] = isActive;
+      mockCapturedSignWindow[id] = inSignWindow;
       return <View testID={`watch-video-cell-${id}`} />;
     },
   };
@@ -199,6 +201,25 @@ describe('WatchFeedList — active item flag', () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// 2026-10-25, PR #808 verdict finding 4: a Watch cell signs its private video only while it is on screen or one swipe
+// away (WatchVideoCell inSignWindow), like GridTile's isVisible. A mounted cell further off sends no sign request.
+describe('WatchFeedList — the sign window is the active cell and its neighbours', () => {
+  beforeEach(() => { Object.keys(mockCapturedSignWindow).forEach((k) => delete mockCapturedSignWindow[k]); });
+
+  it('SW1 activeIndex=2 of 4: items 1-3 may sign; item-0, mounted two swipes back, may not', async () => {
+    const items = [0, 1, 2, 3].map((i) => makeItem(`item-${i}`));
+    await act(async () => {
+      render(<WatchFeedList {...makeProps({ items, activeIndex: 2 })} />);
+    });
+    expect(mockCapturedSignWindow['item-0']).toBe(false);
+    expect(mockCapturedSignWindow['item-1']).toBe(true);
+    if ('item-2' in mockCapturedSignWindow) expect(mockCapturedSignWindow['item-2']).toBe(true);
+    if ('item-3' in mockCapturedSignWindow) expect(mockCapturedSignWindow['item-3']).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 describe('WatchFeedList — mute button', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -279,3 +300,4 @@ describe('WatchFeedList — like action via overlay', () => {
     expect(onLike).not.toHaveBeenCalled();
   });
 });
+

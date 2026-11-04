@@ -3844,7 +3844,7 @@ async function protectRecapRows(sc: any, rows: any[], viewerId: string): Promise
 // file is memory_items' declared writer (lib/memoryTableOwnership.ts).
 import {
   gateMemoryFromOwnMedia,
-  resolveOwnPostMedia,
+  resolveOwnPostMedia, stampPostMediaCount, // 2026-10-25: every answer about the caller's own post says how many media it has
   MAX_POST_MEDIA_INDEX,
 } from "../services/memory/memoryFromOwnMedia.js";
 import { recordMemoryCreatedFromMediaSignal } from "../lib/mediaAnalytics.js";
@@ -3890,12 +3890,12 @@ router.post("/memories/:id/items/from-post", async (req, res) => {
   const source = await resolveOwnPostMedia(sc, { viewerId: user.id, postId: parsed.data.postId, mediaIndex: parsed.data.mediaIndex });
   if (!source.ok) {
     if (source.reason === "not_found") { sendError(res, "not_found", "No post of yours with that id"); return; }
-    if (source.reason === "no_such_media") { sendError(res, "invalid_payload", "That post has no media at that position"); return; }
+    if (source.reason === "no_such_media") { stampPostMediaCount(res, source.mediaCount); sendError(res, "invalid_payload", "That post has no media at that position"); return; }
     req.log.error({ memoryId: id, detail: source.detail }, "memories from-post: the source post could not be read — refusing");
     sendError(res, "degraded_unavailable", "Could not read that post. Please try again.");
     return;
   }
-  const { postId, mediaUrl, mediaType } = source.value;
+  const { postId, mediaUrl, mediaType } = source.value; stampPostMediaCount(res, source.value.mediaCount); // 2026-10-25: 201, 409 and any later refusal carry the server's count
 
   const outcome = await dispatchMemoryCommand<any>({
     sc,

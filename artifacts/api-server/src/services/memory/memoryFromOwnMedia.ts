@@ -39,7 +39,7 @@ export const SOURCE_POST_COLUMN = "source_post_id";
 export const MAX_POST_MEDIA_INDEX = 49;
 
 export type FromOwnMediaRefusal = "disabled" | "unavailable" | "storage_absent" | "not_found" | "no_such_media";
-export type FromOwnMediaResult<T> = { ok: true; value: T } | { ok: false; reason: FromOwnMediaRefusal; detail: string };
+export type FromOwnMediaResult<T> = { ok: true; value: T } | { ok: false; reason: FromOwnMediaRefusal; detail: string; /** no_such_media only: how many the post has (2026-10-25) */ mediaCount?: number };
 
 const refuse = (reason: FromOwnMediaRefusal, detail: string) => ({ ok: false as const, reason, detail });
 
@@ -66,7 +66,7 @@ export interface OwnPostMedia {
   postId: string;
   mediaUrl: string;
   /** memory_items.media_type is a MIME type; a post carries one media_type for all its media. */
-  mediaType: string;
+  mediaType: string; /** 2026-10-25: how many media the post has, by the list this index was read from — the one count the client follows */ mediaCount?: number;
 }
 
 /** `posts.media_type` → the MIME-shaped value memory_items holds. */
@@ -91,8 +91,88 @@ export async function resolveOwnPostMedia(
   const post = data as Record<string, unknown> | null;
   if (!post || post.author_id !== input.viewerId) return refuse("not_found", "no post of the caller's with that id");
   if (post.status !== "active" || post.deleted_at != null) return refuse("not_found", "the post is not live");
-  const media = Array.isArray(post.media_urls) ? (post.media_urls as unknown[]) : [];
-  const url = media[input.mediaIndex];
-  if (typeof url !== "string" || !url) return refuse("no_such_media", `the post carries no media at index ${input.mediaIndex}`);
-  return { ok: true, value: { postId: String(post.id), mediaUrl: url, mediaType: memoryItemMediaTypeFor(post.media_type) } };
+  const listed = await ownPostMediaList(sc, post); // 2026-10-24: post_media first (uploads live there since 2083 / 3924), then media_urls
+  if (!listed.ok) return listed;
+  const entry = listed.value[input.mediaIndex] ?? null;
+  if (!entry) return { ...refuse("no_such_media", `the post carries no media at index ${input.mediaIndex}`), mediaCount: listed.value.length };
+  return { ok: true, value: { postId: String(post.id), mediaUrl: entry.url, mediaType: entry.mediaType, mediaCount: listed.value.length } };
+}
+
+// ── 2026-10-24, video on every surface — appended at the TAIL so no cited line above moves ────────────────────────
+// The reader used to index `posts.media_urls` only. 2083 made `post_media` the store for uploads, 3924 moved the
+// last uploads out of `media_urls`, and #795's create path writes uploads as rows only — so "Save to a Memory"
+// answered `no_such_media` for every upload post. The list is now the one the post's readers serve
+// (routes/posts.ts filterPostMedia + #795's lib/media/storageBackedPostMedia.ts fallback):
+//   1. the post has ANY post_media row → its rows that are `ready` and not `rejected`/`flagged`, in sort_order,
+//      named by `public_url` (else `<storage_bucket>/<storage_path>`), then its EXTERNAL `media_urls` entries
+//      (a storage key left in `media_urls` names an object a row already carries, and is not offered twice);
+//   2. no row at all → `media_urls` exactly as before (#795's fallback: a post 3924 has not reached still works).
+// A row a moderator rejected or flagged, or one still processing, is never offered — and 4000's guard refuses it
+// in the database too. An unreadable post_media read refuses `unavailable`; it is never read as "no rows" (§47).
+
+/** One media item of a post, as "Save to a Memory" indexes it. */
+export interface OwnPostMediaEntry {
+  url: string;
+  /** The MIME-shaped value memory_items.media_type holds. */
+  mediaType: string;
+  source: "post_media" | "media_urls";
+}
+
+const MIME_KIND = /^(image|video)\//i;
+
+/** The media "Save to a Memory" indexes for one post (the post row as resolveOwnPostMedia read it). Never throws. */
+export async function ownPostMediaList(
+  sc: any,
+  post: Record<string, unknown>,
+): Promise<FromOwnMediaResult<Array<OwnPostMediaEntry | null>>> {
+  let rows: any[];
+  try {
+    const { data, error } = await sc
+      .from("post_media")
+      .select("media_type, mime_type, public_url, storage_bucket, storage_path, processing_status, moderation_status, sort_order")
+      .eq("post_id", String(post.id));
+    if (error || !Array.isArray(data)) return refuse("unavailable", `post_media unreadable: ${String(error?.message ?? "no rows array")}`);
+    rows = data;
+  } catch (err) {
+    return refuse("unavailable", `post_media read threw: ${String((err as Error)?.message ?? err)}`);
+  }
+  const urls = Array.isArray(post.media_urls) ? (post.media_urls as unknown[]) : [];
+  const fromUrl = (raw: unknown): OwnPostMediaEntry | null =>
+    typeof raw === "string" && raw
+      ? { url: raw, mediaType: memoryItemMediaTypeFor(mediaKindForPath(raw, post.media_type as string | null)), source: "media_urls" }
+      : null;
+  if (rows.length === 0) return { ok: true, value: urls.map(fromUrl) };
+  const visible = rows
+    .filter((r) => r?.processing_status === "ready" && r?.moderation_status !== "rejected" && r?.moderation_status !== "flagged")
+    .sort((a, b) => (Number(a?.sort_order) || 0) - (Number(b?.sort_order) || 0))
+    .map((r): OwnPostMediaEntry | null => {
+      const url = typeof r.public_url === "string" && r.public_url
+        ? r.public_url
+        : typeof r.storage_path === "string" && r.storage_path ? `${r.storage_bucket ?? "post-media"}/${r.storage_path}` : "";
+      if (!url) return null;
+      const mime = typeof r.mime_type === "string" && MIME_KIND.test(r.mime_type) ? r.mime_type.toLowerCase() : memoryItemMediaTypeFor(r.media_type);
+      return { url, mediaType: mime, source: "post_media" };
+    })
+    .filter((e): e is OwnPostMediaEntry => e !== null);
+  const external = urls.filter((u) => typeof u === "string" && u && postMediaStorageRef(u).kind === "foreign").map(fromUrl);
+  return { ok: true, value: [...visible, ...external] };
+}
+
+import { mediaKindForPath } from "../../lib/media/storageBackedPostMedia.js";
+import { postMediaStorageRef } from "../../lib/media/postMediaModerationHold.js";
+
+// ── 2026-10-25, PR #808 verdict finding 2 — appended at the TAIL so no cited line above moves ──────────────────────
+// The client used to work out how many media a post has on its own (SaveOwnPostToMemorySheet ownPostMediaCount)
+// and could count one more than ownPostMediaList (a public-bucket storage URL, or an unclean string, left in
+// `media_urls`): the sheet then asked for an index this list does not have and the copy stopped part-way with a
+// 400. The SERVER's count is now the one the client follows: every answer the route gives once it has read the
+// caller's OWN live post — the item, "already there", the no-such-index refusal, a later failure — carries
+// `mediaCount`, this list's length, and the client never asks past it. Nothing about anyone else's post is said:
+// `not_found` (someone else's, missing, deleted or held) is sent before this is stamped, and carries no count.
+
+/** Stamp `mediaCount` on every JSON object body this response sends from here on. */
+export function stampPostMediaCount(res: { json: (body: unknown) => unknown }, mediaCount: number | undefined): void {
+  if (typeof mediaCount !== "number" || !Number.isInteger(mediaCount) || mediaCount < 0) return;
+  const send = res.json.bind(res);
+  res.json = (body: unknown) => send(body && typeof body === "object" && !Array.isArray(body) ? { ...(body as Record<string, unknown>), mediaCount } : body);
 }

@@ -10,7 +10,14 @@
  *       player is handed a bare bucket ref (services/playbackUri.ts) — the poster layer draws the derived poster
  *   W2  CONTROL: the same with a .jpg ⇒ no Video
  *   W3  the full post's video flag decides when it is there, and a loadable (signed) URL mounts the Video
- *   W4  a full post whose video URL is still a bare ref mounts no Video either
+ *   W4  a full post whose video URL is still a bare ref mounts no Video either (its signature is refused here)
+ *   W5  (M23, closest equivalent — see below) a full post whose video URL is a bare ref: the viewer REQUESTS the
+ *       signature, mounts no Video while it is in flight, then plays the signed URL — never the ref
+ *   W6  the same for the API relay URL `/api/media/file/post-media/…` the /media/:id payload carries for a private
+ *       post: a player sends no bearer token, so the relay URL itself would be a 401
+ *
+ * W5/W6 were added for the 2026-10-24 "video on every surface" fix. The verifier's original definition of M23 was
+ * not available to this builder; W5/W6 are the closest equivalent (the media viewer's private-video path).
  *
  * Run with: pnpm test:component
  */
@@ -101,6 +108,15 @@ jest.mock('expo-linear-gradient', () => {
   return { LinearGradient: (props: object) => <View {...props} /> };
 });
 
+// NOTE: intentional stub — the network call is the only stand-in; useHydratedMedia and hydrateMediaUrls are real.
+// The default answer refuses (the original comes back), which is what W1/W4 ran against before W5/W6 existed.
+let mockSignCalls: string[][] = [];
+let mockSignAnswer: (urls: string[]) => Promise<Map<string, string>> = async (urls) => new Map(urls.map((u) => [u, u]));
+jest.mock('../../../src/lib/batchSignMedia.ts', () => ({
+  ...jest.requireActual('../../../src/lib/batchSignMedia.ts'),
+  batchSignUrls: (urls: string[]) => { mockSignCalls.push([...urls]); return mockSignAnswer(urls); },
+}));
+
 // ── Imports (after mocks) ─────────────────────────────────────────────────────
 
 import MediaViewer from '../[id].tsx';
@@ -122,7 +138,7 @@ async function renderViewer(post: Record<string, unknown> | null, thumbnailUrl: 
   await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 }
 
-afterEach(() => { clearViewerContext(); });
+afterEach(() => { clearViewerContext(); mockSignCalls = []; mockSignAnswer = async (urls) => new Map(urls.map((u) => [u, u])); });
 
 describe('MediaViewer — a video file plays', () => {
   it('W1 no full post, the item says image, the file is a bare .mov ⇒ a video with no player, showing its poster', async () => {
@@ -148,5 +164,16 @@ describe('MediaViewer — a video file plays', () => {
     await renderViewer({ videoUrl: MOV }, 'post-media/u/photo.jpg');
     expect(screen.queryByTestId('mv-video')).toBeNull();
     expect(screen.getByTestId('mv-video-unloadable')).toBeTruthy();
+  });
+
+  it.each([['W5 bare ref', MOV], ['W6 relay URL', `/api/media/file/${MOV}`]])('%s: the signature is requested, then only the signed URL is played', async (_n, ref) => {
+    let release!: () => void;
+    mockSignAnswer = (urls) => new Promise((r) => { release = () => r(new Map(urls.map((u) => [u, u === ref ? SIGNED : u]))); });
+    await renderViewer({ videoUrl: ref }, 'post-media/u/photo.jpg');
+    expect(mockSignCalls.some((c) => c.includes(ref))).toBe(true);
+    expect(screen.queryByTestId('mv-video')).toBeNull();
+    await act(async () => { release(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    expect(screen.getByTestId('mv-video').props.accessibilityHint).toBe(SIGNED);
   });
 });

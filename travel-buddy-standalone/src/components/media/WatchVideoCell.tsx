@@ -58,7 +58,7 @@ export interface WatchVideoCellProps {
   captionSource?: string;
   posterUrl: string | null;
   isActive: boolean;
-  playbackEligible?: boolean;
+  playbackEligible?: boolean; /** 2026-10-25 (#808 finding 4): the cell is the one on screen or a neighbour — only then is a private source SIGNED, like GridTile's isVisible. Defaults to isActive. */ inSignWindow?: boolean;
   isMuted: boolean;
   /** Called on every playback tick. `durationMs` is null until the video metadata loads. */
   onProgress: (ratio: number, durationMs: number | null) => void;
@@ -73,7 +73,7 @@ export interface WatchVideoCellHandle {
 
 export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellProps>(
   function WatchVideoCell(
-    { id, videoUrl, captionSource, posterUrl, isActive, playbackEligible = true, isMuted, onProgress, onVideoRef, onVideoUnmount },
+    { id, videoUrl, captionSource, posterUrl, isActive, playbackEligible = true, inSignWindow = isActive, isMuted, onProgress, onVideoRef, onVideoUnmount },
     ref,
   ) {
     const videoRef = useRef<Video>(null);
@@ -85,7 +85,7 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
     const [captionStatus, setCaptionStatus] = useState<{ source: string; status: AVPlaybackStatus } | null>(null);
     const captionsEnabled = useFeatureFlags().isEnabled('media_captions_enabled');
     const shouldPlay = isActive && playbackEligible;
-    const playback = useAdaptivePlayback(captionSource ?? videoUrl, videoUrl, shouldPlay);
+    const { resolved: hydrated } = useHydratedMedia(inSignWindow ? [videoUrl] : []); const source = playbackUriState(videoUrl, hydrated); const playbackUri = source.state === 'ready' ? source.uri : ''; const playback = useAdaptivePlayback(captionSource ?? videoUrl, playbackUri, shouldPlay); // 2026-10-24 every surface: a private ref (bare or relay) is SIGNED here — only while the cell is in its sign window (2026-10-25) — and only the signed URL reaches <Video>
     const dubbing = useMediaDubbingSession({ source: captionSource ?? videoUrl, active: shouldPlay && !hasHardFailed,
       controller, controlSource: { shouldPlay, isMuted, volume: 1, rate: 1 } });
     const mountedRef = useRef(true);
@@ -150,16 +150,16 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
 
     // ── Failure state ─────────────────────────────────────────────────────────
 
-    if (hasHardFailed || !isLoadablePlaybackUri(videoUrl)) { // 2026-10-24: a source no player can load is unavailable — never handed to <Video>
+    if (hasHardFailed || !isLoadablePlaybackUri(playbackUri)) { const resolving = !hasHardFailed && source.state === 'resolving'; // 2026-10-24: no <Video> until the source is loadable; the poster and a spinner while the signature is in flight, "Video unavailable" once refused
       return (
         <View style={s.cell}>
           {posterUrl ? (
             <CachedImage source={{ uri: posterUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackLabel="" />
           ) : null}
-          <View style={s.failureOverlay}>
+          {resolving ? (<View style={s.spinnerOverlay} pointerEvents="none" testID="watch-video-resolving"><View style={tailStyles.spinnerBadge}><ActivityIndicator size="large" color="rgba(255,255,255,0.8)" /></View></View>) : <View style={s.failureOverlay}>
             <PlayCircle size={40} color="rgba(255,255,255,0.7)" />
             <Text style={s.failureText}>Video unavailable</Text>
-          </View>
+          </View>}
         </View>
       );
     }
@@ -167,7 +167,7 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
     return (
       <View nativeID={`watch-cell-${id}-${needsLetterbox ? 'contain' : 'cover'}`} style={s.cell}>
         {needsLetterbox ? <VideoBlurBackdrop uri={posterUrl} /> : null}
-        <Video
+        <Video key={playbackUri}
           ref={captureVideo}
           source={playback.source}
           style={{ position: 'absolute', top: 0, left: 0, width: SCREEN_W, height: SCREEN_H }}
@@ -238,4 +238,4 @@ const s = StyleSheet.create({
 const tailStyles = StyleSheet.create({
   spinnerBadge: { padding: 10, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.52)' },
 });
-import { isLoadablePlaybackUri } from '../../services/playbackUri.ts'; // 2026-10-24 video playback: the one playback rule
+import { isLoadablePlaybackUri, playbackUriState } from '../../services/playbackUri.ts'; import { useHydratedMedia } from '../../services/mediaUrl.ts'; // 2026-10-24 video playback: the one playback rule, and the one signing hook
