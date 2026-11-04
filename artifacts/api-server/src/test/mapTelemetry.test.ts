@@ -527,6 +527,28 @@ describe("with map_telemetry_enabled TRUE, each §35 event lands exactly once", 
   });
 });
 
+// ── census-map §54.4 (verifier, 2026-10-24, mutant 5): the ROUTE drops a coordinate-keyed event ─────
+// Every containsDisallowedKey case above tests the helper. Removing the route's CALL left all of them green,
+// so this drives POST /map/telemetry itself: a batch with one clean and two dirty events stores only the clean one.
+describe("the route drops an event whose payload carries a coordinate- or identity-named key", () => {
+  test("top-level and nested coordinate keys are rejected at the route; the clean event is stored", async () => {
+    flagEnabled = true;
+    const res = await post({
+      events: [
+        event("map_opened", 1),
+        { name: "zone_selected", mapSessionId: SESSION, seq: 2, ts: 2, payload: { lat: 25.76, lng: -80.19 } },
+        { name: "place_opened", mapSessionId: SESSION, seq: 3, ts: 3, payload: { place: { geometry: { coordinates: [1, 2] } } } },
+      ],
+      meta: { schemaVersion: "1.0", mapSessionId: SESSION },
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.rejected, 2, "both dirty events are refused by the route");
+    const written = rowsInto("map_telemetry_events");
+    assert.deepEqual(written.map((r) => r.event_name), ["map_opened"], "only the clean event reaches the table");
+    for (const r of written) assert.equal(JSON.stringify(r.payload).includes("lat"), false);
+  });
+});
+
 // ── the flag-off arm: zero rows, and a DROP that somebody can see ───────────
 
 describe("with map_telemetry_enabled FALSE", () => {

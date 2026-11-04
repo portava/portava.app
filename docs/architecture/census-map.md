@@ -3316,3 +3316,170 @@ pass did not edit the checker. Age acknowledgement alone was not the remedy.
 ### Correction (2026-10-17, wave 5) — the circle need-help host push now reaches a host in quiet hours (census-telegraph T254)
 
 The one push the circle need-help route sends to the host (`circle.need_help_host_alert`) now pierces quiet hours where the host's own safety_override is on; it had been held by the Compass gate as activity_social. With the override off it is still held. No Map verdict rests on it (MAP-F08 §46.3; routes/circle.ts is NOT-GRADED here).
+
+## §54 — 2026-10-24 (lane MAP, batch 1): 11 rows W → C on production facts; 19 proposed moves ruled back to W; the open rows re-classified against production as it is now
+
+*Branch `claude/census-map-b1-20261024`, cut from `origin/main` `96d20f10d`. Production was read with SELECT,
+catalog and log queries only, and `https://rumazi.com` with unauthenticated GETs only, on 2026-10-24. Nothing was
+written to production or `portava-ci`, and no flag was changed. `head_commit` is not re-declared.*
+
+**The release rule applied (lead ruling, 2026-10-24).**
+- Server code counts once it is deployed. rumazi.com runs main `4fb0fe5f5`, deployed 2026-10-24 06:05Z.
+- Client code counts only in a build installed against production. Today that is the owner's device build,
+  installed 2026-10-23 10:23Z and built from `259224e31` (main `bfc8142c5` plus #776). The lead corrected the
+  reference from "2026-10-22's main" on 2026-10-24; the new build is a superset of the old one.
+- Anything else is `W`, "waiting on release".
+
+### 54.1 Production as it is now
+
+Most of §43–§53's blockers were production state, and that state changed on 2026-10-21 (migrations) and 2026-10-23
+(flags). Read 2026-10-24:
+
+| # | fact | read |
+|---|---|---|
+| P1 | flags | `locate_friends_enabled`, `map_projection_enabled`, `map_telemetry_enabled`, `memory_projection`, `map_crowd_flow_enabled`, `map_world_intelligence_enabled`, `map_world_moments_enabled`, `map_experience_state_enabled`, `map_display_resolver_enabled` and `map_contributions_enabled` are all TRUE, each `updated_at` 2026-10-23 10:02:06Z (the flag audit). `map_telemetry_retention_enabled` has been TRUE since 2026-09-16. `map_trip_projection_read_enabled` is FALSE. The unauthenticated `GET /api/feature-flags` on rumazi.com serves the same values. |
+| P2 | ledger | `schema_migration_ledger` rows exist for 2201 (2026-10-21), 2202 (09-16), 2217 (09-21), 2218 (10-21), 2219 (09-15, backfill), 2224 (10-21), 2295 (10-21), 2350 (10-21), 2960 (09-16), 2964 (09-21) and 3701 (10-21). |
+| P3 | Locate Friends catalog | All four `locate_friends_*` tables are present. Their columns, defaults, nullability and CHECK constraints are md5-equal to `portava-ci`'s (constraints `68d23006…`, columns `4651a3a8…`), and `portava-ci` matches the tree (`audit:schema` green on main). Specifically: `members.opted_in_at` and `consent_source` are NOT NULL (`opted_in_at` has DEFAULT `now()`, so it records a time, not an act); `sessions.expires_at` is NOT NULL with no default, under `CHECK (expires_at > started_at AND expires_at <= started_at + '12:00:00')`; `positions.rung` is CHECK-bound to the six rungs; and a position decays within one hour. |
+| P4 | row counts | `locate_friends_*` 0 each; `map_telemetry_events` 0; `map_telemetry_drops` 0; `geo_zones` 0; `protected_zones` 0 (0 active); `route_flow_contribution_consent` 0; `intel_live_promoted_scopes` 0; `memory_projections` 73 (1 with `subject_type = 'place'`). |
+| P5 | traces | Over 2026-10-23 08:00Z – 10-24 08:00Z, the edge logs show `protected_zones` read 1,188 times and `blocks` 461 times, every read answering 200 (corrected 2026-10-24, verifier: the window first stated ended two hours after this section's commit, and the `blocks` count was wrong for any window; re-read with `query_logs` over exactly these bounds); `locate_friends_sessions`/`_members` read at 10:56Z on 10-23, `geo_zones` read once, and no insert into `map_telemetry_events`. `map_telemetry_disabled_discards` holds one bucket: 2026-10-22 16:00Z, 1 batch, 2 events. That batch came from the device build installed before 2026-10-23. It sent map telemetry while the flag was still OFF, and the route's discard path counted it. So the app emits, and the request reaches the route. |
+| P6 | code on production | Every anchor cited by the 30 moved rows is present, by text, in the deployed server tree (`4fb0fe5f5`) for server files. For client files it is present, by text, in `259224e31`, the installed device build's commit. The gateway's `enabled: true` path needs exactly three things: the flag, a readable `blocks` set and a readable `protected_zones` (`routes/mapProjection.ts` at `4fb0fe5f5`). All three hold (P1, P5). |
+
+**No viewer's traffic is claimed.** Every move below rests on P1–P3 and P6: flags, ledger, catalog and deployed code. That
+is what each of the 11 moved rows' own criteria names. *(Corrected 2026-10-24, independent verifier: this sentence first
+claimed it for 30 moves. It was false for 19 — M259–M274, M133, M139 and M123 — whose criteria name an observed effect or a
+stored production row. They are ruled back to `W` in §54.2.)* The rows are the census's rule 2 (§2) working in reverse: the sink or
+source that made each one `W` now exists in production, and each row's remaining blocker was a flag that is now TRUE.
+P4 is stated so the empty tables are not mistaken for use. No Locate Friends session and no Map telemetry event exists
+yet, so the first owner session is the confirmation, not the evidence.
+
+### 54.2 Row moves
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| M7 | W | **C** | §44 moved the blocker from the four tables to `locate_friends_enabled`. Both are now met: the tables are present with 2219's constraints (P3), and the flag is TRUE (P1). The server (`lib/locateFriendsSession.ts`) is in the deployed tree, and the client (`src/components/map/LocateFriendsPanel.tsx`, `src/services/locateFriends.ts`) is in the installed build (P6). |
+| M83 | W | **C** | "Storage absent from production — see M7". The storage is present, and the flag is TRUE (P1, P3). **Caveat (verifier, 2026-10-24):** the installed build starts only trip-scoped sessions, so the event-map half of the mode has no device entry point. The row grades the storage, which is what moved. |
+| M85 | W | **C** | `locate_friends_positions` is present, its `precision` CHECK admits the approximate/checkpoint values, and the rung policy is in the installed build (P3, P6). |
+| M86 | W | **C** | As M85, for `network_location`. The rung CHECK admits it (P3). |
+| M87 | W | **C** | As M85, for `event_cached_location` (P3). |
+| M90 | W | **C** | As M85, for `last_known` (P3). |
+| M91 | W | **C** | As M85, for `manual_checkpoint` (P3). |
+| M92 | W | **C** | Opt-in is structural in production: `consent_source` is NOT NULL and CHECK-bound to `creator`/`invite_accept`/`group_join` (P3), so the consent act is carried by `consent_source`. A membership without a recorded consent act cannot be stored. *(Corrected 2026-10-24, verifier: `opted_in_at` is NOT NULL but has DEFAULT `now()`, so it records when, not that, a person opted in.)* |
+| M93 | W | **C** | Group scope is structural: `group_scope_kind` is CHECK-bound to trip/circle/event/plan (P3). The client refuses the mode without a scope (`src/stores/mapStore.tsx:101#LOCATE_FRIENDS:`, in the installed build, P6). |
+| M94 | W | **C** | `expires_at` is NOT NULL with no default and CHECK-bounded to 12 h after `started_at`, and positions decay within an hour (P3). The client's `MAX_SESSION_MS` is in the installed build (P6). |
+| M222 | W | **C** | The mode's blocker was M7's storage and flag, both met. |
+| M133 | W | **W** | **Ruled back to `W` (independent verifier, 2026-10-24).** The row's criterion is that `usedGateway` is true on a real device, and it has not been observed. What holds: 2217 then 2201 are applied, `map_projection_enabled` is TRUE and the gateway's `enabled: true` path is deployed (P1, P2, P5, P6). What does not follow from that: the installed `useMapEntities` falls back to the per-layer path on any non-ok answer or when the device has no position, so configuration alone does not show the device took the gateway. **Waits on: signed-in check** — a device run that records `usedGateway` true. |
+| M139 | W | **W** | **Ruled back to `W` with M133** (verifier, 2026-10-24): its criterion is M133's. The bypass guard holds unchanged. **Waits on: signed-in check**, as M133. |
+| M123 | W | **W** | **Ruled back to `W` (independent verifier, 2026-10-24).** `memory_projection` is TRUE (P1), and the two functions §47.3 named, `memory_are_new_to_user()` and `memory_remembers_for_user()`, now exist in production (read 2026-10-24). But the only place subject among the 73 projections resolves to a `discovery_places` row with null `lat`/`lng` (read 2026-10-24), so no gold memory pin can be drawn for any user. **Waits on: data dependency** — a place memory projection whose place has coordinates — and then a signed-in check that draws it. |
+| M259 | W | **W** | **Ruled back to `W` (independent verifier, 2026-10-24).** The shared criterion (line 838) is a row in `map_telemetry_events` in production carrying this event's name, and production holds 0 (P4). Built, deployed and configured: `map_telemetry_enabled` TRUE, 3701 applied, the route deployed, the emitter in the installed build (P1, P2, P6). **Waits on: signed-in check** — a signed-in map session whose batch stores this event. Event: `map_opened`. |
+| M260 | W | **W** | **Ruled back to `W` (independent verifier, 2026-10-24).** The shared criterion (line 838) is a row in `map_telemetry_events` in production carrying this event's name, and production holds 0 (P4). Built, deployed and configured: `map_telemetry_enabled` TRUE, 3701 applied, the route deployed, the emitter in the installed build (P1, P2, P6). **Waits on: signed-in check** — a signed-in map session whose batch stores this event. Event: `zone_selected`. |
+| M261 | W | **W** | **Ruled back to `W` (independent verifier, 2026-10-24).** The shared criterion (line 838) is a row in `map_telemetry_events` in production carrying this event's name, and production holds 0 (P4). Built, deployed and configured: `map_telemetry_enabled` TRUE, 3701 applied, the route deployed, the emitter in the installed build (P1, P2, P6). **Waits on: signed-in check** — a signed-in map session whose batch stores this event. Event: `place_opened`. |
+| M262 | W | **W** | **Ruled back to `W` (independent verifier, 2026-10-24).** The shared criterion (line 838) is a row in `map_telemetry_events` in production carrying this event's name, and production holds 0 (P4). Built, deployed and configured: `map_telemetry_enabled` TRUE, 3701 applied, the route deployed, the emitter in the installed build (P1, P2, P6). **Waits on: signed-in check** — a signed-in map session whose batch stores this event. Event: `live_state_viewed`. |
+| M263 | W | **W** | **Ruled back to `W` (independent verifier, 2026-10-24).** The shared criterion (line 838) is a row in `map_telemetry_events` in production carrying this event's name, and production holds 0 (P4). Built, deployed and configured: `map_telemetry_enabled` TRUE, 3701 applied, the route deployed, the emitter in the installed build (P1, P2, P6). **Waits on: signed-in check** — a signed-in map session whose batch stores this event. §47.2 closed the payload defect; what remains is the stored row. |
+| M264 | W | **W** | **Ruled back to `W` (independent verifier, 2026-10-24).** The shared criterion (line 838) is a row in `map_telemetry_events` in production carrying this event's name, and production holds 0 (P4). Built, deployed and configured: `map_telemetry_enabled` TRUE, 3701 applied, the route deployed, the emitter in the installed build (P1, P2, P6). **Waits on: signed-in check** — a signed-in map session whose batch stores this event. Event: `compass_requested`. |
+| M265 | W | **W** | **Ruled back to `W` (independent verifier, 2026-10-24).** The shared criterion (line 838) is a row in `map_telemetry_events` in production carrying this event's name, and production holds 0 (P4). Built, deployed and configured: `map_telemetry_enabled` TRUE, 3701 applied, the route deployed, the emitter in the installed build (P1, P2, P6). **Waits on: signed-in check** — a signed-in map session whose batch stores this event. Event: `compass_option_selected`. |
+| M266 | W | **W** | **Ruled back to `W` (independent verifier, 2026-10-24).** The shared criterion (line 838) is a row in `map_telemetry_events` in production carrying this event's name, and production holds 0 (P4). Built, deployed and configured: `map_telemetry_enabled` TRUE, 3701 applied, the route deployed, the emitter in the installed build (P1, P2, P6). **Waits on: signed-in check** — a signed-in map session whose batch stores this event. Event: `route_started`. |
+| M267 | W | **W** | **Ruled back to `W` (independent verifier, 2026-10-24).** The shared criterion (line 838) is a row in `map_telemetry_events` in production carrying this event's name, and production holds 0 (P4). Built, deployed and configured: `map_telemetry_enabled` TRUE, 3701 applied, the route deployed, the emitter in the installed build (P1, P2, P6). **Waits on: signed-in check** — a signed-in map session whose batch stores this event. Event: `trip_stop_added`. |
+| M268 | W | **W** | **Ruled back to `W` (independent verifier, 2026-10-24).** The shared criterion (line 838) is a row in `map_telemetry_events` in production carrying this event's name, and production holds 0 (P4). Built, deployed and configured: `map_telemetry_enabled` TRUE, 3701 applied, the route deployed, the emitter in the installed build (P1, P2, P6). **Waits on: signed-in check** — a signed-in map session whose batch stores this event. Event: `plan_joined`. |
+| M269 | W | **W** | **Ruled back to `W` (independent verifier, 2026-10-24).** The shared criterion (line 838) is a row in `map_telemetry_events` in production carrying this event's name, and production holds 0 (P4). Built, deployed and configured: `map_telemetry_enabled` TRUE, 3701 applied, the route deployed, the emitter in the installed build (P1, P2, P6). **Waits on: signed-in check** — a signed-in map session whose batch stores this event. Event: `meet_here_created`. |
+| M270 | W | **W** | **Ruled back to `W` (independent verifier, 2026-10-24).** The shared criterion (line 838) is a row in `map_telemetry_events` in production carrying this event's name, and production holds 0 (P4). Built, deployed and configured: `map_telemetry_enabled` TRUE, 3701 applied, the route deployed, the emitter in the installed build (P1, P2, P6). **Waits on: signed-in check** — a signed-in map session whose batch stores this event. Event: `crew_locate_started`. |
+| M271 | W | **W** | **Ruled back to `W` (independent verifier, 2026-10-24).** The shared criterion (line 838) is a row in `map_telemetry_events` in production carrying this event's name, and production holds 0 (P4). Built, deployed and configured: `map_telemetry_enabled` TRUE, 3701 applied, the route deployed, the emitter in the installed build (P1, P2, P6). **Waits on: signed-in check** — a signed-in map session whose batch stores this event. Event: `contribution_submitted`. |
+| M272 | W | **W** | **Ruled back to `W` (independent verifier, 2026-10-24).** The shared criterion (line 838) is a row in `map_telemetry_events` in production carrying this event's name, and production holds 0 (P4). Built, deployed and configured: `map_telemetry_enabled` TRUE, 3701 applied, the route deployed, the emitter in the installed build (P1, P2, P6). **Waits on: signed-in check** — a signed-in map session whose batch stores this event. Event: `alternative_requested`. |
+| M273 | W | **W** | **Ruled back to `W` (independent verifier, 2026-10-24).** The shared criterion (line 838) is a row in `map_telemetry_events` in production carrying this event's name, and production holds 0 (P4). Built, deployed and configured: `map_telemetry_enabled` TRUE, 3701 applied, the route deployed, the emitter in the installed build (P1, P2, P6). **Waits on: signed-in check** — a signed-in map session whose batch stores this event. Event: `recommendation_accepted`. |
+| M274 | W | **W** | **Ruled back to `W` (independent verifier, 2026-10-24).** The shared criterion (line 838) is a row in `map_telemetry_events` in production carrying this event's name, and production holds 0 (P4). Built, deployed and configured: `map_telemetry_enabled` TRUE, 3701 applied, the route deployed, the emitter in the installed build (P1, P2, P6). **Waits on: signed-in check** — a signed-in map session whose batch stores this event. Event: `recommendation_declined`. |
+
+**How "in force, never exercised" is graded here.** The 11 moved rows grade a shape: storage and constraints, a mode,
+its blocker. Each was `W` only because production lacked that shape's table or flag, and production now has both. They
+move on catalog and deployment. A row whose criterion is an EFFECT that only input could show, or a stored production
+row, does not move — the lesson of the 19 ruled back (verifier, 2026-10-24): read each row's own criterion before moving
+it. Besides those 19:
+- **M275** (evaluate real-world outcomes) needs outcome events to evaluate, and there are 0.
+- **M10** needs a forecast in a response.
+- **M282** needs a world object in a response.
+- **M179** needs a zone that actually coarsens or withholds.
+
+That is the line the Discovery census draws between DC-13 and A01 (census-discovery §132.2).
+
+### 54.3 Rows restated — the open rows against production as it is now
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| M5 | W | **W** | Its schema blocker is gone: 2218 and 2224 are applied, `map_crowd_flow_enabled` is TRUE, and `route_flow_contribution_consent` is present (P1, P2). **BLOCKED: ops, a curated `geo_zones` set.** It holds 0 rows (P4), so the gateway still refuses at `no_zone_model`. After that, it awaits one production flow. |
+| M67 | W | **W** | The consent table is present (2224), and it holds 0 rows (P4). **BLOCKED: opted-in contributors**, plus M5's zones. |
+| M119 | W | **W** | As M5. |
+| M221 | W | **W** | As M5. |
+| M279 | W | **W** | As M5, M67 and M65. |
+| M65 | W | **W** | **BUILDABLE**, not built in this batch: D-81a's `navigation_start` hop needs a capture, its consent scope under OD-MAP-1/2, a producer and a flag seeded FALSE. A number is now free (wave-5 correction). Once built it waits on: merged, server deploy, its flag migration applied, the next device build, and a signed-in check (an opted-in capture), plus M5's zones. |
+| M10 | W | **W** | 2217 is applied and the flag is TRUE (P1, P2). **EVIDENCE-ONLY. Waits on: signed-in check:** a signed-in `GET /api/map/projection/temporal?offset=+60m` answering `enabled: true` with a non-null `forecast`. That needs credentials this lane does not hold. |
+| M223 | W | **W** | As M10. |
+| M280 | W | **W** | As M10. |
+| M282 | W | **W** | The flags are TRUE and 2295 and 2350 are applied (P1, P2). **EVIDENCE-ONLY. Waits on: signed-in check:** a signed-in projection response carrying a `world_pulse`/`traveler_flow`/`city_model` object. The Experience half also waits on `intel_live_promoted_scopes`, an empty human allowlist by design (P4). |
+| M275 | W | **W** | The sink is present and the flag is TRUE. **EVIDENCE-ONLY. Waits on: signed-in check.** The decision-id loop can only be evaluated once outcome events land, and 0 have (P4). That is the owner's first device session. |
+| M179 | W | **W** | 2217 is applied and `protected_zones` reads (P2, P5), so the gate runs on every projection. **BLOCKED: ops, zones to protect.** With 0 zones (P4), `applyProtection` is the identity pass the row warns of. The response no longer carries protection counts (§50); the evidence is now the server's protection telemetry for a pass that coarsens or withholds. |
+| M278 | W | **W** | Its storage half is met (M7 above). **BLOCKED: the owner's reading of §12's ladder**: whether Phase 3 can close while the BLE rungs (M88, M89) are absent. |
+| M88 | N | **N** | **BLOCKED: a BLE-capable native module and a device run**, under OD-MAP-5's rule (opt-in, per trip, short-lived, no background relay). |
+| M89 | N | **N** | As M88. |
+| M129 | W | **W** | **BLOCKED: owner scope** (D-36b NOT RULED). |
+| M130 | N | **N** | **BLOCKED: owner scope** (D-36c NOT RULED), plus a venue-interior data source. |
+| M281 | N | **N** | **BLOCKED: owner scope**, descoped (Phase 6). |
+
+**The owner's signed-in list for this census** (each row waits on nothing else that this lane can do):
+- a signed-in projection or temporal read: M10, M223, M280, M282;
+- a signed-in map session that stores telemetry: M259–M274, and M275's outcome events;
+- a device run that records `usedGateway`: M133, M139;
+- after a data dependency (a place memory projection with coordinates): M123.
+
+The five CANNOT-VERIFY rows (M254, M255, M256, M258, M292) are device measurements and are unchanged. M256's live arm
+needs a disposable PostgreSQL, and this lane now has one; its device half is still needed, so it stays `?`.
+
+### 54.4 Isolation, privacy and duplicate authorities (owner directive, 2026-10-24)
+
+**Who can reach these tables (production catalog, read 2026-10-24).**
+- `locate_friends_*`, `map_telemetry_*`, `memory_projections` and `protected_zones` have RLS on and no `anon` or
+  `authenticated` grant. No client role can read or write them, and every access is through a server route that runs as
+  service role and takes the actor from `requireUser`.
+- `geo_zones` is `anon`/`authenticated` SELECT. It holds zone definitions, nothing personal.
+- `route_flow_contribution_consent` is `authenticated` SELECT under two policies.
+
+No moved row rests on UI hiding or client filtering.
+
+**Privacy.**
+- Map telemetry is decided: OD-MAP-1 ("No precise-location analytics by default"). `routes/mapTelemetry.ts` drops an
+  event whose payload carries a key NAMED like a coordinate, geometry, geohash or bbox (or an identity), matched as a
+  substring at any depth (`containsDisallowedKey`), and 2202's CHECK refuses such keys at the TOP level only. *(Corrected
+  2026-10-24, verifier: "drops any event that carries a coordinate" overstated it.)* The limit, stated: the check is by
+  key name, so a coordinate under a key whose name matches no fragment is not caught by either layer. The route's drop, not
+  only the helper, is now pinned: the telemetry suite posts a batch with one clean and two coordinate-keyed events and
+  asserts that only the clean one is stored (verifier mutant 5, which removed the route's call, is now killed).
+- Its retention is 30 days (3701, applied), on OD-INPUT-2's basis. That is tighter than 2202's 90, so nothing is
+  expanded.
+- The owner's consolidated decision page (2026-10-24) lists no pending Map item.
+- No consent is invented here. Locate Friends' opt-in is the stored consent act (M92).
+
+**Duplicate authorities, and the canonical one.**
+
+| responsibility | authorities | canonical |
+|---|---|---|
+| loading the active protected-zone policy | `lib/protectedZoneStore.ts` `loadActiveProtectedZones`, used by `routes/mapProjection.ts` and Discovery; a private copy with its own cache in `routes/mapProjectionTemporal.ts`; a deliberate copy in `lib/locateFriendsSession.ts`, kept separate by design so two surfaces' failure modes are not coupled | `lib/protectedZoneStore.ts`. The temporal route's copy has no stated reason. |
+| a temporary location share for a TRIP's members | Trips' crew live share (`trip_crew_location_sessions`); Locate Friends sessions, whose scope CHECK admits `trip`; Layover crew location grants (3996) | Trips' crew live share for a trip crew; Locate Friends for group sessions — the installed client reaches it only through the trip scope (corrected 2026-10-24, verifier); the CHECK also admits circle, event and plan, which have no client entry point; Layover grants for a layover session. The `trip` value in Locate Friends' CHECK overlaps Trips. **Needs a lead ruling.** |
+| place identity | Map projects `public.places`; Discovery serves `db/<places.id>` but lets a `discovery_places` row with the same uuid shadow it | `public.places` |
+
+### 54.5 What would turn this red
+
+- A production catalog diff on any `locate_friends_*` constraint (P3): M92, M93 or M94 reopens.
+- `locate_friends_enabled`, `map_projection_enabled`, `map_telemetry_enabled` or `memory_projection` turned off: the
+  rows that rest on that flag return to `W`.
+- The gateway answering `enabled: false` to a signed-in viewer, or the first owner map session storing no event: M133,
+  M139 and M259–M274, already `W`, stay there with a defect named rather than a release step.
+
+### 54.6 Headline, restated from the rows
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **251** |
+| BUILT-BUT-WRONG | **33** |
+| NOT-BUILT | **4** |
+| CANNOT-VERIFY | **5** |
+
+251 + 33 + 4 + 5 = 293. CONSTRUCTED 96.9 % (284 / 293, unchanged: every move is W → C) · CORRECT 85.7 % (251 / 293).
+Eleven rows moved `W` → `C`; nineteen proposed moves were ruled back to `W` by the independent verifier (2026-10-24).
+These are local records on an unmerged branch.
