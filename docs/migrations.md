@@ -7212,3 +7212,82 @@ which re-grants the baseline's `profiles` column list.
 
 **Rollback:** `db/rollback/2026-10-14-3942-profiles-avatar-url-storage-only-rollback.sql` drops the trigger and its
 function and re-grants the column to anon and authenticated. It re-opens the door.
+
+## 2026-11-04 — `3985_definer_client_execute_and_search_path_pins.sql`, written and NOT applied anywhere (portava-ci security advisor)
+
+**What it is.** It changes privileges and function settings only, and closes the portava-ci advisor's findings
+where that does not break a policy. It changes no table, column, policy, trigger, row, flag or function body.
+
+- **Withdrawn from PUBLIC, anon and authenticated:** the five trigger functions `add_owner_as_member`,
+  `enforce_is_official_privileged`, `enforce_profile_role_privileged`, `enforce_trip_max_members` and
+  `handle_new_user`, and `event_is_in_state`. PostgreSQL never lets a client call a trigger function, and a
+  firing trigger does not check EXECUTE. `event_is_in_state` is referenced by nothing (ledgered HOLD in
+  `SECURITY_DEFINER_ORACLES.json`), so withdrawing it ends the anonymous event-existence oracle.
+- **Withdrawn from PUBLIC and anon only:** `can_post_to_trip`, `user_is_event_participant` and
+  `is_accepted_trip_member`. Every policy that calls one is TO authenticated, and `is_accepted_trip_member`'s
+  callers are SECURITY DEFINER. authenticated is granted EXPLICITLY, so a database where it held EXECUTE only
+  through PUBLIC keeps it.
+- **service_role** keeps EXECUTE on all nine.
+- **`SET search_path = ''`** (2175's form) on the ten functions the advisor flagged:
+  `canonical_events_append_only`, `input_normalize_city_key`, `stories_freeze_deleted_at`,
+  `trip_presence_freshness`, `trip_reservation_events_append_only`, `trip_reservation_events_no_direct_delete`,
+  `trip_snapshot_fold`, `trip_snapshot_fold_all`, `trip_snapshot_replay` and `trip_snapshot_seed`. Each body names
+  only pg_catalog built-ins or `public.`-qualified objects.
+
+**Kept, and why.**
+
+- `auth_uid_has_event_role`, `auth_uid_has_event_rsvp`, `auth_uid_is_event_cohost`, `auth_uid_is_event_host`,
+  `can_see_post`, `can_see_postcard`, `can_see_trip` and `viewer_is_blocked` are called by policies TO public on
+  tables anon reads, so a revoke from either role turns those reads into errors. 2534's postcondition also pins
+  both roles on `can_see_trip`, and 2973's pins authenticated on every policy-referenced definer.
+- `intel_self_contributor_tokens` and `post_media_path_is_moderated` are already authenticated-only, and their
+  policies need it.
+- The three PostGIS `st_estimatedextent` overloads are extension members that postgres cannot revoke on.
+- **Owner checks.** `viewer_is_blocked` is the advisor's block-status oracle. Moving it out of the exposed schema
+  (2182's method) contradicts `docs/architecture/10_Database_Architecture.md` section 7 and needs `can_see_trip`
+  re-pinned, so that is an owner decision. authenticated is kept on `is_accepted_trip_member` only because
+  2973's postcondition 4 matches policy text by bare word.
+
+**Default privileges.** Unchanged, as 2973 decided. The offline ratchet `src/scripts/lib/definerClientExecuteWithdrawn.ts`,
+run by `check:security-definer-oracles` and required by `scripts/run-security-checks.sh`, fails a later migration
+that:
+
+- grants one of these back;
+- drops or plainly re-creates one without the revoke;
+- re-defines a pinned function without `SET search_path`; or
+- writes a policy, view or invoker caller for a role that no longer holds EXECUTE.
+
+**Safety at apply time.** The `$pre$` refuses unless the nineteen functions exist with these signatures, none is an
+extension member, and the migration role can act as each owner. Nothing a losing role reaches may call a function
+withdrawn from it. That is checked by OID through `pg_depend` (policies, views, defaults, constraints) and by text
+over SECURITY INVOKER bodies, in every schema. `authz.is_accepted_trip_member(uuid, uuid)` is a different function
+and does not trip it. Each pinned function must have no search_path yet, or already `''`.
+
+**The `$post$` stays inside the transaction**, and certify stage 4 re-runs it. It checks:
+
+- the privilege matrix, with PUBLIC read from the ACL;
+- that each of the ten pins is `''`;
+- that every non-trigger pinned function, called under the pin, answers what its own migration asserted. These are
+  3440's three city keys, 2776's four freshness grades, the 2773 seed, a stage fold, fold_all and an empty replay.
+
+**Order.** 3985 is a gap number. No file numbered above it on main, and none in open PRs #814 or #748, names any of the
+nineteen functions.
+
+**Proofs.** `src/test/definerClientExecuteWithdrawn3985.test.ts` (registered in `test`).
+
+- **Statically:** it pins every GRANT, REVOKE and ALTER statement and the advisor disposition of all 22 flagged
+  signatures. It holds the `$pre$`/`$post$` lists, the ratchet's lists and the rollback equal, and runs the ratchet's
+  19 red and 13 green fixtures and the real corpus.
+- **On PGlite,** over stubbed definers and the real bodies from 2120, 2773+2787+2799, 2776, 2784, 2998 and 3440:
+  - Before the apply, anon reads a draft event through the oracle, and a caller's search_path redirects
+    `input_normalize_city_key`.
+  - After it, the matrix is exact. anon's reads still work, and its insert is refused by RLS, not by a function
+    permission.
+  - authenticated's policies pass through the definer chain, the triggers still fire, and the pinned bodies resolve
+    and ignore a hostile search_path.
+  - A re-apply is a no-op, and the `$post$` stands alone and is load-bearing.
+  - Each of nine unsafe starting states is refused with nothing changed.
+  - The rollback restores the pre-state.
+
+**Rollback.** `db/rollback/2026-11-04-3985-definer-client-execute-and-search-path-pins-rollback.sql` grants client
+EXECUTE back as the replayed chain had it, RESETs the ten search_paths and deletes the ledger row.
