@@ -64,7 +64,7 @@ import {
   loadRestrictiveGems,
   type LocationVisibilityTier,
 } from "../../lib/mediaLocationVisibility.js";
-import { publicationPrecision } from "../../lib/memoryLocationPrecision.js";
+import { publicationPrecision } from "../../lib/memoryLocationPrecision.js"; import { loadAudienceCeilings, withAudienceCeiling } from "./memoryVisibilityPolicies.js"; // census-highlights-memories §CD (H33): the owner's per-audience ceiling
 import {
   asHistoricalFact,
   currentWorldReading,
@@ -418,8 +418,8 @@ export async function mayDiscloseVenue(
   if (viewerId === memory.owner_id) return { ok: true };
   // An unreadable gate is not "the owner chose a coarse rung": nobody knows.
   // It is a could-not-check, never presented as a refusal (finding 5).
-  if (precisionGate === "unreadable") return { ok: false, reason: "PRIVACY_UNREADABLE" };
-  const rung = publicationPrecision(memory, precisionGate === "on");
+  if (precisionGate === "unreadable") return { ok: false, reason: "PRIVACY_UNREADABLE" }; const ceilings = await loadAudienceCeilings(sc, [memory]); if (ceilings.state === "unreadable") return { ok: false, reason: "PRIVACY_UNREADABLE" }; // §CD (H33): an owner ceiling that cannot be read is a could-not-check, never "the owner chose"
+  const rung = withAudienceCeiling(publicationPrecision(memory, precisionGate === "on"), ceilings, memory); // §CD (H33): never finer than the owner's ceiling for the Memory's audience
   if (rung !== "exact" && rung !== "venue") return { ok: false, reason: "PLACE_WITHHELD_BY_OWNER" };
   const gem = await deps.restrictiveGemCeiling(sc, place);
   if (!gem.determined) return { ok: false, reason: "PRIVACY_UNREADABLE" };

@@ -905,21 +905,72 @@ export async function refuseUnresolvedEntities(
   if (request.intent?.kind === "mine_place") {
     const placeId = (request.intent as { placeId?: unknown }).placeId;
     if (typeof placeId !== "string" || placeId.length === 0) return null; // resolveTarget refuses it
-    const isUuid = UUID_RE.test(placeId);
-    if (isUuid) {
-      const catalog = await sc.from("places").select("id").eq("id", placeId).maybeSingle();
-      if (catalog.error) return unreadable(`the place catalog could not be read: ${catalog.error.message ?? "failed"}`);
-      if (catalog.data) return null;
-    }
-    const byPlace = await sc.from("memories").select("id").eq("owner_id", viewerId).eq("place_id", placeId).neq("state", "deleted").limit(1);
-    if (byPlace.error || !Array.isArray(byPlace.data)) return unreadable(`your places could not be read: ${byPlace.error?.message ?? "no row array"}`);
-    if (byPlace.data.length > 0) return null;
-    if (isUuid) {
-      const byCanonical = await sc.from("memories").select("id").eq("owner_id", viewerId).eq("canonical_location_id", placeId).neq("state", "deleted").limit(1);
-      if (byCanonical.error || !Array.isArray(byCanonical.data)) return unreadable(`your places could not be read: ${byCanonical.error?.message ?? "no row array"}`);
-      if (byCanonical.data.length > 0) return null;
-    }
+    // census-highlights-memories §CD (H262): ONE rule, in placeKnownToViewer at the foot,
+    // so this search, the Compass place history and GET /memories/places/:placeId cannot
+    // drift apart. A catalog place, or a reference one of the viewer's own live Memories
+    // carries, is known; anything else is unknown and nothing is searched in its stead.
+    const known = await placeKnownToViewer(sc, viewerId, placeId);
+    if (known.state === "unreadable") return unreadable(known.detail);
+    if (known.state === "known") return null;
+    // What "known" means, so a reader need not open the helper: the catalog
+    // (`places`) first, for a UUID; then the viewer's own live Memories, by
+    // `place_id`, and for a UUID by `canonical_location_id`. A read that fails
+    // is unreadable and retryable — the 503 above — never "unknown". A place
+    // NAME is never resolved here: a name that matches a Memory's text is
+    // exactly the semantic substitute §28.3 forbids, which is why only an id
+    // can be known.
     return unknown("this place is not known; no similar place was searched in its stead");
   }
   return null;
+}
+
+// ── census-highlights-memories §CD (H262): §28.3, one rule for every surface ──
+// Appended at the foot so no cited line above moves. "Never query a semantic
+// substitute for an unknown canonical place or person and pretend it is the
+// requested entity." A place is KNOWN to a viewer when it is a catalog place
+// (`places`) or a reference one of the viewer's own live Memories carries
+// (`place_id` or `canonical_location_id`). A person is known when the id is a
+// profile. Everything else is UNKNOWN, and the caller answers "not known"
+// rather than an empty history or a similar match. A failed read is UNREADABLE
+// (retryable), never "unknown".
+export type EntityKnown = { state: "known" } | { state: "unknown" } | { state: "unreadable"; detail: string };
+
+export async function placeKnownToViewer(sc: any, viewerId: string, placeId: string): Promise<EntityKnown> {
+  const isUuid = UUID_RE.test(placeId);
+  if (isUuid) {
+    const catalog = await sc.from("places").select("id").eq("id", placeId).maybeSingle();
+    if (catalog.error) return { state: "unreadable", detail: `the place catalog could not be read: ${catalog.error.message ?? "failed"}` };
+    if (catalog.data) return { state: "known" };
+  }
+  const byPlace = await sc.from("memories").select("id").eq("owner_id", viewerId).eq("place_id", placeId).neq("state", "deleted").limit(1);
+  if (byPlace.error || !Array.isArray(byPlace.data)) return { state: "unreadable", detail: `your places could not be read: ${byPlace.error?.message ?? "no row array"}` };
+  if (byPlace.data.length > 0) return { state: "known" };
+  if (isUuid) {
+    const byCanonical = await sc.from("memories").select("id").eq("owner_id", viewerId).eq("canonical_location_id", placeId).neq("state", "deleted").limit(1);
+    if (byCanonical.error || !Array.isArray(byCanonical.data)) return { state: "unreadable", detail: `your places could not be read: ${byCanonical.error?.message ?? "no row array"}` };
+    if (byCanonical.data.length > 0) return { state: "known" };
+  }
+  // The owner's own corrections are their places too (§9, lead ruling H-16): a
+  // place an owner ASSERTED through a correction is known even while no stored
+  // row names it yet. Storage without 3673 has no corrections, so nothing to add.
+  const asserted = await sc.from("memory_corrections").select("id").eq("owner_id", viewerId).eq("field", "place").eq("kind", "assert")
+    .eq(isUuid ? "canonical_location_id" : "place_id", placeId).limit(1);
+  if (asserted.error) {
+    if (String(asserted.error.code ?? "") === "42P01" || String(asserted.error.code ?? "") === "PGRST205") return { state: "unknown" };
+    return { state: "unreadable", detail: `your place corrections could not be read: ${asserted.error.message ?? "failed"}` };
+  }
+  if (Array.isArray(asserted.data) && asserted.data.length > 0) return { state: "known" };
+  if (isUuid) {
+    const assertedPlace = await sc.from("memory_corrections").select("id").eq("owner_id", viewerId).eq("field", "place").eq("kind", "assert").eq("place_id", placeId).limit(1);
+    if (assertedPlace.error) return { state: "unreadable", detail: `your place corrections could not be read: ${assertedPlace.error.message ?? "failed"}` };
+    if (Array.isArray(assertedPlace.data) && assertedPlace.data.length > 0) return { state: "known" };
+  }
+  return { state: "unknown" };
+}
+
+export async function personKnown(sc: any, personId: string): Promise<EntityKnown> {
+  if (!UUID_RE.test(personId)) return { state: "unknown" };
+  const { data, error } = await sc.from("profiles").select("id").eq("id", personId).maybeSingle();
+  if (error) return { state: "unreadable", detail: `the person could not be resolved: ${error.message ?? "failed"}` };
+  return data ? { state: "known" } : { state: "unknown" };
 }

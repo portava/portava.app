@@ -173,7 +173,7 @@ export function startMemoryOutboxScheduler(): void {
   );
   const generation = ++_outboxGeneration;
   _outboxTimer = setTimeout(function tick() {
-    void runMemoryOutboxDrainPass()
+    void runMemoryOutboxDrainTick() // census-highlights-memories §CC (H161): the pass plus its /healthz/schedulers status and job_health row
       .catch((err) => logger.warn({ err }, "memory outbox drain failed"))
       // In `.finally` for the reason the projection scheduler's timing suite
       // pins on its own pass: rescheduling only on success means one transient
@@ -192,4 +192,78 @@ export function stopMemoryOutboxScheduler(): void {
   // when there is no timer handle left to clear.
   _outboxGeneration += 1;
   if (_outboxTimer !== null) { clearTimeout(_outboxTimer); _outboxTimer = null; }
+}
+
+// ── census-highlights-memories §CC (H161, H162, H203, H244): the drain is observable ──
+// Appended at the foot so no cited line above moves. Until this, the drain
+// started at boot and left no trace: /healthz/schedulers listed it under
+// `coverage.unobservable` and no job_health row existed, so production could not
+// show that it had ever run. Now each tick records its status for
+// /healthz/schedulers (job "memoryOutboxDrain") and writes a job_health row —
+// at most once a minute while it succeeds, and on EVERY failed pass — the house
+// shape of telegraphOutboxDrain and memoryDeletionRedrive. The drain itself is
+// unchanged: no flag, no new read, no new write to a Memory table.
+export const MEMORY_OUTBOX_DRAIN_JOB = "memoryOutboxDrain";
+const MEMORY_OUTBOX_HEALTH_PERSIST_EVERY_MS = 60_000;
+
+export interface MemoryOutboxDrainStatus {
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  consecutiveFailures: number;
+  lastResult: MemoryOutboxDrainResult | null;
+}
+
+const _drainStatus: MemoryOutboxDrainStatus = { lastAttemptAt: null, lastSuccessAt: null, consecutiveFailures: 0, lastResult: null };
+let _drainLastPersistMs = 0;
+
+export function getMemoryOutboxDrainStatus(): Readonly<MemoryOutboxDrainStatus> {
+  return { ..._drainStatus };
+}
+
+/** Test seam. */
+export function _resetMemoryOutboxDrainStatus(): void {
+  Object.assign(_drainStatus, { lastAttemptAt: null, lastSuccessAt: null, consecutiveFailures: 0, lastResult: null });
+  _drainLastPersistMs = 0;
+}
+
+/** The /healthz/schedulers detail: what the last pass did, or why it failed. */
+export function memoryOutboxDrainHealthDetail(s: Readonly<MemoryOutboxDrainStatus>): string | undefined {
+  const r = s.lastResult;
+  if (!r) return undefined;
+  if (r.reason !== null) return `last pass FAILED (${r.reason}): claimed ${r.claimed}, acked ${r.acked}, failed ${r.failed}`;
+  return `last pass: claimed ${r.claimed}, acked ${r.acked}, failed ${r.failed}`;
+}
+
+/** One tick: the pass, its status, and the throttled job_health row. Never throws. */
+export async function runMemoryOutboxDrainTick(
+  opts: { client?: any; now?: Date } = {},
+): Promise<MemoryOutboxDrainResult> {
+  const now = opts.now ?? new Date();
+  const result = await runMemoryOutboxDrainPass("client" in opts ? { client: opts.client } : {});
+  _drainStatus.lastResult = result;
+  _drainStatus.lastAttemptAt = now.toISOString();
+  // A pass that ran and could read the outbox succeeded, whether it claimed 100 events or none.
+  const succeeded = result.reason === null && result.failed === 0;
+  if (succeeded) {
+    _drainStatus.consecutiveFailures = 0;
+    _drainStatus.lastSuccessAt = now.toISOString();
+  } else {
+    _drainStatus.consecutiveFailures += 1;
+    const log = _drainStatus.consecutiveFailures >= 3 ? logger.error.bind(logger) : logger.warn.bind(logger);
+    log({ job: MEMORY_OUTBOX_DRAIN_JOB, reason: result.reason, failed: result.failed, consecutiveFailures: _drainStatus.consecutiveFailures },
+      "memory outbox drain did NOT succeed — projections may lag their Memories");
+  }
+  const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
+  if (db && (!succeeded || now.getTime() - _drainLastPersistMs >= MEMORY_OUTBOX_HEALTH_PERSIST_EVERY_MS)) {
+    _drainLastPersistMs = now.getTime();
+    try {
+      const row: Record<string, unknown> = { job: MEMORY_OUTBOX_DRAIN_JOB, last_run_at: now.toISOString() };
+      if (succeeded) row.last_success_at = now.toISOString();
+      const { error } = await db.from("job_health").upsert(row, { onConflict: "job" });
+      if (error) logger.warn({ job: MEMORY_OUTBOX_DRAIN_JOB, err: error }, "memory outbox drain: could not persist job health");
+    } catch (err) {
+      logger.warn({ job: MEMORY_OUTBOX_DRAIN_JOB, err }, "memory outbox drain: could not persist job health");
+    }
+  }
+  return result;
 }

@@ -39,7 +39,7 @@
 import { readFlagState } from "../../lib/capability/schemaCapability.js";
 import {
   isMemoryLocationPrecision,
-  stricterPrecision,
+  stricterPrecision, publicationPrecision,
   type MemoryLocationPrecision,
 } from "../../lib/memoryLocationPrecision.js";
 
@@ -227,4 +227,25 @@ export async function clearOwnerPolicy(
     .select("owner_id");
   if (error) return { ok: false, reason: "unavailable", detail: error.message ?? "the policy delete failed" };
   return { ok: true, value: { audience, cleared: Array.isArray(data) && data.length > 0 } };
+}
+
+// ── census-highlights-memories §CD (H33): ONE composition for every non-owner place surface ──
+// Appended at the foot so no cited line above moves. Before §CD only routes/memories.ts
+// (protectMemoryRow) and the public search index applied the owner's per-audience ceiling;
+// the Compass Memory tools, the anonymous share card, the Telegraph Memory card and the
+// Memory action menu each applied §10's rung alone, so an owner's `country` ceiling for
+// `public` still let a public Memory's city out through them.
+/**
+ * `row` with `location_precision` replaced by the rung a NON-OWNER is served: the stricter
+ * of the Memory's own §10 rung (read under `precisionClamp`, exactly as `publicationPrecision`
+ * reads it) and its owner's ceiling for the Memory's audience. Hand the result to
+ * `memoryPlaceLabelsForNonOwner(row, true)` / `publicationPrecision(row, true)`: with the clamp
+ * on, the composed value is what they read. An unreadable ceiling is `hidden` (audienceCeilingFor).
+ */
+export function rowAtNonOwnerRung<T extends { owner_id?: unknown; visibility?: unknown; location_precision?: unknown }>(
+  row: T,
+  precisionClamp: boolean,
+  ceilings: AudienceCeilings | undefined,
+): T & { location_precision: MemoryLocationPrecision } {
+  return { ...row, location_precision: withAudienceCeiling(publicationPrecision(row, precisionClamp), ceilings, row) };
 }

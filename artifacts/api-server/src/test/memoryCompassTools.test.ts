@@ -103,7 +103,7 @@ interface State {
   /** §10: the dedicated `id, location_precision` read fails. */
   rungReadError?: boolean;
   /** Per-Memory column overrides on the fixture rows, by id. */
-  patch?: Record<string, Record<string, unknown>>;
+  patch?: Record<string, Record<string, unknown>>; /** census-highlights-memories §CD (H262): extra fixture tables (the catalog `places`, `memory_corrections`), and tables whose reads fail. On this line so no cited line moves. */ extra?: Record<string, any[]>; failTables?: string[];
 }
 
 function memory(over: Record<string, unknown>): Record<string, unknown> {
@@ -178,7 +178,7 @@ interface Client { client: any; writes: Array<{ table: string; op: string }>; pr
 
 function makeClient(state: State = {}): Client {
   const db = fixture();
-  if (state.placeCoords) db.discovery_places = db.discovery_places!.map((p) => ({ ...p, ...state.placeCoords }));
+  if (state.placeCoords) db.discovery_places = db.discovery_places!.map((p) => ({ ...p, ...state.placeCoords })); if (state.extra) Object.assign(db, state.extra);
   const writes: Array<{ table: string; op: string }> = [];
   if (state.patch) db.memories = db.memories!.map((m) => (state.patch![m.id] ? { ...m, ...state.patch![m.id] } : m));
   if (state.precisionGate === "on" || state.precisionGate === "off") {
@@ -201,7 +201,7 @@ function makeClient(state: State = {}): Client {
       return _limit !== null ? rows.slice(0, _limit) : rows;
     };
     const injected = () => {
-      if (table === "feature_flags" && state.precisionGate === "unreadable") return { message: "feature_flags read blew up" };
+      if (state.failTables?.includes(table)) return { message: `${table} read blew up` }; if (table === "feature_flags" && state.precisionGate === "unreadable") return { message: "feature_flags read blew up" };
       if (table === "memories" && state.rungReadError && _cols.includes("location_precision")) return { message: "rung read blew up" };
       if (table === "blocks" && state.blocksError) return { message: "blocks read blew up" };
       if (table === "memory_tags" && state.tagsError) return { message: "tags read blew up" };
@@ -897,7 +897,7 @@ describe("§10 — the owner's location-precision rung reaches the Compass Memor
       assert.deepEqual(await ask("city"), [M_OWN_PUBLIC], "Bob's Memory at `city` matched a placeId question");
       assert.deepEqual(await ask("venue"), [M_BOB_TAGGED, M_OWN_PUBLIC].sort(), "control: at `venue` it matches");
       const byCanon: any = await executeMemoryCompassTool(makeClient({ patch: VENUE_PATCH, precisionGate: "on", rungs: { [M_BOB_TAGGED]: "city" } }).client, ALICE, "memory_get_place_history", { placeId: CANON });
-      assert.deepEqual(byCanon.visits, [], "the canonical location id is a venue id too");
+      const neverSeen: any = await executeMemoryCompassTool(makeClient({ patch: VENUE_PATCH, precisionGate: "on", rungs: { [M_BOB_TAGGED]: "city" } }).client, ALICE, "memory_get_place_history", { placeId: "9e9e9e9e-0000-4000-8000-00000000abcd" }); assert.equal(byCanon.visits, undefined, "the canonical location id is a venue id too: no visit is served for it"); assert.deepEqual(byCanon, neverSeen, "and it answers exactly as a place the viewer never saw (census-highlights-memories §CD, H262: 'not known', so the answer is no oracle for where the withheld Memory is)");
     });
 
     it("the trip id is a CITY fact (wave-6 verifier L6b F1): kept at `city`, withheld at `country` / `hidden` / unreadable", async () => {
@@ -973,5 +973,102 @@ describe("§10 — the owner's location-precision rung reaches the Compass Memor
       assert.deepEqual([bare.city, bare.country, bare.place_id, bare.trip_id], [null, null, null, null], "fixture: no words, no place, trip withheld");
       assert.equal(bare.place_withheld, true, "a withheld trip is a withheld place fact");
     });
+  });
+});
+
+/* ── census-highlights-memories §CD (H262): §28.3 on the Compass Memory tools ──
+ * "Never query a semantic substitute for an unknown canonical place or person and
+ * pretend it is the requested entity." Before §CD the place history answered an
+ * unknown place id as an empty history and matched a city by substring, and the
+ * shared tool answered an id that is nobody as "nothing shared". */
+describe("§28.3 (H262) — the Compass Memory tools answer an unknown place or person as unknown, never with a substitute", () => {
+  const NEVER = "9e9e9e9e-0000-4000-8000-00000000abcd";
+  const CATALOG_ONLY = "9e9e9e9e-0000-4000-8000-00000000c47a";
+  const ASSERTED = "9e9e9e9e-0000-4000-8000-00000000a55e";
+  const history = (state: State, args: Record<string, unknown>) => executeMemoryCompassTool(makeClient(state).client, ALICE, "memory_get_place_history", args) as Promise<any>;
+
+  it("a place id that is no catalog place and on none of the user's Memories or corrections is refused as NOT KNOWN — not an empty history", async () => {
+    const out = await history({}, { placeId: NEVER });
+    assert.equal(out.authorized, false, JSON.stringify(out));
+    assert.match(out.reason, /not known/);
+    assert.equal(out.visits, undefined, "no history, empty or otherwise, is offered in its place");
+  });
+
+  it("control: a catalog place the user has no Memory of is KNOWN — an empty history, not a refusal", async () => {
+    const out = await history({ extra: { places: [{ id: CATALOG_ONLY }] } }, { placeId: CATALOG_ONLY });
+    assert.notEqual(out.authorized, false, JSON.stringify(out));
+    assert.deepEqual(out.visits, []);
+  });
+
+  it("a place the user ASSERTED through a correction is theirs (§9, H-16): known, even while no stored row names it", async () => {
+    const out = await history({ extra: { memory_corrections: [{ id: "c1", owner_id: ALICE, field: "place", kind: "assert", place_id: null, canonical_location_id: ASSERTED }] } }, { placeId: ASSERTED });
+    assert.notEqual(out.authorized, false, JSON.stringify(out));
+    assert.deepEqual(out.visits, []);
+    const someoneElses = await history({ extra: { memory_corrections: [{ id: "c2", owner_id: BOB, field: "place", kind: "assert", place_id: null, canonical_location_id: ASSERTED }] } }, { placeId: ASSERTED });
+    assert.equal(someoneElses.authorized, false, "another person's correction does not make a place the user's");
+  });
+
+  it("a catalog that cannot be read is 'could not be checked', never 'not known' and never an empty history", async () => {
+    const out = await history({ failTables: ["places"] }, { placeId: NEVER });
+    assert.equal(out.authorized, false);
+    assert.match(out.reason, /could not be checked/);
+    assert.doesNotMatch(out.reason, /not known/);
+  });
+
+  it("a city is matched EXACTLY (case, composition and outer space aside) — 'san' is not San Francisco", async () => {
+    const state: State = { patch: { [M_OWN_ONLYME]: { location_city: "San Francisco" } } };
+    const cities = async (city: string) => ((await history(state, { city })).visits ?? []).map((v: any) => v.memory_id);
+    assert.deepEqual(await cities("san"), [], "a substring of a city is a different, unknown city");
+    assert.deepEqual(await cities("Francisco"), []);
+    assert.deepEqual(await cities("san francisco"), [M_OWN_ONLYME]);
+    assert.deepEqual(await cities("  SAN FRANCISCO "), [M_OWN_ONLYME]);
+  });
+
+  it("memory_get_shared: a person id that is no profile is refused exactly as a hidden person, never answered as 'nothing shared'", async () => {
+    const nobody: any = await executeMemoryCompassTool(makeClient().client, ALICE, "memory_get_shared", { personId: NEVER });
+    const hidden: any = await executeMemoryCompassTool(makeClient().client, ALICE, "memory_get_shared", { personHandle: "nobody-at-all" });
+    assert.equal(nobody.authorized, false, JSON.stringify(nobody));
+    assert.deepEqual(nobody, hidden, "the same opaque refusal as a handle that resolves to no one");
+    const carl: any = await executeMemoryCompassTool(makeClient().client, ALICE, "memory_get_shared", { personId: CARL });
+    assert.notEqual(carl.authorized, false, "control: a real person's id is answered");
+  });
+});
+
+/* ── census-highlights-memories §CD (H33): the owner's per-audience ceiling reaches the Compass Memory tools ──
+ * memory_visibility_policies (3997) is applied in production and its switch is ON. Before §CD
+ * these tools applied §10's per-Memory rung alone, so an owner's `country` ceiling for `public`
+ * still let a public Memory's city and venue out to the model answering another person. */
+describe("§3.6 / §28.7 (H33) — the owner's ceiling for a Memory's audience bounds what the Compass Memory tools give another person", () => {
+  const POLICY_ON = { flag: "memory_visibility_policies_enabled", enabled: true };
+  const PRECISION_ON = { flag: "memory_location_precision_enabled", enabled: true };
+  const PLACE = { [M_BOB_TAGGED]: { location_city: "Da Nang", location_country: "Vietnam", place_id: PLACE_ID } };
+  const read = async (viewer: string, state: State) => (await executeMemoryCompassTool(makeClient({ patch: PLACE, rungs: { [M_BOB_TAGGED]: "exact" }, ...state }).client, viewer, "memory_get", { memoryId: M_BOB_TAGGED }) as any).memory;
+  const words = (m: any) => [m.city, m.country, m.place_id];
+  const policy = (audience: string, rung: string) => [{ owner_id: BOB, audience, location_precision: rung }];
+
+  it("Bob's `public` ceiling `country`: Alice is given the country only — no city, no place id — though his own rung is `exact`", async () => {
+    const m = await read(ALICE, { extra: { feature_flags: [PRECISION_ON, POLICY_ON], memory_visibility_policies: policy("public", "country") } });
+    assert.deepEqual(words(m), [null, "Vietnam", null]);
+    assert.equal(m.place_withheld, true);
+  });
+
+  it("`hidden`: no place words at all", async () => {
+    assert.deepEqual(words(await read(ALICE, { extra: { feature_flags: [PRECISION_ON, POLICY_ON], memory_visibility_policies: policy("public", "hidden") } })), [null, null, null]);
+  });
+
+  it("the ceiling holds with §10's gate OFF: it is the owner's own policy, not the per-Memory rung", async () => {
+    assert.deepEqual(words(await read(ALICE, { extra: { feature_flags: [POLICY_ON], memory_visibility_policies: policy("public", "country") } })), [null, "Vietnam", null]);
+  });
+
+  it("a policy table that cannot be read is `hidden` — never `exact`", async () => {
+    assert.deepEqual(words(await read(ALICE, { extra: { feature_flags: [PRECISION_ON, POLICY_ON] }, failTables: ["memory_visibility_policies"] })), [null, null, null]);
+  });
+
+  it("controls: no ceiling row, a ceiling for ANOTHER audience, the policy switch off, and the owner's own read are unchanged", async () => {
+    const full = ["Da Nang", "Vietnam", PLACE_ID];
+    assert.deepEqual(words(await read(ALICE, { extra: { feature_flags: [PRECISION_ON, POLICY_ON], memory_visibility_policies: [] } })), full, "no ceiling");
+    assert.deepEqual(words(await read(ALICE, { extra: { feature_flags: [PRECISION_ON, POLICY_ON], memory_visibility_policies: policy("followers", "hidden") } })), full, "a followers ceiling does not bound a public Memory");
+    assert.deepEqual(words(await read(ALICE, { extra: { feature_flags: [PRECISION_ON], memory_visibility_policies: policy("public", "hidden") } })), full, "switch off");
+    assert.deepEqual(words(await read(BOB, { extra: { feature_flags: [PRECISION_ON, POLICY_ON], memory_visibility_policies: policy("public", "hidden") } })), full, "the owner's own Memory");
   });
 });

@@ -7171,3 +7171,90 @@ and type. It then re-applies 3911 and checks the definition's md5 is restored ex
 **Rollback.** `db/rollback/2026-10-23-3911-memory-kernel-create-participants-rollback.sql` re-creates 2711's definition
 verbatim (the md5 above) with its grants, then delete 3911's ledger row. The routes keep their pre-3911 arms, so
 nothing breaks.
+
+## 2026-10-24 — `3912_memory_kernel_item_visibility_and_moderation_restore.sql`, written and NOT applied anywhere (census drive, Highlights & Memories batch 3)
+
+**What it is.** A `CREATE OR REPLACE` of `public.memory_kernel_execute(jsonb)`. It is 3911's function byte for byte,
+plus two commands, so the last two canonical Memory writes outside the kernel now cross it (census-highlights-memories
+§CC):
+
+1. **`CHANGE_ITEM_VISIBILITY`.** A photo's own audience (§10, 3672): `memory_items.visibility` is NULL (it inherits
+   the Memory's audience) or `only_me`. The owner-checked write and `memory.visibility_changed` happen in one
+   transaction. A hidden photo's event states `visibility: only_me`, which is what tells a §18 consumer to re-derive.
+   A photo that is not on the Memory is `MEMORY_ITEM_NOT_FOUND`. Any value other than `only_me` or null is
+   `MEMORY_COMMAND_MALFORMED`.
+2. **`MODERATION_RESTORE_MEMORY`.** The restore an upheld appeal performs. The actor is the moderator, and must hold
+   `profiles.role = 'admin'` (otherwise the new reason `MEMORY_AUTH_NOT_MODERATOR`). The command must name the
+   Memory's owner (otherwise `MEMORY_NOT_FOUND`). It reverses a moderation removal (`removed` → `published`) and
+   nothing else. Every other state is `MEMORY_LIFECYCLE_INVALID_TRANSITION`, so an owner's deletion stays terminal.
+   A restore that carries a `patch` is `MEMORY_COMMAND_MALFORMED` and writes nothing: it shares the UPDATE arm, so a
+   patch would otherwise change the owner's title, caption, audience or place in the moderator's name. The caller
+   (`resolveAppeal`) sends `select: "id,state"`, so the receipt kept under the moderator's id holds only those two keys.
+   It emits `memory.corrected`, DELETED → ACTIVE.
+
+The signature, SECURITY INVOKER, the pinned `search_path`, the grants and every other branch are 3911's. No table,
+column, row or flag is touched.
+
+**Order.** It requires 3911. The `$pre$` block refuses a kernel without 3911's writes, so 3912 can never discard them.
+It also requires 3672's `memory_items.visibility` and `profiles.role`, both of which sort before it.
+
+**Order-independent with the API.** If the API ships first, a 2711 or 3911 kernel answers the new commands with
+`MEMORY_COMMAND_UNKNOWN_TYPE`, and both routes then run their pre-3912 writes exactly as today (their compat arms). If
+3912 is applied first, nothing calls the new commands until the API ships.
+
+**A behaviour change, stated.** Before this, an upheld Memory appeal set `state='published'` on any of the
+appellant's Memories, including one its owner had deleted. That broke §5's terminal DELETED state and undid a §21
+purge. After 3912 plus this API, a Memory that is not `removed` is a restoration a moderator must decide by hand
+(`restore_requires_policy`), and an owner-deleted one matches nothing. Nothing in the API writes `removed` today
+(lib/memoryCommandBus.ts), so no current restore is lost.
+
+**Proofs.** `src/test/db/memoryKernelItemVisibilityRestore.db.test.ts`, V1–V5, R1–R7, H1–H2:
+
+- **V1–V5:** the photo switch over HTTP, the kernel off, and the compat arm on 3911.
+- **R1–R6:** the appeal restore as the appeals route calls it, including replay, refusal, the kernel off and the compat arm.
+  R1 also asserts the moderator's receipt holds only `id` and `state`.
+- **R7:** a restore that carries a `patch`, sent straight to the function, is `MEMORY_COMMAND_MALFORMED` and writes
+  nothing; the same command without it changes the state and nothing else.
+- **H1–H2:** the outbox heartbeat, which needs no migration.
+
+Each case asserts equal `xmin` between the change and its event, and that the route wrote nothing to the Memory
+aggregate itself. 12 TypeScript and 8 SQL mutants of this change, all killed (census §CC.3). The verifier fixes of
+2026-10-24 add one of each, both killed: the restore without `select` (`appealReversalAffectedRows.test.ts` and R1
+red) and 3912 without the patch guard (R7 red).
+
+**Rollback.** `db/rollback/2026-10-24-3912-memory-kernel-item-visibility-and-moderation-restore-rollback.sql`
+re-creates 3911's definition verbatim with its grants, then delete 3912's ledger row. The routes' compat arms take over.
+
+## 2026-10-24 — `3913_memory_kernel_tag_block_gate.sql`, written and NOT applied anywhere (census drive, Highlights & Memories batch 4)
+
+**What it is.** A `CREATE OR REPLACE` of `public.memory_kernel_execute(jsonb)`: 3912's function byte for byte, plus the
+block gate on tagging (census-highlights-memories §CD):
+
+1. **CREATE_MEMORY** never tags a person the owner has blocked, or a person who has blocked the owner
+   (`public.blocks`, either direction). Such a person is SKIPPED, as an id with no profile is (3911): the create
+   succeeds, and the answer and `memory.created` name only the people actually tagged. Skipped, not refused, because a
+   refusal would tell the owner about another person's block.
+2. **ADD_PERSON** (a tagged person's consent) across a block is refused with the INTERNAL reason `MEMORY_AUTH_BLOCKED`,
+   audited. The API answers it byte for byte as a tag that does not exist (404 "Tag not found", no reason on the wire).
+   REMOVE_PERSON is never gated.
+
+The gate is one predicate inside the command's transaction: a blocks table that cannot be read raises, and the whole
+command rolls back. The signature, SECURITY INVOKER, the pinned `search_path`, the grants and every other branch are
+3912's. No table, column, row or flag is touched.
+
+**Order.** After 3911 and 3912. The `$pre$` block refuses a kernel without 3912's commands (and requires
+`public.blocks (blocker_id, blocked_id)`), so 3913 can never discard 3911's or 3912's writes. The postcondition checks
+both gate markers.
+
+**Order-independent with the API.** The API filters blocked people out of a create, a trip memory and a consent
+BEFORE it calls any kernel, and `notifyTagged` re-checks before it writes a notification or sends a push. So with 2711,
+3911, 3912 or 3913 installed, and in either deploy order, nobody blocked is tagged or notified once the API ships.
+3913 is the same rule held by the database for every other caller.
+
+**Proofs.** `src/test/db/memoryTagBlockGate.db.test.ts`, 40/40: G1–G4, R1 and F1–F4 on all four kernels (both block
+directions; the notification and the push; an unreadable blocks table), K1–K3 on 3913 called directly, H1 for the
+wire. 10 TypeScript and 7 SQL mutants of the gate, all killed (census §CD.3).
+
+**Rollback.** `db/rollback/2026-10-24-3913-memory-kernel-tag-block-gate-rollback.sql` re-creates 3912's definition and
+comment verbatim with its grants (measured: md5 `207e80ff…`, comment md5 `fe1d33b5…`), then delete 3913's ledger row.
+The API's own gate keeps holding.
