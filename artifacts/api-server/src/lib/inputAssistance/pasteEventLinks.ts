@@ -32,6 +32,7 @@ export const INPUT_PASTE_EVENT_LINKS_FLAG = 'input_paste_event_links_enabled';
 
 /** The web hosts that serve Portava's share pages (app.json's intent filters + the canonical origin). */
 export const PORTAVA_LINK_HOSTS: ReadonlySet<string> = new Set([
+  'rumazi.com',
   'portava.replit.app',
   'portava.app',
   'www.portava.app',
