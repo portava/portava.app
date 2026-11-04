@@ -264,8 +264,11 @@ describe("the real tree, against the current capture", () => {
   });
 
   it("a function only production has is not declared (negative control)", () => {
-    assert.ok(!real.functions.has("commit_media_upload_chunk"));
-    assert.ok(prod.functions.includes("commit_media_upload_chunk"));
+    // commit_media_upload_chunk served here until 4001 codified it on 2026-11-04;
+    // the journey-shadow programme's functions are still production-only.
+    assert.ok(!real.functions.has("set_journey_observation_consent_v1"));
+    assert.ok(prod.functions.includes("set_journey_observation_consent_v1"));
+    assert.ok(real.functions.has("commit_media_upload_chunk"), "4001 declares the upload commit now");
   });
 
   it("nothing in production is undeclared and unrecorded", () => {
@@ -290,13 +293,17 @@ describe("the real tree, against the current capture", () => {
     }
   });
 
-  it("the ratchet's columns are the list checkSchemaReferences tolerates, and still include the nine it kept by hand", () => {
+  it("the ratchet's columns are the list checkSchemaReferences tolerates: the six journey columns it kept by hand, and no longer the three lease columns 4002 declares", () => {
     const cols = undeclaredProductionColumns();
     for (const c of [
-      "location_sessions.journey_purpose",
       "user_deletion_requests.execution_lease_expires_at",
       "user_deletion_requests.execution_started_at",
       "user_deletion_requests.execution_token",
+    ]) {
+      assert.ok(!cols.has(c), `${c} is declared by 4002 since 2026-11-04 and must no longer be tolerated as undeclared`);
+    }
+    for (const c of [
+      "location_sessions.journey_purpose",
       "user_location_preferences.journey_consent_granted_at",
       "user_location_preferences.journey_consent_revoked_at",
       "user_location_preferences.journey_consent_scope",

@@ -129,32 +129,6 @@ export interface RatchetEntry {
 const CENSUS_NOTE =
   'docs/architecture/census-media.md, "Note (2026-10-24, capability refresh, PR #788)"';
 
-/**
- * Group 1 — new between the 2026-09-22 and 2026-10-24 captures: a chunked-upload
- * store, plus three media_assets columns.
- */
-const CHUNKED_UPLOAD_STORE: RatchetEntry = {
-  decision: "owner-pending",
-  note:
-    "A chunked-upload store that reached production between the 2026-09-22 and 2026-10-24 captures. " +
-    "No code in this tree reads or writes any of it; the tree's own resumable transport (census-media §37) " +
-    "uses storage parts, not these tables. Production holds rows — 3 media_upload_sessions, and 3 media_assets " +
-    "rows with hls_path set and subtitle_processing_status moved off its default — so code outside this tree " +
-    `wrote them. The DDL is transcribed in full at ${CENSUS_NOTE}. RLS is on with no policy; grants reach ` +
-    "postgres and service_role only. Owner decision pending: codify (a migration recording that DDL), drop, or keep.",
-};
-
-/** Group 2 — long-standing: a deletion execution lease on user_deletion_requests. */
-const DELETION_LEASE: RatchetEntry = {
-  decision: "owner-pending",
-  note:
-    "A deletion execution lease on user_deletion_requests, in every capture since 2026-09-07 and on " +
-    "checkSchemaReferences' hand-kept UNDECLARED_LIVE_COLUMNS since 2026-09-04 (that list is now derived from " +
-    "this ratchet). No row holds an execution_token. The 'executing' status itself IS declared, by 2178; the " +
-    `three columns, their CHECK and their partial index are not. Recorded at ${CENSUS_NOTE}. ` +
-    "Owner decision pending: codify, drop, or keep.",
-};
-
 /** Group 3 — long-standing: the dormant journey-shadow programme. */
 const JOURNEY_SHADOW: RatchetEntry = {
   decision: "owner-pending",
@@ -181,30 +155,15 @@ function entries(
  * Production objects no migration in this tree declares, keyed `kind:name`
  * (`column:table.column`). Seeded 2026-11-04 from the three groups the
  * 2026-10-24 capability refresh recorded, re-measured against the 2026-11-04
- * capture: nothing has been added, codified or dropped since.
+ * capture. Later the same day the owner chose "codify" for the first two:
+ * 4001_media_upload_store_codified.sql declares the chunked-upload store (two
+ * tables, commit_media_upload_chunk, three media_assets columns) and
+ * 4002_user_deletion_execution_lease_codified.sql the deletion lease (three
+ * user_deletion_requests columns), so their 9 entries are struck. The
+ * journey-shadow programme (44 entries) stays owner-pending.
  */
 export const UNDECLARED_PRODUCTION_OBJECTS: Readonly<Record<string, RatchetEntry>> = {
-  // ── Group 1: the chunked-upload store ──────────────────────────────────────
-  ...entries("table", ["media_upload_sessions", "media_upload_chunks"], CHUNKED_UPLOAD_STORE),
-  ...entries("function", ["commit_media_upload_chunk"], CHUNKED_UPLOAD_STORE),
-  ...entries(
-    "column",
-    ["media_assets.hls_path", "media_assets.subtitle_paths", "media_assets.subtitle_processing_status"],
-    CHUNKED_UPLOAD_STORE,
-  ),
-
-  // ── Group 2: the deletion execution lease ──────────────────────────────────
-  ...entries(
-    "column",
-    [
-      "user_deletion_requests.execution_token",
-      "user_deletion_requests.execution_started_at",
-      "user_deletion_requests.execution_lease_expires_at",
-    ],
-    DELETION_LEASE,
-  ),
-
-  // ── Group 3: the journey-shadow programme ──────────────────────────────────
+  // ── The journey-shadow programme (groups 1 and 2 were codified by 4001 and 4002) ──
   ...entries(
     "table",
     [
