@@ -532,3 +532,37 @@ that exists in no code.
 
 **Held and untouched:** all production flag writes, `post_media` read policy,
 `content_stamps` retention, the editorial-posts work, and the Step C grant.
+
+---
+
+## Superseded in part, 2026-10-03: the live values here are stale
+
+**The dispositions above still stand.** What has gone stale is the column they
+rest on: every "Live" value in this file was read **2026-08-12**, against **168**
+flags. Production held **201 rows, 106 enabled** when re-read on 2026-10-03, and
+several flags this file lists as live (`rent_buddy_available_now_enabled`,
+`trust_caps_enabled`, the `location_phase*` family and others) no longer have a
+row — the retirement migrations this file's rule produced have since been
+applied.
+
+Do not read a flag's production value out of this file. The 2026-10-03 capture,
+the full 201-row list, and — new — what turning each flag ON for hosted testing
+would need are in
+[docs/ops/hosted-testing-flag-map-2026-10-03.md](hosted-testing-flag-map-2026-10-03.md).
+
+Two findings from that re-read bear directly on this file's subject:
+
+- **72 flags are ON in production that every migration seeds OFF**, and
+  `feature_flag_audit_log` holds three rows in its entire history. This file's
+  KEEP/DROP rule asks whether a reader exists; it does not ask whether the
+  value is the one anyone intended, and for 72 flags nothing in the repository
+  can say.
+- **The seed-scanner defect recorded above is easy to reintroduce and was.** A
+  fresh scan written for the re-read used a non-greedy match to the next
+  semicolon and lost 32 names — every `RENT_BUDDY_*` mode flag,
+  `invite_only_beta`, `disable_posting`, `disable_signups`, `disable_messaging`,
+  `compass_ai_enabled` and the `shared_moments_*` children. Anyone writing a
+  third implementation should parse forward respecting `''`-escaped quotes and
+  `--` comments, and should expect 305 distinct seeded names, not 152: this
+  file's count covers `INSERT` statements, and the two migration directories
+  together carry more.
