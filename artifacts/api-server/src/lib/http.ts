@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import type { Request, Response } from "express";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { getServiceClient, isServiceClientReady, _setTestServiceClient } from "./supabase"; import { REVOKED_DEVICE_MESSAGE, endRevokedSession, isRevokedDeviceSession } from "./deviceSessionGate.js";
-export { _setTestServiceClient } from "./supabase"; import { optionalUserFromToken, sendTokenRefusal, resolveAccountRestriction, restrictionRefusal, withRefusalReason } from "./accountStateGate.js"; export { AccountStatusUnavailableError, AccountRestrictedError, optionalUserFromToken, requireUserFromToken, enforceAccountState, resolveAccountRestriction, getGatedUser, rethrowAccountGateRefusal, isAccountGateRefusal } from "./accountStateGate.js"; import { bindIdempotencyKey, type IdempotencyBinding } from "./idempotencyKey"; // one line: census docs cite this file by line (PAY-046, 09 §7, rides on it too)
+export { _setTestServiceClient } from "./supabase"; import { optionalUserFromToken, sendTokenRefusal, resolveGateAccountRestriction, verifiedBearerUser, restrictionRefusal, withRefusalReason } from "./accountStateGate.js"; export { AccountStatusUnavailableError, AccountRestrictedError, optionalUserFromToken, requireUserFromToken, enforceAccountState, resolveAccountRestriction, getGatedUser, rethrowAccountGateRefusal, isAccountGateRefusal } from "./accountStateGate.js"; import { bindIdempotencyKey, type IdempotencyBinding } from "./idempotencyKey"; // one line: census docs cite this file by line (PAY-046, 09 §7, rides on it too)
 
 /**
  * Constant-time comparison for shared secrets (internal API keys, webhook
@@ -291,7 +291,7 @@ export async function requireUser(
   }
 
   const client = (_testClient ?? getServiceClient()!) as SupabaseClient;
-  const { data, error } = await client.auth.getUser(token);
+  const { data, error } = await verifiedBearerUser(client, token); // client.auth.getUser(token), remembered per lib/hotPathCache.ts (lib/accountStateGate.ts)
   if (error || !data?.user) {
     sendTokenRefusal(res, error); // 401 — or 403 `account_restricted` when the auth service refuses the token as banned
     return null;
@@ -348,7 +348,7 @@ export async function requireUser(
   // ban enforcement has been switched off system-wide, and `10` B-4 records
   // that this schema drifts in BOTH directions. Waiving the one error that
   // signals it is how it would go unnoticed.
-  const statusRead = await resolveAccountRestriction(client, data.user.id); // the ONE read path: profiles + user_account_states
+  const statusRead = await resolveGateAccountRestriction(client, data.user.id); // the ONE read path: profiles + user_account_states (only an unrestricted, active answer is remembered, <=30s: lib/hotPathCache.ts)
   if (statusRead.state === "unavailable") {
     (req as any).log?.error?.(
       { userId: data.user.id, reason: statusRead.reason },
@@ -363,7 +363,7 @@ export async function requireUser(
   }
 
   // An IN-FORCE user_account_states row (expires_at NULL or future; an unban
-  // revokes by setting it to now) refuses with 403, read per request — so a token
+  // revokes by setting it to now) refuses with 403, read per request (a ban written on ANOTHER instance: within 30s, lib/hotPathCache.ts) — so a token
   // issued before the ban is refused too. deleted / deactivated / pending_deletion / no profile row are served.
   const accountStatus = statusRead.restriction.kind; // the MODERATION restriction ("none" | "banned" | "suspended"), not profiles.account_status
   if (accountStatus !== "none" && restrictedAccountMayUse(req)) { (req as any).accountRestriction = statusRead.restriction; setLayoverAuditActor(data.user.id); return { client: auditedLayoverClient(client), user: data.user as User }; } if (accountStatus !== "none") res = withRefusalReason(res, statusRead.restriction); // TV-4b allow-list first (lib/restrictedAccountAccess.ts); the 403 below also carries `reason` (lib/accountStateGate.ts)

@@ -215,7 +215,7 @@ export async function applyAccountRestriction(
     },
     { onConflict: "user_id,state" },
   );
-  if (error) return { ok: false, error: String(error.message ?? error.code ?? "user_account_states write failed") };
+  invalidateUserAuthCache(input.userId); if (error) return { ok: false, error: String(error.message ?? error.code ?? "user_account_states write failed") }; // invalidate first, whatever the outcome: an errored write may still have landed
 
   try { terminateUserConnections(input.userId); } catch { /* best effort: the stream's own gate re-runs on reconnect */ }
 
@@ -317,3 +317,10 @@ export async function revokeAccountRestrictions(
   if (!unlock.ok) return { ok: true, revoked, sessionLock: "failed", sessionLockError: unlock.error };
   return { ok: true, revoked, sessionLock: "unlocked" };
 }
+
+// lib/hotPathCache.ts: a ban or suspension written here ends what THIS instance
+// remembers about the account (its verified tokens and its "unrestricted"
+// state), so the restriction refuses the very next request here; another
+// instance refuses within the cache's 30s bound. A lift needs nothing: a
+// restricted state is never remembered. Appended at the foot so no cited line moves.
+import { invalidateUserAuthCache } from "./hotPathCache.js";
