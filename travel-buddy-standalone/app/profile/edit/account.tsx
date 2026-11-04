@@ -1,13 +1,13 @@
 /**
- * Account — email display, account status, reactivate/deactivate/delete flows,
- * and log out. All confirmation flows are preserved verbatim from
+ * Account — email display, download your data, account status,
+ * reactivate/deactivate/delete flows, and log out. All confirmation flows are preserved verbatim from
  * app/settings/index.tsx. Delete uses a two-step confirmation inside a
  * danger-zone card. No unsaved guard (no form fields).
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, Pressable, Alert, ActivityIndicator, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
-import { LogOut, Mail } from 'lucide-react-native';
+import { LogOut, Mail, Download } from 'lucide-react-native';
 import { supabase } from '../../../src/lib/supabase';
 import { useSession } from '../../../src/context/SessionContext';
 import {
@@ -19,6 +19,7 @@ import {
   getAccountStatus, deactivateAccount, reactivateAccount, requestAccountDeletion,
   type AccountStatus,
 } from '../../../src/services/profile';
+import { downloadMyData, dataExportErrorMessage } from '../../../src/services/dataExport';
 
 export default function AccountScreen() {
   const { signOut, isAuthed, configured } = useSession();
@@ -27,6 +28,7 @@ export default function AccountScreen() {
   const [loading, setLoading] = useState(true);
   const [email, setEmail] = useState<string | null>(null);
   const [accountStatus, setAccountStatus] = useState<AccountStatus | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -126,6 +128,20 @@ export default function AccountScreen() {
     );
   }, []);
 
+  // Download your data — the in-app access and portability the privacy policy
+  // promises. The server answers all-or-nothing, so a failure means no file.
+  const handleDownloadData = useCallback(async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const res = await downloadMyData();
+      if (!res.ok) Alert.alert('Could not download your data', dataExportErrorMessage(res.error));
+      else if (!res.complete) Alert.alert('Your data is ready', 'One or more sections were too large to include in full; the file marks which ones.');
+    } finally {
+      setExporting(false);
+    }
+  }, [exporting]);
+
   const handleLogout = useCallback(async () => {
     await signOut();
     router.replace('/(auth)/sign-in');
@@ -152,6 +168,19 @@ export default function AccountScreen() {
 
       {live && (
         <>
+          <SettingsSection title="Your Data">
+            <SettingsRow
+              icon={<Download size={18} color={PP.ink} />}
+              title="Download your data"
+              subtitle="A copy of your profile, posts, trips, follows and settings, as a file"
+              onPress={handleDownloadData}
+              disabled={exporting}
+              right={exporting ? <ActivityIndicator size="small" color={PP.ink} /> : undefined}
+              chevron={!exporting}
+              testID="account-download-data"
+            />
+          </SettingsSection>
+
           <SettingsSection title="Account Status">
             {accountStatus === 'deactivated' ? (
               <SettingsRow

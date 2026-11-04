@@ -18,7 +18,7 @@ import tripCommandsRouter from "../server/trips/commandRoute"; import tripFlight
 import postsRouter from "./posts";
 import followsRouter from "./follows";
 import friendsRouter from "./friends";
-import profileRouter from "./profile";
+import profileRouter from "./profile"; import personalDataExportRouter from "./personalDataExport"; // GET /api/me/export — "Download your data"
 import passportRouter from "./passport";
 import telegraphRouter from "./telegraph";
 import telegraphChatRouter from "./telegraphChat";
@@ -179,7 +179,7 @@ router.use(tripMapProjectionRouter);
 router.use(tripProjectionsRouter);
 router.use(tripCommandsRouter); router.use(tripFlightSegmentsRouter); // 3826: Trips flight segments (census-layover L11)
 router.use(postsRouter);
-router.use(profileRouter);
+router.use(profileRouter); router.use(personalDataExportRouter);
 router.use(followsRouter);
 router.use(friendsRouter);
 router.use(passportRouter);
