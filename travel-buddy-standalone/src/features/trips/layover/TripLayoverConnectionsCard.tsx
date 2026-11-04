@@ -29,6 +29,8 @@ import {
   stateWords, unknownWords, type ConnectionsBody, type FlightEntry, type LayoverConnection,
 } from './tripLayoverConnections.ts';
 import type { ApiRead } from '../shared/tripApi.ts';
+import { recordTripFlightGate } from './tripLayoverConnections.ts';
+import { TripFlightGateControl } from './TripFlightGateControl.tsx';
 
 interface Props {
   tripId: string;
@@ -37,11 +39,12 @@ interface Props {
   start?: typeof startLayoverFromConnection;
   addFlight?: typeof addTripFlight;
   open?: (sessionId: string) => void;
+  recordGate?: typeof recordTripFlightGate;
 }
 
 const EMPTY_ENTRY: FlightEntry = { flight: '', departureAirport: '', arrivalAirport: '', departureLocal: '', arrivalLocal: '' };
 
-export function TripLayoverConnectionsCard({ tripId, load = fetchLayoverConnections, start = startLayoverFromConnection, addFlight = addTripFlight, open }: Props) {
+export function TripLayoverConnectionsCard({ tripId, load = fetchLayoverConnections, start = startLayoverFromConnection, addFlight = addTripFlight, open, recordGate = recordTripFlightGate }: Props) {
   const [read, setRead] = useState<ApiRead<ConnectionsBody> | undefined>(undefined);
   const [starting, setStarting] = useState<string | null>(null);
   const [startResult, setStartResult] = useState<Record<string, ApiWrite<unknown>>>({});
@@ -145,6 +148,7 @@ export function TripLayoverConnectionsCard({ tripId, load = fetchLayoverConnecti
                 <Text style={s.connTitle}>{c.airport} · {c.status === 'detected' ? gapWords(c.gapMinutes) : 'gap unknown'}</Text>
                 <Text style={s.detail}>{c.arrivalSegment.designator ?? 'Flight'} → {c.departureSegment.designator ?? 'flight'} · {bookingWords(c.connectionType)}</Text>
                 {c.terminalChange ? <Text style={s.detail} testID={`trip-layover-terminal-${c.key}`}>Terminal change: {c.arrivalSegment.arrivalTerminal} → {c.departureSegment.departureTerminal}</Text> : null}
+                <TripFlightGateControl tripId={tripId} flight={c.departureSegment} record={recordGate} onRecorded={() => void run()} />{/* census-layover L153: the gate the traveller sees */}
                 {c.status === 'undetermined' ? (
                   <Text style={s.detail} testID={`trip-layover-undetermined-${c.key}`}>Not enough to go on: {unknownWords(c.unknowns)}.</Text>
                 ) : (
