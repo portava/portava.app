@@ -534,10 +534,10 @@ describe("B4.5 — the probe: what establishes the function, and what does not",
 // ═════════════════════════════════════════════════════════════════════════════
 // PASS 12 (independent verification, 2026-10-18) — C2 and C3. Appended: the lines above are counted by the census.
 //
-// C2. The probe's memo was keyed on the CLIENT OBJECT, and getServiceClient() builds a new client on every call
-// (lib/supabase.ts:20, no cache): in production the memo lived one request, so the probe was sent on every promotion
+// C2. The probe's memo was keyed on the CLIENT OBJECT, and getServiceClient() built a new client on every call
+// (lib/supabase.ts:20, no cache then; it is built once per process now, and a cleared test double drops that memo): in production the memo lived one request, so the probe was sent on every promotion
 // door and every accept, not once per TTL. The memo is now process-wide, keyed on the database the client names. These
-// cases use clients AS PRODUCTION BUILDS THEM — real supabase-js objects from getServiceClient(), each a new object —
+// cases use clients AS PRODUCTION BUILDS THEM — real supabase-js objects from getServiceClient(), each a new object (each built after _setTestServiceClient(null)) —
 // with the rig's statement runner in place of their HTTP surface, one client per request.
 // C3. settledLockedSeatRpc caught a THROW but not a RESOLVED non-envelope: `.rpc` resolving undefined crashed the door
 // with a 500 after the leaver's RSVP had already been removed. A non-envelope is now a failed call, exactly as a throw.
@@ -551,7 +551,7 @@ describe("pass 12 C2 — the probe's memo outlives the request: one probe per TT
   const clockAt = (ms: number) => { offsetMs = ms; Date.now = () => realNow.call(Date) + offsetMs; };
   afterEach(() => { Date.now = realNow; });
 
-  /** A client exactly as getServiceClient() builds one in production (a new object per call), reading through the rig. */
+  /** A client exactly as getServiceClient() builds one in production (a new object: _setTestServiceClient(null) drops the memo first), reading through the rig. */
   function productionClient(d: Rig): any {
     _setTestServiceClient(null);
     const real: any = getServiceClient();
@@ -566,7 +566,7 @@ describe("pass 12 C2 — the probe's memo outlives the request: one probe per TT
     const d = current = await world({ present: true, max: 4, state: "open", going: [A1], queue: [[W1, 1, LIVE], [W2, 2, LIVE], [W3, 3, LIVE]] });
     clockAt(10 * 60 * 60 * 1000);
     const [c1, c2, c3] = [productionClient(d), productionClient(d), productionClient(d)];
-    assert.ok(c1 !== c2 && c2 !== c3, "getServiceClient() builds a new client on every call");
+    assert.ok(c1 !== c2 && c2 !== c3, "each _setTestServiceClient(null) drops the memo, so getServiceClient() builds a new client");
     assert.ok(typeof c1.supabaseUrl === "string" && c1.supabaseUrl.length > 0 && c1.supabaseUrl === c2.supabaseUrl && c2.supabaseUrl === c3.supabaseUrl, "every one names the same database");
     const r1 = await as(c1, "POST", `/events/${EV}/waitlist/accept`, "w1");
     const r2 = await as(c2, "POST", `/events/${EV}/waitlist/accept`, "w2");
