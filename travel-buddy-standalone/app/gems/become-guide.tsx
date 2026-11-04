@@ -102,7 +102,7 @@ export default function BecomeGuideScreen() {
     const done = {
       active: { icon: 'ribbon', title: "You're a Local Guide", body: 'Your gems carry the guide badge, and your profile lists the cities you know.' },
       pending: { icon: 'time-outline', title: 'Application sent', body: 'A Portava reviewer looks at every application. Keep adding gems in the meantime; they count toward your guide level.' },
-      paused: { icon: 'pause-circle-outline', title: 'Your guide profile is paused', body: 'Your Local Guide profile is not active right now. If you think that is a mistake, use Report a Problem in Settings.' },
+      paused: { icon: 'pause-circle-outline', title: 'Your guide profile is paused', body: 'Your Local Guide profile is not active right now, so it is not shown to travellers. A Portava reviewer can make it active again.' },
     }[outcome];
     return (
       <SafeAreaView style={styles.root} edges={['top']}>

@@ -169,7 +169,7 @@ export const SECTIONS: DirectorySection[] = [
       { key: 'acc-security',    label: 'Security',           Icon: KeyRound,     iconColor: '#2563EB', route: '/profile/change-password' },
       { key: 'acc-devices',     label: 'Devices',            Icon: Smartphone,   iconColor: '#0891B2', disabled: true },
       { key: 'acc-help',        label: 'Help',               Icon: HelpCircle,   iconColor: '#27AE71', disabled: true },
-      { key: 'acc-report',      label: 'Report a Problem',   Icon: Flag,         iconColor: '#D97706', route: '/profile/edit/reports' },
+      { key: 'acc-report',      label: 'Your Reports',       Icon: Flag,         iconColor: '#D97706', route: '/profile/edit/reports' },
       { key: 'acc-sign-out',    label: 'Sign Out',           Icon: LogOut,       iconColor: '#D94040', action: 'sign-out' },
     ],
   },

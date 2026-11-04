@@ -110,10 +110,10 @@ function ReportedBanner({
         <FlagFill size={28} color={color.signal} />
       </View>
       <Text style={rb.title}>You reported this post</Text>
-      <Text style={rb.sub}>Thank you — our team will review it shortly.</Text>
+      <Text style={rb.sub}>Thank you. A reviewer will look at it. Showing the post again does not withdraw your report.</Text>
       {undoAvailable && (
-        <Pressable style={rb.undoBtn} onPress={onUndo} hitSlop={8}>
-          <Text style={rb.undoLabel}>Undo</Text>
+        <Pressable style={rb.undoBtn} onPress={onUndo} hitSlop={8} accessibilityRole="button" accessibilityLabel="Show the post. Your report stays sent.">
+          <Text style={rb.undoLabel}>Show post</Text>{/* was "Undo": no route withdraws a report, so this only shows the post again */}
         </Pressable>
       )}
     </View>
