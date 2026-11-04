@@ -15,21 +15,20 @@
  * absent from the production CORS allowlist, which is a single value:
  * `ALLOWED_ORIGINS = "https://portava.replit.app"` (.replit [userenv.production]).
  *
- * ## Why portava.replit.app
+ * ## Why rumazi.com
  *
- * It is the origin the travel-buddy-standalone deployment actually serves, per
- * this tree's own configuration — not the legacy tree's:
+ * It is the origin the production deployment serves (rumazi.com fronts the
+ * Replit autoscale deployment; portava.replit.app was its default domain until
+ * 2026-11), per this tree's own configuration:
  *
- *   - app.json  ios.associatedDomains = ["applinks:portava.replit.app"]
+ *   - app.json  ios.associatedDomains = ["applinks:rumazi.com"]
  *   - app.json  android.intentFilters autoVerify=true for
- *               https://portava.replit.app/passport and /u
+ *               https://rumazi.com/passport and /u
+ *   - app.json  expo-router plugin origin https://rumazi.com/
  *   - eas.json  EXPO_PUBLIC_WEB_ORIGIN + EXPO_PUBLIC_API_BASE_URL, preview and
  *               production profiles
  *   - .env.example  EXPO_PUBLIC_WEB_ORIGIN, annotated "must match app.json"
- *   - .replit [userenv.production]  ALLOWED_ORIGINS
- *   - artifacts/travel-buddy/.replit-artifact/artifact.toml (archived at bc1bef404) — the deployment's
- *     production build/run commands point exclusively at
- *     travel-buddy-standalone/scripts/build.js and .../server/serve.js
+ *   - .replit [userenv.production]  EXPO_PUBLIC_API_BASE_URL
  *
  * ## Resolution order
  *
@@ -50,7 +49,7 @@
  */
 
 /** Pinned canonical origin. The only web-domain literal in the tree. */
-export const CANONICAL_APP_URL = 'https://portava.replit.app';
+export const CANONICAL_APP_URL = 'https://rumazi.com';
 
 function stripTrailingSlash(origin: string): string {
   return origin.replace(/\/+$/, '');
@@ -81,8 +80,8 @@ export function canonicalOrigin(): string {
 /**
  * Build an absolute shareable URL from an app-relative path.
  *
- *   canonicalUrl('/posts/abc')  → 'https://portava.replit.app/posts/abc'
- *   canonicalUrl('posts/abc')   → 'https://portava.replit.app/posts/abc'
+ *   canonicalUrl('/posts/abc')  → 'https://rumazi.com/posts/abc'
+ *   canonicalUrl('posts/abc')   → 'https://rumazi.com/posts/abc'
  *
  * Callers are responsible for encoding their own path segments.
  */

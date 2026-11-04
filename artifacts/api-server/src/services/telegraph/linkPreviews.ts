@@ -46,12 +46,12 @@ export const LINK_PREVIEW_RATE = { limit: 20, windowMs: 60_000 } as const;
 
 /**
  * Portava's own web hosts. A link to one is an in-app link, rendered by the app
- * itself, and is never fetched as an "external" preview. The first three are
+ * itself, and is never fetched as an "external" preview. The first four are
  * `lib/inputAssistance/pasteEventLinks.ts#PORTAVA_LINK_HOSTS` (a test holds this
  * set to be a superset of that one); the configured web origins and the storage
  * origin (`lib/mediaUrl.ts#configuredStorageOrigin`) are added at call time.
  */
-const OWN_HOSTS: ReadonlySet<string> = new Set(["portava.replit.app", "portava.app", "www.portava.app"]);
+const OWN_HOSTS: ReadonlySet<string> = new Set(["rumazi.com", "portava.replit.app", "portava.app", "www.portava.app"]);
 
 export function portavaOwnHosts(env: NodeJS.ProcessEnv = process.env, storageOrigin: string | null = configuredStorageOrigin()): Set<string> {
   const out = new Set(OWN_HOSTS);
