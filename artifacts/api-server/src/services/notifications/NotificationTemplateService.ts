@@ -32,6 +32,18 @@ export interface NotificationTemplate {
 
 const tpl = (t: NotificationTemplate): NotificationTemplate => t;
 
+/**
+ * The Find Your Circle screen for one trip or event. The app has no
+ * /circle/:type/:id screen (only /circle, /circle-presence and
+ * /circle-context-settings), so the old `/circle/${contextType}/${contextId}`
+ * opened "This screen doesn't exist." for every circle notification, the
+ * urgent safety alert included. circle-presence reads both as query params.
+ */
+export function circlePresenceUrl({ contextType, contextId }: Record<string, string | undefined>): string {
+  if (!contextType || !contextId) return '/circle';
+  return `/circle-presence?contextType=${encodeURIComponent(contextType)}&contextId=${encodeURIComponent(contextId)}`;
+}
+
 export const TEMPLATES: NotificationTemplate[] = [
   // ── Plans ──────────────────────────────────────────────────────────────────
   tpl({
@@ -387,7 +399,7 @@ export const TEMPLATES: NotificationTemplate[] = [
     defaultChannels: ['in_app', 'push'],
     title: () => 'Leave earlier to make your next stop',
     body: ({ stopTitle }) => stopTitle ? `Travel to ${stopTitle} takes longer than the time left` : 'You may need to leave earlier for your next stop',
-    actionUrl: ({ routePlanId }) => routePlanId ? `/route-plan/${routePlanId}` : '/',
+    actionUrl: ({ routePlanId }) => routePlanId ? `/route/${routePlanId}` : '/', // the screen is app/route/[id]; /route-plan/:id had no screen
   }),
   tpl({
     eventType: 'compass.sense.weather_change',
@@ -891,8 +903,16 @@ export const TEMPLATES: NotificationTemplate[] = [
     defaultChannels: ['in_app', 'push'],
     title: ({ taggerHandle }) => `@${taggerHandle ?? 'someone'} mentioned you`,
     body: ({ context }) => context ?? 'You were mentioned in a post.',
-    actionUrl: ({ sourceType, sourceId }) =>
-      sourceType && sourceId ? `/${sourceType}/${sourceId}` : '/feed',
+    // A mention lives on a post, a comment or a reply, and only /post/:id is a
+    // screen: `/${sourceType}/${sourceId}` built /comment/<id> (no such route)
+    // and the '/feed' fallback has no route either, so a tap landed on Not
+    // found. Producers pass the post's id; without one the inbox is the answer.
+    actionUrl: ({ postId, threadId, sourceType, sourceId }) =>
+      postId ? `/post/${postId}`
+        : threadId ? `/messages/${threadId}`
+          : sourceType === 'post' && sourceId ? `/post/${sourceId}`
+            : sourceType === 'message' ? '/(tabs)/messages'
+              : '/notifications',
   }),
 
   // ── Admin / Moderation ─────────────────────────────────────────────────────
@@ -929,7 +949,7 @@ export const TEMPLATES: NotificationTemplate[] = [
     defaultChannels: ['in_app', 'push'],
     title: ({ actor }) => `${actor} joined your Circle`,
     body: ({ contextTitle }) => `${contextTitle ? `In ${contextTitle} — ` : ''}Find Your Circle is now active.`,
-    actionUrl: ({ contextType, contextId }) => `/circle/${contextType}/${contextId}`,
+    actionUrl: circlePresenceUrl,
   }),
   tpl({
     eventType: 'circle.sharing_paused',
@@ -938,7 +958,7 @@ export const TEMPLATES: NotificationTemplate[] = [
     defaultChannels: ['in_app', 'push'],
     title: ({ actor }) => `${actor} paused their Circle`,
     body: ({ contextTitle }) => `${contextTitle ? `In ${contextTitle} — ` : ''}They won't be visible until they resume.`,
-    actionUrl: ({ contextType, contextId }) => `/circle/${contextType}/${contextId}`,
+    actionUrl: circlePresenceUrl,
   }),
   tpl({
     // Fired when a user's presence sharing expires (e.g. past trip/event end time).
@@ -949,7 +969,7 @@ export const TEMPLATES: NotificationTemplate[] = [
     defaultChannels: ['in_app', 'push'],
     title: () => 'Your Circle sharing ended',
     body: ({ contextTitle }) => `${contextTitle ? `In ${contextTitle} — ` : ''}Your location sharing session has ended automatically.`,
-    actionUrl: ({ contextType, contextId }) => `/circle/${contextType}/${contextId}`,
+    actionUrl: circlePresenceUrl,
   }),
   tpl({
     // Fired when the first member in a context starts sharing (0→1 active transition).
@@ -960,7 +980,7 @@ export const TEMPLATES: NotificationTemplate[] = [
     defaultChannels: ['in_app', 'push'],
     title: ({ contextTitle }) => `Circle is live${contextTitle ? ` · ${contextTitle}` : ''}`,
     body: ({ actor }) => `${actor} started sharing. Find Your Circle is now active.`,
-    actionUrl: ({ contextType, contextId }) => `/circle/${contextType}/${contextId}`,
+    actionUrl: circlePresenceUrl,
   }),
   tpl({
     eventType: 'circle.checkin',
@@ -972,7 +992,7 @@ export const TEMPLATES: NotificationTemplate[] = [
       statusLabel
         ? `${statusLabel}${contextTitle ? ` · ${contextTitle}` : ''}`
         : `New check-in${contextTitle ? ` in ${contextTitle}` : ''}`,
-    actionUrl: ({ contextType, contextId }) => `/circle/${contextType}/${contextId}`,
+    actionUrl: circlePresenceUrl,
   }),
   tpl({
     // Privacy: body must NOT include venue names, area labels, or any location text.
@@ -984,7 +1004,7 @@ export const TEMPLATES: NotificationTemplate[] = [
     title: ({ contextTitle }) => `Meeting point updated${contextTitle ? ` · ${contextTitle}` : ''}`,
     body: ({ contextTitle }) =>
       `${contextTitle ? `In ${contextTitle} — ` : ''}The host updated the meeting point. Tap to see details.`,
-    actionUrl: ({ contextType, contextId }) => `/circle/${contextType}/${contextId}`,
+    actionUrl: circlePresenceUrl,
   }),
   tpl({
     eventType: 'circle.need_help_host_alert',
@@ -994,7 +1014,7 @@ export const TEMPLATES: NotificationTemplate[] = [
     title: () => 'Circle safety alert',
     body: ({ actor, contextTitle }) =>
       `${actor} may need assistance${contextTitle ? ` during ${contextTitle}` : ''}. Tap to check in with them.`,
-    actionUrl: ({ contextType, contextId }) => `/circle/${contextType}/${contextId}`,
+    actionUrl: circlePresenceUrl,
   }),
 
   // ── Rent a Buddy ─────────────────────────────────────────────────────────────

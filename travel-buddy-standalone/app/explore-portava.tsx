@@ -51,7 +51,7 @@ interface DirectoryItem {
   route?: string;
   /** For items that trigger an action instead of navigation. */
   action?: 'create-hub' | 'sign-out';
-  /** True → muted row, no press, "Coming soon" badge. */
+  /** True → nothing behind it yet: the row is left out of the directory. */
   disabled?: boolean;
 }
 
@@ -68,7 +68,7 @@ export const SECTIONS: DirectorySection[] = [
     data: [
       { key: 'pulse',      label: 'Pulse',      Icon: Zap,           iconColor: '#FF4D2E', route: '/(tabs)/' },
       { key: 'media',      label: 'Media',       Icon: ImageIcon,     iconColor: '#7B5CE5', route: '/(tabs)/media' },
-      { key: 'stories',    label: 'Stories',     Icon: Film,          iconColor: '#DB2777', disabled: true },
+      { key: 'stories',    label: 'Stories',     Icon: Film,          iconColor: '#DB2777', route: '/stories' },
       { key: 'memories',   label: 'Memories',    Icon: BookOpen,      iconColor: '#27AE71', route: '/(tabs)/passport' },
       { key: 'telegraph',  label: 'Telegraph',   Icon: MessageSquare, iconColor: '#2563EB', route: '/(tabs)/messages' },
       { key: 'calls',      label: 'Calls',       Icon: Phone,         iconColor: '#059669', route: '/profile/edit/calling' },
@@ -96,12 +96,12 @@ export const SECTIONS: DirectorySection[] = [
     title: 'Travel',
     data: [
       { key: 'trips',            label: 'Trips',                     Icon: Briefcase,    iconColor: '#7C3AED', route: '/(tabs)/trips' },
-      { key: 'active-trip',      label: 'Active Trip',               Icon: Navigation,   iconColor: '#FF4D2E', disabled: true },
+      { key: 'active-trip',      label: 'Active Trip',               Icon: Navigation,   iconColor: '#FF4D2E', route: '/(tabs)/trips' },
       { key: 'trip-calendar',    label: 'Trip Calendar',             Icon: CalendarDays, iconColor: '#2563EB', disabled: true },
       { key: 'trip-map',         label: 'Trip Map',                  Icon: Map,          iconColor: '#059669', disabled: true },
       { key: 'saved-places',     label: 'Saved Places',              Icon: Bookmark,     iconColor: '#D4A017', route: '/saved' },
       { key: 'boarding-passes',  label: 'Boarding Passes',           Icon: CreditCard,   iconColor: '#4F46E5', disabled: true },
-      { key: 'trip-invitations', label: 'Trip Invitations',          Icon: MailOpen,     iconColor: '#0891B2', disabled: true },
+      { key: 'trip-invitations', label: 'Trip Invitations',          Icon: MailOpen,     iconColor: '#0891B2', route: '/(tabs)/trips' },
       { key: 'trip-requests',    label: 'Trip Requests',             Icon: TicketCheck,  iconColor: '#DB2777', disabled: true },
       { key: 'visa-passport',    label: 'Visa and Passport Tools',   Icon: FileText,     iconColor: '#059669', route: '/profile/edit/passports' },
     ],
@@ -149,7 +149,7 @@ export const SECTIONS: DirectorySection[] = [
       { key: 'payments',        label: 'Payments',          Icon: DollarSign,    iconColor: '#D4A017', disabled: true },
       { key: 'reviews',         label: 'Reviews',           Icon: Star,          iconColor: '#F59E0B', disabled: true },
       { key: 'safety',          label: 'Safety',            Icon: Shield,        iconColor: '#D94040', route: '/profile/edit/safety' },
-      { key: 'safe-return',     label: 'Safe Return',       Icon: LifeBuoy,      iconColor: '#0891B2', disabled: true },
+      { key: 'safe-return',     label: 'Safe Return',       Icon: LifeBuoy,      iconColor: '#0891B2', route: '/safety-history' },
       { key: 'emergency-tools', label: 'Emergency Tools',   Icon: Siren,         iconColor: '#FF4D2E', route: '/profile/edit/emergency-contacts' },
     ],
   },
@@ -159,13 +159,13 @@ export const SECTIONS: DirectorySection[] = [
       { key: 'acc-settings',    label: 'Settings',           Icon: Settings,     iconColor: '#4A4A48', route: '/profile/edit' },
       { key: 'acc-privacy',     label: 'Privacy',            Icon: Lock,         iconColor: '#3B7DED', route: '/profile/edit/privacy' },
       { key: 'acc-notifs',      label: 'Notifications',      Icon: Bell,         iconColor: '#D97706', route: '/profile/edit/notifications' },
-      { key: 'acc-language',    label: 'Language',           Icon: Languages,    iconColor: '#27AE71', disabled: true },
-      { key: 'acc-translation', label: 'Translation',        Icon: Globe,        iconColor: '#059669', disabled: true },
+      { key: 'acc-language',    label: 'Language',           Icon: Languages,    iconColor: '#27AE71', route: '/profile/edit/languages' },
+      { key: 'acc-translation', label: 'Translation',        Icon: Globe,        iconColor: '#059669', route: '/profile/edit/content-language' },
       { key: 'acc-a11y',        label: 'Accessibility',      Icon: Accessibility, iconColor: '#7C3AED', disabled: true },
       { key: 'acc-data',        label: 'Data and Storage',   Icon: Database,     iconColor: '#4F46E5', disabled: true },
       { key: 'acc-blocked',     label: 'Blocked Accounts',   Icon: UserX,        iconColor: '#D94040', route: '/blocked-users' },
       { key: 'acc-muted',       label: 'Muted Accounts',     Icon: VolumeX,      iconColor: '#6B6862', route: '/muted-users' },
-      { key: 'acc-security',    label: 'Security',           Icon: KeyRound,     iconColor: '#2563EB', disabled: true },
+      { key: 'acc-security',    label: 'Security',           Icon: KeyRound,     iconColor: '#2563EB', route: '/profile/change-password' },
       { key: 'acc-devices',     label: 'Devices',            Icon: Smartphone,   iconColor: '#0891B2', disabled: true },
       { key: 'acc-help',        label: 'Help',               Icon: HelpCircle,   iconColor: '#27AE71', disabled: true },
       { key: 'acc-report',      label: 'Report a Problem',   Icon: Flag,         iconColor: '#D97706', route: '/profile/edit/reports' },
@@ -293,8 +293,16 @@ export default function ExplorePortavaScreen() {
   // production, 2026-10-22): the row opened nothing but the (rent-a-buddy)
   // layout's "COMING SOON" gate, so it is not listed until the flag is on.
   const rentABuddyOn = useRentABuddyFlag().enabled;
+  // A `disabled` row has nothing behind it yet. It used to be drawn muted with
+  // a "Coming soon" badge, which made a third of the directory read as
+  // unfinished; such rows are now left out until they get a route.
   const sections = useMemo(
-    () => (rentABuddyOn ? SECTIONS : SECTIONS.map((sec) => ({ ...sec, data: sec.data.filter((item) => item.key !== 'rent-buddy') }))),
+    () => SECTIONS
+      .map((sec) => ({
+        ...sec,
+        data: sec.data.filter((item) => !item.disabled && (rentABuddyOn || item.key !== 'rent-buddy')),
+      }))
+      .filter((sec) => sec.data.length > 0),
     [rentABuddyOn],
   );
 

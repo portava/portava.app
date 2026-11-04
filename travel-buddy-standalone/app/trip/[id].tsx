@@ -80,6 +80,11 @@ function TripDetailScreen() {
   // §17.2's mode as the Today card last read it; §17.3's entry mounts under it when not NORMAL.
   const [attentionMode, setAttentionMode] = useState<string | null>(null);
   const { data: realTrip, loading, error: tripError, reload: reloadTrip } = useTrip(live ? id : undefined);
+  // A deleted or archived trip leaves the traveller's lists (GET /trips/me), so
+  // staying on its page after the action read as if nothing had happened.
+  const leaveDeletedTrip = useCallback(() => {
+    if (router.canGoBack()) router.back(); else router.replace('/(tabs)/trips' as any);
+  }, []);
   // Next best action (Trip Brain wave) — fail-soft null when the server flag
   // is off or the request fails, so TodayNextUp keeps its empty state.
   const { action: nextBestAction } = useNextBestAction(live ? id : null);
@@ -428,7 +433,16 @@ function TripDetailScreen() {
             <ChevronLeft size={22} color={color.signal} />
             <Text style={styles.backText}>My Trip</Text>
           </Pressable>
-          <View style={{ flex: 1 }} />
+          {/* An owner gets up to seven actions here (Chat, Invite, Share Trip,
+              Links, Edit Trip, Remind me, and Rent a Buddy when it is on): about
+              720pt in one row on a ~390pt phone, so Links and Remind me were off
+              the screen. They scroll sideways now, right-aligned when they fit. */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={{ flex: 1 }}
+            contentContainerStyle={styles.topActions}
+          >
           {isAuthed && (
             <Pressable
               style={[styles.topBtn, chatLoading && { opacity: 0.5 }]}
@@ -513,6 +527,7 @@ function TripDetailScreen() {
               <Bell size={15} color={color.ink} /><Text style={styles.topBtnText}>Remind me</Text>
             </Pressable>
           )}
+          </ScrollView>
         </View>
         <TripHero trip={trip} />
 
@@ -809,7 +824,7 @@ function TripDetailScreen() {
             onExtended={(s) => { setShowMissedPrompt(false); setActiveSafeReturnSession(s); }}
           />
         )}
-        {live && isAuthed ? <TripLifecycleCard tripId={trip.id} isOwner={realTrip.ownerId === userId} storedStatus={realTrip.status} exclude={['complete']} onChanged={() => { void reloadTrip(); }} /> : null}{/* Mark as complete — shown to trip owner when trip is not yet completed (WP-10: cancel/archive/delete live in TripLifecycleCard above) */}
+        {live && isAuthed ? <TripLifecycleCard tripId={trip.id} isOwner={realTrip.ownerId === userId} storedStatus={realTrip.status} exclude={['complete']} onChanged={(action) => { if (action === 'delete' || action === 'archive') { leaveDeletedTrip(); return; } void reloadTrip(); }} /> : null}{/* Mark as complete — shown to trip owner when trip is not yet completed (WP-10: cancel/archive/delete live in TripLifecycleCard above) */}
         {live && isAuthed && realTrip?.ownerId === userId && realTrip?.status !== 'completed' && (
           <Pressable
             style={[styles.markCompleteBtn, completingTrip && { opacity: 0.6 }]}
@@ -956,6 +971,7 @@ const nl = StyleSheet.create({
 
 const styles = StyleSheet.create({
   topBar: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.lg, paddingBottom: space.sm, backgroundColor: color.paper, borderBottomWidth: 1, borderBottomColor: color.haze },
+  topActions: { flexGrow: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: space.sm },
   backBtn: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   backText: { ...t.bodyStrong, color: color.signal },
   topBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },

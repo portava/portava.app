@@ -49,6 +49,11 @@ export default function Onboarding() {
   const [homeCity, setHomeCity] = useState('');
   const [homeCountry, setHomeCountry] = useState('');
   const [dateOfBirth, setDateOfBirth] = useState('');
+  // The AgeGate wraps (auth) too, so a new account has already given its date
+  // of birth by the time onboarding renders. GET /me/profile answers
+  // ageGateRequired === false then, and the DOB step is skipped rather than
+  // asked a second time (the profile never returns the date to prefill it).
+  const [dobOnFile, setDobOnFile] = useState(false);
   const [dobError, setDobError] = useState<string | null>(null);
   const [style, setStyle] = useState<TravelStyle>('solo');
   const [picked, setPicked] = useState<Interest[]>([]);
@@ -60,16 +65,18 @@ export default function Onboarding() {
 
   // Same non-blocking availability + min-length validation the identity screen
   // enforces (§23) — reuses the single shared rule set so a handle accepted here
-  // can no longer be rejected on the identity screen. Username is optional: an
-  // empty (or already-owned) handle is idle, never invalid.
+  // can no longer be rejected on the identity screen. Username is REQUIRED:
+  // both the tabs layout and sign-in send a profile without one back here, so
+  // an "optional" username that was left empty reopened onboarding on every
+  // cold start. An already-owned handle is idle, never invalid.
   const {
     status: usernameStatus,
     message: usernameMessage,
     alternatives: usernameAlternatives,
   } = useUsernameAvailability(handle, { skipValue: loadedUsername });
   const usernameBlocking =
-    handle.length > 0 &&
-    (usernameStatus === 'invalid' || usernameStatus === 'taken' || usernameStatus === 'checking');
+    handle.length === 0 ||
+    usernameStatus === 'invalid' || usernameStatus === 'taken' || usernameStatus === 'checking';
 
   const fillHomeFromGps = useCallback(async () => {
     await runFillHomeFromGps(
@@ -120,6 +127,7 @@ export default function Onboarding() {
         if ((p as any).homeCountry) setHomeCountry((p as any).homeCountry);
         if ((p as any).travelStyle) setStyle((p as any).travelStyle as TravelStyle);
         if ((p as any).interests?.length) setPicked((p as any).interests as Interest[]);
+        if ((p as any).ageGateRequired === false) setDobOnFile(true);
       }
       setChecking(false);
     }).catch(() => setChecking(false));
@@ -157,9 +165,10 @@ export default function Onboarding() {
   }
 
   function handleNext() {
-    // Block advancing past the name/handle step while the (optional) username is
+    // Block advancing past the name/handle step while the username is missing,
     // too short, taken, or still being checked — matching the identity screen.
     if (step === 0 && usernameBlocking) return;
+    if (step === 0 && dobOnFile) { setStep(2); return; }
     // Validate DOB step before advancing
     if (step === 1) {
       if (!dateOfBirth) {
@@ -182,6 +191,7 @@ export default function Onboarding() {
   }
 
   function handleBack() {
+    if (step === 2 && dobOnFile) { setStep(0); return; }
     if (step > 0) setStep((s) => s - 1);
   }
 
@@ -202,9 +212,9 @@ export default function Onboarding() {
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
       <View style={styles.progress}>
-        {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
+        {Array.from({ length: TOTAL_STEPS }).map((_, i) => (dobOnFile && i === 1 ? null : (
           <View key={i} style={[styles.dot, i === step && styles.dotActive, i < step && styles.dotDone]} />
-        ))}
+        )))}
       </View>
 
       <ScrollView
@@ -240,7 +250,7 @@ export default function Onboarding() {
                 <Text style={styles.hint}>Maximum 30 characters.</Text>
               </View>
               <View>
-                <Text style={styles.label}>Username (optional)</Text>
+                <Text style={styles.label}>Username *</Text>
                 <TextInput
                   style={styles.input}
                   value={handle}

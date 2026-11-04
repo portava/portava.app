@@ -6,7 +6,7 @@
 import React, { useCallback, useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
-  StyleSheet, RefreshControl,
+  StyleSheet, RefreshControl, Alert,
 } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -55,6 +55,8 @@ export default function EventInvitesScreen() {
     if (res.ok) {
       setInvites((prev) => prev.filter((i) => i.id !== invite.id));
       router.push(`/event/${invite.eventId}` as any);
+    } else {
+      Alert.alert("Couldn't accept invite", res.message ?? 'Please try again.');
     }
   }
 
@@ -63,6 +65,7 @@ export default function EventInvitesScreen() {
     const res = await declineEventInvite(invite.eventId, invite.id);
     setActionLoading(null);
     if (res.ok) setInvites((prev) => prev.filter((i) => i.id !== invite.id));
+    else Alert.alert("Couldn't decline invite", res.message ?? 'Please try again.');
   }
 
   const pending = invites.filter((i) => i.status === 'pending');

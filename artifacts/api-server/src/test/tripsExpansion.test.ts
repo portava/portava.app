@@ -389,6 +389,27 @@ describe("trips-expansion routes", () => {
       assert.equal(r.body.trips[0].id, TRIP_ID);
     });
 
+    it("leaves out archived trips (a deleted trip is archived)", async () => {
+      const ARCHIVED_ID = "99999999-9999-4999-8999-999999999999";
+      const { client } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Paris", destination_city: "Paris",
+            status: "upcoming", visibility: "private", created_at: "2026-01-01T00:00:00Z" },
+          { id: ARCHIVED_ID, owner_id: OWNER_ID, title: "Gone", destination_city: "Rome",
+            status: "archived", visibility: "private", created_at: "2026-01-02T00:00:00Z" },
+        ]},
+        trip_members: { rows: [
+          { trip_id: TRIP_ID, user_id: OWNER_ID, role: "owner", status: "accepted" },
+          { trip_id: ARCHIVED_ID, user_id: OWNER_ID, role: "owner", status: "accepted" },
+        ]},
+      });
+      _setTestClient(client, true);
+
+      const r = await req(port, "GET", "/trips/me", { token: "owner-token" });
+      assert.equal(r.status, 200);
+      assert.deepEqual(r.body.trips.map((t: any) => t.id), [TRIP_ID]);
+    });
+
     it("returns empty array when caller has no trips", async () => {
       const { client } = makeFakeClient();
       _setTestClient(client, true);

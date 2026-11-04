@@ -49,6 +49,7 @@ import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
+import { notifyPostLiked, notifyPostCommented, notifyCommentReplied } from "../services/notifications/socialActivityNotifier.js";
 import { isKillSwitchEngaged, killSwitchStateUnknown, KILL_SWITCH_UNKNOWN_MESSAGE } from '../lib/featureFlags.js';
 import { processImage, makeThumbnail, makeFeedVariant, computePHash } from "../lib/mediaProcessing.js";
 import { stripVideoLocationMetadata, probeVideoContainer, probedDurationSeconds } from "../lib/videoMetadata.js";
@@ -912,7 +913,7 @@ router.post("/posts", async (req, res) => {
                 actorId: user.id,
                 sourceType: 'post',
                 sourceId: (data as any).id,
-                params: { taggerHandle, context: `@${taggerHandle} mentioned you in a post.` },
+                params: { taggerHandle, postId: (data as any).id, context: `@${taggerHandle} mentioned you in a post.` },
               });
               if (row) await notifRouter.route(row);
             }),
@@ -2492,6 +2493,7 @@ router.post("/posts/:postId/like", async (req, res) => {
   const { stampCount } = await stampEntity(sc, user.id, "post", postId);
   void linkOutcomeSignal(sc, user.id, postId, "liked", "route:post_like");
   res.json({ likedByMe: true, likeCount: stampCount });
+  void notifyPostLiked(sc, { actorId: user.id, postId, authorId }); // the author hears about it (socialActivityNotifier.ts)
 });
 
 // Compat wrapper — proxies to content_stamps until mobile clients are migrated.
@@ -2873,7 +2875,7 @@ router.post("/posts/:postId/comments", async (req, res) => {
                 actorId: user.id,
                 sourceType: 'comment',
                 sourceId: (comment as any).id,
-                params: { taggerHandle, context: `@${taggerHandle} mentioned you in a comment.` },
+                params: { taggerHandle, postId, context: `@${taggerHandle} mentioned you in a comment.` },
               });
               if (row) await notifRouter.route(row);
             }),
@@ -2899,6 +2901,10 @@ router.post("/posts/:postId/comments", async (req, res) => {
     },
     commentCount: count, ...commentCountFailed.body(),
   });
+
+  // The post's author hears about the comment (after any @mention of them above,
+  // which the dedup makes the one notification for that comment).
+  void notifyPostCommented(sc, { actorId: user.id, postId, authorId, commentId: (comment as any).id, body });
 
   // Language detection for comment — fire-and-forget.
   if (body.trim()) {
@@ -3545,7 +3551,7 @@ router.post("/posts/:postId/comments/:commentId/replies", async (req, res) => {
                 actorId: user.id,
                 sourceType: 'comment',
                 sourceId: (reply as any).id,
-                params: { taggerHandle, context: `@${taggerHandle} mentioned you in a reply.` },
+                params: { taggerHandle, postId, context: `@${taggerHandle} mentioned you in a reply.` },
               });
               if (row) await notifRouter.route(row);
             }),
@@ -3589,6 +3595,10 @@ router.post("/posts/:postId/comments/:commentId/replies", async (req, res) => {
         : { id: user.id, handle: "traveler", name: "Traveler", avatarUrl: null },
     },
   });
+
+  // The parent comment's author, and the post's author when that is someone
+  // else, hear about the reply (socialActivityNotifier.ts).
+  void notifyCommentReplied(sc, { actorId: user.id, postId, postAuthorId: authorId, parentCommentId: commentId, replyId: (reply as any).id, body });
 });
 
 /* ===========================================================================
