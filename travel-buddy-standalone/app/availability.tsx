@@ -56,7 +56,14 @@ export default function AvailabilityScreen() {
   const [settingQuick, setSettingQuick] = useState<QuickStatus | null>(null);
   const [quickError, setQuickError] = useState<string | null>(null);
 
-  const status = resolveStatus(availability, new Date().toISOString(), 'cebu');
+  // The city is the one a trip window of yours covers today (it was a fixed
+  // 'cebu', so "On a trip" showed only for trips to Cebu).
+  const nowISO = new Date().toISOString();
+  const todaysTripCity = (availability.trips ?? []).find((t) => {
+    const now = Date.parse(nowISO);
+    return now >= Date.parse(t.startDate) && now <= Date.parse(`${t.endDate}T23:59:59`);
+  })?.citySlug;
+  const status = resolveStatus(availability, nowISO, todaysTripCity);
 
   async function onSave() {
     // `saveError` read here would be the value from the render that started
