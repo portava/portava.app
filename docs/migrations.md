@@ -7224,3 +7224,63 @@ adds the three nullable columns (no default, so no row is rewritten), the CHECK 
 rollback, the ledger row is the whole rollback; U0–U2 of `undeclaredObjectsCodified4001And4002.db.test.ts` cover it. After
 4002, `checkSchemaReferences`' tolerated columns are the six journey-shadow ones only
 (`undeclaredProductionObjects.test.ts` pins that the three lease columns are no longer tolerated).
+
+## 2026-11-05 — `4003_journey_shadow_programme_retired.sql`, written and applied to `portava-ci` by hand (a no-op there); NOT applied to production (goes with the next release)
+
+**What it is.** The retirement of the dormant journey-shadow programme from production, on the owner's decision of
+2026-11-05 00:29 UTC ("approve all calls on 50 journey shadow objects", delegating the call to the recommendation on
+record: retire). The programme is migration 2127 on a branch never merged to main, applied to production anyway
+(2976's header establishes the origin; `docs/architecture/census-media.md`, "Note (2026-10-24, capability refresh,
+PR #788)", item 3, records every object with its definition digest). Nothing in this tree reads or writes any of it,
+and no other artifact in the repository names it. The file drops nine `journey_*` tables, the six columns on
+`location_sessions` and `user_location_preferences` with their CHECKs, the 35 functions `check:undeclared-production-objects`
+carried plus 2976's `global_journey_shadow_stop_v1` (the one programme function a file here describes), every trigger
+that calls a programme function wherever it sits (the purge triggers are on the host tables), and the three
+`COMPASS_JOURNEY_*` feature-flag rows that only the programme read (the 2026-11-05 flag census: production-only, read by
+no code). The one row of `journey_retention_health` (job-health counters, no user column) is printed as a NOTICE before
+the drop so the apply log keeps it.
+
+**What it refuses.** It was written without a production read, so it does not assume the programme is still dormant:
+its `$pre$` block raises, and the transaction changes nothing, when any programme table other than
+`journey_retention_health` holds a row, any location session carries `journey_purpose = 'journey_observation_v1'`, any
+preference row has `journey_observation_enabled` on, a `COMPASS_JOURNEY_*` flag is enabled or is one the file does not
+know, a function outside the programme names a programme object in its body, or a view or a foreign key from outside
+the programme depends on a programme table or column. Every DROP is without CASCADE for the same reason. A refusal
+names what it found; the owner decides, and the file is edited, not forced.
+
+**By starting shape:**
+
+- **Production.** Retires the programme as described. Every statement is `IF EXISTS` or catalogue-driven, so a second
+  apply is a no-op.
+- **portava-ci and the local-db harness.** None of it exists (the chain never created it; 2976 refuses to create its
+  stop from nothing), so the file is a strict no-op apart from the ledger row. Applied to portava-ci by hand on
+  2026-11-05 as manual pre-merge certification (ledger row `applied_by = 'manual'`), because the PR run of `live-db.yml`
+  only dry-runs the applier and `check:migration-ledger` fails on a file with no row.
+
+**Shape.** Body inside `BEGIN; … COMMIT;` (a `$pre$` premise block, a catalogue-driven trigger drop, one `DROP TABLE`
+naming all nine tables so their own foreign keys do not matter, the column drops, the top-level `DROP FUNCTION` of the
+stop so `check:security-definer-oracles` sees it leave, a catalogue-driven function drop by identity arguments so an
+overload the tree never recorded cannot survive, the flag-row delete), then two read-only postcondition DO blocks
+after the COMMIT: nothing of the programme remains, and the host tables and the flag table are intact.
+
+**What it does not touch, and the follow-up it leaves.** `lib/locationPurposes.ts`'s `journey_observation` purpose
+and 3753's purpose CHECK on `trip_crew_location_sessions` (an application purpose id, not a column of the programme);
+`lib/d6Classifications.ts` and `lib/deletionDispositions.ts`'s `journey_*` rows; and the 50 ratchet entries in
+`checkUndeclaredProductionObjects.ts`, now decision `drop`. Those entries, the two registries' rows and the purpose's
+table list are struck together on the first production capture taken after the release that applies 4003 (the check
+fails on the "gone" direction until the entries go). 2976 stays in the chain unchanged: it is gated on the stop's
+presence and no-ops once the stop is gone; its `SECURITY_DEFINER_ORACLES.json` entry (which said "if abandoned, the
+function should be DROPPED by a new migration") goes with this file.
+
+**Rollback.** None at the schema level: the programme's DDL is not in this tree (that is why it was on the ratchet), so
+the only way back is the census note's transcription, by hand. On portava-ci and the harness there is nothing to undo;
+deleting the ledger row is the whole rollback there.
+
+**Proofs.** `src/test/db/journeyShadowProgrammeRetired4003.db.test.ts`, J0–J3: the postconditions hold on the replayed
+chain (J0); re-running the body there keeps every host oid and the definition fingerprint (J1); on production's shape,
+rebuilt in a rolled-back transaction from the census note's DDL and the capture's column lists (36 functions plus an
+unrecorded overload, three triggers, three flags, the health row), the body removes all of it, the host rows survive and
+the postconditions hold (J2); each of the nine premises refuses by name and says it changed nothing (J3). Before commit
+the same four properties were run on an embedded PostgreSQL 16 (PGlite) in every starting shape: the chain twice, the
+rebuilt production shape then a second apply, the `$pre$` block and the postconditions alone on both, and the nine
+refusals each leaving the catalogue byte-identical.
