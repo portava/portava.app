@@ -79,6 +79,7 @@ export function ownMessageStatus(input: {
   if (r && r.status === 'SEEN' && r.seenBy > 0) {
     return { kind: 'seen', seenBy: r.seenBy, recipientCount: r.recipientCount };
   }
+  if (r?.delivered === true) return { kind: 'delivered' };
   if (input.receiptsState === 'unavailable') return { kind: 'receipt_unavailable' };
   const d = input.delivery;
   if (d && d.deliveredCount > 0) return { kind: 'delivered' };
@@ -110,6 +111,7 @@ export function ownMessageStatusLabel(status: OwnMessageStatus, opts: { isGroup:
 export interface SeenCandidate {
   id: string;
   createdAt: string;
+  sequence?: number | null;
   deleted?: boolean;
   deliveryStatus?: 'sending' | 'sent' | 'failed' | null;
 }
@@ -129,7 +131,8 @@ export function seenThreshold(messages: readonly SeenCandidate[]): string | null
     if (!isServerMessageId(m.id)) continue;
     const at = Date.parse(m.createdAt);
     if (Number.isNaN(at)) continue;
-    if (at >= bestAt) { best = m; bestAt = at; }
+    const sequenced = Number.isSafeInteger(m.sequence) && Number.isSafeInteger(best?.sequence);
+    if (!best || (sequenced ? m.sequence! > best.sequence! : at >= bestAt)) { best = m; bestAt = at; }
   }
   return best ? best.id : null;
 }

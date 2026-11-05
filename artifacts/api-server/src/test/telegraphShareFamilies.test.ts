@@ -233,7 +233,7 @@ function makeClient(state: State) {
       then(resolve: (v: any) => void, reject?: (e: any) => void) {
         const e = err();
         if (e) return Promise.resolve({ data: null, error: e, count: null }).then(resolve, reject);
-        return Promise.resolve({ data: rowsNow(), error: null }).then(resolve, reject);
+        return Promise.resolve({ data: rowsNow(), error: null, count: (db[table] ?? []).filter(r => filters.every(f => f(r))).length }).then(resolve, reject);
       },
     };
     const proxy: any = new Proxy(target, {
@@ -692,7 +692,7 @@ describe("T265 (wave 5) — the place card carries Discovery's live intelligence
     invalidateCandidateProjectionFlagCache();
     _clearPromotedScopeCache();
     const state: Record<string, unknown> = {
-      places: [{ id: PLACE_ID, name: "Sky36 (now)", city: "Da Nang", neighborhood: "Hai Chau", primary_category: "bar", status: "active", updated_at: "2026-10-01T00:00:00Z" }],
+      places: [{ id: PLACE_ID, name: "Sky36 (now)", city: "Da Nang", neighborhood: "Hai Chau", primary_category: "bar", status: "active", moderation_status: "visible", merged_into_place_id: null, updated_at: "2026-10-01T00:00:00Z" }],
       feature_flags: flags.map((flag) => ({ flag, enabled: true })),
       intel_live_promoted_scopes: [{ scope_key: "|crowd.level" }],
       intel_state_snapshots: opts.failIntel ? { error: { message: "intel read failed" } } : (opts.snapshots ?? []),

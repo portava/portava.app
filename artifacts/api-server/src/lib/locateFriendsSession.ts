@@ -1,3 +1,4 @@
+import { loadPersonalProtectedZones, personalPointSuppressed } from './mapPersonalProtection.js';
 /**
  * locateFriendsSession — the server half of Map spec §12 "Locate My Friends".
  *
@@ -1434,6 +1435,8 @@ export async function readSessionForViewer(
     .in("user_id", otherIds);
   if (positionsError) return { ...EMPTY_READ, status: "unreadable" };
 
+  const personalProtection = await loadPersonalProtectedZones(db, otherIds);
+  if (personalProtection === null) return { ...EMPTY_READ, status: "unreadable" };
   const positions = new Map<string, PositionRow>();
   for (const r of ((positionRows as PositionRow[]) ?? [])) positions.set(r.user_id, r);
 
@@ -1466,16 +1469,19 @@ export async function readSessionForViewer(
   }
 
   const members = otherIds.map((id) => {
+    const personal = personalProtection.get(id) ?? [];
+    const position = positions.get(id);
+    const suppressed = position && typeof position.lat === 'number' && typeof position.lng === 'number' && personalPointSuppressed(personal, { lat: position.lat, lng: position.lng });
     const own = projectMember({
       memberId: id,
       displayName: names.get(id) ?? null,
       sessionId,
-      position: positions.get(id) ?? null,
+      position: position ?? null,
       sessionCeiling,
-      zones,
+      zones: zones === null ? null : [...zones, ...personal],
       nowMs,
     });
-    if (zones === null) return own;
+    if (zones === null || suppressed) return own;
     const scopes: PresenceConsentScope[] = [locateSessionScope(sessionId)];
     const circleScope = circle === null ? null : circleScopeFor(id, circle, circleAccess?.get(id));
     if (circleScope !== null) scopes.push(circleScope);

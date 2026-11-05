@@ -114,7 +114,8 @@ function makeFakeClient(
     from: (table: string) => {
       if (tableErrors.has(table)) return errorBuilder;
 
-      const sourceRows: any[] = [...(state[table] ?? [])];
+      const sourceRows: any[] = (state[table] ?? []).map(row => table === 'places'
+        ? { moderation_status: 'visible', merged_into_place_id: null, ...row } : row);
       const filters: Array<(r: any) => boolean> = [];
       let _rangeStart = 0;
       let _rangeEnd   = Infinity;
@@ -223,7 +224,7 @@ function makeFakeClient(
                   ? _limitN
                   : undefined,
             ));
-          return Promise.resolve({ data: matched, error: null }).then(onF, onR);
+          return Promise.resolve({ data: matched, error: null, count: sourceRows.filter(row => filters.every(filter => filter(row))).length }).then(onF, onR);
         },
       };
       return builder;

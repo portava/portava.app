@@ -1760,10 +1760,17 @@ router.get("/memories/:id", async (req, res) => {
     }
   }
   const participants = projectParticipants(participantCtx, tagRows, participantProfiles);
+  let telegraphSource: boolean | null = false;
+  if (memory.owner_id === user.id) {
+    const source = await sc.from('telegraph_memory_sources').select('memory_id').eq('memory_id', id).maybeSingle();
+    // An absent migration/read failure is not proof there is no source.
+    telegraphSource = source.error ? null : Boolean(source.data);
+  }
 
   res.json({
     memory: {
       ...mapMemory(withCanonicalPayload(safeMemory, canonPayload), user.id), ...(redirectedFrom ? { redirectedFrom } : {}),
+      ...(memory.owner_id === user.id ? { telegraphSource } : {}),
       items: await withMemoryItemRenditions(sc, user.id, ((items.data ?? []) as any[]).filter((it) => !hiddenItems.keys.has(itemKey(id, it.position))).map(mapItem), req.log), // H182: tiny/card/viewer renditions, only behind MEDIA_IMAGE_VARIANTS_ENABLED and 3980's two flags; the original always stays
       tags: participants.participants,
       anonymousParticipants: participants.anonymousCount,

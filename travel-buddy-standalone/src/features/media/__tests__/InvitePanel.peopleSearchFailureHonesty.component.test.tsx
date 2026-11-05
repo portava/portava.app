@@ -19,21 +19,20 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 // NOTE: intentionally exhaustive — requireActual would construct the real
 // Supabase client, whose auto-refresh timer outlives the test environment.
-jest.mock('../../../lib/supabase', () => ({
-  isSupabaseConfigured: true,
-  authedClient: () => null,
-  supabase: {
-    auth: {
-      getSession: async () => ({ data: { session: { access_token: 'tok', expires_at: Math.floor(Date.now() / 1000) + 3600 } } }),
-      refreshSession: async () => ({ data: { session: { access_token: 'tok' } } }),
-    },
-  },
-}));
+jest.mock('../../../lib/supabase', () => {
+  const listeners = new Set();
+  return { isSupabaseConfigured: true, authedClient: () => null, supabase: { auth: { listeners,
+    onAuthStateChange: (listener: unknown) => { listeners.add(listener); return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } }; },
+  } } };
+});
 
 // NOTE: intentionally exhaustive — the ShareSheet this module also exports a
 // panel for pulls messaging's native E2EE deps; it is not rendered here.
 jest.mock('../../../components/ShareSheet.tsx', () => ({ ShareSheet: () => null }));
 
+import { seedObservedOwnerSession, disposeObservedOwnerSession, observedOwnerAccessToken } from '../../../services/__tests__/observedOwnerSessionFixture.ts';
+import { setDiscoveryViewerFromSession } from '../../../services/discoveryViewerScope.ts';
+import { _setTestSupabase, _resetTestSupabase } from '../../../services/apiToken.ts';
 import { InvitePanel } from '../components/MediaActionPanels.tsx';
 
 type Reply = { status: number; body: unknown } | Error;
@@ -55,9 +54,11 @@ const SEARCH_FAILED = /couldn.t search travellers/i;
 const NONE_FOUND = 'No travellers found';
 const pending = (q: string) => deferred.find((d) => d.q === q);
 
-beforeAll(() => { process.env.EXPO_PUBLIC_API_BASE_URL = 'http://api.test'; });
+beforeAll(() => { process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test'; });
 
 beforeEach(() => {
+  setDiscoveryViewerFromSession('owner-a'); seedObservedOwnerSession('owner-a', 'session-a');
+  _setTestSupabase({ auth: { getSession: async () => ({ data: { session: { access_token: observedOwnerAccessToken('owner-a', 'session-a'), expires_at: Math.floor(Date.now() / 1000) + 3600 } } }) } } as any);
   searchReplies = new Map();
   deferred = [];
   deferSearch = false;
@@ -75,7 +76,7 @@ beforeEach(() => {
   });
   (globalThis as any).fetch = fetchMock;
 });
-afterEach(async () => { await act(async () => {}); });
+afterEach(async () => { await act(async () => { disposeObservedOwnerSession(); setDiscoveryViewerFromSession(null); }); _resetTestSupabase(); });
 
 async function open() {
   ui = await render(<InvitePanel momentId="m-1" mediaId={null} onBack={jest.fn()} />);

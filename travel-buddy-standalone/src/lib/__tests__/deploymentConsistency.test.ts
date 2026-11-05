@@ -152,6 +152,15 @@ describe('Sentry: a beta build reports only to an allowlisted beta DSN (lead, 20
     assert.equal(sentryDsnFor(undefined, undefined), undefined);
   });
 
+  it('refuses placeholders and malformed DSNs before native startup in every environment', () => {
+    for (const env of [undefined, '', 'production', 'beta']) {
+      for (const invalid of [undefined, '', 'none', 'undefined', 'https://sentry.io/123', 'file://key@host/1', 'https://key@host/project']) {
+        assert.equal(sentryDsnFor(env, invalid), undefined);
+      }
+    }
+    assert.equal(sentryDsnFor('production', ` ${DSN} `), DSN);
+  });
+
   it("REFUSED: a beta build with any DSN not on the allowlist (production's included) initialises Sentry with none", () => {
     assert.equal(sentryDsnFor('beta', DSN), undefined);
     assert.equal(sentryDsnFor('staging', DSN), undefined);
@@ -163,6 +172,7 @@ describe('Sentry: a beta build reports only to an allowlisted beta DSN (lead, 20
     const init = layout.slice(layout.indexOf('Sentry.init({'), layout.indexOf('Sentry.init({') + 300);
     assert.match(init, /dsn: sentryDsnFor\(process\.env\.EXPO_PUBLIC_DEPLOYMENT_ENV, process\.env\.EXPO_PUBLIC_SENTRY_DSN\),/);
     assert.equal((layout.match(/Sentry\.init\(/g) ?? []).length, 1, 'one init, and it goes through the rule');
+    assert.match(layout, /if \(startupSentryDsn\) Sentry\.init\(/, 'invalid DSNs never initialize the native SDK');
   });
 });
 

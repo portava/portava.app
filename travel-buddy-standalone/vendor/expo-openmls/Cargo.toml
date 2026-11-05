@@ -10,18 +10,19 @@ crate-type = ["lib", "staticlib", "cdylib"]
 
 [dependencies]
 # MLS RFC 9420 implementation.
-# 0.6, not 0.5: the source targets 0.6 APIs and 0.6 is where the StorageProvider
-# persistence model this module depends on is established.
-openmls = { version = "0.6.0", features = ["crypto-subtle"] }
-openmls_rust_crypto = "0.3.0"
-openmls_basic_credential = "0.3.0"
-openmls_traits = "0.3.0"
+# Pinned patched maintenance release: 0.6 failed to persist consumed receive keys
+# (GHSA-qr9h-x63w-vqfm). 0.7.4 also includes later tag/provider security fixes.
+# Legacy 0.6 snapshots are covered by executable compatibility tests.
+openmls = { version = "=0.7.4", features = ["crypto-subtle"] }
+openmls_rust_crypto = "=0.4.4"
+openmls_basic_credential = "=0.4.1"
+openmls_traits = "=0.4.1"
 
 # KNOWN COMPROMISE: MemoryStorage::serialize/deserialize are gated behind
 # `test-utils` upstream ("For testing (KATs in particular)"). They are the only
 # ready-made way to snapshot provider state. Replacing this with a real
 # StorageProvider over SecureStore/SQLCipher is tracked work, NOT done here.
-openmls_memory_storage = { version = "0.3.0", features = ["test-utils"] }
+openmls_memory_storage = { version = "=0.4.1", features = ["test-utils"] }
 
 tls_codec = "0.4"
 

@@ -115,6 +115,41 @@ describe('usePassport — an unread section is never written down as an empty on
     mockGetMyPassportSuggestions.mockReset().mockResolvedValue({ ok: true, data: [] });
   });
 
+  it('renders the profile and ready sections before slow memories or recommendations finish', async () => {
+    let finishMemories!: (value: unknown) => void;
+    let finishSuggestions!: (value: unknown) => void;
+    mockGetMyPassportMemories.mockReturnValue(new Promise((resolve) => { finishMemories = resolve; }));
+    mockGetMyPassportSuggestions.mockReturnValue(new Promise((resolve) => { finishSuggestions = resolve; }));
+    let state!: ReturnType<typeof usePassport>;
+    let tree!: TestRenderer.ReactTestRenderer;
+    await act(async () => { tree = TestRenderer.create(<Probe onState={(s) => { state = s; }} />); });
+    expect(state.profile?.id).toBe('owner-1');
+    expect(state.loading).toBe(false);
+    expect(state.sectionLoading).toEqual({ postcards: false, stamps: false, memories: true });
+    expect(mockSaveSnapshot).not.toHaveBeenCalled();
+    await act(async () => { finishMemories({ ok: true, data: [MEMORY] }); });
+    expect(state.memories).toEqual([MEMORY]);
+    expect(state.sectionLoading.memories).toBe(false);
+    expect(mockSaveSnapshot).toHaveBeenCalledTimes(1);
+    await act(async () => { finishSuggestions({ ok: false, data: [] }); });
+    expect(state.error).toBeNull();
+    await act(async () => { tree.unmount(); });
+  });
+
+  it('reports a profile failure immediately even when a secondary request is still pending', async () => {
+    mockGetMyProfile.mockResolvedValue({ ok: false, data: null, message: 'Profile unavailable' });
+    let finishStamps!: (value: unknown) => void;
+    mockGetMyPassportStamps.mockReturnValue(new Promise((resolve) => { finishStamps = resolve; }));
+    let state!: ReturnType<typeof usePassport>;
+    let tree!: TestRenderer.ReactTestRenderer;
+    await act(async () => { tree = TestRenderer.create(<Probe onState={(s) => { state = s; }} />); });
+    expect(state.loading).toBe(false);
+    expect(state.error).toBe('Profile unavailable');
+    await act(async () => { finishStamps({ ok: true, data: [], total: 0 }); });
+    expect(mockSaveSnapshot).not.toHaveBeenCalled();
+    await act(async () => { tree.unmount(); });
+  });
+
   it('does not persist a snapshot when the Memories read failed', async () => {
     mockGetMyPassportMemories.mockResolvedValue({
       ok: false, message: 'We could not load your memories. Please try again.',

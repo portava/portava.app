@@ -6,6 +6,7 @@ import * as Sentry from '@sentry/react-native';
 // before any call to Location.startGeofencingAsync.
 import '../src/tasks/geofenceExitTask';
 import '../src/tasks/checkpointArrivalTask';
+import '../src/platform/input-assistance/voice/installOnDeviceSpeech';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Platform, Linking, AppState } from 'react-native';
@@ -14,7 +15,8 @@ import { Platform, Linking, AppState } from 'react-native';
 // so that native crashes and JS errors during startup are captured.
 // EXPO_PUBLIC_SENTRY_DSN must be set in the EAS / Replit environment secrets.
 // When the DSN is absent (e.g. local dev without the secret) Sentry is a no-op.
-Sentry.init({
+const startupSentryDsn = sentryDsnFor(process.env.EXPO_PUBLIC_DEPLOYMENT_ENV, process.env.EXPO_PUBLIC_SENTRY_DSN);
+if (startupSentryDsn) Sentry.init({
   dsn: sentryDsnFor(process.env.EXPO_PUBLIC_DEPLOYMENT_ENV, process.env.EXPO_PUBLIC_SENTRY_DSN), // a beta build: only an allowlisted beta DSN (deploymentConsistency.ts)
   // Disable Sentry in dev mode to keep the local console clean.
   enabled: !__DEV__,
@@ -25,10 +27,10 @@ Sentry.init({
 // Warn loudly in non-dev builds when the DSN is missing so the misconfiguration
 // is visible in EAS build logs and device consoles rather than silently dropping
 // all crash reports.
-if (!__DEV__ && !process.env.EXPO_PUBLIC_SENTRY_DSN) {
+if (!__DEV__ && !startupSentryDsn) {
   // eslint-disable-next-line no-console
   console.warn(
-    '[Sentry] EXPO_PUBLIC_SENTRY_DSN is not set — crash reporting is disabled for this build. ' +
+    '[Sentry] EXPO_PUBLIC_SENTRY_DSN is absent or invalid — crash reporting is disabled for this build. ' +
     'Add the secret to the EAS production build profile to enable error tracking.',
   );
 }
@@ -412,6 +414,7 @@ function RootLayoutApp() { // the app; RootLayout (at the foot) renders it only 
                       <Stack
                         screenOptions={{
                           headerShown: false,
+                          freezeOnBlur: Platform.OS !== 'web',
                           contentStyle: { backgroundColor: color.paper },
                           animation: 'slide_from_right',
                         }}

@@ -294,6 +294,15 @@ router.post(
 );
 
 // ── GET /media/:id/actions ────────────────────────────────────────────────────
+/** Null means unreadable, never an invented "not wanted" answer. */
+export async function readViewerMediaIntent(sc: any, userId: string, mediaId: string): Promise<boolean | null> {
+  try {
+    const { data, error } = await sc.from("media_intent_signals").select("media_id")
+      .eq("user_id", userId).eq("media_id", mediaId).maybeSingle();
+    return error ? null : Boolean(data);
+  } catch { return null; }
+}
+
 router.get(
   "/media/:id/actions",
   asyncHandler(async (req, res) => {
@@ -324,7 +333,12 @@ router.get(
       sendError(res, "not_found", "Media item not found");
       return;
     }
-    res.json({ ...result, generatedAt: new Date(nowMs).toISOString() });
+    const wanted = await readViewerMediaIntent(sc, auth.user.id, id);
+    if (wanted === null) {
+      sendError(res, "db_error", "Could not read media interest. Please retry.", { exposeDetail: false });
+      return;
+    }
+    res.json({ ...result, wanted, generatedAt: new Date(nowMs).toISOString() });
   }),
 );
 

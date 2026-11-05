@@ -23,8 +23,8 @@
  * wired into a runner.
  */
 
-import { _reset as resetSecureStore } from 'expo-secure-store';
-import { _resetMls } from 'expo-openmls';
+const { _reset: resetSecureStore } = require('expo-secure-store') as { _reset(): void };
+const { _resetMls } = require('expo-openmls') as { _resetMls(): void };
 import {
   hasGroupSession,
   initGroupAsInitiator,
@@ -35,6 +35,23 @@ import {
   deriveSafetyNumberForThread,
 } from '../mlsSession.ts';
 import { setSecure, SECURE_KEYS } from '../secureStore.ts';
+
+import { seedObservedOwnerSession, disposeObservedOwnerSession } from '../../services/__tests__/observedOwnerSessionFixture.ts';
+import { setDiscoveryViewerFromSession } from '../../services/discoveryViewerScope.ts';
+import { captureObservedOwnerSnapshot } from '../../services/observedOwnerSnapshot.ts';
+import { cryptoStorageKey, closeNativeMessageDatabases } from '../e2ee/nativeSessionStore.ts';
+import { resetFixture } from '../e2ee/__tests__/nativeSqliteFixture.ts';
+jest.mock('../supabase.ts', () => {
+  const listeners = new Set();
+  return { isSupabaseConfigured: true, supabase: { auth: { listeners, onAuthStateChange: (listener: unknown) => { listeners.add(listener); return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } }; } } } };
+});
+jest.mock('@op-engineering/op-sqlite', () => {
+  // NOTE: real SQLite transaction semantics with synthetic cipher capability.
+  return require('../e2ee/__tests__/nativeSqliteFixture.ts');
+});
+beforeEach(() => { closeNativeMessageDatabases(); resetFixture(); setDiscoveryViewerFromSession('user-under-test'); seedObservedOwnerSession('user-under-test', 'session-under-test'); });
+afterEach(() => { closeNativeMessageDatabases(); resetFixture(); disposeObservedOwnerSession(); setDiscoveryViewerFromSession(null); });
+const scopedKey = (key: string) => cryptoStorageKey(captureObservedOwnerSnapshot()!, key);
 
 jest.mock('expo-secure-store');
 jest.mock('expo-openmls');
@@ -51,13 +68,13 @@ const FAKE_KP         = Buffer.from('fake-mls-key-package-v1').toString('base64'
 const USER_ID = 'user-under-test';
 
 async function seedPrivateKeys() {
-  await setSecure(SECURE_KEYS.IDENTITY_PRIVATE_KEY, FAKE_IDENT_PRIV);
-  await setSecure(SECURE_KEYS.IDENTITY_PUBLIC_KEY,  FAKE_IDENT_PUB);
-  await setSecure(SECURE_KEYS.DEVICE_ED25519_PRIVATE_KEY, FAKE_ED_PRIV);
+  await setSecure(scopedKey(SECURE_KEYS.IDENTITY_PRIVATE_KEY), FAKE_IDENT_PRIV);
+  await setSecure(scopedKey(SECURE_KEYS.IDENTITY_PUBLIC_KEY),  FAKE_IDENT_PUB);
+  await setSecure(scopedKey(SECURE_KEYS.DEVICE_ED25519_PRIVATE_KEY), FAKE_ED_PRIV);
   // loadPrivKeys() returns null unless BOTH halves are present, and a null there
   // makes every group operation return null silently.
-  await setSecure(SECURE_KEYS.DEVICE_ED25519_PUBLIC_KEY,  FAKE_ED_PUB);
-  await setSecure(SECURE_KEYS.DEVICE_X25519_PRIVATE_KEY,  FAKE_X25519_PRIV);
+  await setSecure(scopedKey(SECURE_KEYS.DEVICE_ED25519_PUBLIC_KEY),  FAKE_ED_PUB);
+  await setSecure(scopedKey(SECURE_KEYS.DEVICE_X25519_PRIVATE_KEY),  FAKE_X25519_PRIV);
 }
 
 beforeEach(async () => {
@@ -85,7 +102,7 @@ describe('group lifecycle', () => {
 
   it('initGroupAsRecipient returns true', async () => {
     const fakeWelcome = Buffer.from('fake-welcome').toString('base64');
-    const ok = await initGroupAsRecipient('thread-2', fakeWelcome);
+    const ok = await initGroupAsRecipient('thread-2', fakeWelcome, 'mock-pending');
     expect(ok).toBe(true);
   });
 

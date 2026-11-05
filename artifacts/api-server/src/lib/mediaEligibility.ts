@@ -22,6 +22,8 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js"; import { readWholeColumn } from "./feedReads.js"; import { readBlockDirection, readMuteExclusions } from "./exclusionSet.js"; // census-media §47: gate lists read whole, by key
 
+import { filterMediaByCurrentPlace } from "./media/mediaPlaceGovernance.js";
+
 export type FeedType = "for_you" | "following";
 
 /**
@@ -156,6 +158,7 @@ export interface EligibilityResult {
 /** Minimal shape of a candidate row from the DB. */
 export interface MediaCandidate {
   id: string;
+  canonical_place_id?: string | null;
   author_id: string;
   status?: string;
   post_status?: string;
@@ -221,6 +224,12 @@ export async function filterEligibleMediaCandidates(
   if (candidates.length === 0) {
     return { eligible: [], blockFetchFailed: false };
   }
+
+  // All public Media readers (Watch, Grid, World, search and shared single
+  // items) cross this gate. Stored location labels cannot revive a withheld
+  // catalog place. Unreadable policy is a retryable refusal, not empty success.
+  candidates = await filterMediaByCurrentPlace(sc, candidates);
+  if (candidates.length === 0) return { eligible: [], blockFetchFailed: false };
 
   // ── Step 1: Blocks (fail-closed) ───────────────────────────────────────────
   let blockFetchFailed = false;

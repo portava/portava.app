@@ -1,3 +1,20 @@
+import { setDiscoveryViewerFromSession } from '../../discoveryViewerScope.ts';
+import { seedObservedOwnerSession, disposeObservedOwnerSession, observedOwnerAccessToken, observedOwnerSession, emitObservedAuthEvent } from '../../__tests__/observedOwnerSessionFixture.ts';
+
+jest.mock('../../../lib/supabase.ts', () => {
+  const listeners = new Set();
+  return { isSupabaseConfigured: true, supabase: { auth: {
+    listeners,
+    onAuthStateChange: (listener: unknown) => {
+      listeners.add(listener);
+      return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } };
+    },
+  } } };
+});
+const ownerId = '10000000-0000-4000-a000-000000000001';
+const sessionId = 'caption-session';
+const token = observedOwnerAccessToken(ownerId, sessionId);
+
 import { freshToken } from '../../apiToken.ts';
 import { getCaptionTranslationStatus, requestCaptionTranslation, revokeCaptionTranslation, readCaptionTranslationDraft, publishCaptionTranslation } from '../captionTranslation.ts';
 
@@ -13,10 +30,14 @@ function response(value: unknown, overrides: Partial<Response> = {}): Response {
 }
 beforeEach(() => {
   process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
-  jest.mocked(freshToken).mockResolvedValue('synthetic-translation-token');
+  setDiscoveryViewerFromSession(ownerId);
+  seedObservedOwnerSession(ownerId, sessionId);
+  jest.mocked(freshToken).mockResolvedValue(token);
   jest.spyOn(globalThis, 'fetch').mockResolvedValue(response(status));
 });
 afterEach(() => {
+  disposeObservedOwnerSession();
+  setDiscoveryViewerFromSession(null);
   jest.restoreAllMocks(); jest.resetAllMocks(); jest.useRealTimers();
   if (savedBase === undefined) delete process.env.EXPO_PUBLIC_API_BASE_URL;
   else process.env.EXPO_PUBLIC_API_BASE_URL = savedBase;
@@ -31,7 +52,7 @@ it('pins creator bearer traffic to HTTPS and rejects invalid origins, viewers an
   await expect(getCaptionTranslationStatus({ ...source, canEdit: false })).rejects.toThrow();
   expect(freshToken).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
   await getCaptionTranslationStatus(source);
-  expect(jest.mocked(fetch).mock.calls[0]).toEqual([`https://api.test/api/media/caption-translations/${source.assetId}`, expect.objectContaining({ method: 'GET', redirect: 'error', credentials: 'omit', cache: 'no-store', headers: { Authorization: 'Bearer synthetic-translation-token', 'Content-Type': 'application/json' } })]);
+  expect(jest.mocked(fetch).mock.calls[0]).toEqual([`https://api.test/api/media/caption-translations/${source.assetId}`, expect.objectContaining({ method: 'GET', redirect: 'error', credentials: 'omit', cache: 'no-store', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } })]);
   for (const changed of [{ redirected: true }, { url: 'https://foreign.test/stolen' }, { url: 'https://api.test/other' }]) {
     jest.mocked(fetch).mockResolvedValueOnce(response(status, changed));
     await expect(getCaptionTranslationStatus(source)).rejects.toThrow(/redirected/);
@@ -118,11 +139,34 @@ it('bounds token lookup and ignores late token completion without sending privat
 
 it('cancels an abort-ignoring response and rejects oversized or malformed status bodies', async () => {
   const abort = new AbortController();
-  jest.mocked(fetch).mockResolvedValueOnce(response(status, { text: () => new Promise(() => {}) }));
+  let started!: () => void;
+  const reading = new Promise<void>((resolve) => { started = resolve; });
+  jest.mocked(fetch).mockResolvedValueOnce(response(status, { text: () => { started(); return new Promise(() => {}); } }));
   const failed = expect(getCaptionTranslationStatus(source, abort.signal)).rejects.toThrow(/cancelled/);
-  await Promise.resolve(); abort.abort(); await failed;
+  await reading; abort.abort(); await failed;
   jest.mocked(fetch).mockResolvedValueOnce(response(status, { headers: { get: () => '2000001' } as unknown as Headers }));
   await expect(getCaptionTranslationStatus(source)).rejects.toThrow(/too large/);
   jest.mocked(fetch).mockResolvedValueOnce(response({ ...status, allowedPairs: [{ source: 'en', target: 'en' }] }));
   await expect(getCaptionTranslationStatus(source)).rejects.toThrow(/Invalid/);
+});
+
+for (const replacement of ['another account', 'same account new session', 'logout then original session']) {
+  it(`refuses a pending write token after ${replacement}`, async () => {
+    let finish!: (value: string) => void;
+    jest.mocked(freshToken).mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    const pending = requestCaptionTranslation(source, 'en', 'fr', true, status.consentEpoch);
+    const rejected = expect(pending).rejects.toThrow(/session changed/);
+    const nextOwner = replacement === 'another account' ? '10000000-0000-4000-a000-000000000002' : ownerId;
+    if (replacement === 'logout then original session') emitObservedAuthEvent('SIGNED_OUT', null);
+    emitObservedAuthEvent('SIGNED_IN', observedOwnerSession(nextOwner, replacement === 'logout then original session' ? sessionId : 'replacement-session'));
+    setDiscoveryViewerFromSession(nextOwner);
+    finish(observedOwnerAccessToken(nextOwner, replacement === 'logout then original session' ? sessionId : 'replacement-session'));
+    await rejected;
+    expect(fetch).not.toHaveBeenCalled();
+  });
+}
+
+it('does not accept a response decoded after the signed-in session ended', async () => {
+  jest.mocked(fetch).mockResolvedValueOnce(response(status, { text: async () => { emitObservedAuthEvent('SIGNED_OUT', null); return JSON.stringify(status); } }));
+  await expect(getCaptionTranslationStatus(source)).rejects.toThrow(/session changed/);
 });

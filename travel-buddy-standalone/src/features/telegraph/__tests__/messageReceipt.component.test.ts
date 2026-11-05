@@ -54,6 +54,12 @@
 jest.mock('../../../lib/supabase.ts', () => ({ isSupabaseConfigured: true, supabase: null }));
 jest.mock('../../../services/apiToken.ts', () => ({ freshToken: async () => 'test-token' }));
 
+// NOTE: HTTP mapping is isolated here; the real owner boundary has native auth tests.
+jest.mock('../../../services/messagingOwnerRequest.ts', () => ({
+ captureMessagingOwnerRequest: () => ({isCurrent: () => true}),
+ messagingOwnerToken: async () => 'tok-1',
+}));
+
 import {
   canOfferUnsend,
   deriveReceiptState,

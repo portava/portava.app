@@ -1,3 +1,5 @@
+import { PostReferenceCard } from './PostReferenceCard.tsx';
+import { POST_REFERENCE_MEDIA_TYPE } from '../services/postDestinations.ts';
 /**
  * HighlightViewer — full-screen modal highlight player.
  *
@@ -153,6 +155,7 @@ export function HighlightViewer({
   const isOwner = current?.ownerId === currentUserId;
   const currentPinnedAt = current ? pinnedAtOf(current, pinState) : undefined;
   const isVideo = (current?.mediaType ?? '').startsWith('video/');
+  const isReference = current?.mediaType === POST_REFERENCE_MEDIA_TYPE;
 
   // Video sources hydrate exactly as SharedVideoPlayer's do (deb8c9a86).
   // post-media is a PRIVATE bucket, so the stored value is a bare
@@ -221,7 +224,7 @@ export function HighlightViewer({
 
   // Progress timer — images only. Videos drive progress via onPlaybackStatusUpdate.
   useEffect(() => {
-    if (!visible || paused || isVideo) {
+    if (!visible || paused || isVideo || isReference) {
       if (intervalRef.current) clearInterval(intervalRef.current);
       return;
     }
@@ -240,7 +243,7 @@ export function HighlightViewer({
       });
     }, tickMs);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [visible, index, paused, isVideo]);
+  }, [visible, index, paused, isVideo, isReference]);
 
   // Reset video progress when navigating to a new item.
   //
@@ -468,7 +471,7 @@ export function HighlightViewer({
     <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={onClose}>
       <View style={s.container}>
         {/* Media — web <video> on web, expo-av Video on native, Image for photos */}
-        {isVideo && !playbackUri && !videoUnresolvable ? (<View testID="highlight-video-resolving" style={StyleSheet.absoluteFill} />) : isVideo && Platform.OS === 'web' ? (
+        {isReference ? <View style={[StyleSheet.absoluteFill, { justifyContent: 'center', padding: 24, zIndex: 6 }]} pointerEvents="box-none"><PostReferenceCard key={current.id} active={visible} mediaType={current.mediaType} uri={current.mediaUrl} onOpen={postId => closeThenNavigate(onClose, `/post/${postId}`)} /><View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 }}><Pressable accessibilityRole="button" onPress={goPrev}><Text style={{ color: color.onInk, padding: 12 }}>Previous</Text></Pressable><Pressable accessibilityRole="button" onPress={goNext}><Text style={{ color: color.onInk, padding: 12 }}>Next</Text></Pressable></View></View> : isVideo && !playbackUri && !videoUnresolvable ? (<View testID="highlight-video-resolving" style={StyleSheet.absoluteFill} />) : isVideo && Platform.OS === 'web' ? (
           // Web video fallback: HTML <video> element with progress/auto-advance wired
           // via onTimeUpdate / onEnded; paused and muted are synced via useEffect above.
           // src is the hydrated URL — signed URLs are self-authenticating, so no
@@ -620,7 +623,7 @@ export function HighlightViewer({
         </View>
 
         {/* Tap zones */}
-        <View style={s.tapZones} pointerEvents="box-none">
+        <View style={s.tapZones} pointerEvents={isReference ? "none" : "box-none"}>
           <Pressable
             style={s.tapLeft}
             onPress={goPrev}
@@ -769,7 +772,7 @@ export function HighlightViewer({
               </Pressable>
             )}
 
-            {!isOwner && (current.visibility === 'public' || current.visibility === 'travelers_nearby') && (
+            {!isOwner && !isReference && (current.visibility === 'public' || current.visibility === 'travelers_nearby') && (
               <Pressable
                 onPress={async () => {
                   const available = await Sharing.isAvailableAsync();

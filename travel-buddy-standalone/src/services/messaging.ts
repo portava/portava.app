@@ -1,3 +1,4 @@
+import { fetchOwnedApi } from './ownedApiRequest.ts';
 /**
  * Messaging service — typed client over the API server.
  *
@@ -12,8 +13,12 @@
  * All writes go through the API server (service-role + JWT verification).
  * No private posts, trip data, live location, or GPS are accessible here.
  */
+import { pendingMessage } from '../features/telegraph/outbox/pendingMessages.ts';
+import { messageOutbox } from '../features/telegraph/outbox/runtime.ts';
+import type { OutboxEntry } from '../features/telegraph/outbox/types.ts';
 import { isSupabaseConfigured } from '../lib/supabase.ts';
 import { captureMessagingOwnerRequest, messagingOwnerToken, assertMessagingOwnerRequest, type MessagingOwnerRequest } from './messagingOwnerRequest.ts';
+import { telegraphIndexHeaders } from '../features/telegraph/negotiation/clientCapabilities.ts';
 import { freshToken as freshApiToken, isCurrentSessionToken } from './apiToken.ts'; import { noteTelegraphRequest } from '../features/telegraph/connection/connectionMonitor.ts'; import { networkDurationMs } from '../features/telegraph/connection/bandwidthSignal.ts'; import { telegraphReadHeaders, type TelegraphReadSurface } from '../features/telegraph/negotiation/clientCapabilities.ts'; // §30A.15: every answer (or none) feeds the connection banner; §17.4: the network share · T431: the §30A.16 capability headers
 
 export type MessageVerdict = 'allowed' | 'requires_request' | 'denied';
@@ -88,7 +93,7 @@ export interface ThreadOtherMember {
 
 export interface ThreadSummary {
   id: string;
-  threadType: 'direct' | 'trip' | 'circle' | 'rent_buddy_booking';
+  threadType: 'direct' | 'trip' | 'circle' | 'group' | 'rent_buddy_booking';
   tripId: string | null;
   circleOwnerId: string | null;
   title: string | null;
@@ -163,6 +168,7 @@ export interface Message {
   id: string;
   /** Telegraph §17.1 per-conversation sequence (T233); present only when the server's resume capability is on. */
   sequence?: number | null;
+  deliveryAcknowledgementRequired?: boolean;
   threadId: string;
   senderId: string;
   senderHandle: string | null;
@@ -191,6 +197,9 @@ export interface Message {
   e2eeFailed?: boolean;
   /** Client-generated id for optimistic-send correlation (set locally; echoed by the server). */
   clientId?: string | null;
+  /** Device-local retry metadata, never authoritative server state. */
+  pendingIsE2ee?: boolean;
+  pendingRetryAt?: number;
   /** Local delivery state for optimistic UI. Absent for messages loaded from the server. */
   deliveryStatus?: 'sending' | 'sent' | 'failed'; /** Why the server refused it, when it said (set with `failed`). */ sendFailure?: import('../features/telegraph/lifecycle/readState.ts').SendFailure | null;
   /** Saved @mention annotations — whitelist for RichText rendering. */
@@ -238,6 +247,7 @@ export interface Message {
 }
 
 export type MsgErrorKind =
+  | 'cancelled'
   | 'unauthenticated'
   | 'forbidden'
   | 'not_found'
@@ -260,6 +270,7 @@ export interface MsgResult<T> {
   ok: boolean;
   data: T | null;
   errorKind?: MsgErrorKind;
+  retryable?: boolean;
   message?: string; /** Seconds the server asked the client to wait (HTTP 429 `Retry-After`); null when it gave none. */ retryAfterSeconds?: number | null;
 }
 
@@ -278,6 +289,7 @@ function mapApiError<T>(status: number, body: any, retryAfter?: string | null): 
     ok: false,
     data: null,
     errorKind: known.includes(code) ? code : 'db_error',
+    retryable: status >= 500 || status === 429,
     message: body?.message ?? `API ${status}`, ...(code === 'rate_limited' ? { retryAfterSeconds: parseRetryAfterSeconds(retryAfter) } : {}),
   };
 }
@@ -323,13 +335,13 @@ async function apiGet<T>(path: string, owner?: MessagingOwnerRequest, scope?: La
   }
 }
 
-async function apiPost<T>(path: string, body?: unknown, owner?: MessagingOwnerRequest): Promise<MsgResult<T>> {
+async function apiPost<T>(path: string, body?: unknown, owner?: MessagingOwnerRequest, method: 'POST' | 'PUT' | 'DELETE' = 'POST'): Promise<MsgResult<T>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
   const token = owner ? await messagingOwnerToken(owner) : await freshToken();
   if (!token || (owner && !owner.isCurrent())) return { ok: false, data: null, errorKind: 'unauthenticated' };
   try {
     const res = await fetch(`${apiBase()}${path}`, {
-      method: 'POST',
+      method,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
@@ -454,8 +466,8 @@ export async function cancelMessageRequest(
 
 // ── Threads ───────────────────────────────────────────────────────────────────
 
-export async function getMyThreads(): Promise<MsgResult<{ threads: ThreadSummary[] }>> {
-  return apiGet('/api/me/threads');
+export async function getMyThreads(owner?: MessagingOwnerRequest): Promise<MsgResult<{ threads: ThreadSummary[] }>> {
+  return apiGet('/api/me/threads', owner, undefined, telegraphIndexHeaders());
 }
 
 export async function getUnreadCounts(): Promise<MsgResult<{ messages: number; notifications: number; meetups: number; newHighlights: number; /** buckets the server could NOT count — their numbers are placeholders */ degraded?: Array<'messages' | 'notifications' | 'meetups' | 'newHighlights'> }>> {
@@ -485,25 +497,25 @@ export async function markThreadRead(
 export async function openTripChat(
   tripId: string,
 ): Promise<MsgResult<GroupChatResult>> {
-  return apiGet(`/api/trips/${tripId}/chat`);
+  return apiGet(`/api/trips/${tripId}/chat`, undefined, undefined, telegraphReadHeaders('group_chat'));
 }
 
 export async function openCircleChat(
   circleOwnerId: string,
 ): Promise<MsgResult<GroupChatResult>> {
-  return apiGet(`/api/circles/${circleOwnerId}/chat`);
+  return apiGet(`/api/circles/${circleOwnerId}/chat`, undefined, undefined, telegraphReadHeaders('group_chat'));
 }
 
 export async function getTripChat(
   tripId: string,
 ): Promise<MsgResult<{ thread: GroupThread; messages: Message[] }>> {
-  return apiGet(`/api/trips/${tripId}/chat`);
+  return apiGet(`/api/trips/${tripId}/chat`, undefined, undefined, telegraphReadHeaders('group_chat'));
 }
 
 export async function getCircleChat(
   circleOwnerId: string,
 ): Promise<MsgResult<{ thread: GroupThread; messages: Message[] }>> {
-  return apiGet(`/api/circles/${circleOwnerId}/chat`);
+  return apiGet(`/api/circles/${circleOwnerId}/chat`, undefined, undefined, telegraphReadHeaders('group_chat'));
 }
 
 export async function syncTripChat(
@@ -523,17 +535,24 @@ export async function syncCircleChat(
 
 export async function getThreadMessages(
   threadId: string,
-  before?: string, surface: TelegraphReadSurface = 'conversation', // T431: the screen that draws this page decides what the client can render
+  before?: string, surface: TelegraphReadSurface = 'conversation', beforeSequence?: number | null, // T431: the screen that draws this page decides what the client can render
 ): Promise<MsgResult<{ messages: Message[]; threadId: string }>> {
   // T233: `withSequence=1` asks the server to label each message with its conversation sequence (the resume
   // cursor). A server without the capability ignores it and answers exactly as before.
-  const qs = before ? `?before=${encodeURIComponent(before)}&withSequence=1` : '?withSequence=1';
+  const owner = captureMessagingOwnerRequest();
+  if (!owner?.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  const qs = (before ? `?before=${encodeURIComponent(before)}&withSequence=1` : '?withSequence=1') + (Number.isSafeInteger(beforeSequence) && beforeSequence! >= 0 ? `&beforeSequence=${beforeSequence}` : '');
   const res = await apiGet<{ messages: Message[]; threadId: string }>(
-    `/api/threads/${threadId}/messages${qs}`, undefined, undefined, telegraphReadHeaders(surface),
+    `/api/threads/${encodeURIComponent(threadId)}/messages${qs}`, owner, undefined, telegraphReadHeaders(surface),
   );
   if (!res.ok || !res.data?.messages) return res;
 
-  return { ...res, data: { ...res.data, messages: await hydrateMessages(threadId, res.data.messages) } };
+  try {
+    return { ...res, data: { ...res.data, messages: await hydrateMessages(threadId, res.data.messages, owner) } };
+  } catch (error) {
+    if (!owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    throw error;
+  }
 }
 
 /**
@@ -545,11 +564,18 @@ export async function resumeThreadMessages(
   threadId: string,
   afterSequence: number,
 ): Promise<MsgResult<{ messages: Message[]; threadId: string; resume?: { afterSequence: number; nextSequence: number; hasMore: boolean } }>> {
+  const owner = captureMessagingOwnerRequest();
+  if (!owner?.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
   const res = await apiGet<{ messages: Message[]; threadId: string; resume?: { afterSequence: number; nextSequence: number; hasMore: boolean } }>(
-    `/api/threads/${threadId}/messages?afterSequence=${encodeURIComponent(String(afterSequence))}`, undefined, undefined, telegraphReadHeaders('conversation'), // resume is the conversation screen's (useMessaging)
+    `/api/threads/${encodeURIComponent(threadId)}/messages?afterSequence=${encodeURIComponent(String(afterSequence))}`, owner, undefined, telegraphReadHeaders('conversation'), // resume is the conversation screen's (useMessaging)
   );
   if (!res.ok || !res.data?.messages) return res;
-  return { ...res, data: { ...res.data, messages: await hydrateMessages(threadId, res.data.messages) } };
+  try {
+    return { ...res, data: { ...res.data, messages: await hydrateMessages(threadId, res.data.messages, owner) } };
+  } catch (error) {
+    if (!owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    throw error;
+  }
 }
 
 /**
@@ -565,31 +591,47 @@ export async function resumeThreadMessages(
  * "nothing was said", which is a worse lie than "this message could not be
  * decrypted".
  */
-async function hydrateMessages(threadId: string, messages: Message[]): Promise<Message[]> {
+async function hydrateMessages(threadId: string, messages: Message[], owner: MessagingOwnerRequest): Promise<Message[]> {
+  assertMessagingOwnerRequest(owner);
+  const port = ownerCryptoPort(owner);
+  messages = messages.map((message) => message.deleted ? { ...message, body: '', displayBody: '', originalBody: '', e2eeFailed: false } : message);
+  for (const message of messages) if (message.deleted && port.isNative()) {
+    try { await port.reconcileMessage?.(threadId, message.id, message.ciphertext ?? null, true); }
+    catch { assertMessagingOwnerRequest(owner); }
+  }
   const anyCiphertext = messages.some((m) => !!(m as { ciphertext?: string | null }).ciphertext);
   const anyWelcome = messages.some(
     (m) => m.msgType === 'system' && m.subtype === E2EE_WELCOME_SUBTYPE,
   );
   if (!anyCiphertext && !anyWelcome) return messages;
 
-  await joinFromWelcomeIfNeeded(realCryptoPort, threadId, messages as never);
+  try { await joinFromWelcomeIfNeeded(port, threadId, messages as never); }
+  catch { assertMessagingOwnerRequest(owner); /* Missing native storage/keys must show unreadable rows, never protocol bytes. */ }
 
   const out: Message[] = [];
   for (const m of messages) {
     // The Welcome is protocol plumbing. Users should not see a wall of base64.
     if (m.msgType === 'system' && m.subtype === E2EE_WELCOME_SUBTYPE) continue;
 
+    assertMessagingOwnerRequest(owner);
+    if (m.deleted) { out.push({ ...m, body: '', displayBody: '', originalBody: '', e2eeFailed: false }); continue; }
     const cipher = (m as { ciphertext?: string | null }).ciphertext;
     if (!cipher) { out.push(m); continue; }
 
-    const d = await decryptIncoming(realCryptoPort, threadId, {
+    try { if (port.isNative()) await port.reconcileMessage?.(threadId, m.id, cipher, false); }
+    catch {
+      assertMessagingOwnerRequest(owner);
+      out.push({ ...m, body: '', displayBody: '', originalBody: '', e2eeFailed: true }); continue;
+    }
+    const d = await decryptIncoming(port, threadId, {
       id: m.id,
       body: m.body ?? null,
       ciphertext: cipher,
       msgType: m.msgType ?? null,
       subtype: m.subtype ?? null,
     });
-    out.push({ ...m, body: d.body ?? '', e2eeFailed: d.failed } as Message);
+    assertMessagingOwnerRequest(owner);
+    out.push({ ...m, body: d.body ?? '', displayBody: d.body ?? '', originalBody: d.body ?? '', e2eeFailed: d.failed } as Message);
   }
   return out;
 }
@@ -605,9 +647,17 @@ function ownerCryptoPort(owner: MessagingOwnerRequest): CryptoPort {
   return {
     ...realCryptoPort,
     isNative: () => { assertCurrent(); return realCryptoPort.isNative(); },
-    hasGroupSession: (threadId) => guarded(() => realCryptoPort.hasGroupSession(threadId)),
-    encryptForThread: (threadId, body) => guarded(() => realCryptoPort.encryptForThread(threadId, body, assertCurrent)),
-    initGroupAsInitiator: (threadId, userId, keyPackage) => guarded(() => realCryptoPort.initGroupAsInitiator(threadId, userId, keyPackage, assertCurrent)),
+    reconcileMessage: (threadId, messageId, ciphertext, deleted) => guarded(() => realCryptoPort.reconcileMessage(threadId, messageId, ciphertext, deleted, owner)),
+    hasGroupSession: (threadId) => guarded(() => realCryptoPort.hasGroupSession(threadId, owner)),
+    encryptForThread: (threadId, body) => guarded(() => realCryptoPort.encryptForThread(threadId, body, assertCurrent, owner)),
+    initGroupAsInitiator: (threadId, userId, keyPackage) => guarded(() => realCryptoPort.initGroupAsInitiator(threadId, userId, keyPackage, assertCurrent, owner)),
+    decryptFromThread: (threadId, ciphertext) => guarded(() => realCryptoPort.decryptFromThread(threadId, ciphertext, assertCurrent, owner)),
+    initGroupAsRecipient: (threadId, welcome, pending) => guarded(() => realCryptoPort.initGroupAsRecipient(threadId, welcome, pending, assertCurrent, owner)),
+    getDeviceSigningKeys: () => guarded(() => realCryptoPort.getDeviceSigningKeys(owner)),
+    getPendingKeyPackageState: () => guarded(() => realCryptoPort.getPendingKeyPackageState(owner)),
+    getPendingKeyPackageStates: () => guarded(() => realCryptoPort.getPendingKeyPackageStates(owner)),
+    setPendingKeyPackageState: (state) => guarded(() => realCryptoPort.setPendingKeyPackageState(state, owner)),
+    clearPendingKeyPackageState: (usedState) => guarded(() => realCryptoPort.clearPendingKeyPackageState(usedState, owner)),
   };
 }
 
@@ -637,18 +687,22 @@ export async function sendMessage(
   const owner = request ?? captureMessagingOwnerRequest();
   if (!owner?.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
   const { isE2ee, ...rest } = opts ?? {};
-  let payload: Awaited<ReturnType<typeof buildOutgoingPayload>>;
-  try {
-    payload = await buildOutgoingPayload(ownerCryptoPort(owner), threadId, body, isE2ee === true);
-  } catch (error) {
-    if (!owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
-    throw error;
-  }
-  if (!owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
-  // T231: the clientId doubles as the idempotency key, so a retry of a send that actually landed (the
-  // response was lost) answers with the ORIGINAL message instead of writing a second one. retrySend
-  // reuses the failed message's clientId for exactly this reason. Ignored by a server with the flag OFF.
-  return apiPost(`/api/threads/${threadId}/messages`, { ...payload, ...rest, ...(rest.clientId ? { idempotencyKey: rest.clientId } : {}) }, owner);
+  if (isE2ee && !ownerCryptoPort(owner).isNative()) await buildOutgoingPayload(ownerCryptoPort(owner), threadId, body, true);
+  const clientId = rest.clientId ?? `c_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  let result;
+  try { result = await messageOutbox.submit(owner, {
+    clientId, threadId,
+    display: { body, msgType: rest.msgType ?? 'text', subtype: rest.subtype ?? null, replyToId: rest.replyToId ?? null, isE2ee: isE2ee === true },
+  }, async () => {
+    // Encryption runs once, before the durable write. Every retry reuses these
+    // exact bytes and this idempotency key, including after an app restart.
+    const payload = await buildOutgoingPayload(ownerCryptoPort(owner), threadId, body, isE2ee === true);
+    assertMessagingOwnerRequest(owner);
+    return { ...payload, ...rest, clientId, idempotencyKey: clientId };
+  }, (entry, signal) => postOutboxEntry(entry, owner, signal)); }
+  catch (error) { if (!owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' }; throw error; }
+  return result as MsgResult<Message>;
+
 }
 
 /**
@@ -969,18 +1023,12 @@ export interface TelegraphCallResult<T> {
   message?: string;
 }
 
-async function telegraphCall<T>(method: 'GET' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<TelegraphCallResult<T>> {
+async function telegraphCall<T>(method: 'GET' | 'PATCH' | 'DELETE', path: string, body?: object): Promise<TelegraphCallResult<T>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, code: 'config_error' };
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, code: 'unauthenticated' };
+  const owner = captureMessagingOwnerRequest();
+  if (!owner) return { ok: false, data: null, code: 'unauthenticated' };
   try {
-    const res = await fetch(`${apiBase()}${path}`, {
-      method,
-      headers: body !== undefined
-        ? { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
-        : { Authorization: `Bearer ${token}` },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
+    const res = await fetchOwnedApi(path, {owner,method,body,headers:method === 'GET' ? telegraphIndexHeaders() : {}});
     const json = await res.json().catch(() => null);
     if (!res.ok) {
       return {
@@ -993,7 +1041,7 @@ async function telegraphCall<T>(method: 'GET' | 'PATCH' | 'DELETE', path: string
     if (json === null) return { ok: false, data: null, code: 'bad_response' };
     return { ok: true, data: json as T };
   } catch (e) {
-    return { ok: false, data: null, code: isNetworkError(e) ? 'network_unreachable' : 'db_error' };
+    return { ok: false, data: null, code: !owner.isCurrent() ? 'unauthenticated' : isNetworkError(e) ? 'network_unreachable' : 'db_error' };
   }
 }
 
@@ -1063,4 +1111,71 @@ function saveOutcome(r: MsgResult<{ ok: boolean; savedAt: string; reason?: strin
     return { ok: false, data: null, errorKind: 'db_error', message: 'Saving is unavailable right now. Nothing was saved — please try again later.' };
   }
   return r;
+}
+
+// Conversation management always binds both the request and its answer to the
+// session that opened the flow. Server gates are authoritative for every action.
+export interface ThreadControls {
+  slowModeSeconds: number;
+  postingPolicy: 'everyone' | 'hosts_only';
+  mediaPolicy: 'everyone' | 'hosts_only';
+  linkPolicy: 'everyone' | 'hosts_only';
+}
+export interface ThreadControlState {
+  threadId: string;
+  controls: ThreadControls;
+  isHost: boolean;
+  mutedUntil: string | null;
+}
+export type MessageContentCapability = 'ALLOW' | 'NO_FORWARD' | 'SOURCE_POLICY' | 'EXPIRES_WITH_SOURCE';
+export type CarryForwardSelection = { kind: 'PLAN' | 'PLACE'; objectId: string };
+const threadPath = (id: string) => `/api/threads/${encodeURIComponent(id)}`;
+
+export function getThreadControls(threadId: string, owner: MessagingOwnerRequest): Promise<MsgResult<ThreadControlState>> {
+  return apiGet(`${threadPath(threadId)}/controls`, owner);
+}
+export function updateThreadControls(threadId: string, controls: Partial<ThreadControls>, owner: MessagingOwnerRequest): Promise<MsgResult<{ controls: ThreadControls }>> {
+  return apiPost(`${threadPath(threadId)}/controls`, controls, owner, 'PUT');
+}
+export function formConversationGroup(threadId: string, input: { userIds: string[]; title?: string; carryForward?: CarryForwardSelection[] }, owner: MessagingOwnerRequest): Promise<MsgResult<{ threadId: string; threadType: 'group'; historyFrom: 'formation'; memberUserIds: string[] }>> {
+  return apiPost(`${threadPath(threadId)}/add-people`, input, owner);
+}
+export function forwardThreadMessage(targetThreadId: string, sourceMessageId: string, owner: MessagingOwnerRequest, requestId?: string): Promise<MsgResult<{ id: string; threadId: string }>> {
+  return apiPost(`${threadPath(targetThreadId)}/forward`, { sourceMessageId, ...(requestId ? { requestId } : {}) }, owner);
+}
+export function updateMessageContentCapability(threadId: string, messageId: string, capability: MessageContentCapability, owner: MessagingOwnerRequest): Promise<MsgResult<{ messageId: string; capability: MessageContentCapability }>> {
+  return apiPost(`${threadPath(threadId)}/messages/${encodeURIComponent(messageId)}/content-capability`, { capability }, owner, 'PUT');
+}
+export function moderateThreadMember(threadId: string, userId: string, action: 'mute' | 'unmute' | 'remove', owner: MessagingOwnerRequest, minutes?: number): Promise<MsgResult<{ userId: string; mutedUntil?: string | null; removedAt?: string }>> {
+  const verb = action === 'unmute' ? 'mute' : action;
+  return apiPost(`${threadPath(threadId)}/moderation/${encodeURIComponent(userId)}/${verb}`, action === 'mute' ? { minutes: minutes ?? null } : undefined, owner, action === 'unmute' ? 'DELETE' : 'POST');
+}
+
+
+export async function postOutboxEntry(entry: OutboxEntry, owner: MessagingOwnerRequest, signal?: AbortSignal): Promise<MsgResult<Message>> {
+  try {
+    const response = await fetchOwnedApi(`/api/threads/${encodeURIComponent(entry.threadId)}/messages`, { owner, signal, method: 'POST', body: entry.payload });
+    const data = await response.json();
+    if (!owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    return response.ok ? { ok: true, data } : mapApiError(response.status, data, response.headers?.get('Retry-After') ?? null);
+  } catch {
+    if (!owner.isCurrent()) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    if (signal?.aborted) return { ok: false, data: null, errorKind: 'cancelled', retryable: false };
+    return { ok: false, data: null, errorKind: 'network_unreachable', retryable: true, message: 'Connection interrupted. The message is saved on this device.' };
+  }
+}
+export async function cancelPendingMessage(clientId: string): Promise<void> {
+  const owner = captureMessagingOwnerRequest();
+  if (!owner) throw new Error('Sign in again to manage pending messages.');
+  await messageOutbox.cancel(owner, clientId);
+}
+export async function replayPendingThreadMessages(threadId?: string): Promise<void> {
+  const owner = captureMessagingOwnerRequest();
+  if (!owner) return;
+  await messageOutbox.replay(owner, (entry, signal) => postOutboxEntry(entry, owner, signal), threadId);
+}
+export async function getPendingThreadMessages(threadId: string): Promise<Message[]> {
+  const owner = captureMessagingOwnerRequest();
+  if (!owner) return [];
+  return (await messageOutbox.pending(owner, threadId)).map(pendingMessage);
 }

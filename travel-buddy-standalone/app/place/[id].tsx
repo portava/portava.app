@@ -90,9 +90,12 @@ function DiscoveryFallback({ place }: { place: DiscoveryPlace }) {
   const [liveStatus, setLiveStatus] = useState<PlaceLiveStatus | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+    setSaved(false);
     checkSaved('place', place.id)
-      .then(({ saved: s }) => setSaved(s))
+      .then(({ saved: s, ok }) => { if (!cancelled && ok !== false) setSaved(s); })
       .catch(() => {});
+    return () => { cancelled = true; };
   }, [place.id]);
 
   useEffect(() => {

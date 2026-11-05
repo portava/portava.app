@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { AVPlaybackSourceObject } from 'expo-av';
-import { freshToken } from '../apiToken.ts';
+import { captureMessagingOwnerRequest, messagingOwnerToken } from '../messagingOwnerRequest.ts';
 import { supabase } from '../../lib/supabase.ts';
 
 export const DUBBING_LABEL = 'AI-generated translated audio';
@@ -32,64 +32,75 @@ function endpoint(identity: DubbingIdentity, targetLanguage?: string, audio = fa
   return `${base.origin}/api/media/${identity.assetId}/dubbing${audio ? '/audio' : ''}${targetLanguage ? `?language=${encodeURIComponent(targetLanguage)}` : ''}`;
 }
 
-async function currentUser(identity: DubbingIdentity, signal?: AbortSignal) {
-  if (signal?.aborted) throw new DubbingRequestError('cancelled');
-  const { data, error } = await supabase.auth.getSession();
-  if (signal?.aborted) throw new DubbingRequestError('cancelled');
-  if (error || data.session?.user.id !== identity.userId) throw new DubbingRequestError('authentication_required');
-}
-
 async function request(identity: DubbingIdentity, uri: string, method: string, body?: unknown, signal?: AbortSignal) {
-  await currentUser(identity, signal);
-  const token = await freshToken();
-  if (!token) throw new DubbingRequestError('authentication_required');
-  await currentUser(identity, signal);
+  const owner = captureMessagingOwnerRequest();
   const controller = new AbortController();
-  const abort = () => controller.abort();
+  const abort = () => controller.abort(new DubbingRequestError('cancelled'));
   signal?.addEventListener('abort', abort, { once: true });
   if (signal?.aborted) abort();
-  const timer = setTimeout(abort, 15_000);
-  const headers = { Authorization: `Bearer ${token}`, 'Cache-Control': 'no-store', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) };
+  const timer = setTimeout(() => controller.abort(new DubbingRequestError('unavailable')), 15_000);
+  const requireActive = () => {
+    if (controller.signal.aborted) throw controller.signal.reason;
+    if (!owner?.isCurrent() || owner.ownerId !== identity.userId) throw new DubbingRequestError('authentication_required');
+  };
+  let refuse = () => {};
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    refuse = () => reject(controller.signal.reason);
+    if (controller.signal.aborted) refuse();
+    else controller.signal.addEventListener('abort', refuse, { once: true });
+  });
   try {
-    const response = await fetch(uri, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: controller.signal, redirect: 'error', cache: 'no-store', credentials: 'omit' });
-    if (controller.signal.aborted) throw new DubbingRequestError('cancelled');
-    await currentUser(identity, signal);
-    if (response.redirected || (response.url && response.url !== uri)) throw new DubbingRequestError('unavailable');
-    if (!response.ok) {
-      let code: unknown;
-      try { code = (await response.json()).error; } catch {}
-      if (method === 'DELETE' && code === 'cleanup_failed') throw new DubbingRequestError('cleanup_failed', response.status);
-      throw new DubbingRequestError(response.status === 409 ? 'stale_consent' : 'unavailable', response.status);
-    }
-    return { response, headers };
+    // The deadline covers token refresh, headers and decoding. React Native or
+    // a provider ignoring AbortSignal must not leave this action stuck forever.
+    return await Promise.race([cancelled, (async () => {
+      requireActive();
+      const token = owner ? await messagingOwnerToken(owner) : null;
+      requireActive();
+      if (!token) throw new DubbingRequestError('authentication_required');
+      const headers = { Authorization: `Bearer ${token}`, 'Cache-Control': 'no-store', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) };
+      const response = await fetch(uri, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: controller.signal, redirect: 'error', cache: 'no-store', credentials: 'omit' });
+      requireActive();
+      if (response.redirected || (response.url && response.url !== uri)) throw new DubbingRequestError('unavailable');
+      if (!response.ok) {
+        let code: unknown;
+        try { code = (await response.json()).error; } catch {}
+        requireActive();
+        if (method === 'DELETE' && code === 'cleanup_failed') throw new DubbingRequestError('cleanup_failed', response.status);
+        throw new DubbingRequestError(response.status === 409 ? 'stale_consent' : 'unavailable', response.status);
+      }
+      const data: unknown = method === 'GET' || method === 'POST' ? await response.json() : null;
+      requireActive();
+      return { response, headers, data };
+    })()]);
   } catch (error) {
     if (error instanceof DubbingRequestError) throw error;
-    throw new DubbingRequestError(controller.signal.aborted ? 'cancelled' : 'unavailable');
-  } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
+    throw new DubbingRequestError('unavailable');
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', abort);
+    controller.signal.removeEventListener('abort', refuse);
+  }
 }
 
 export async function getDubbingConsent(identity: DubbingIdentity, targetLanguage: string, signal?: AbortSignal): Promise<DubbingConsent> {
-  const { response } = await request(identity, endpoint(identity, targetLanguage), 'GET', undefined, signal);
-  const parsed = consentSchema.safeParse(await response.json());
+  const { data } = await request(identity, endpoint(identity, targetLanguage), 'GET', undefined, signal);
+  const parsed = consentSchema.safeParse(data);
   if (!parsed.success) throw new DubbingRequestError('unavailable');
-  await currentUser(identity, signal);
   return parsed.data;
 }
 
 export async function getDubbingOptions(identity: DubbingIdentity, signal?: AbortSignal): Promise<DubbingOptions> {
-  const { response } = await request(identity, `${endpoint(identity)}/options`, 'GET', undefined, signal);
-  const parsed = optionsSchema.safeParse(await response.json());
+  const { data } = await request(identity, `${endpoint(identity)}/options`, 'GET', undefined, signal);
+  const parsed = optionsSchema.safeParse(data);
   if (!parsed.success || parsed.data.assetId !== identity.assetId) throw new DubbingRequestError('unavailable');
-  await currentUser(identity, signal);
   return parsed.data;
 }
 
 export async function requestDubbing(identity: DubbingIdentity, targetLanguage: string, expectedConsentRevision: string, explicitOptIn: boolean, signal?: AbortSignal) {
   if (explicitOptIn !== true || !revision.safeParse(expectedConsentRevision).success || !language.safeParse(targetLanguage).success) throw new DubbingRequestError('invalid_input');
-  const { response } = await request(identity, endpoint(identity), 'POST', { targetLanguage, expectedConsentRevision, explicitOptIn: true, disclosureVersion: DUBBING_DISCLOSURE_VERSION }, signal);
-  const parsed = queuedSchema.safeParse(await response.json());
+  const { response, data } = await request(identity, endpoint(identity), 'POST', { targetLanguage, expectedConsentRevision, explicitOptIn: true, disclosureVersion: DUBBING_DISCLOSURE_VERSION }, signal);
+  const parsed = queuedSchema.safeParse(data);
   if (response.status !== 202 || !parsed.success) throw new DubbingRequestError('unavailable');
-  await currentUser(identity, signal);
   return parsed.data;
 }
 

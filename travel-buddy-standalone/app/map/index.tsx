@@ -15,6 +15,9 @@
  * inline via Platform.OS checks so we avoid a separate .web.tsx route file.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { contributeNavigationIntent, saveProtectedPlace, type ProtectedCategory } from '../../src/services/mapPrivacy.ts';
+import { useIsFocused } from '@react-navigation/native';
+import { useInputAccountEpoch } from '../../src/platform/input-assistance/hooks/useInputAccountEpoch.ts';
 import type { CameraRef } from '@maplibre/maplibre-react-native';
 import {
   View, Text, Pressable, StyleSheet, Platform, ActivityIndicator, AppState, BackHandler,
@@ -697,6 +700,7 @@ function parseCategory(v: string | string[] | undefined): DiscoveryCategory {
  * this default export automatically get the store provider.
  */
 export default function FullScreenMapScreen() {
+  const ownerEpoch = useInputAccountEpoch();
   const params = useLocalSearchParams<{ mode?: string }>();
   const mode = firstParam(params.mode);
 
@@ -705,7 +709,7 @@ export default function FullScreenMapScreen() {
   const initialLayers = mode === 'circle' ? (['friends'] as const) : undefined;
 
   return (
-    <MapStoreProvider initialEnabledLayers={initialLayers as any}>
+    <MapStoreProvider key={ownerEpoch} initialEnabledLayers={initialLayers as any}>
       <FullScreenMapScreenInner />
     </MapStoreProvider>
   );
@@ -713,6 +717,10 @@ export default function FullScreenMapScreen() {
 
 /** Inner implementation — reads map state from the store via useMapStore(). */
 function FullScreenMapScreenInner() {
+  const screenFocused = useIsFocused();
+  const privacyActive = useRef(true); const privacySaving = useRef(false);
+  privacyActive.current = screenFocused;
+  useEffect(() => () => { privacyActive.current = false; }, []);
   const insets = useSafeAreaInsets();
   // §22's eighth prompt needs a camera, and this screen is where one lives.
   // The shared picker is used rather than a map-specific one so the capture
@@ -767,6 +775,7 @@ function FullScreenMapScreenInner() {
     entry?: string;
     /** §11: render ONE trip's itinerary rather than every trip's destination. */
     tripId?: string;
+    protectArea?: string;
   }>();
 
   const { isEnabled: isFlagEnabled } = useFeatureFlags();
@@ -1127,8 +1136,6 @@ function FullScreenMapScreenInner() {
       null,
       paramLat,
       paramLng,
-      userLat,
-      userLng,
     ).then((res) => {
       if (cancelled) return;
       placesFetchedRef.current = true;
@@ -1170,7 +1177,9 @@ function FullScreenMapScreenInner() {
   // legacyPlacesActive folds in entityTypes, the destination and the gateway
   // verdict, so a verdict arriving after mount starts (or never starts) it.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [destination, category, legacyPlacesActive, paramLat, paramLng, userLat, userLng, placesRetryCount]);
+  // This layer uses destination ordering, never Nearest. Live GPS still moves
+  // the viewer dot, but must not restart the destination's place request.
+  }, [destination, category, legacyPlacesActive, paramLat, paramLng, placesRetryCount]);
 
   // ── §11 Trip Map ────────────────────────────────────────────────────────────
   // "Trip Map renders the current Trip geographically without duplicating or
@@ -2336,7 +2345,7 @@ function FullScreenMapScreenInner() {
             routeId: `route:${rawObjectId(obj.id)}`,
             destinationObjectId: obj.id,
           });
-          if (c) openInMaps(c.lat, c.lng);
+          if (c) { void contributeNavigationIntent(c); openInMaps(c.lat, c.lng); }
           return;
         case 'contribute':
           // Declared in MAP_ACTIONS but not currently emitted by any projector
@@ -3159,13 +3168,25 @@ function FullScreenMapScreenInner() {
         }}
       />
 
+      {(['home', 'work', 'school'] as string[]).includes(firstParam(params.protectArea) ?? '') && cameraCenter ? (
+        <View style={[s2.ttlChooser, { bottom: insets.bottom + 200 }]}>
+          <Text style={s2.ttlChooserTitle}>Protect your {firstParam(params.protectArea)} area</Text>
+          <Text>Move the map to choose its center. A rounded center and 1.5 km radius will be protected.</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="Protect this area" style={s2.optimizeChip} onPress={() => {
+            const area = firstParam(params.protectArea) as ProtectedCategory;
+            const point = cameraCenter;
+            Alert.alert('Protect this area?', 'Only the rounded map center and protective radius will be stored. No address is saved.', [{ text: 'Cancel', style: 'cancel' }, { text: 'Protect', onPress: () => { if (!privacyActive.current || privacySaving.current) return; privacySaving.current = true; void saveProtectedPlace(area, point).then(() => { if (privacyActive.current) router.back(); }).catch(() => { if (privacyActive.current) Alert.alert('Protection not confirmed', 'Please try again.'); }).finally(() => { privacySaving.current = false; }); } }]);
+          }}><Text style={s2.optimizeChipText}>Protect this area</Text></Pressable>
+        </View>
+      ) : null}
+
       {/* ── §12 Locate My Friends ───────────────────────────────────────────
           Mounted on the session id alone. The panel owns its own read and
           publish polls and tears both down with its effect, so a closed screen
           cannot keep publishing someone's position. */}
       {locateSessionId && userId ? (
         <LocateFriendsPanel
-          live={{ sessionId: locateSessionId, viewerMemberId: userId }}
+          live={{ sessionId: locateSessionId, viewerMemberId: userId, active: screenFocused }}
           onLeave={() => setLocateSessionId(null)}
           onEndSession={() => setLocateSessionId(null)}
         />

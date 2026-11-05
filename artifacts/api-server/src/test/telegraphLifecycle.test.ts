@@ -199,6 +199,7 @@ describe("§7.3 — receipts, derived and not stored", () => {
   it("reports DELIVERED as null with a reason, never as a measured false", () => {
     const r = receiptFor(message, [{ user_id: BOB, last_read_at: null }]);
     assert.equal(r.delivered, null);
+    assert.ok(r.deliveredUnavailableReason);
     assert.match(r.deliveredUnavailableReason, /no per-device acknowledgement/i);
     assert.equal(r.deliveredUnavailableReason, DELIVERED_UNAVAILABLE);
   });

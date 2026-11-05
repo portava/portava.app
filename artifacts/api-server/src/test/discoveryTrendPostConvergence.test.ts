@@ -255,10 +255,10 @@ describe("L — the loader: OFF is §84 byte for byte", () => {
             return Promise.resolve({ data: flag in flags ? { enabled: flags[flag] } : null, error: null });
           },
           range() { return Promise.resolve({ data: table === "rank_events" ? rows : [], error: null }); },
-          limit() { return Promise.resolve({ data: table === "memories" ? memories : [], error: null }); },
+          limit() { return q; },
           then(res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) {
-            const data = table === "discovery_places" ? [{ id: PLACE }] : [];
-            return Promise.resolve({ data, error: null }).then(res, rej);
+            const data = table === "discovery_places" ? [{ id: PLACE }] : table === 'memories' ? memories : [];
+            return Promise.resolve({ data, error: null, count: data.length }).then(res, rej);
           },
         };
         return q;

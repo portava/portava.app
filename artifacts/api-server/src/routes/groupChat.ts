@@ -15,6 +15,8 @@
  */
 
 import { Router } from 'express';
+import { decoratePlatformReads } from '../services/telegraph/platformReadDecorations.js';
+import { getServiceClient } from '../lib/supabase.js';
 import { requireUser, sendError, isAcceptedTripMember } from '../lib/http';
 import { isUuid } from '../lib/followDecisions'; import { refuseEditOnEncryptedThread } from '../services/telegraph/editE2eeGate';
 import { syncTripChatMembers, syncCircleChatMembers } from '../lib/chatSync';
@@ -28,7 +30,7 @@ import {
 import { nameVisibilitySet } from '../lib/publicIdentity';
 import { asyncHandler } from '../lib/asyncHandler';
 // Telegraph §13.2 message.deleted — census T182 measured the delete as silent.
-import { publishToThread } from '../lib/telegraphEvents'; import { withholdLocationAcrossBlocks, isLocationWithheld } from '../services/telegraph/locationAcrossBlocks.js'; import { applySharedCardTruth } from '../services/telegraph/sharedCardTruth.js'; // census-telegraph T448 (lane w-tg-cardtruth); PR-TREL-5 (§76.1): the trip/circle chat doors withhold a location across a block like every other message reader
+import { publishMessageMutation } from '../lib/telegraphOutboxDrainScheduler.js'; import { withholdLocationAcrossBlocks, isLocationWithheld } from '../services/telegraph/locationAcrossBlocks.js'; import { applySharedCardTruth } from '../services/telegraph/sharedCardTruth.js'; // census-telegraph T448 (lane w-tg-cardtruth); PR-TREL-5 (§76.1): the trip/circle chat doors withhold a location across a block like every other message reader
 import {
   applyHistoryWindow,
   historyBoundEnabled,
@@ -155,10 +157,11 @@ async function fetchMessagesForThread(
   threadId: string,
   userId: string,
   visibleFrom: string | null,
+  headers?: Record<string, unknown>,
 ): Promise<ThreadMessagesRead> {
   let q = sc
     .from('messages')
-    .select(`id, thread_id, sender_id, body, msg_type, subtype, deleted_at, created_at, edited_at, original_language, profile:profiles!messages_sender_id_fkey(${PROFILE_PUBLIC})`)
+    .select(`id, thread_id, sender_id, body, content_ref, msg_type, subtype, deleted_at, created_at, edited_at, original_language, profile:profiles!messages_sender_id_fkey(${PROFILE_PUBLIC})`)
     .eq('thread_id', threadId)
     .order('created_at', { ascending: false })
     .limit(INITIAL_MSG_LIMIT);
@@ -263,6 +266,8 @@ async function fetchMessagesForThread(
       senderAvatarUrl: p.avatar_url ?? null,
       body: isDeleted ? null : m.body,
       deleted: isDeleted,
+      msgType: m.msg_type ?? 'text',
+      subtype: m.subtype ?? null,
       createdAt: m.created_at,
       editedAt: m.edited_at ?? null,
       displayBody: display.displayBody,
@@ -275,6 +280,7 @@ async function fetchMessagesForThread(
     };
   });
 
+  await decoratePlatformReads(getServiceClient() ?? sc, rows, messages, headers);
   return { ok: true, messages };
 }
 
@@ -355,7 +361,7 @@ router.get('/trips/:tripId/chat', asyncHandler(async (req, res) => {
   }
 
   const read = active
-    ? await fetchMessagesForThread(sc, threadId, user.id, visibleFrom)
+    ? await fetchMessagesForThread(sc, threadId, user.id, visibleFrom, req.headers)
     : ({ ok: true, messages: [] } as const);
   if (!read.ok) {
     req.log.error({ err: (read as any).error, threadId, tripId },
@@ -448,7 +454,7 @@ router.get('/circles/:circleId/chat', asyncHandler(async (req, res) => {
   }
 
   const read = active
-    ? await fetchMessagesForThread(sc, threadId, user.id, visibleFrom)
+    ? await fetchMessagesForThread(sc, threadId, user.id, visibleFrom, req.headers)
     : ({ ok: true, messages: [] } as const);
   if (!read.ok) {
     req.log.error({ err: (read as any).error, threadId, circleOwnerId },
@@ -489,7 +495,7 @@ router.patch('/messages/:messageId', asyncHandler(async (req, res) => {
 
   const { data: msgRow, error: msgErr } = await sc
     .from('messages')
-    .select('id, thread_id, sender_id, body, deleted_at')
+    .select('id, thread_id, sender_id, body, content_ref, deleted_at')
     .eq('id', messageId)
     .maybeSingle();
 
@@ -538,6 +544,8 @@ router.patch('/messages/:messageId', asyncHandler(async (req, res) => {
     deleted: false,
     editedAt: now,
   });
+
+  void publishMessageMutation(sc, m.thread_id, { type:'message.updated', payload:{messageId,editedAt:now} });
 
   await markTranslationsPending(sc, messageId);
 
@@ -634,7 +642,7 @@ router.delete('/messages/:messageId', asyncHandler(async (req, res) => {
   // The payload carries the ID and not the body, because there is no body left:
   // the row above redacted it in place. A consumer wanting the old text is
   // asking for exactly the thing the delete removed.
-  void publishToThread(sc, m.thread_id, {
+  void publishMessageMutation(sc, m.thread_id, {
     type: 'message.deleted',
     payload: { messageId, deletedAt: now, senderId: user.id },
   }, { excludeUserId: user.id });

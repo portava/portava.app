@@ -106,6 +106,8 @@ function pgrstError(code: string, message: string) {
 }
 
 interface FakeOpts {
+  rejectAuthorProfiles?: boolean;
+  authorProfiles?: any[];
   /** Tables whose reads resolve with a PostgREST error instead of rows. */
   rejectTables?: Set<string>;
   /** Flag overrides merged over FLAGS. */
@@ -163,12 +165,13 @@ function fakeClient(opts: FakeOpts = {}) {
         return Promise.resolve({ data: null, error: null });
       },
       then(onF: any, onR: any) {
+        if (table === 'profiles' && opts.rejectAuthorProfiles) return Promise.resolve(pgrstError('42501', 'author eligibility unavailable')).then(onF, onR);
         if (reject.has(table)) {
           return Promise.resolve(pgrstError("42501", `${table} denied`)).then(onF, onR);
         }
         let data: any[] = [];
         if (table === "posts") data = (opts.posts ?? POSTS).slice();
-        else if (table === "profiles") data = [VIEWER_PROFILE, AUTHOR_PROFILE];
+        else if (table === "profiles") data = [VIEWER_PROFILE, ...(opts.authorProfiles ?? [AUTHOR_PROFILE])];
         else if (table === "user_follows") {
           data = eqs["follower_id"] === VIEWER ? (opts.follows ?? [{ following_id: AUTHOR }]) : [];
         } else if (table === "passport_postcards") data = opts.postcards ?? [];
@@ -253,6 +256,21 @@ function request(path: string): Promise<{ status: number; json: any }> {
 }
 
 describe("Wall: a failed read is never served as an empty feed (§27/§34)", () => {
+  for (const [label, opts] of [
+    ["missing", { authorProfiles: [] }],
+    ["null", { authorProfiles: [{ ...AUTHOR_PROFILE, account_status: null }] }],
+    ["unreadable", { rejectAuthorProfiles: true }],
+  ] as const) {
+    it(`withholds content and caughtUp when author status is ${label}`, async () => {
+      _setTestClient(fakeClient(opts as FakeOpts) as any, true);
+      const res = await request("/api/wall?mode=following&limit=20");
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.json.items, []);
+      assert.notEqual(res.json.caughtUp, true);
+      assert.ok(res.json.degraded?.includes("spine"), "author eligibility failure must be visible");
+    });
+  }
+
   it("CONTROL: a genuinely empty spine reports caughtUp and NO degradation", async () => {
     _setTestClient(fakeClient({ posts: [] }) as any, true);
     const res = await request("/api/wall?mode=following&limit=20");

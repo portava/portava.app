@@ -1,3 +1,4 @@
+import { FullscreenPhoto } from './ui/FullscreenPhoto.tsx';
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, Pressable, Image, ScrollView,
@@ -27,6 +28,7 @@ import { groupMemoriesByTimeline } from '../lib/memoryTimeline.ts';
 import type { TripRow } from '../services/trips.ts';
 import { groupMemoriesByTrip, groupMemoriesByPlace } from './passport/memoryViews.ts';
 import { MemoriesMapView } from './passport/MemoriesMapView';
+import { OwnMemoryAlbums } from '../features/memories/social/OwnMemoryAlbums.tsx';
 
 const CATEGORIES = [
   { key: 'city', label: '🏙 City' },
@@ -431,11 +433,12 @@ function MemoryCard({ memory, onVisibilityChange, onEdit, onViewVideo }: MemoryC
           </View>
         </Pressable>
       ) : memory.photoUrl ? (
-        <Pressable onPress={() => onEdit(memory)} style={mc.photoWrap}>
+        <Pressable onPress={() => onEdit(memory)} style={mc.photoWrap} accessibilityRole="button" accessibilityLabel="Edit Memory photo">
           <CachedImage source={{ uri: memory.photoUrl }} style={mc.photo} resizeMode="cover" />
           <View style={mc.photoEditBadge}>
             <Camera size={13} color="#fff" />
           </View>
+          <FullscreenPhoto uri={memory.photoUrl} style={{ position: 'absolute', top: 0, left: 0, width: 64, height: 64 }}>{null}</FullscreenPhoto>
         </Pressable>
       ) : (
         <Pressable style={mc.addPhotoBanner} onPress={() => onEdit(memory)}>
@@ -881,6 +884,7 @@ export function MemoriesTab({ memories, loading, onReload, collapsed, trips, unr
         </Pressable>
         {expanded && (
           <>
+            <OwnMemoryAlbums />
             {localMemories.length === 0 && unreadable ? (
               // §28.11 — same rule as the expanded branch below.
               <View style={mt.collapsedEmpty} testID="memories-unreadable-collapsed">
@@ -891,7 +895,7 @@ export function MemoriesTab({ memories, loading, onReload, collapsed, trips, unr
               </View>
             ) : localMemories.length === 0 ? (
               <View style={mt.collapsedEmpty}>
-                <Text style={mt.emptySub}>No memories yet. Memories are added when you check in or complete a Safe Return.</Text>
+                <Text style={mt.emptySub}>No travel memories yet. Memories are added when you check in or complete a Safe Return.</Text>
                 <Pressable style={mt.addBtn} onPress={() => setCreateOpen(true)}>
                   <Plus size={14} color="#fff" />
                   <Text style={mt.addBtnText}>Add memory</Text>
@@ -947,8 +951,9 @@ export function MemoriesTab({ memories, loading, onReload, collapsed, trips, unr
 
   return (
     <View style={mt.wrap}>
+      <OwnMemoryAlbums />
       <View style={mt.headerRow}>
-        <Text style={mt.heading}>Memories</Text>
+        <Text style={mt.heading}>Travel memories</Text>
         <Pressable style={mt.addBtn} onPress={() => setCreateOpen(true)}>
           <Plus size={16} color="#fff" />
           <Text style={mt.addBtnText}>Add</Text>
@@ -971,7 +976,7 @@ export function MemoriesTab({ memories, loading, onReload, collapsed, trips, unr
       ) : localMemories.length === 0 ? (
         <View style={mt.empty}>
           <Text style={mt.emptyIcon}>📖</Text>
-          <Text style={mt.emptyTitle}>No memories yet</Text>
+          <Text style={mt.emptyTitle}>No travel memories yet</Text>
           <Text style={mt.emptySub}>
             Memories are created when you check in, complete a Safe Return, or visit a new city.
             You can also add them manually.

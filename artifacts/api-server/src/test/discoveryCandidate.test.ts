@@ -230,13 +230,20 @@ describe("G. the Map-facing reader", () => {
     { id: "db/2",   name: "Two", category: "food", lat: 1, lng: 1, tags: [] },
   ] as any[];
 
-  it("anonymous viewer: no per-user ranking, rankedBy none, every whyForUser empty, no client touched", async () => {
-    const sc: any = { from: () => { throw new Error("must not be called"); } };
+  it("anonymous viewer: no per-user ranking, but current place visibility is still checked", async () => {
+    const reads: string[] = [];
+    const sc: any = { from: (table: string) => {
+      reads.push(table);
+      const b: any = { select: () => b, eq: () => b, in: () => b, limit: () => b,
+        then: (resolve: any) => Promise.resolve({ data: [], error: null, count: 0 }).then(resolve) };
+      return b;
+    } };
     const out = await readDiscoveryCandidatesForViewer(sc, rows, null, "manila");
     assert.equal(out.rankedBy, "none");
     assert.equal(out.candidates.length, 2);
     for (const c of out.candidates) assert.deepEqual(c.candidate.whyForUser, []);
     assert.equal(out.suppressedWrites, 0);
+    assert.deepEqual(reads.sort(), ['discovery_places', 'external_place_references', 'protected_zones']);
   });
   it("empty input: empty output, nothing read", async () => {
     const sc: any = { from: () => { throw new Error("must not be called"); } };
@@ -251,7 +258,7 @@ describe("G. the Map-facing reader", () => {
     for (const fn of ["select", "eq", "neq", "in", "not", "is", "ilike", "or", "gte", "lte", "gt", "lt", "order", "limit", "range", "contains", "overlaps"]) b[fn] = () => b;
     b.maybeSingle = async () => ({ data: null, error: null });
     b.single = async () => ({ data: null, error: null });
-    b.then = (res: any, rej?: any) => Promise.resolve({ data: [], error: null }).then(res, rej);
+    b.then = (res: any, rej?: any) => Promise.resolve({ data: [], error: null, count: 0 }).then(res, rej);
     for (const w of ["insert", "upsert", "update", "delete"]) b[w] = () => { attempted.push(w); return b; };
     const sc: any = { from: () => b, rpc: () => { attempted.push("rpc"); return Promise.resolve({ data: null, error: null }); } };
 

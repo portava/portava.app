@@ -9,14 +9,17 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert } from 'react-native';
+import { useThreadOutbox } from '../features/telegraph/outbox/useThreadOutbox.ts';
+import { mergePendingMessages } from '../features/telegraph/outbox/pendingMessages.ts';
 import {
   getTripChat,
   getCircleChat,
-  sendMessage,
+  sendMessage, cancelPendingMessage,
   editThreadMessage,
   deleteMessage,
   getThreadMessages,
   sendTyping,
+  type MsgResult,
   type GroupChatResult,
   type GroupThread,
   type Message,
@@ -52,6 +55,7 @@ export interface GroupChatData {
   reload: () => void;
   send: (body: string, replyToId?: string) => Promise<{ ok: boolean }>;
   retrySend: (clientId: string) => Promise<void>;
+  cancelSend: (clientId: string) => Promise<void>;
   notifyTyping: (isTyping: boolean) => void;
   /** Resolves `ok: true` only when the server accepted the edit; otherwise carries the copy to show. */
   edit: (messageId: string, body: string) => Promise<{ ok: boolean; message?: string }>;
@@ -74,6 +78,10 @@ export function useGroupChat(
   threadIdRef.current = thread?.id ?? null;
   const typingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const lastTypingSentRef = useRef(0);
+  const sendingRef = useRef(false);
+  const identity = `${type}:${id ?? ''}:${userId ?? ''}`;
+  const identityRef = useRef(identity); identityRef.current = identity;
+  useEffect(() => { setMessages([]); setThread(null); setState('loading'); setSending(false); sendingRef.current = false; }, [identity]);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -84,6 +92,7 @@ export function useGroupChat(
       ? await getTripChat(id)
       : await getCircleChat(id);
 
+    if (identityRef.current !== identity) return;
     if (!res.ok) {
       if (res.errorKind === 'forbidden') {
         const errMsg = (res as any).message ?? '';
@@ -107,7 +116,7 @@ export function useGroupChat(
     if (d?.thread) {
       // Nested shape: { thread, messages } — thread + first page in one call.
       setThread(d.thread);
-      setMessages(d.messages ?? []);
+      setMessages((previous) => mergePendingMessages(d.messages ?? [], previous));
       setState(d.thread.memberAccess === 'removed' ? 'no_access' : 'active');
       return;
     }
@@ -131,6 +140,7 @@ export function useGroupChat(
         memberAccess: 'active',
       };
       const msgRes = await getThreadMessages(d.threadId, undefined, 'group_chat'); // census-telegraph T431: GroupChatScreen draws only shared cards as themselves
+      if (identityRef.current !== identity) return;
       // DV-83: a first page that could not be read is NOT an empty chat. It
       // used to open as 'active' with no messages, which told a member their
       // trip chat was silent when the read had simply failed.
@@ -143,14 +153,15 @@ export function useGroupChat(
       setThread(synthesized);
       // Endpoint returns newest-first; reverse into chronological order
       // (same convention as useThreadMessages / loadMore).
-      setMessages([...(msgRes.data.messages ?? [])].reverse());
+      const confirmed = [...(msgRes.data.messages ?? [])].reverse();
+      setMessages((previous) => mergePendingMessages(confirmed, previous));
       setState('active');
       return;
     }
 
     setState('error');
     setErrorMessage('Failed to load chat');
-  }, [type, id]);
+  }, [type, id, identity]);
 
   useEffect(() => {
     if (id) load();
@@ -160,7 +171,9 @@ export function useGroupChat(
   const silentRefresh = useCallback(async () => {
     const tid = threadIdRef.current;
     if (!tid) return;
+    const key = identityRef.current;
     const res = await getThreadMessages(tid, undefined, 'group_chat');
+    if (identityRef.current !== key || threadIdRef.current !== tid) return;
     // The server re-authorizes every read. A member removed while this screen
     // was open (or while the device was away) is told so, rather than left
     // looking at a conversation they are no longer in.
@@ -170,10 +183,11 @@ export function useGroupChat(
     setMessages((prev) => {
       // Replace any confirmed incoming messages; keep still-pending optimistic ones
       const confirmedIds = new Set(incoming.map((m) => m.id));
+      const confirmedClients = new Set(incoming.map((m) => m.clientId).filter(Boolean));
       const byId = new Map<string, Message>();
       for (const m of prev) {
         // Drop optimistic 'sending'/'failed' messages that were confirmed server-side
-        if (!m.clientId || !confirmedIds.has(m.id)) byId.set(m.id, m);
+        if (!m.clientId || (!confirmedIds.has(m.id) && !((m.deliveryStatus === 'sending' || m.deliveryStatus === 'failed') && confirmedClients.has(m.clientId)))) byId.set(m.id, m);
       }
       let changed = false;
       for (const m of incoming) {
@@ -186,6 +200,8 @@ export function useGroupChat(
       );
     });
   }, []);
+
+  useThreadOutbox(thread?.id ?? null, userId, (pending) => setMessages((previous) => mergePendingMessages(previous, pending)), () => { void silentRefresh(); }, setErrorMessage);
 
   // TEL-F10 — a member who was offline or backgrounded catches up on return.
   // See useReconnectCatchUp for why this is a re-read and not the owner-only
@@ -235,7 +251,9 @@ export function useGroupChat(
   }, [silentRefresh, clearTyping]);
 
   const send = useCallback(async (body: string, replyToId?: string): Promise<{ ok: boolean }> => {
-    if (!thread || !body.trim()) return { ok: false };
+    if (!thread || !body.trim() || sendingRef.current) return { ok: false };
+    const requestIdentity = identityRef.current;
+    sendingRef.current = true;
     const clientId = makeClientId();
     const optimistic: Message = {
       id: clientId,
@@ -250,6 +268,7 @@ export function useGroupChat(
       deleted: false,
       msgType: 'text',
       subtype: null,
+      replyToId: replyToId ?? null,
       deliveryStatus: 'sending',
       translationStatus: null,
       translationLabel: null,
@@ -261,11 +280,15 @@ export function useGroupChat(
     } as unknown as Message;
     setSending(true);
     setMessages((prev) => [...prev, optimistic]);
-    const res = await sendMessage(thread.id, body.trim(), { clientId, ...(replyToId ? { replyToId } : {}) });
+    let res: MsgResult<Message>;
+    try { res = await sendMessage(thread.id, body.trim(), { clientId, ...(replyToId ? { replyToId } : {}) }); }
+    catch (error) { res = { ok: false, data: null, errorKind: 'db_error', message: error instanceof Error ? error.message : 'Message could not be sent.' }; }
+    if (identityRef.current !== requestIdentity) return { ok: false };
+    sendingRef.current = false;
     if (res.ok && res.data) {
       setMessages((prev) => {
         const withoutOptimistic = prev.filter((m) => m.clientId !== clientId);
-        return [...withoutOptimistic, { ...(res.data as Message), deliveryStatus: 'sent' as const }];
+        return withoutOptimistic.some((message) => message.id === res.data?.id) ? withoutOptimistic : [...withoutOptimistic, { ...(res.data as Message), deliveryStatus: 'sent' as const }];
       });
     } else {
       setMessages((prev) =>
@@ -280,19 +303,32 @@ export function useGroupChat(
     // message render as incoming instead of outgoing.
   }, [thread, userId]);
 
+  const cancelSend = useCallback(async (clientId: string) => {
+    const identity = identityRef.current;
+    await cancelPendingMessage(clientId);
+    if (identityRef.current !== identity) return;
+    setMessages((previous) => previous.filter((message) => message.clientId !== clientId || message.deliveryStatus === 'sent'));
+  }, []);
+
   const retrySend = useCallback(async (clientId: string) => {
     const failed = messages.find((m) => m.clientId === clientId);
-    if (!failed || !thread) return;
+    if (!failed || !thread || sendingRef.current || failed.deliveryStatus !== 'failed') return;
+    const requestIdentity = identityRef.current;
+    sendingRef.current = true; setSending(true);
     setMessages((prev) =>
       prev.map((m) =>
         m.clientId === clientId ? { ...m, deliveryStatus: 'sending' as const, sendFailure: null } : m,
       ),
     );
-    const res = await sendMessage(thread.id, failed.body ?? '', { clientId });
+    let res: MsgResult<Message>;
+    try { res = await sendMessage(thread.id, failed.body ?? '', { clientId, replyToId: failed.replyToId ?? undefined, msgType: failed.msgType, subtype: failed.subtype ?? undefined }); }
+    catch (error) { res = { ok: false, data: null, errorKind: 'db_error', message: error instanceof Error ? error.message : 'Message could not be sent.' }; }
+    if (identityRef.current !== requestIdentity) return;
+    sendingRef.current = false; setSending(false);
     if (res.ok && res.data) {
       setMessages((prev) => {
         const withoutOptimistic = prev.filter((m) => m.clientId !== clientId);
-        return [...withoutOptimistic, { ...(res.data as Message), deliveryStatus: 'sent' as const }];
+        return withoutOptimistic.some((message) => message.id === res.data?.id) ? withoutOptimistic : [...withoutOptimistic, { ...(res.data as Message), deliveryStatus: 'sent' as const }];
       });
     } else {
       setMessages((prev) =>
@@ -360,7 +396,7 @@ export function useGroupChat(
     loadingOlderRef.current = true;
     try {
       const oldest = messages[0];
-      const res = await getThreadMessages(thread.id, oldest.createdAt, 'group_chat');
+      const res = await getThreadMessages(thread.id, oldest.createdAt, 'group_chat', oldest.sequence);
       if (res.ok && res.data) {
         const older = [...(res.data.messages ?? [])].reverse();
         setMessages((prev) => {
@@ -376,5 +412,5 @@ export function useGroupChat(
     }
   }, [thread, messages]);
 
-  return { state, thread, messages, sending, errorMessage, typingUserIds, reload: load, send, retrySend, notifyTyping, edit, remove, loadMore };
+  return { state, thread, messages, sending, errorMessage, typingUserIds, reload: load, send, retrySend, cancelSend, notifyTyping, edit, remove, loadMore };
 }

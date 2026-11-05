@@ -1,3 +1,4 @@
+import { readCanonicalPlaceRow } from "../lib/places/placeGovernance.js";
 import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
@@ -29,13 +30,9 @@ const cursorSchema = z.string().transform((value, ctx) => {
 });
 
 async function canonicalPlace(sc: any, id: string): Promise<any | null> {
-  const { data } = await sc.from("places")
-    .select("id, name, city, latitude, longitude, merged_into_place_id").eq("id", id).maybeSingle();
-  if (!data) return null;
-  if (!(data as any).merged_into_place_id) return data;
-  const { data: survivor } = await sc.from("places")
-    .select("id, name, city, latitude, longitude").eq("id", (data as any).merged_into_place_id).maybeSingle();
-  return survivor ?? null;
+  const result=await readCanonicalPlaceRow(sc,id);
+  if(!result.ok) { if(result.reason==='not_found') return null; throw Object.assign(new Error('Canonical place group unavailable'),{status:503}); }
+  return result.place;
 }
 
 async function guard(req: any, res: any) {

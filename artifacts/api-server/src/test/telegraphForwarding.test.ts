@@ -194,6 +194,13 @@ function makeClient(state: State) {
     from,
     rpc: async (name: string, args: any) => {
       rpcCalls.push({ name, args });
+      if (name === "telegraph_set_content_capability") {
+        const rows = db.message_content_capabilities!;
+        const row = { message_id: args.p_message, capability: args.p_capability, set_by: args.p_actor };
+        const old = rows.findIndex(r => r.message_id === args.p_message);
+        if (old >= 0) rows[old] = row; else rows.push(row);
+        return { data: null, error: null };
+      }
       if (name === "telegraph_record_forward") return { data: recordForward(db, args), error: null };
       return { data: null, error: { message: "rpc not modelled" } };
     },
@@ -394,7 +401,7 @@ describe("T406 — POST /threads/:id/forward", () => {
   it("deleted, photo, location, encrypted and revoked-object sources are refused", async () => {
     const c = useState();
     assert.equal((await forward(BOB, M_DELETED)).status, 404);
-    assert.equal((await forward(BOB, M_PHOTO)).body.reason, "attachment_copy_unsupported");
+    assert.equal((await forward(BOB, M_PHOTO)).body.reason, "forward_restricted");
     assert.equal((await forward(BOB, M_LOCATION)).body.reason, "kind_not_forwardable");
     assert.equal((await forward(BOB, M_E2EE)).body.reason, "e2ee_source");
     assert.equal((await forward(BOB, M_OBJECT_GONE)).status, 404);

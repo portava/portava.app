@@ -1,234 +1,133 @@
-/**
- * E-1: Crypto identity initialisation.
- *
- * On first launch (or after a re-install that cleared SecureStore on iOS):
- *   1. Generates an Ed25519 identity key pair and an Ed25519+X25519 device key pair.
- *   2. Stores all private keys in SecureStore.
- *   3. Registers the device with the server (`POST /me/crypto-devices/:id/public-key`).
- *   4. Generates an initial batch of KeyPackages and uploads them to the server.
- *
- * Subsequent launches: detects existing keys in SecureStore and skips generation.
- *
- * HALTING CONDITION: if expo-openmls is not loaded (EAS build not performed),
- * this function logs an error and returns without setting keys. The app continues
- * to work without E2EE (E-0 / plaintext mode) until an EAS build is run.
- *
- * NEVER log private key values.
- */
-
+/** Native identity material belongs to one account. Legacy unowned keys are
+ * preserved, but never silently attributed to whichever account signs in next. */
 import { Platform } from 'react-native';
+import { SECURE_KEYS, isNative, deleteSecure } from './secureStore.ts';
+import type { MessagingOwnerRequest } from '../services/observedOwnerSnapshot.ts';
+import { cryptoOwner, readLegacyCryptoSecret, readCryptoSecret, writeCryptoSecret, serializedCrypto, pendingWasConsumed, cryptoStorageKey } from './e2ee/nativeSessionStore.ts';
 
-import {
-  getSecure,
-  setSecure,
-  SECURE_KEYS,
-  isNative,
-} from './secureStore.ts';
-import { freshToken } from '../services/apiToken.ts';
-
-const KEY_PACKAGE_BATCH_SIZE = 10;
-
-function log(msg: string, data?: object) {
-  if (__DEV__) {
-    console.log(`[CryptoIdentity] ${msg}`, data ?? '');
-  }
-}
-
-/** Returns true if identity keys are already in SecureStore. */
-export async function hasCryptoIdentity(): Promise<boolean> {
+type Native = typeof import('../../vendor/expo-openmls/src/index.ts');
+type Post = (path: string, body?: object) => Promise<{ data?: unknown; error?: unknown }>;
+export const PENDING_PUBLIC = 'pending_keypackage_public';
+export const PENDING_PUBLISHED = 'pending_keypackage_published';
+export const LEGACY_PENDING = 'legacy_pending_keypackage';
+const refillListeners = new Set<() => void>();
+export const onKeyPackageConsumed = (listener: () => void): (() => void) => { refillListeners.add(listener); return () => { refillListeners.delete(listener); }; };
+export function notifyKeyPackageConsumed(): void { for (const listener of refillListeners) listener(); }
+export async function hasCryptoIdentity(request?: MessagingOwnerRequest): Promise<boolean> {
   if (!isNative()) return false;
-  const key = await getSecure(SECURE_KEYS.IDENTITY_PRIVATE_KEY);
-  return Boolean(key);
+  return Boolean(await readCryptoSecret(cryptoOwner(request), SECURE_KEYS.IDENTITY_PRIVATE_KEY));
 }
-
-/** Returns the stored identity public key, or null if not initialised. */
-export async function getIdentityPublicKey(): Promise<string | null> {
-  return getSecure(SECURE_KEYS.IDENTITY_PUBLIC_KEY);
+export async function getIdentityPublicKey(request?: MessagingOwnerRequest): Promise<string | null> {
+  return readCryptoSecret(cryptoOwner(request), SECURE_KEYS.IDENTITY_PUBLIC_KEY);
 }
-
-/** Returns the stored device Ed25519 public key, or null if not initialised. */
-export async function getDeviceEd25519PublicKey(): Promise<string | null> {
-  return getSecure(SECURE_KEYS.DEVICE_ED25519_PUBLIC_KEY);
+export async function getDeviceEd25519PublicKey(request?: MessagingOwnerRequest): Promise<string | null> {
+  return readCryptoSecret(cryptoOwner(request), SECURE_KEYS.DEVICE_ED25519_PUBLIC_KEY);
 }
-
-/** Returns the registered device ID (UUID from server), or null. */
-export async function getRegisteredDeviceId(): Promise<string | null> {
-  return getSecure(SECURE_KEYS.REGISTERED_DEVICE_ID);
+export async function getRegisteredDeviceId(request?: MessagingOwnerRequest): Promise<string | null> {
+  return readCryptoSecret(cryptoOwner(request), SECURE_KEYS.REGISTERED_DEVICE_ID);
 }
-
-/**
- * Main entry point. Idempotent — safe to call on every app launch.
- * Returns immediately if keys are already generated.
- */
 export async function initCryptoIdentity(opts: {
-  /** Server API helper — must POST and PUT against /api endpoints. */
-  apiPost: (path: string, body?: object) => Promise<{ data?: unknown; error?: unknown }>;
+  apiPost: Post;
+  apiGet?: (path: string) => Promise<{ data?: unknown; error?: unknown }>;
   apiPut: (path: string, body: object) => Promise<{ data?: unknown; error?: unknown }>;
+  owner?: MessagingOwnerRequest;
 }): Promise<void> {
   if (!isNative()) return;
-
-  // Guard: expo-openmls native module requires an EAS dev build
-  let ExpoOpenmls: any = null;
-  try {
-    ExpoOpenmls = require('expo-openmls');
-  } catch {
-    log('expo-openmls not available — running in plaintext mode (EAS build required for E2EE)');
-    return;
-  }
-
-  // Idempotent: already initialised?
-  const existingIdentityPriv = await getSecure(SECURE_KEYS.IDENTITY_PRIVATE_KEY);
-  if (existingIdentityPriv) {
-    // Ensure the server has our device ID (may have been lost between restarts)
-    await _ensureDeviceRegistered(opts.apiPost, ExpoOpenmls, existingIdentityPriv);
-    return;
-  }
-
-  log('generating key material for first time…');
-
-  // 1. Identity key pair (Ed25519 — long-lived per user)
-  let identityKeys: { pubKeyB64: string; privKeyB64: string };
-  try {
-    identityKeys = await ExpoOpenmls.generateIdentityKeyPair();
-  } catch (err) {
-    log('identity key generation failed', { err });
-    return; // non-fatal: app continues without E2EE
-  }
-
-  // 2. Device key pair (Ed25519 + X25519 — one per install)
-  let deviceKeys: {
-    ed25519PubB64: string; ed25519PrivB64: string;
-    x25519PubB64: string; x25519PrivB64: string;
-  };
-  try {
-    deviceKeys = await ExpoOpenmls.generateDeviceKeyPair();
-  } catch (err) {
-    log('device key generation failed', { err });
-    return;
-  }
-
-  // 3. Store ALL private keys before any network call.
-  //    If the network call fails below, keys are in SecureStore for next launch.
-  await setSecure(SECURE_KEYS.IDENTITY_PRIVATE_KEY,        identityKeys.privKeyB64);
-  await setSecure(SECURE_KEYS.IDENTITY_PUBLIC_KEY,         identityKeys.pubKeyB64);
-  await setSecure(SECURE_KEYS.DEVICE_ED25519_PRIVATE_KEY,  deviceKeys.ed25519PrivB64);
-  await setSecure(SECURE_KEYS.DEVICE_ED25519_PUBLIC_KEY,   deviceKeys.ed25519PubB64);
-  await setSecure(SECURE_KEYS.DEVICE_X25519_PRIVATE_KEY,   deviceKeys.x25519PrivB64);
-  await setSecure(SECURE_KEYS.DEVICE_X25519_PUBLIC_KEY,    deviceKeys.x25519PubB64);
-
-  log('keys generated and stored in SecureStore');
-
-  // 4. Register device + upload public key
-  await _ensureDeviceRegistered(opts.apiPost, ExpoOpenmls, identityKeys.privKeyB64);
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-async function _ensureDeviceRegistered(
-  apiPost: (path: string, body?: object) => Promise<{ data?: unknown; error?: unknown }>,
-  ExpoOpenmls: any,
-  identityPrivB64: string,
-): Promise<void> {
-  let deviceId = await getSecure(SECURE_KEYS.REGISTERED_DEVICE_ID);
-
-  if (!deviceId) {
-    // Register the device
-    const { data, error } = await apiPost('/me/crypto-devices', {
-      platform: Platform.OS === 'android' ? 'android' : Platform.OS === 'web' ? 'web' : 'ios',
-    }) as { data?: { device?: { id: string } }; error?: unknown };
-
-    if (error || !data?.device?.id) {
-      log('device registration failed', { error });
-      return;
+  const owner = cryptoOwner(opts.owner);
+  const native = require('expo-openmls') as Native;
+  return serializedCrypto(owner, '__identity__', async () => {
+    const required = [SECURE_KEYS.IDENTITY_PRIVATE_KEY, SECURE_KEYS.IDENTITY_PUBLIC_KEY,
+      SECURE_KEYS.DEVICE_ED25519_PRIVATE_KEY, SECURE_KEYS.DEVICE_ED25519_PUBLIC_KEY,
+      SECURE_KEYS.DEVICE_X25519_PRIVATE_KEY, SECURE_KEYS.DEVICE_X25519_PUBLIC_KEY];
+    const persistIdentity = async (values: string[]) => {
+      // One recoverable keychain record precedes the individual compatibility
+      // keys. An interrupted first initialization resumes the same identity.
+      await writeCryptoSecret(owner, 'identity_bundle_v1', JSON.stringify(values));
+      for (let i = 0; i < required.length; i++) await writeCryptoSecret(owner, required[i]!, values[i]!);
+    };
+    const bundle = await readCryptoSecret(owner, 'identity_bundle_v1');
+    if (bundle && (await Promise.all(required.map((key) => readCryptoSecret(owner, key)))).some((value) => !value)) {
+      const values: unknown = JSON.parse(bundle);
+      if (!Array.isArray(values) || values.length !== required.length || values.some((value) => typeof value !== 'string' || !value)) throw new Error('The encrypted-message identity could not be recovered.');
+      await persistIdentity(values as string[]);
     }
-    deviceId = data.device.id;
-    await setSecure(SECURE_KEYS.REGISTERED_DEVICE_ID, deviceId);
-    log('device registered', { deviceId });
-  }
-
-  // Upload public key (no-op if already set — server handles gracefully)
-  const identityPub = await getSecure(SECURE_KEYS.IDENTITY_PUBLIC_KEY);
-  if (identityPub && deviceId) {
-    const result = await (async () => {
-      try {
-        const url = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-        const token = await freshToken();
-        if (!token) return;
-        await fetch(`${url}/api/me/crypto-devices/${deviceId}/public-key`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ publicKey: identityPub }),
-        });
-      } catch { /* best-effort */ }
-    })();
-  }
-
-  // Publish a KeyPackage so other users can start an E2EE thread with this
-  // device. Without one, `GET /users/:id/key-packages/consume` returns
-  // no_key_package and every attempt to encrypt a thread with this user fails
-  // — visibly, but it fails. This is what makes the device reachable.
-  if (deviceId) await publishKeyPackageForDevice(ExpoOpenmls, deviceId);
-}
-
-/**
- * Generate and publish one KeyPackage, retaining the private material the
- * resulting Welcome will be encrypted to.
- *
- * ORDER: the pending state is stored BEFORE the KeyPackage is published. If a
- * peer consumed a published KeyPackage while this device had not yet stored the
- * matching private material, the Welcome would arrive unopenable and the thread
- * would be permanently unreadable. Storing first can at worst orphan an unused
- * pending state, which costs nothing.
- *
- * Pool size is deliberately one — see lib/e2ee/threadCrypto.ts. Republished on
- * each launch, which is also the replenish path after a consume.
- */
-async function publishKeyPackageForDevice(ExpoOpenmls: any, deviceId: string): Promise<void> {
-  try {
-    const [priv, pub, userId] = await Promise.all([
-      getSecure(SECURE_KEYS.DEVICE_ED25519_PRIVATE_KEY),
-      getSecure(SECURE_KEYS.DEVICE_ED25519_PUBLIC_KEY),
-      currentUserIdForCredential(),
-    ]);
-    if (!priv || !pub || !userId) return;
-
-    // Two-value return: the KeyPackage to publish, and the state to keep.
-    const result = await ExpoOpenmls.generateKeyPackage(userId, priv, pub);
-    if (!result?.keyPackageB64 || !result?.pendingStateB64) {
-      log('generateKeyPackage returned an unexpected shape');
-      return;
+    // Old installs used global keys. Adopt only after the current account's
+    // authenticated device census confirms both device ID and identity key.
+    if ((await Promise.all(required.map((key) => readCryptoSecret(owner, key)))).some((value) => !value) && opts.apiGet) {
+      const [legacyId, legacyPublic] = await Promise.all([readLegacyCryptoSecret(SECURE_KEYS.REGISTERED_DEVICE_ID), readLegacyCryptoSecret(SECURE_KEYS.IDENTITY_PUBLIC_KEY)]);
+      cryptoOwner(owner);
+      if (legacyId && legacyPublic) {
+        const census = await opts.apiGet('/me/crypto-devices'); cryptoOwner(owner);
+        if (census.error) throw new Error('Cannot verify the existing encrypted-message identity.');
+        const devices = (census.data as { devices?: Array<{ id?: string; public_key?: string }> })?.devices;
+        if (!Array.isArray(devices)) throw new Error('Cannot verify the existing encrypted-message identity.');
+        if (devices.some((device) => device.id === legacyId && device.public_key === legacyPublic)) {
+          const values = await Promise.all(required.map(readLegacyCryptoSecret)); cryptoOwner(owner);
+          if (values.some((value) => !value)) throw new Error('The existing encrypted-message identity is incomplete.');
+          const pending = await readLegacyCryptoSecret(SECURE_KEYS.MLS_PENDING_KEY_PACKAGE); cryptoOwner(owner);
+          if (pending) {
+            await writeCryptoSecret(owner, LEGACY_PENDING, pending);
+          }
+          await writeCryptoSecret(owner, SECURE_KEYS.REGISTERED_DEVICE_ID, legacyId);
+          await persistIdentity(values as string[]);
+        }
+      }
     }
-
-    await setSecure(SECURE_KEYS.MLS_PENDING_KEY_PACKAGE, result.pendingStateB64);
-
-    const url = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-    const token = await freshToken();
-    if (!token) return;
-    await fetch(`${url}/api/me/devices/${deviceId}/key-packages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ keyPackages: [result.keyPackageB64] }),
-    });
-    log('key package published');
-  } catch (e) {
-    // Never block startup on this. The cost of failure is that nobody can start
-    // an E2EE thread with this device until the next launch — visible, not silent.
-    log('key package publish failed', { e: String(e) });
-  }
-}
-
-/** Signed-in user id — the PUBLIC identity placed in the MLS credential. */
-async function currentUserIdForCredential(): Promise<string | null> {
-  try {
-    const { supabase } = await import('./supabase.ts');
-    const { data } = await supabase.auth.getSession();
-    return data?.session?.user?.id ?? null;
-  } catch {
-    return null;
-  }
+    const existing = await Promise.all(required.map((key) => readCryptoSecret(owner, key)));
+    cryptoOwner(owner);
+    if (existing.some((key) => !key)) {
+      if (existing.some(Boolean)) throw new Error('The existing encrypted-message identity is incomplete.');
+      const identity = await native.generateIdentityKeyPair(); cryptoOwner(owner);
+      const device = await native.generateDeviceKeyPair(); cryptoOwner(owner);
+      const values = [identity.privKeyB64, identity.pubKeyB64, device.ed25519PrivB64, device.ed25519PubB64, device.x25519PrivB64, device.x25519PubB64];
+      if (values.some((value) => typeof value !== 'string' || !value)) throw new Error('Crypto identity generation failed.');
+      await persistIdentity(values);
+    }
+    let deviceId = await readCryptoSecret(owner, SECURE_KEYS.REGISTERED_DEVICE_ID);
+    if (!deviceId) {
+      cryptoOwner(owner);
+      const result = await opts.apiPost('/me/crypto-devices', { platform: Platform.OS }); cryptoOwner(owner);
+      const data = result.data as { device?: { id?: unknown } } | null;
+      if (result.error || typeof data?.device?.id !== 'string' || !data.device.id) throw new Error('Crypto device registration failed.');
+      deviceId = data.device.id;
+      await writeCryptoSecret(owner, SECURE_KEYS.REGISTERED_DEVICE_ID, deviceId);
+    }
+    const publicKey = await readCryptoSecret(owner, SECURE_KEYS.IDENTITY_PUBLIC_KEY); cryptoOwner(owner);
+    const publishedIdentity = await opts.apiPost(`/me/crypto-devices/${encodeURIComponent(deviceId)}/public-key`, { publicKey }); cryptoOwner(owner);
+    if (publishedIdentity.error) throw new Error('Crypto identity registration failed.');
+    // Joining a Welcome records consumption in the SAME SQLCipher commit as
+    // group state. Recover a crash before the separate Keychain cleanup here.
+    for (const slot of [SECURE_KEYS.MLS_PENDING_KEY_PACKAGE, LEGACY_PENDING]) {
+      const used = await readCryptoSecret(owner, slot);
+      if (used && await pendingWasConsumed(owner, used)) {
+        for (const key of slot === LEGACY_PENDING ? [slot] : [slot, PENDING_PUBLIC, PENDING_PUBLISHED]) {
+          await deleteSecure(cryptoStorageKey(owner, key)); cryptoOwner(owner);
+        }
+      }
+    }
+    let pending = await readCryptoSecret(owner, SECURE_KEYS.MLS_PENDING_KEY_PACKAGE);
+    let publicPackage = await readCryptoSecret(owner, PENDING_PUBLIC);
+    // Legacy private material has its own bounded slot so a delayed old
+    // Welcome remains decryptable while new conversations can obtain a key.
+    if (!pending || !publicPackage) {
+      const [priv, pub] = await Promise.all([
+        readCryptoSecret(owner, SECURE_KEYS.DEVICE_ED25519_PRIVATE_KEY), readCryptoSecret(owner, SECURE_KEYS.DEVICE_ED25519_PUBLIC_KEY),
+      ]);
+      cryptoOwner(owner);
+      if (!priv || !pub) throw new Error('Crypto device keys are missing.');
+      const result = await native.generateKeyPackage(owner.ownerId, priv, pub); cryptoOwner(owner);
+      if (!result.pendingStateB64 || !result.keyPackageB64) throw new Error('Key package generation failed.');
+      pending = result.pendingStateB64; publicPackage = result.keyPackageB64;
+      await writeCryptoSecret(owner, PENDING_PUBLIC, publicPackage);
+      await writeCryptoSecret(owner, SECURE_KEYS.MLS_PENDING_KEY_PACKAGE, pending);
+    }
+    // Retry publication with exactly the same pending private/public pair. A
+    // failed request or relaunch must not discard the key needed by a Welcome.
+    if (await readCryptoSecret(owner, PENDING_PUBLISHED) === publicPackage) return;
+    cryptoOwner(owner);
+    const published = await opts.apiPost(`/me/devices/${encodeURIComponent(deviceId)}/key-packages`, { keyPackages: [publicPackage] });
+    cryptoOwner(owner);
+    if (published.error) throw new Error('Key package publication failed.');
+    await writeCryptoSecret(owner, PENDING_PUBLISHED, publicPackage);
+  });
 }

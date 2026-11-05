@@ -158,9 +158,12 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
 
   // `checkSaved` is the bookmark icon — must be accurate so fires immediately.
   useEffect(() => {
+    let cancelled = false;
+    setSaved(false);
     checkSaved('place', place.id)
-      .then(({ saved }) => setSaved(saved))
+      .then(({ saved, ok }) => { if (!cancelled && ok !== false) setSaved(saved); })
       .catch(() => {});
+    return () => { cancelled = true; };
   }, [place.id]);
 
   // `getSavedListIds` drives the "Saved to N trips" badge — secondary info.

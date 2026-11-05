@@ -15,10 +15,11 @@
  */
 import { useRef, useCallback } from 'react';
 import type { NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
-import { View } from 'react-native';
+import { View, useWindowDimensions } from 'react-native';
 import { makeMutable, withSpring } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React from 'react';
+import { floatingTabBarMetrics } from '../components/navigation/floatingTabBarGeometry.ts';
 
 // ── Spring configs ──────────────────────────────────────────────────────────
 
@@ -101,7 +102,9 @@ export function useNavBarScrollHandler() {
  */
 export function NavBarFiller() {
   const insets = useSafeAreaInsets();
+  const { fontScale } = useWindowDimensions();
   return React.createElement(View, {
-    style: { height: NAV_BAR_FILLER_HEIGHT + insets.bottom },
+    testID: 'nav-bar-filler',
+    style: { height: NAV_BAR_FILLER_HEIGHT + floatingTabBarMetrics(fontScale).extraHeight + insets.bottom },
   });
 }

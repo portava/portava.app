@@ -21,6 +21,7 @@
  * and reusing the microphone the video call already opened.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { currentDiscoveryScope, onDiscoveryScopeChange } from '../discoveryViewerScope.ts';
 import {
   ACOUSTIC_PERMISSION_DENIED,
   acousticCaptureAllowed,
@@ -31,11 +32,10 @@ import {
   type StorageLike,
 } from '../../lib/sensing/acousticPermission.ts';
 
-const storage: StorageLike = {
-  getItem: (k) => AsyncStorage.getItem(k),
-  setItem: (k, v) => AsyncStorage.setItem(k, v),
-  removeItem: (k) => AsyncStorage.removeItem(k),
-};
+function storageFor(owner: string): StorageLike {
+  const key = (k: string) => `${k}:${encodeURIComponent(owner)}`;
+  return { getItem: k => AsyncStorage.getItem(key(k)), setItem: (k, v) => AsyncStorage.setItem(key(k), v), removeItem: k => AsyncStorage.removeItem(key(k)) };
+}
 
 export type AcousticPermissionSnapshot = Readonly<{
   permission: AcousticPermission;
@@ -50,7 +50,10 @@ let snapshot: AcousticPermissionSnapshot = Object.freeze({
   persistence: 'unchanged',
   intent: null,
 });
-let localDenied = false;
+let permissionOwner = currentDiscoveryScope().viewer;
+const deniedOwners = new Set<string>();
+const hasOwner = () => typeof permissionOwner === 'string' && permissionOwner.startsWith('u:');
+let localDenied = !hasOwner();
 let readGeneration = 0;
 let latestRead: Promise<AcousticPermission> = Promise.resolve(ACOUSTIC_PERMISSION_DENIED);
 let writes = Promise.resolve();
@@ -74,6 +77,7 @@ function publish(next: AcousticPermissionSnapshot): void {
 
 function begin(intent: 'grant' | 'withdraw'): number {
   localDenied = true;
+  if (permissionOwner) deniedOwners.add(permissionOwner);
   const revision = snapshot.revision + 1;
   publish({ permission: ACOUSTIC_PERMISSION_DENIED, revision, persistence: 'pending', intent });
   return revision;
@@ -86,6 +90,7 @@ async function persist(revision: number, write: () => Promise<AcousticPermission
       const permission = await write();
       if (revision !== snapshot.revision) return;
       localDenied = !permission.granted;
+      if (permissionOwner) { if (localDenied) deniedOwners.add(permissionOwner); else deniedOwners.delete(permissionOwner); }
       publish({ ...snapshot, permission, persistence: 'saved' });
     } catch {
       if (revision !== snapshot.revision) return;
@@ -115,6 +120,8 @@ async function osMicrophoneGranted(): Promise<boolean> {
 
 /** The current combined state. Never prompts; safe to call on every window. */
 export function readAcousticSensingPermission(): Promise<AcousticPermission> {
+  if (!hasOwner()) return Promise.resolve(ACOUSTIC_PERMISSION_DENIED);
+  const storage = storageFor(permissionOwner!);
   const revision = snapshot.revision;
   const expected = ++readGeneration;
   if (localDenied) return Promise.resolve(snapshot.permission);
@@ -141,6 +148,8 @@ export async function acousticSensingAllowed(): Promise<boolean> {
  * — at the moment they chose it, on a surface that said what it is for.
  */
 export async function requestAcousticSensingPermission(): Promise<AcousticPermission> {
+  if (!hasOwner()) return ACOUSTIC_PERMISSION_DENIED;
+  const storage = storageFor(permissionOwner!);
   const revision = begin('grant');
   let granted = false;
   try {
@@ -156,8 +165,22 @@ export async function requestAcousticSensingPermission(): Promise<AcousticPermis
 
 /** Withdraw the acoustic grant. Calls and video keep their microphone. */
 export async function withdrawAcousticSensingPermission(): Promise<AcousticPermission> {
+  if (!hasOwner()) return ACOUSTIC_PERMISSION_DENIED;
+  const storage = storageFor(permissionOwner!);
   const revision = begin('withdraw');
   return persist(revision, () => revokeAcousticPermission(storage, Date.now()));
 }
+
+// A device-wide historical grant has no known owner and is deliberately not
+// migrated. Each signed-in person must explicitly choose this separate purpose.
+onDiscoveryScopeChange(() => {
+  const next = currentDiscoveryScope().viewer;
+  if (next === permissionOwner) return;
+  permissionOwner = next;
+  readGeneration += 1;
+  localDenied = !hasOwner() || deniedOwners.has(next!);
+  latestRead = Promise.resolve(ACOUSTIC_PERMISSION_DENIED);
+  publish({ permission: ACOUSTIC_PERMISSION_DENIED, revision: snapshot.revision + 1, persistence: 'unchanged', intent: null });
+});
 
 export { ACOUSTIC_PERMISSION_DENIED };

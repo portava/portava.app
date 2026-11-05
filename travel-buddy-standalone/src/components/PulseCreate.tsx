@@ -168,6 +168,7 @@ export function UnifiedPostComposer({
   onSuccess,
   openCameraOnMount = false,
   initialPlace = null,
+  initialText = '',
   initialBucket = null, tripId = null,
 }: {
   onClose: () => void;
@@ -176,6 +177,8 @@ export function UnifiedPostComposer({
   openCameraOnMount?: boolean;
   /** Pre-selected place (e.g. when opened from a place page CTA). */
   initialPlace?: Place | null;
+  /** A link shared from another post; editable and unpublished until submit. */
+  initialText?: string;
   /** Bucket hint passed from a place-page bucket CTA (e.g. 'night'). */
   initialBucket?: string | null; /** Post TO this trip (the trip page's Add Post): sent as `tripId`, so the post lands in the trip's own list. The server keeps trip posts out of the public feeds, and the composer says so. */ tripId?: string | null;
 }) {
@@ -189,9 +192,9 @@ export function UnifiedPostComposer({
   // upload → create lifecycle, not just the create phase.
   const [inFlight, setInFlight] = useState(false);
 
-  const [selectedType, setSelectedType] = useState<PostTypeId | null>(null);
-  const [selectedCategory, setSelectedCategory] = useState<PostCategory | null>(null);
-  const [text, setText] = useState('');
+  const [selectedType, setSelectedType] = useState<PostTypeId | null>(initialText ? 'post_update' : null);
+  const [selectedCategory, setSelectedCategory] = useState<PostCategory | null>(initialText ? resolveDefaultCategory('post_update') : null);
+  const [text, setText] = useState(initialText);
   const [placeName, setPlaceName] = useState('');
   const mentionRef = useRef<MentionInputHandle>(null);
   // Shared lock across concurrent handleSubmit() calls — prevents double-close

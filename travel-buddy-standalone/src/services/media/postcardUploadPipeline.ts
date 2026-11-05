@@ -91,6 +91,11 @@ export interface PostcardUploadJob {
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; message: string; retryable?: boolean };
 
 export interface PipelineDeps {
+  /** Optional on pure test runtimes; the device binds all effects to one session. */
+  isCurrent?(): boolean;
+  isCancelled?(): boolean;
+  cancel?(): void;
+  dispose?(): void;
   createShell(input: PostcardUploadInput): Promise<ApiResult<{ id: string }>>;
   reserveSlot(postId: string, params: { mimeType: string; fileSizeBytes: number }): Promise<ApiResult<{ mediaId: string; uploadUrl: string }>>;
   readFile(uri: string): Promise<FileLike>;
@@ -149,7 +154,8 @@ export async function runPostcardUpload(
     await deps.persist(job);
     hooks.onStage?.(job);
   };
-  const cancelled = () => hooks.isCancelled?.() === true;
+  const cancelled = () => hooks.isCancelled?.() === true || deps.isCancelled?.() === true;
+  const interrupted = () => cancelled() || deps.isCurrent?.() === false;
   const pause = (message: string) => save({ retryable: true, lastError: message });
   const fail = async (message: string) => {
     if (job.postId) await deps.discardShell(job.postId).catch(() => {});
@@ -168,14 +174,16 @@ export async function runPostcardUpload(
 
   // ── shell ──────────────────────────────────────────────────────────────────
   if (job.stage === 'queued') {
+    if (deps.isCurrent?.() === false) { await pause('Sign in again to resume this upload.'); return job; }
     if (cancelled()) { await cancel(); return job; }
     const shell = await deps.createShell(job.input);
-    if (!shell.ok) { await (shell.retryable ? pause(shell.message) : fail(shell.message)); return job; }
+    if (!shell.ok) { await (deps.isCurrent?.() === false ? pause('Sign in again to resume this upload.') : cancelled() ? cancel() : shell.retryable ? pause(shell.message) : fail(shell.message)); return job; }
     await save({ stage: 'shell', postId: shell.data.id });
   }
 
   // ── slot ───────────────────────────────────────────────────────────────────
   if (job.stage === 'shell') {
+    if (deps.isCurrent?.() === false) { await pause('Sign in again to resume this upload.'); return job; }
     if (cancelled()) { await cancel(); return job; }
     // The slot is reserved for an EXACT size — the resume protocol checks every
     // part against it — so an unreported picker size is resolved from the bytes.
@@ -189,12 +197,13 @@ export async function runPostcardUpload(
       }
     }
     const slot = await deps.reserveSlot(job.postId!, { mimeType: asset.mimeType, fileSizeBytes: size });
-    if (!slot.ok) { await (slot.retryable ? pause(slot.message) : fail(slot.message)); return job; }
+    if (!slot.ok) { await (deps.isCurrent?.() === false ? pause('Sign in again to resume this upload.') : cancelled() ? cancel() : slot.retryable ? pause(slot.message) : fail(slot.message)); return job; }
     await save({ stage: 'slot', mediaId: slot.data.mediaId, uploadUrl: slot.data.uploadUrl, fileSizeBytes: size });
   }
 
   // ── bytes ──────────────────────────────────────────────────────────────────
   if (job.stage === 'slot') {
+    if (deps.isCurrent?.() === false) { await pause('Sign in again to resume this upload.'); return job; }
     if (cancelled()) { await cancel(); return job; }
     let file: FileLike;
     try {
@@ -211,12 +220,12 @@ export async function runPostcardUpload(
       if (job.transport !== 'resumable') await save({ transport: 'resumable' });
       const r = await uploadSlotResumable(
         slot, file, asset.mimeType, deps.resumable.transport,
-        { ...deps.env, isCancelled: hooks.isCancelled },
+        { ...deps.env, isCancelled: interrupted },
         hooks.onProgress,
       );
       if (r.ok) landed = true;
       else if ('unsupported' in r && r.unsupported) await save({ transport: 'single' });
-      else if (r.cancelled) { await cancel(); return job; }
+      else if (r.cancelled) { await (deps.isCurrent?.() === false ? pause('Sign in again to resume this upload.') : cancel()); return job; }
       else if (r.retryable) { await pause(r.reason); return job; }
       else { await fail(r.reason); return job; }
     }
@@ -229,9 +238,9 @@ export async function runPostcardUpload(
         const s = r.status ?? null;
         if (s == null || s === 408 || s === 429 || (s >= 500 && s <= 599)) return { kind: 'retry', reason: r.message ?? 'upload failed' };
         return { kind: 'fail', reason: r.message ?? `upload failed (HTTP ${s})`, status: s };
-      }, { ...DEFAULT_RETRY, ...deps.env.retry, sleep: deps.env.sleep, random: deps.env.random, isCancelled: hooks.isCancelled });
+      }, { ...DEFAULT_RETRY, ...deps.env.retry, sleep: deps.env.sleep, random: deps.env.random, isCancelled: interrupted });
       if (!put.ok) {
-        if (put.cancelled) { await cancel(); return job; }
+        if (put.cancelled) { await (deps.isCurrent?.() === false ? pause('Sign in again to resume this upload.') : cancel()); return job; }
         // One PUT has no resume token: on the single transport a paused upload
         // restarts from byte 0 next run, which is exactly why the resumable
         // transport exists.
@@ -246,6 +255,8 @@ export async function runPostcardUpload(
 
   // ── poster (video only; fail-soft) ─────────────────────────────────────────
   if (job.stage === 'bytes') {
+    if (deps.isCurrent?.() === false) { await pause('Sign in again to resume this upload.'); return job; }
+    if (cancelled()) { await cancel(); return job; }
     let thumbnailPath: string | null = null;
     if (asset.isVideo) {
       const frame = await deps.extractPoster(asset.uri).catch(() => null);
@@ -256,6 +267,7 @@ export async function runPostcardUpload(
 
   // ── complete ───────────────────────────────────────────────────────────────
   if (job.stage === 'poster') {
+    if (deps.isCurrent?.() === false) { await pause('Sign in again to resume this upload.'); return job; }
     if (cancelled()) { await cancel(); return job; }
     const done = await deps.complete(job.postId!, job.mediaId!, {
       mimeType: asset.mimeType,
@@ -266,7 +278,7 @@ export async function runPostcardUpload(
       thumbnailPath: job.thumbnailPath ?? undefined,
       stampOverlay: asset.isVideo ? undefined : job.input.stampOverlay,
     });
-    if (!done.ok) { await (done.retryable ? pause(done.message) : fail(done.message)); return job; }
+    if (!done.ok) { await (deps.isCurrent?.() === false ? pause('Sign in again to resume this upload.') : cancelled() ? cancel() : done.retryable ? pause(done.message) : fail(done.message)); return job; }
     await save({ stage: 'done', result: done.data });
   }
   return job;

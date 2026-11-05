@@ -14,18 +14,26 @@
  *
  * Run with: npx jest src/services/__tests__/collectionsAndPassports.readFailure.component.test.ts
  */
+jest.mock('../../lib/supabase.ts', () => {
+  const listeners = new Set();
+  return { isSupabaseConfigured: true, supabase: { auth: { listeners, onAuthStateChange: (listener: unknown) => {
+    listeners.add(listener); return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } };
+  } } } };
+});
 import assert from 'node:assert/strict';
+import { seedObservedOwnerSession, disposeObservedOwnerSession, observedOwnerAccessToken } from './observedOwnerSessionFixture.ts';
+import { setDiscoveryViewerFromSession } from '../discoveryViewerScope.ts';
 
 process.env.EXPO_PUBLIC_SUPABASE_URL ??= 'https://test.supabase.co';
 process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ??= 'test-anon-key';
-process.env.EXPO_PUBLIC_API_BASE_URL = 'http://api.test';
+process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
 
 const collections = require('../collections.ts') as typeof import('../collections.ts');
 const passports = require('../entryRequirements.ts') as typeof import('../entryRequirements.ts');
 const { _setTestSupabase, _resetTestSupabase } = require('../apiToken.ts') as typeof import('../apiToken.ts');
 
 const FAR_FUTURE = Math.floor(Date.now() / 1000) + 3600;
-const session = { access_token: 'tok', expires_at: FAR_FUTURE };
+const session = { access_token: observedOwnerAccessToken('owner-a', 'session-a'), expires_at: FAR_FUTURE };
 const fakeSupabase = {
   auth: {
     getSession: async () => ({ data: { session } }),
@@ -48,8 +56,8 @@ function respond(status: number, body: unknown) {
   }) as typeof fetch;
 }
 
-beforeEach(() => { urls.length = 0; _setTestSupabase(fakeSupabase as never); });
-afterEach(() => { globalThis.fetch = realFetch; _resetTestSupabase(); });
+beforeEach(() => { setDiscoveryViewerFromSession('owner-a'); seedObservedOwnerSession('owner-a', 'session-a'); urls.length = 0; _setTestSupabase(fakeSupabase as never); });
+afterEach(() => { disposeObservedOwnerSession(); setDiscoveryViewerFromSession(null); globalThis.fetch = realFetch; _resetTestSupabase(); });
 
 describe('collections and passports — failures are not empty lists', () => {
   it.each(READS)('C1: %s answers ok:false on an HTTP error', async (_name, read) => {

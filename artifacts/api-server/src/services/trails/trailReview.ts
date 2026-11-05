@@ -59,12 +59,14 @@ export async function listOwnTrails(
 
 /** The admin queue: pending Trails, oldest first. */
 export async function listPendingTrailReviews(
-  sc: any, limit = 50,
+  sc: any, limit = 50, after?: { createdAt: string; id: string },
 ): Promise<{ refusal: ReviewReadRefusal | null; trails: TrailRow[] }> {
   if (!sc) return { refusal: "no_service_client", trails: [] };
-  const { data, error } = await sc.from("trails").select(REVIEW_COLUMNS)
+  let query = sc.from("trails").select(REVIEW_COLUMNS)
     .eq("review_state", "pending").neq("lifecycle_status", "archived")
-    .order("created_at", { ascending: true }).limit(Math.min(100, Math.max(1, limit)));
+    .order("created_at", { ascending: true }).order("id", { ascending: true });
+  if (after) query = query.or(`created_at.gt.${after.createdAt},and(created_at.eq.${after.createdAt},id.gt.${after.id})`);
+  const { data, error } = await query.limit(Math.min(100, Math.max(1, limit)));
   if (error) return { refusal: readRefusal(error), trails: [] };
   return { refusal: null, trails: (data ?? []) as TrailRow[] };
 }

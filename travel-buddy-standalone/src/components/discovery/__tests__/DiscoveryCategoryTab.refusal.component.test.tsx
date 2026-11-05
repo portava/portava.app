@@ -27,6 +27,9 @@ import { render, screen, act, waitFor } from '@testing-library/react-native';
 
 const mockGetDiscoveryPlaces       = jest.fn();
 const mockGetCachedDiscoveryPlaces = jest.fn();
+const mockMapProps: Array<Record<string, unknown>> = [];
+// NOTE: native GL is outside this test; capture whether the real category screen mounts it before the request resolves.
+jest.mock('../DiscoveryMapView', () => ({ DiscoveryMapView: (props: Record<string, unknown>) => { mockMapProps.push(props); return null; } }));
 
 // NOTE: intentionally exhaustive — the real module imports Supabase; spreading
 // requireActual would load the client and OOM the Jest runner.
@@ -77,6 +80,7 @@ async function renderTab() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockMapProps.length = 0;
   mockGetCachedDiscoveryPlaces.mockReturnValue(null);
   mockGetDiscoveryPlaces.mockResolvedValue({
     ok: true, data: { places: [MOCK_PLACE], total: 1 },
@@ -86,6 +90,29 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => {}); });
 
 describe('DiscoveryCategoryTab — refusal vs. empty category', () => {
+  it('keeps a map available during the first request, and offers retry if that request fails', async () => {
+    let finish!: (value: { ok: false; error: string }) => void;
+    mockGetDiscoveryPlaces.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    await render(<DiscoveryCategoryTab category="places" destination="Paris" viewMode="map" lat={48.85} lng={2.35} onSelectPlace={jest.fn()} onAddToPlan={jest.fn()} />);
+    expect(mockMapProps.at(-1)?.placesLoading).toBe(true);
+    await act(async () => { finish({ ok: false, error: 'Offline' }); });
+    expect(mockMapProps.at(-1)?.placesLoading).toBe(false);
+    expect(mockMapProps.at(-1)?.placesError).toBe('Offline');
+    await act(async () => { (mockMapProps.at(-1)?.onRetryPlaces as () => void)(); });
+    expect(mockGetDiscoveryPlaces).toHaveBeenCalledTimes(2);
+    expect(mockMapProps.at(-1)?.placesError).toBeNull();
+  });
+
+  it('does not replace newer filter results with a late old request', async () => {
+    let finish!: (value: unknown) => void;
+    mockGetDiscoveryPlaces.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const props = { category: 'places' as const, destination: 'Paris', viewMode: 'map' as const, onSelectPlace: jest.fn(), onAddToPlan: jest.fn() };
+    const view = await render(<DiscoveryCategoryTab {...props} filters={{ radiusKm: 10, openNow: false, minRating: null }} />);
+    await view.rerender(<DiscoveryCategoryTab {...props} filters={{ radiusKm: 25, openNow: false, minRating: null }} />);
+    await act(async () => { finish({ ok: true, data: { places: [], total: 0 } }); });
+    expect(mockMapProps.at(-1)?.places).toEqual([MOCK_PLACE]);
+  });
+
   it('does NOT tell the user to adjust their filters when the server refused', async () => {
     mockGetDiscoveryPlaces.mockResolvedValue({
       ok: true, data: { places: [], total: 0, destination: 'Paris', cached: false, refusal: UPSTREAM_REFUSAL },

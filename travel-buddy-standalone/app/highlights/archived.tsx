@@ -1,3 +1,5 @@
+import { POST_REFERENCE_MEDIA_TYPE } from '../../src/services/postDestinations.ts';
+import { PostReferenceCover } from '../../src/components/PostReferenceCard.tsx';
 /**
  * Archived Highlights — /highlights/archived
  *
@@ -144,13 +146,13 @@ export default function ArchivedHighlightsScreen() {
           {(highlights ?? []).map((h) => (
             <View key={h.id} style={s.card}>
               <View style={s.row} testID={`archived-highlight-${h.id}`}>
-                <DisplayMediaImage
+                {h.mediaType === POST_REFERENCE_MEDIA_TYPE ? <View style={s.thumb}><PostReferenceCover /></View> : <DisplayMediaImage
                   uri={h.mediaUrl}
                   width={56}
                   height={56}
                   style={s.thumb}
                   alt={h.caption ?? 'Archived highlight'}
-                />
+                />}
                 <View style={s.body}>
                   <Text style={s.rowTitle} numberOfLines={1}>{h.caption ?? 'Highlight'}</Text>
                   <Text style={s.rowNote} numberOfLines={1}>

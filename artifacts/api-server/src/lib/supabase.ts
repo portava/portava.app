@@ -14,11 +14,12 @@ export function _setTestServiceClient(client: SupabaseClient | null): void {
   _testServiceClient = client;
 }
 
-export function getServiceClient(): SupabaseClient | null {
+export function getServiceClient(fetchOverride?: typeof fetch): SupabaseClient | null {
   if (_testServiceClient) return auditedLayoverClient(_testServiceClient);
   if (!isServiceClientReady) return null;
   return auditedLayoverClient(createClient(supabaseUrl, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
+    ...(fetchOverride ? { global: { fetch: fetchOverride } } : {}),
   }));
 }
 
@@ -46,7 +47,7 @@ const postgrestBackedClients = new WeakSet<object>();
 function createClient(
   url: string,
   key: string,
-  options: { auth: { autoRefreshToken: boolean; persistSession: boolean } },
+  options: { auth: { autoRefreshToken: boolean; persistSession: boolean }; global?: { fetch: typeof fetch } },
 ): SupabaseClient {
   const client: SupabaseClient = createSupabaseClient(url, key, options);
   postgrestBackedClients.add(client);

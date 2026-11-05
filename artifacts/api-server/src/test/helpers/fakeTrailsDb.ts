@@ -30,7 +30,6 @@
  *              rpc/unknown-function (TrailService never calls these verbs)
  *   divergent — insert/unique-violation-23505 (no unique constraints),
  *              error/unknown-column-42703 (only `missingColumns` fail),
- *              select/count-exact (no count surface),
  *              rls/denied-read-yields-zero-rows, rls/denied-write-yields-42501
  *              (no service-vs-user distinction)
  */
@@ -51,11 +50,11 @@ export interface FakeTrailsDbOptions {
   readFailure?: Record<string, { code: string; message: string }>;
 }
 
-type Settled = { data: Row[] | Row | null; error: { code: string; message: string } | null };
+type Settled = { data: Row[] | Row | null; error: { code: string; message: string } | null; count?: number };
 
 /** The PostgREST builder surface TrailService calls, and nothing else. */
 export interface FakeBuilder extends PromiseLike<Settled> {
-  select(cols?: string): FakeBuilder;
+  select(cols?: string, options?: { count?: string }): FakeBuilder;
   eq(c: string, v: unknown): FakeBuilder;
   neq(c: string, v: unknown): FakeBuilder;
   in(c: string, v: unknown[]): FakeBuilder;
@@ -86,6 +85,8 @@ export function makeFakeTrailsDb(seed: Record<string, Row[]>, opts: FakeTrailsDb
     ...seed,
   };
   const broken = new Set(opts.erroring ?? []);
+  tables.places = (tables.places ?? []).map(row => ({ moderation_status: 'visible', merged_into_place_id: null, ...row }));
+  tables.discovery_places = (tables.discovery_places ?? []).map(row => ({ status: 'active', ...row }));
   const missing = new Set(opts.missingColumns ?? []);
   const inserts: Array<{ table: string; payload: Row }> = [];
   const insertAttempts: Record<string, number> = {};
@@ -100,6 +101,7 @@ export function makeFakeTrailsDb(seed: Record<string, Row[]>, opts: FakeTrailsDb
     let range: [number, number] | null = null;
     let surfaceFilter: string | null = null;
     let selected: string[] = [];
+    let countRequested = false;
     const store = () => (tables[table] ??= []);
     const rows = () => {
       let out = store().filter((r) => filters.every((f) => f(r)));
@@ -117,10 +119,12 @@ export function makeFakeTrailsDb(seed: Record<string, Row[]>, opts: FakeTrailsDb
       if (table === "rank_events" && opts.failRankEvents === "all_surfaces" && surfaceFilter === null) return timeout();
       return null;
     };
-    const run = (): Settled => fault() ?? { data: rows(), error: null };
+    const run = (): Settled => fault() ?? { data: rows(), error: null,
+      ...(countRequested ? { count: store().filter(row => filters.every(filter => filter(row))).length } : {}) };
 
     const b: FakeBuilder = {
-      select(cols?: string) {
+      select(cols?: string, options?: { count?: string }) {
+        countRequested = !!options?.count;
         selected = typeof cols === "string" ? cols.split(",").map((c) => c.trim()).filter(Boolean) : [];
         return b;
       },

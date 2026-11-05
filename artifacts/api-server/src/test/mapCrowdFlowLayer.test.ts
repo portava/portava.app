@@ -133,7 +133,7 @@ function specOf(state: FakeState, table: string): TableSpec {
 function buildQuery(spec: TableSpec) {
   let rows = [...(spec.rows ?? [])];
   const err = spec.error ?? null;
-  const result = () => (err ? { data: null, error: err } : { data: rows, error: null });
+  const result = () => (err ? { data: null, error: err } : { data: rows, error: null, count: rows.length });
 
   const q: any = {
     select() { return q; },
@@ -321,6 +321,7 @@ function placeRow(id: string, point: { lat: number; lng: number }): any {
     latitude: point.lat,
     longitude: point.lng,
     status: "active",
+    moderation_status: "visible",
     merged_into_place_id: null,
   };
 }
@@ -490,6 +491,7 @@ describe("a cohort that clears every §10 gate reaches the client", () => {
     assert.equal(r.body.total, 1);
     assert.equal(r.body.crowdFlow.refusal, null);
     assert.deepEqual(r.body.crowdFlow.familyRefusals, {
+      navigation_start: "not_available",
       accepted_plan: null,
       next_stop_contribution: null,
     });

@@ -1,3 +1,4 @@
+import { decodeObjectReference } from "./objectReference.js";
 /**
  * Telegraph §5 — the one share contract, §5.3's revocation, and §606's sixth
  * capability (search behaviour, see `TelegraphShareable` below).
@@ -41,6 +42,7 @@
  * and a correct one; the alternative is a backdoor.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { readCanonicalPlaceVisibility } from "../../lib/places/placeGovernance.js";
 import { mayDiscloseGemIdentity } from "../hiddenGems/HiddenGemPrivacyGuard.js";
 import { canReadMemory } from "../memory/memoryReadPolicy.js"; import { readMemoryPrecisionGate, precisionColumnSelectable, precisionClampApplies } from "../../lib/memoryPrecisionGate.js"; import { memoryPlaceLabelsForNonOwner } from "../../lib/memoryLocationPrecision.js"; // §10 on the Memory card (lane R, 2026-10-07); on this line so no cited line moves
 import { applyHistoryWindow, historyBoundEnabled, visibleFromOf } from "../groupChatHistoryBound.js";
@@ -1220,7 +1222,7 @@ async function ownerSharedIntoThread(
   }
   const query = client
     .from("messages")
-    .select("id, body")
+    .select("id, body, content_ref")
     .eq("thread_id", conversationId)
     .eq("sender_id", ownerId)
     .eq("msg_type", msgTypeOf("PORTAVA_OBJECT"))
@@ -1235,7 +1237,7 @@ async function ownerSharedIntoThread(
     .limit(20);
   if (error) return "unreadable";
   for (const m of (data ?? []) as Row[]) {
-    const body = parsePortavaObjectBody(m.body);
+    const body = parsePortavaObjectRow(m);
     if (body && body.objectType === objectType && body.objectId === objectId) return "shared";
   }
   return "not_shared";
@@ -1396,17 +1398,27 @@ export function shareableFor(
     if (!cache) cache = loader(client, objectId, viewerId, ctx);
     return cache;
   };
+  // A shareable can outlive its initial read. A cached place preview is never
+  // an authorization answer; moderation is checked again on each capability.
+  const current = async (viewerId: string): Promise<Loaded> => {
+    if (["PLACE", "MAP_PIN", "MEETUP_POINT"].includes(objectType)) {
+      const visibility = await readCanonicalPlaceVisibility(client, [objectId]);
+      if (!visibility.ok) return { state: UNAVAILABLE("unknown"), projection: null };
+      if (!visibility.visibleIds.has(objectId)) return { state: UNAVAILABLE("not_found"), projection: null };
+    }
+    return load(viewerId);
+  };
   return {
     async getSharePreview(viewerId) {
-      const r = await load(viewerId);
+      const r = await current(viewerId);
       return r.state.available ? r.projection : null;
     },
     async getCurrentState(viewerId) {
-      const r = await load(viewerId);
+      const r = await current(viewerId);
       return r.state;
     },
     async getAvailableActions(viewerId, _conversationId) {
-      const r = await load(viewerId);
+      const r = await current(viewerId);
       return r.state.available ? actionsWhileLive(objectType, r.state.status, conversationActions) : []; // T320/T411: the object's CURRENT status narrows what it offers
     },
     getDeepLink() {
@@ -1663,3 +1675,12 @@ async function withPlaceLiveIntelligence(client: SupabaseClient, id: string, loa
 // Imported at the foot so the cited lines above do not move (census-telegraph T265, wave 5).
 import { candidateProjectionEnabled, whyNowOf, whyNowValidForMsOf } from "../../lib/discoveryCandidate.js";
 import { withDiscoveryLiveRank } from "../../lib/discoveryLiveRankRead.js";
+
+/** New rows carry a canonical pointer. Old rows remain readable; contradictory
+ * or future pointers must not authorize a different source from the body. */
+export function parsePortavaObjectRow(row: { body?: unknown; content_ref?: unknown }): PortavaObjectBody | null {
+  const body = parsePortavaObjectBody(row.body);
+  if (row.content_ref == null) return body;
+  const ref = decodeObjectReference(row.content_ref);
+  return body && ref && ref.objectType === body.objectType && ref.objectId === body.objectId ? body : null;
+}

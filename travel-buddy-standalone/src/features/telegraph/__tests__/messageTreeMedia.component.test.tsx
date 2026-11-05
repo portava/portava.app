@@ -118,6 +118,8 @@ const SINKS: ReadonlyArray<[string, RegExp]> = [
  * not anything a sender put in a message.
  */
 const EXEMPT: ReadonlyArray<{ file: string; expr: string; why: string }> = [
+  {file:'src/features/telegraph/gifs/GifPickerSheet.tsx',expr:'item.stillUrl',why:'Fresh configured-provider response after explicit search; giphyApi pins HTTPS media*.giphy.com, keeps provider URLs unmodified, caches nothing. No URL comes from a message. giphyApi and gifPicker mounted tests prove this boundary.'},
+  {file:'src/features/telegraph/gifs/ProviderGifMedia.tsx',expr:'uri',why:'An explicit Load resolves only the opaque provider id using a pinned API; the fresh response is validated by providerMediaUrl. No sender URL reaches this sink. No cache; private account/focus fences and full-screen one-image behavior are tested.'},
   { file: 'src/components/GroupChatScreen.tsx', expr: 'm.avatarUrl', why: "a member's profile avatar in the header stack (GET members)" },
   { file: 'src/components/GroupChatScreen.tsx', expr: 'm.senderAvatarUrl', why: "the sender's profile avatar the server joins to the row" },
   { file: 'src/components/GroupChatScreen.tsx', expr: 'uri', why: "read receipts: readers' profile avatars (useReaderAvatars)" },
@@ -180,6 +182,12 @@ describe('T446 — STRUCTURAL: the message tree fetches nothing a message named,
 
 // ── BEHAVIOUR ─────────────────────────────────────────────────────────────────
 
+// Only the image boundary is stubbed; actual URL admission and rendering remain real.
+jest.mock('../../../components/CachedImage.tsx', () => {
+  const RN = jest.requireActual('react-native');
+  const R = jest.requireActual('react');
+  return { ...jest.requireActual('../../../components/CachedImage.tsx'), CachedImage: (props: {source:{uri?:string}}) => R.createElement(RN.View,{testID:'display-media-image',accessibilityHint:props.source.uri ?? 'NO-URI'}) };
+});
 jest.mock('../../../components/ui/DisplayMediaImage.tsx', () => {
   const RN = jest.requireActual('react-native');
   const R = jest.requireActual('react');
@@ -253,8 +261,8 @@ describe('T446 — behaviour through the real components', () => {
   it('B5 TypedMessageRenderer: a GIF from another host draws no image; an album keeps only storage', async () => {
     const { TypedMessageRenderer } = require('../kinds/TypedMessageRenderer.tsx');
     await render(<TypedMessageRenderer msgType="gif" body={env('GIF', { url: TRACKER, stillUrl: TRACKER })} mine={false} />);
-    expect(drawn('display-media-image')).toEqual(['NO-URI']);
+    expect(drawn('display-media-image')).toEqual([]);
     await render(<TypedMessageRenderer msgType="media_album" body={env('MEDIA_ALBUM', { assets: [{ url: TRACKER }, { url: STORED }] })} mine={false} />);
-    expect(drawn('display-media-image')).toEqual(['NO-URI', STORED]);
+    expect(drawn('display-media-image')).toEqual([STORED]);
   });
 });

@@ -7,24 +7,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Animated, AccessibilityInfo } from 'react-native';
 import {
-  MapPin, Users, Gem, ShieldCheck, Crown, Ticket, Lock, Sparkles, Star,
+  Lock,
 } from 'lucide-react-native';
-import type { ComponentType } from 'react';
+import { resolveStampArtworkIcon as resolveIcon } from './stamps/artworkIcons.ts';
 import type { PassportStamp } from '../types/models.ts';
 import { resolveArtwork } from '../lib/stampArtworkResolver.ts';
 import { STAMP_RARITY_LABELS, STAMP_RARITY_COLORS } from '../types/stampArtwork.ts';
 import { StampSvgFrame } from './StampSvgFrame.tsx';
 import { color, space, type as t, dot } from '../theme/tokens.ts';
-
-type IconCmp = ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
-
-const ICON_MAP: Record<string, IconCmp> = {
-  MapPin, Users, Gem, ShieldCheck, Crown, Ticket, Sparkles, Star,
-};
-
-function resolveIcon(key: string): IconCmp {
-  return ICON_MAP[key] ?? MapPin;
-}
 
 interface StampDetailArtworkProps {
   stamp: PassportStamp;

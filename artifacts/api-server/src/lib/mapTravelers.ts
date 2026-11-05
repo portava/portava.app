@@ -1,3 +1,4 @@
+import { loadPersonalProtectedZones, personalPointSuppressed } from './mapPersonalProtection.js';
 /**
  * mapTravelers — decides WHO appears on the Discovery live map, WHERE their
  * marker sits, and HOW PRECISELY.
@@ -276,6 +277,8 @@ async function loadCandidates(
   const locs = locsRaw as LocStateRow[];
 
   const ids = locs.map((l) => l.user_id);
+  const personalProtection = await loadPersonalProtectedZones(db, ids);
+  if (personalProtection === null) return null;
 
   const [prefsQ, profsQ, noDiscQ, upsQ] = await Promise.all([
     db.from("location_preferences")
@@ -316,6 +319,7 @@ async function loadCandidates(
   const now = Date.now();
   for (const loc of locs) {
     const id = loc.user_id;
+    if (typeof loc.lat === "number" && typeof loc.lng === "number" && personalPointSuppressed(personalProtection.get(id), { lat: loc.lat, lng: loc.lng })) continue;
     const prof = profById.get(id);
     if (!prof) continue; // unknown profile → exclude (fail-closed)
     if (prof.account_status !== "active") continue;

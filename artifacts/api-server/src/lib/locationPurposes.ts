@@ -99,6 +99,8 @@ const HOUR = 3600, DAY = 24 * HOUR;
 export const INTEL_IDENTIFIABLE_RETENTION_SECONDS = 180 * DAY;
 
 export const LOCATION_PURPOSES: readonly LocationPurpose[] = [
+  { id: 'personal_map_protection', description: 'Suppress my location and route contributions around areas I explicitly choose.', precision: 'coarse', lawfulBasis: 'contract', retentionBound: 'content_lifetime', retentionSeconds: null, retentionNote: 'Kept until the owner removes the chosen protection; no inferred locations.', visibility: 'Owner-only; server uses for suppression, never public geometry.', deletionBehavior: 'Cascades with profile deletion.', tables: ['map_personal_protected_places'], requiresSeparateControl: true },
+  { id: 'explicit_navigation_intent', description: 'Contribute an explicitly requested navigation intent to coarse area route trends under a separate reviewed opt-in.', precision: 'coarse', lawfulBasis: 'consent', retentionBound: 'clock', retentionSeconds: 900, retentionNote: 'Only the latest zone pair per owner; ignored at expiry and swept every minute. Withdrawal deletes it immediately. No raw coordinate or route history is stored.', visibility: 'Service-only source; only thresholded aggregate output is public.', deletionBehavior: 'Deleted on withdrawal, protection change, expiry sweep, and profile deletion.', tables: ['map_navigation_contributions'], requiresSeparateControl: true },
   {
     id: "safety_anti_spoof",
     retentionBound: "clock",

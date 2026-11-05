@@ -10,6 +10,7 @@ import { z } from "zod";
 import { requireUser, isAcceptedTripMember, canEditPlan, sendError } from "../lib/http.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js"; import { getServiceClient as tripGateClient } from "../lib/supabase.js";
 import { asyncHandler } from "../lib/asyncHandler.js"; import { findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; // census-trips §87.3 (D-65)
 import { isMissingColumnError } from "../lib/capability/schemaCapability.js";
+import { readDiscoveryPlaceFacts } from "../lib/discoveryPlaceGovernance.js";
 import {
   tripKernelClient,
   readCommandEnvelope,
@@ -165,14 +166,11 @@ router.post("/places/:placeId/add-to-trip-plan", asyncHandler(async (req, res) =
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
   if (!permitted) { sendError(res, "forbidden", "You don't have permission to add items to this plan"); return; } if (await refuseTripActionIfRestricted(res, tripGateClient() ?? client, tripId, user.id, "change_shared_plan")) return; // census-trips §84 / TRV2-08 (lane C reading)
 
-  // Fetch place row — public-safe columns only (name, category, city)
-  // NOTE: exact coordinates are intentionally NOT fetched.
-  // Repointed from non-existent "places" to the live "discovery_places" table.
-  const { data: place } = await client
-    .from("discovery_places")
-    .select("id, name, category, city")
-    .eq("id", placeId)
-    .maybeSingle();
+  // Resolve both canonical and community IDs through current moderation. The
+  // plan below copies only public name/category/city, never exact coordinates.
+  const facts = await readDiscoveryPlaceFacts(tripGateClient() ?? client, [placeId]);
+  if (facts === null) { sendError(res, "degraded_unavailable", "Place availability could not be checked. Try again."); return; }
+  const place = facts[0];
   if (!place) { sendError(res, "not_found", "Place not found"); return; }
 
   // Duplicate guard — see the meetup route above for why `error` must be bound:

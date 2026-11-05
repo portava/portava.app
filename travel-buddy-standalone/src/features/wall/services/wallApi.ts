@@ -22,6 +22,7 @@
  */
 
 import { isSupabaseConfigured } from '../../../lib/supabase.ts';
+import { currentDiscoveryScope, isCurrentDiscoveryScope } from '../../../services/discoveryViewerScope.ts';
 import { freshToken } from '../../../services/apiToken.ts';
 import type {
   QuickMediaItem,
@@ -120,7 +121,7 @@ export async function fetchWall(opts: FetchWallOptions): Promise<FetchWallResult
   if (!isSupabaseConfigured || !apiBase()) {
     return { ok: true, data: emptyWallResponse(opts.mode), degraded: true };
   }
-  const token = await freshToken();
+  const token = await tokenForWallOwner();
   if (!token) {
     // Not signed in — a safe empty feed, not an error screen.
     return { ok: true, data: emptyWallResponse(opts.mode), degraded: true };
@@ -163,7 +164,7 @@ export async function fetchLiveForYou(opts: {
   if (!isSupabaseConfigured || !apiBase()) {
     return { ok: true, liveForYou: [], degraded: true };
   }
-  const token = await freshToken();
+  const token = await tokenForWallOwner();
   if (!token) return { ok: true, liveForYou: [], degraded: true };
 
   const params = new URLSearchParams();
@@ -205,7 +206,7 @@ export async function fetchQuickMedia(opts: {
   if (!isSupabaseConfigured || !apiBase()) {
     return { ok: true, items: [], degraded: true };
   }
-  const token = await freshToken();
+  const token = await tokenForWallOwner();
   if (!token) return { ok: true, items: [], degraded: true };
 
   const params = new URLSearchParams();
@@ -239,7 +240,7 @@ export async function setSessionIntent(text: string): Promise<SessionIntentResul
   if (!isSupabaseConfigured || !apiBase()) {
     return { ok: false, error: 'not_configured', disabled: true };
   }
-  const token = await freshToken();
+  const token = await tokenForWallOwner();
   if (!token) return { ok: false, error: 'not_authenticated' };
 
   try {
@@ -264,7 +265,7 @@ export async function setSessionIntent(text: string): Promise<SessionIntentResul
 
 export async function clearSessionIntent(): Promise<{ ok: boolean; error?: string }> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: true };
-  const token = await freshToken();
+  const token = await tokenForWallOwner();
   if (!token) return { ok: true };
 
   try {
@@ -287,17 +288,19 @@ export interface WallMutationTarget {
   session?: string | null;
 }
 
-async function postJson(path: string, payload: Record<string, unknown>): Promise<void> {
-  if (!isSupabaseConfigured || !apiBase()) return;
-  const token = await freshToken();
-  if (!token) return;
+async function postJson(path: string, payload: Record<string, unknown>): Promise<boolean> {
+  if (!isSupabaseConfigured || !apiBase()) return false;
+  const token = await tokenForWallOwner();
+  if (!token) return false;
   try {
-    await fetch(`${apiBase()}${path}`, {
+    const response = await fetch(`${apiBase()}${path}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
+    return response.ok;
   } catch {
+    return false;
     // Fire-and-forget: an impression/action that fails to record must never
     // affect the feed the user is looking at (spec §40).
   }
@@ -342,7 +345,7 @@ export async function revalidateCachedObjects(
   const ids = [...new Set(objectIds)].filter((id) => typeof id === 'string' && id.length > 0);
   if (ids.length === 0) return { ok: true, eligibleObjectIds: [] };
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
-  const token = await freshToken();
+  const token = await tokenForWallOwner();
   if (!token) return { ok: false, error: 'not_authenticated' };
   try {
     const res = await fetch(`${apiBase()}/api/wall/revalidate`, {
@@ -369,8 +372,8 @@ export async function revalidateCachedObjects(
 export async function sendAction(
   target: WallMutationTarget,
   action: WallActionEvent,
-): Promise<void> {
-  await postJson('/api/wall/action', {
+): Promise<boolean> {
+  return postJson('/api/wall/action', {
     objectId: target.objectId,
     objectType: target.objectType,
     action,
@@ -415,4 +418,11 @@ const KNOWN_INTENT_RESOLUTIONS: readonly string[] = [
  */
 function readIntentResolution(raw: string | undefined): IntentResolution | null {
   return KNOWN_INTENT_RESOLUTIONS.includes(raw ?? '') ? (raw as IntentResolution) : null;
+}
+
+
+async function tokenForWallOwner(): Promise<string | null> {
+  const scope = currentDiscoveryScope();
+  const token = await freshToken();
+  return isCurrentDiscoveryScope(scope) ? token : null;
 }

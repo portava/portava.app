@@ -1,3 +1,4 @@
+import { encodeObjectReference } from '../services/telegraph/objectReference.js';
 /**
  * Telegraph §30A.9 forwarding and §30A.16 schema discovery (census-telegraph
  * T406, T407, T353, T429, T431).
@@ -5,7 +6,7 @@
  *   POST /api/threads/:threadId/forward
  *        Forward one message the caller can see into :threadId. The derivative
  *        is FORWARDED (a person's words) or RESHARED_FROM_SOURCE (a Portava
- *        object, re-resolved per recipient). COPIED_ATTACHMENT is refused — see
+ *        object, re-resolved per recipient). COPIED_ATTACHMENT is privately copied — see
  *        services/telegraph/forwarding.ts.
  *
  *   PUT  /api/threads/:threadId/messages/:messageId/content-capability
@@ -25,6 +26,8 @@
  * "not_found" for a fake one would be an oracle for message ids in threads the
  * caller has never seen.
  */
+import { boundedServiceFetch } from "../lib/boundedServiceFetch.js";
+import { copyForwardAttachments } from "../services/telegraph/forwardAttachments.js";
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
@@ -35,7 +38,7 @@ import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegr
 import { publishToThread } from "../lib/telegraphEvents.js"; import { notifyNewMessage } from "../services/telegraph/messageNotifications.js"; // census-telegraph T256 (wave 5 safety lane)
 import { logger as rootLogger } from "../lib/logger.js";
 import { historyBoundEnabled, visibleFromOf, withinWindow } from "../services/groupChatHistoryBound.js";
-import { parsePortavaObjectBody, shareableFor } from "../services/telegraph/shareables.js";
+import { parsePortavaObjectRow, shareableFor } from "../services/telegraph/shareables.js";
 import type { TelegraphObjectType } from "../services/telegraph/vocabulary.js";
 import {
   CONTENT_CAPABILITIES,
@@ -58,10 +61,10 @@ const router = Router();
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const ForwardSchema = z.object({ sourceMessageId: z.string().regex(UUID) });
+const ForwardSchema = z.object({ sourceMessageId: z.string().regex(UUID), requestId: z.string().uuid().optional() });
 const CapabilitySchema = z.object({ capability: z.enum(CONTENT_CAPABILITIES) });
 
-const SOURCE_COLUMNS = "id, thread_id, sender_id, body, msg_type, subtype, media_url, deleted_at, created_at";
+const SOURCE_COLUMNS = "id, thread_id, sender_id, body, content_ref, msg_type, subtype, media_url, media_type, deleted_at, unsent_at, created_at";
 
 const GONE = FORWARD_REFUSAL_MESSAGES.source_unavailable;
 
@@ -172,7 +175,7 @@ router.post(
 
     let objectAvailableToForwarder: boolean | undefined;
     if (forwardShapeOf(source) === "object") {
-      const ref = parsePortavaObjectBody(source.body)!;
+      const ref = parsePortavaObjectRow(source)!;
       const shareable = shareableFor(client, ref.objectType as TelegraphObjectType, ref.objectId, undefined, {
         log: req.log,
         conversationId: threadId,
@@ -195,9 +198,26 @@ router.post(
       return;
     }
 
-    const guard = await guardTelegraphThreadWrite(client, threadId, user.id);
+    const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { groupSend: { media: decision.provenance === "COPIED_ATTACHMENT", text: decision.body } });
     if (!guard.ok) {
       sendThreadWriteRefusal(res, guard);
+      return;
+    }
+
+    if (decision.provenance === "COPIED_ATTACHMENT") {
+      try {
+        const result = await copyForwardAttachments(getServiceClient(boundedServiceFetch()) ?? sc, { source, targetThreadId: threadId, actorId: user.id, requestId: parsed.data.requestId });
+        res.status(result.replay ? 200 : 201).json({ id: result.messageId, threadId, senderId: user.id,
+          createdAt: result.createdAt, msgType: decision.msgType, subtype: null,
+          forwarded: { provenance: "COPIED_ATTACHMENT" }, contentCapability: result.capability });
+        if (!result.replay) {
+          void notifyNewMessage(sc, { threadId, senderId: user.id, messageId: result.messageId, msgType: decision.msgType, subtype: null, nowMs: Date.parse(result.createdAt) || Date.now() }, { log });
+          void publishToThread(sc, threadId, { type: "message.created", payload: { messageId: result.messageId, senderId: user.id, msgType: decision.msgType, createdAt: result.createdAt } });
+        }
+      } catch (error) {
+        log.warn({ error, threadId }, "Attachment forward did not complete");
+        sendError(res, "degraded_unavailable", "We couldn't share this media right now. Please try again.");
+      }
       return;
     }
 
@@ -213,6 +233,7 @@ router.post(
       p_subtype: decision.subtype,
       p_provenance: decision.provenance,
       p_capability: decision.capability,
+      p_content_ref: decision.provenance === "RESHARED_FROM_SOURCE" ? encodeObjectReference(parsePortavaObjectRow({ body: decision.body })!) : null,
     });
     if (recErr || !rec) {
       log.error({ err: recErr, threadId }, "forward: telegraph_record_forward failed");
@@ -310,12 +331,9 @@ router.put(
       sendError(res, verdict.code, verdict.message);
       return;
     }
-    const { error: wErr } = await sc
-      .from("message_content_capabilities")
-      .upsert(
-        { message_id: messageId, capability: parsed.data.capability, set_by: user.id, updated_at: new Date().toISOString() },
-        { onConflict: "message_id" },
-      );
+    const { error: wErr } = await sc.rpc("telegraph_set_content_capability", {
+      p_message: messageId, p_actor: user.id, p_capability: parsed.data.capability,
+    });
     if (wErr) {
       log.error({ err: wErr, messageId }, "content capability write failed");
       sendError(res, "db_error", "Could not save that setting");

@@ -11,6 +11,7 @@
  */
 
 import { NativeModulesProxy, requireNativeModule } from 'expo-modules-core';
+import { encodeBridgePlaintext, decodeBridgePlaintext } from './plaintextBridge';
 import {
   KeyPairBytes,
   DeviceKeyPairBytes,
@@ -114,12 +115,15 @@ export function processWelcome(
 
 /** Encrypt plaintext in an MLS group. Updates group state (must be stored back). */
 export function encryptMessage(groupStateB64: string, plaintext: string): Promise<EncryptResult> {
-  return wrapNative<EncryptResult>('encryptMessage', groupStateB64, plaintext);
+  if (typeof getNative().encryptMessageJson !== 'function') throw new OpenMlsError('NativeUpdateRequired', 'Install the updated native app to use encrypted messages.');
+  return wrapNative<EncryptResult>('encryptMessageJson', groupStateB64, encodeBridgePlaintext(plaintext));
 }
 
 /** Decrypt an MLS ciphertext. Updates group state (must be stored back). */
-export function decryptMessage(groupStateB64: string, ciphertextB64: string): Promise<DecryptResult> {
-  return wrapNative<DecryptResult>('decryptMessage', groupStateB64, ciphertextB64);
+export async function decryptMessage(groupStateB64: string, ciphertextB64: string): Promise<DecryptResult> {
+  if (typeof getNative().decryptMessageJson !== 'function') throw new OpenMlsError('NativeUpdateRequired', 'Install the updated native app to use encrypted messages.');
+  const result = await wrapNative<{ plaintextJson: string; updatedGroupStateB64: string }>('decryptMessageJson', groupStateB64, ciphertextB64);
+  return { plaintext: decodeBridgePlaintext(result.plaintextJson), updatedGroupStateB64: result.updatedGroupStateB64 };
 }
 
 /**
@@ -134,4 +138,9 @@ export function decryptMessage(groupStateB64: string, ciphertextB64: string): Pr
  */
 export function deriveSafetyNumber(groupStateB64: string): Promise<string> {
   return wrapNative<string>('deriveSafetyNumber', groupStateB64);
+}
+
+/** Public account credential of the local member, used to verify legacy ownership. */
+export function sessionOwnerId(groupStateB64: string): Promise<string> {
+  return wrapNative<string>('sessionOwnerId', groupStateB64);
 }

@@ -10,7 +10,7 @@
  * Same reason `src/lib/safeNotifications.ts` gives: in Hermes a "Cannot find
  * native module" thrown inside a module factory fires during Metro's evaluation
  * phase, before the caller's try frame is active, so try/catch around
- * `require()` does not intercept it. `NativeModules` is populated synchronously
+ * `require()` does not intercept it. Expo's optional-native-module registry is available
  * at startup, so we ask it first and skip the require entirely when the module
  * is absent. A build without `expo-sensors` therefore gets `null` and a capture
  * loop with no motion source — degraded, named in `sensor_health.degraded`,
@@ -27,7 +27,8 @@
  * buffer, are handed only to `reduceSensingWindow`, and are dropped when the
  * window closes. `contributionPayload.privacy.test.ts` is what holds that line.
  */
-import { NativeModules, Platform } from 'react-native';
+import { Platform } from 'react-native';
+import { requireOptionalNativeModule } from 'expo-modules-core';
 import type {
   LocationSource,
   MotionSource,
@@ -51,9 +52,10 @@ function sensorsModule(): AnyModule | null {
     _sensors = null;
     return null;
   }
-  const nm = NativeModules as Record<string, unknown>;
-  // expo-sensors registers these; absence means an older dev client or Expo Go.
-  if (!nm['ExpoAccelerometer'] && !nm['ExponentAccelerometer'] && !nm['ExpoDeviceMotion']) {
+  // Expo SDK54 registers this on the Expo JSI/bridge registry, which need
+  // not appear in React Native's NativeModules object. Check that registry
+  // without importing a module factory that could throw on older builds.
+  if (!requireOptionalNativeModule('ExponentAccelerometer')) {
     _sensors = null;
     return null;
   }
@@ -88,10 +90,13 @@ export function createDeviceMotionSource(): MotionSource | null {
       } catch {
         // A device that refuses the rate still delivers at its default.
       }
+      let cancelled = false;
       const sub = Accelerometer.addListener((d: { x: number; y: number; z: number }) => {
+        if (cancelled) return;
         onSample({ t: Date.now(), x: d.x, y: d.y, z: d.z });
       });
       return () => {
+        cancelled = true;
         try {
           sub?.remove?.();
         } catch {
@@ -131,7 +136,7 @@ export function createDeviceLocationSource(): LocationSource {
             },
             (pos: any) => {
               const c = pos?.coords;
-              if (!c) return;
+              if (cancelled || !c) return;
               onSample({
                 t: typeof pos.timestamp === 'number' ? pos.timestamp : Date.now(),
                 lat: c.latitude,

@@ -6,8 +6,8 @@
  * A JavaScript fetch/XHR stops when iOS suspends the app, a few seconds after
  * it leaves the foreground. A transfer handed to the OS in a background
  * URLSession keeps going (and keeps retrying on a dead network) while the app
- * is suspended; Android runs expo-file-system transfers outside the JS thread
- * the same way. The OS can only transfer a FILE, not a slice of a JS Blob, so
+ * is suspended; Android uses a visible dataSync foreground service in native builds.
+ * Expo Go does not supply that service. The OS can only transfer a FILE, not a slice of a JS Blob, so
  * each part is first written to a small cache file — the byte range read
  * straight from the picked file — then handed over, then deleted.
  *
@@ -21,6 +21,7 @@
  * is loaded lazily by loadExpoFs().
  */
 import type { FileLike, PartOutcome, ResumableTransport } from './resumableUpload.ts';
+import type { UploadLifetime } from './uploadLifetime.ts';
 
 /** What a background FileLike's slice returns: a byte range of a local file. */
 export interface PartDescriptor {
@@ -50,7 +51,7 @@ export interface FsLike {
     fileUri: string,
     options: { httpMethod: 'PUT'; uploadType: number; sessionType: number; headers: Record<string, string> },
     callback?: (progress: { totalBytesSent: number; totalBytesExpectedToSend: number }) => void,
-  ): { uploadAsync(): Promise<FsUploadResult | undefined | null> };
+  ): { uploadAsync(): Promise<FsUploadResult | undefined | null>; cancelAsync?(): Promise<unknown> };
 }
 
 /** A FileLike over a local file whose slices are byte-range descriptors, never bytes in JS. */
@@ -79,6 +80,7 @@ let partCounter = 0;
 
 async function stagePart(fs: FsLike, part: PartDescriptor, uri: string): Promise<void> {
   const length = part.end - part.start;
+  if (length > 8 * 1024 * 1024) throw new Error('Upload part exceeds the staging limit');
   const contents = await fs.readAsStringAsync(part.uri, { encoding: 'base64', position: part.start, length });
   await fs.writeAsStringAsync(uri, contents, { encoding: 'base64' });
   const info = await fs.getInfoAsync(uri);
@@ -124,9 +126,18 @@ export function backgroundPartTransport(api: ResumableTransport['api'], fs: FsLi
 }
 
 /** The real module, or null where it is unavailable (web, a build without it). Never throws. */
-export async function loadExpoFs(): Promise<FsLike | null> {
+export async function loadExpoFs(lifetime?: UploadLifetime): Promise<FsLike | null> {
   try {
     const mod = await import('expo-file-system/legacy');
+    const { Platform } = await import('react-native');
+    let androidTask: FsLike['createUploadTask'] | null = null;
+    if (Platform.OS === 'android' && lifetime) {
+      const { requireOptionalNativeModule } = await import('expo-modules-core');
+      const { androidUploadTasks } = await import('./androidBackgroundUpload.ts');
+      const native = requireOptionalNativeModule<import('./androidBackgroundUpload.ts').AndroidUploadModule>('PortavaBackgroundUpload');
+      if (!native) return null; // A build without the service makes no background promise.
+      androidTask = await androidUploadTasks(native, lifetime, process.env.EXPO_PUBLIC_SUPABASE_URL ?? '');
+    }
     return {
       cacheDirectory: mod.cacheDirectory,
       sessionBackground: mod.FileSystemSessionType.BACKGROUND,
@@ -138,8 +149,12 @@ export async function loadExpoFs(): Promise<FsLike | null> {
       deleteAsync: (uri, options) => mod.deleteAsync(uri, options), readDirectoryAsync: (uri) => mod.readDirectoryAsync(uri), // §37.8 sweep
       // The OS session type and upload type are fixed here, from the module's own
       // enums; `options` carries them only so a test can assert what was asked for.
-      createUploadTask: (url, fileUri, options, callback) =>
-        mod.createUploadTask(
+      createUploadTask: (url, fileUri, options, callback) => {
+        if (Platform.OS === 'android') {
+          if (!androidTask) throw new Error('Android background upload requires a current account');
+          return androidTask(url, fileUri, options, callback);
+        }
+        const task = mod.createUploadTask(
           url,
           fileUri,
           {
@@ -149,7 +164,18 @@ export async function loadExpoFs(): Promise<FsLike | null> {
             headers: options.headers,
           },
           callback,
-        ),
+        );
+        return {
+          async uploadAsync() {
+            if (lifetime && (!lifetime.isCurrent() || lifetime.signal.aborted)) throw new Error('Upload session changed');
+            const cancel = () => { void task.cancelAsync().catch(() => {}); };
+            lifetime?.signal.addEventListener('abort', cancel);
+            try { return await task.uploadAsync(); }
+            finally { lifetime?.signal.removeEventListener('abort', cancel); }
+          },
+          cancelAsync: () => task.cancelAsync(),
+        };
+      },
     };
   } catch {
     return null;
@@ -171,12 +197,10 @@ export async function loadExpoFs(): Promise<FsLike | null> {
  *      part. A part that could not be staged is never handed over and is
  *      reported as no answer, so the caller retries it; it is never success.
  *
- * What this cannot do on its own is the device half: whether iOS finishes the
- * tasks while suspended, and whether it relaunches the app to report them, is
- * what a device run must show. Android runs these on OkHttp inside the app
- * process — expo-file-system's `sessionType` has no effect there — so a
- * suspended or killed Android process loses them until a foreground service
- * (a native module) keeps it alive. Both are named in census-media §37.
+ * iOS uses the OS background URLSession. Android uses the local visible
+ * dataSync service with three native workers. Process death interrupts Android
+ * requests; persisted jobs reconcile server parts on the next foreground.
+ * Neither transport is a claim of physical-device acceptance.
  */
 export async function putPartsInBackground(
   fs: FsLike,
@@ -186,6 +210,9 @@ export async function putPartsInBackground(
   /** census-media §37.8: the owning slot (slotOwnerKey), written into every staged file's name. */
   owner?: string,
 ): Promise<PartOutcome[]> {
+  if (parts.length > 32 || parts.reduce((sum, p) => sum + (isDescriptor(p.part) ? p.part.end - p.part.start : 0), 0) > 100 * 1024 * 1024) {
+    return parts.map(() => ({ error: 'Upload batch exceeds the staging limit' }));
+  }
   const outcomes: PartOutcome[] = parts.map(() => ({ error: 'not handed over' }));
   const staged: Array<{ position: number; url: string; uri: string }> = [];
   const dir = fs.cacheDirectory;

@@ -1,3 +1,7 @@
+import { startOutcomeRetention } from './lib/telegraphOutcomeRetention.js';
+import { startForwardMediaSweep } from './lib/telegraphForwardMediaSweep.js';
+import { startMapNavigationRetentionScheduler } from './lib/mapNavigationRetentionScheduler.js';
+import { startTripNearbyRetentionScheduler } from './lib/tripNearbyRetention.js';
 // Sentry must be the very first import so it can instrument the process before
 // any other module loads.  The module is a no-op when SENTRY_DSN is not set.
 import { Sentry } from "./lib/sentry.js"; import "./lib/deploymentEnvironmentGuard.js"; // BEFORE ./app: a PORTAVA_DEPLOYMENT_ENV=beta process exits 1 unless SUPABASE_URL is portava-beta's (lib/deploymentEnvironment.ts)
@@ -142,6 +146,8 @@ app.listen(port, (err) => {
   // it sweeps so they never repeat the location_snapshots defect (expires_at with
   // no cleanup job). Flag-gated and fail-closed; safe to start before enabling.
   startIntelRetentionScheduler();
+  startMapNavigationRetentionScheduler();
+  startTripNearbyRetentionScheduler();
   // TTL sweep for the anonymous sensing store (migration 2315). 2315 shipped
   // purge_expired_sensing_contributions and nothing called it, and there is no
   // pg_cron in src/migrations, so without this a short-lived store kept its rows
@@ -299,7 +305,7 @@ app.listen(port, (err) => {
   // Near-duplicate media collapse worker — groups visually-similar post_media
   // images at the same canonical place using 64-bit pHash difference hashing.
   // Runs every 20 minutes; fail-soft (never affects uploads or post creation).
-  startMediaDedupWorker(); startMediaProcessingWorker(); startPendingUploadSweepScheduler(); startMessageMediaPartsSweepScheduler(); // census-media §30 (MD338): claims queued/failed media_assets and completes or fails each; one flag read a minute until media_processing_worker_enabled (3338, seeded FALSE). census-discovery §56 (DV-77): the abandoned-upload sweep — removes a postcard upload whose /complete never ran (its unstripped original, parts, poster, then row); hourly, one flag read a pass until media_pending_upload_sweep_enabled (3400, seeded FALSE)
+  startMediaDedupWorker(); startMediaProcessingWorker(); startPendingUploadSweepScheduler(); startMessageMediaPartsSweepScheduler(); startForwardMediaSweep(); startOutcomeRetention(); // census-media §30 (MD338): claims queued/failed media_assets and completes or fails each; one flag read a minute until media_processing_worker_enabled (3338, seeded FALSE). census-discovery §56 (DV-77): the abandoned-upload sweep — removes a postcard upload whose /complete never ran (its unstripped original, parts, poster, then row); hourly, one flag read a pass until media_pending_upload_sweep_enabled (3400, seeded FALSE)
 
   // Place collections precompute worker — maintains place_best_of,
   // place_top_contributors, and place_living_cache so popular destination

@@ -1,3 +1,4 @@
+import { readCanonicalPlaceVisibility } from "../../lib/places/placeGovernance.js";
 /**
  * MemoryActionService — §14 "Executable Memories", the service §2 names and
  * §27 gives three methods: `compileDoAgain(memoryId, currentContext)`,
@@ -330,22 +331,25 @@ export function _setMemoryActionDeps(d: Partial<MemoryActionDeps> | null): void 
  * cannot be read is unknown, not "no successor".
  */
 export async function followMergeChain(sc: SupabaseClient, start: PlaceRow): Promise<{ ok: true; row: PlaceRow; followed: string[] } | { ok: false }> {
+  const visibility=await readCanonicalPlaceVisibility(sc,[start.id]);
+  if(!visibility.ok||!visibility.visibleIds.has(start.id)) return {ok:false};
   let row = start;
   const followed: string[] = [];
   const seen = new Set<string>([String(row.id)]);
   while (row.merged_into_place_id && followed.length < H17_MAX_MERGE_HOPS) {
     const next = String(row.merged_into_place_id);
-    if (seen.has(next)) break;
+    if (seen.has(next)) return {ok:false};
     const { data, error } = await sc.from("places").select(PLACE_ACTION_COLUMNS).eq("id", next).maybeSingle();
     if (error) {
       log.error({ err: error, from: row.id, to: next }, "memory actions: merged-place successor read failed");
       return { ok: false };
     }
-    if (!data) break;
+    if (!data) return {ok:false};
     followed.push(String(row.id));
     seen.add(next);
     row = data as PlaceRow;
   }
+  if(row.merged_into_place_id) return {ok:false};
   return { ok: true, row, followed };
 }
 

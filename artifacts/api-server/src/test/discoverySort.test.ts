@@ -30,16 +30,23 @@ import discoveryRouter, {
 } from "../routes/discovery.js";
 import { trackOsmPlaceSave, trackOsmPlaceUnsave } from "../routes/wishlist.js";
 import { _setTestClient, _clearTestClient } from "../lib/http.js";
+import { _setTestServiceClient } from '../lib/supabase.js';
+import { makeFakeClient } from './telegraphCertificationHarness.js';
+
+// These route cases supply their directory rows below. All other reads still
+// need an isolated client: falling through to Supabase starts real retry loops.
+beforeEach(() => {
+  const client = makeFakeClient({});
+  _setTestClient(client, true);
+});
+afterEach(() => { _clearTestClient(); _setTestServiceClient(null); });
 
 // ── Block external network calls ───────────────────────────────────────────────
 
 const _originalFetch = globalThis.fetch;
 globalThis.fetch = async (url: string | URL | Request, init?: RequestInit) => {
   const urlStr = String(typeof url === "string" ? url : (url as URL).href ?? "");
-  if (
-    urlStr.includes("overpass-api.de") ||
-    urlStr.includes("nominatim.openstreetmap.org")
-  ) {
+  if (!/^http:\/\/(127\.0\.0\.1|localhost)(:|\/)/.test(urlStr)) {
     throw new Error("Network blocked in test environment");
   }
   return _originalFetch(url as string, init);

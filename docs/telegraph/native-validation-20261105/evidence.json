@@ -1,0 +1,158 @@
+{
+  "date": "2026-11-05",
+  "scope": "Isolated full-app debug native binaries, synthetic Expo/Hermes/JSI runtime entry; no API, authentication or message transport. Ordinary app entry bundled separately. These binaries precede subsequent JS-only feature work.",
+  "runtimeResults": [
+    {
+      "platform": "ios",
+      "passed": true,
+      "count": 12,
+      "checks": [
+        "registered:PortavaVideoCompressor",
+        "registered:PortavaNearbyCheckpoint",
+        "registered:PortavaOnDeviceSpeech",
+        "sqlcipher-jsi-cipher-version",
+        "sqlcipher-jsi-wrong-key-refused",
+        "sqlcipher-jsi-reopen",
+        "mls-native-owner",
+        "mls-native-safety-agreement",
+        "mls-native-unicode-roundtrip",
+        "mls-native-persisted-replay-refused",
+        "mls-native-bidirectional",
+        "scene-native-url-roundtrip"
+      ],
+      "synthetic": true
+    },
+    {
+      "platform": "android",
+      "passed": true,
+      "count": 11,
+      "checks": [
+        "registered:PortavaVideoCompressor",
+        "registered:PortavaNearbyCheckpoint",
+        "registered:PortavaOnDeviceSpeech",
+        "sqlcipher-jsi-cipher-version",
+        "sqlcipher-jsi-wrong-key-refused",
+        "sqlcipher-jsi-reopen",
+        "mls-native-owner",
+        "mls-native-safety-agreement",
+        "mls-native-unicode-roundtrip",
+        "mls-native-persisted-replay-refused",
+        "mls-native-bidirectional"
+      ],
+      "synthetic": true
+    }
+  ],
+  "iosLifecycleObserved": [
+    "active",
+    "inactive",
+    "background",
+    "active"
+  ],
+  "iosLifecycleLog": {
+    "path": "/tmp/portava-native-app-metro-final.log",
+    "bytes": 5962,
+    "sha256": "169dc6b10ab7d47a938d4a6ce6e608117ce94060f0380a1e642cdf13c1bb506d"
+  },
+  "toolchain": {
+    "xcode": "27.2 (27B52)",
+    "iosSimulator": "27.1 / iPhone Duo",
+    "androidEmulator": "API 36 / arm64-v8a"
+  },
+  "sources": [
+    {
+      "path": "tools/telegraph/native-app-runtime.tsx",
+      "bytes": 5916,
+      "sha256": "c06d0d1103aa88129dd717fbed257ac185da820c5688cc68dc9a74052862e4fb"
+    },
+    {
+      "path": "travel-buddy-standalone/plugins/PortavaSceneDelegate.swift",
+      "bytes": 2817,
+      "sha256": "9725904c82a2c85425db779e6e42147b50048e2e95060be3252a522b85f04bc1"
+    },
+    {
+      "path": "travel-buddy-standalone/plugins/withPortavaSceneLifecycle.js",
+      "bytes": 2815,
+      "sha256": "d4f82a7ad78c0bff416aa31d2afd745c5f0ff8f8a87e202ee2e8368af8d8a3b9"
+    },
+    {
+      "path": "travel-buddy-standalone/vendor/expo-openmls/src/index.ts",
+      "bytes": 5856,
+      "sha256": "1374441a519c8fb9af6949d92402ca16990382077283e1f8bf3cc49443e3f48c"
+    },
+    {
+      "path": "travel-buddy-standalone/vendor/expo-openmls/src/plaintextBridge.ts",
+      "bytes": 615,
+      "sha256": "2e0c0bcbeb6e87235a207a0482ed18954d8ec7e55fc2d6536cd0335fff0685ce"
+    },
+    {
+      "path": "travel-buddy-standalone/vendor/expo-openmls/ios/ExpoOpenmls/ExpoOpenmlsModule.swift",
+      "bytes": 5614,
+      "sha256": "52fcb935619e30ede312b79682d065f3689d21f1ce91f837fad7d8e073bf5ab1"
+    },
+    {
+      "path": "travel-buddy-standalone/vendor/expo-openmls/android/src/main/java/expo/modules/openmls/ExpoOpenmlsModule.kt",
+      "bytes": 5420,
+      "sha256": "83cc8327e924cf2f00fcb0ce79e7a28b219a3efc0658ede256e7e35427c15503"
+    },
+    {
+      "path": "travel-buddy-standalone/patches/react-native-reanimated@4.1.7.patch",
+      "bytes": 1343,
+      "sha256": "346aeddf48600d37f004bc5b45801b8cd506cd23115341a76c0c88bbed2e1e4a"
+    },
+    {
+      "path": "travel-buddy-standalone/pnpm-lock.yaml",
+      "bytes": 429263,
+      "sha256": "e2d4f96ef42bf686ea1d031fed6a59c3a15a1c84fa3bc0c0ad66b25863a5b0bb"
+    }
+  ],
+  "logs": [
+    {
+      "path": "/tmp/portava-native-app-metro-scene.log",
+      "bytes": 3070,
+      "sha256": "0b9bd49fa4c86e2d18420f0be08f175cf32de7a8953c37dd597405e411316849"
+    },
+    {
+      "path": "/tmp/portava-native-app-metro-final.log",
+      "bytes": 5962,
+      "sha256": "169dc6b10ab7d47a938d4a6ce6e608117ce94060f0380a1e642cdf13c1bb506d"
+    },
+    {
+      "path": "/tmp/portava-integrated-native-build-final.log",
+      "bytes": 75221,
+      "sha256": "cfd63e464d8d2bf8ecac554df19f7186ebfdeca77392128a06b10c294bb54a17"
+    },
+    {
+      "path": "/tmp/portava-integrated-ios-scene-build.log",
+      "bytes": 901459,
+      "sha256": "6ceb72391c49341fedee72280cc72a03c3485a2656ea7079e9256458f2bd50df"
+    },
+    {
+      "path": "/tmp/portava-integrated-native-bundle.log",
+      "bytes": 3861,
+      "sha256": "56319ae2cc304a278b48153293e4ccc4a72eabc457760d6081c438d993a98b84"
+    },
+    {
+      "path": "/tmp/portava-integrated-ios-bundle.log",
+      "bytes": 5957,
+      "sha256": "873bc87eb6fd779a0504626a1de213d081bb989d95eb61f592c3adbfab2a374c"
+    }
+  ],
+  "binaries": [
+    {
+      "path": "/tmp/portava-integrated-native-20261105/android/app/build/outputs/apk/debug/app-debug.apk",
+      "bytes": 126113710,
+      "sha256": "5e47cc45ae926d515badae04512aa08c729a180700284cc69d946426ec28574a"
+    },
+    {
+      "path": "/tmp/portava-integrated-ios-derived/Build/Products/Debug-iphonesimulator/Portava.app/Portava.debug.dylib",
+      "bytes": 64896832,
+      "sha256": "b28ec32cc8ea46e92c737d0d31d1395997e49f9c4909cb4b7d86df923761facb"
+    }
+  ],
+  "limits": [
+    "No production deployment or store-signed build",
+    "Physical-device media, radios, permissions and performance acceptance remain separate",
+    "Cold universal-link and notification delivery are wired but not claimed as end-to-end simulator fixtures",
+    "Source corpus changed after normal JS bundles; bundle results describe their captured stages"
+  ]
+}

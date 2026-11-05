@@ -135,6 +135,23 @@ router.post(
 
 // ── T23: a window's signal fields ────────────────────────────────────────────
 
+router.get(
+  "/me/availability-windows/:windowId/signal",
+  asyncHandler(async (req, res) => {
+    const g = await gate(req, res);
+    if (!g) return;
+    const { windowId } = req.params;
+    if (!isUuid(windowId)) { sendError(res, "invalid_payload", "Invalid windowId."); return; }
+    const { data, error } = await g.db.from("availability_windows")
+      .select("id, audience_policy_id, proximity_visibility, geography_scope")
+      .eq("id", windowId).eq("user_id", g.userId).maybeSingle();
+    if (error) { sendError(res, "degraded_unavailable", "The window could not be read."); return; }
+    if (!data) { sendError(res, "not_found", "Window not found."); return; }
+    res.json({ id: data.id, audiencePolicyId: data.audience_policy_id ?? null,
+      proximityVisibility: data.proximity_visibility ?? "HIDDEN", geographyScope: data.geography_scope ?? null });
+  }),
+);
+
 router.patch(
   "/me/availability-windows/:windowId/signal",
   asyncHandler(async (req, res) => {

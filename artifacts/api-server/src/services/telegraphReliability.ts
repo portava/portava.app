@@ -1,3 +1,4 @@
+import { prepareLegacyCardWrite } from './telegraph/legacyCardWrite.js';
 /**
  * Telegraph §17.2 / §30 "Reliability" — idempotent resend, sequence resume and
  * resume backpressure (census-telegraph T231, T233, T376).
@@ -148,7 +149,9 @@ export function sameSendPayload(
   row: ReplayRow,
   sent: { body: string | null; ciphertext: string | null; msgType: string; subtype: string | null; replyToId: string | null },
 ): boolean {
-  return (row.body ?? null) === (sent.body ?? null)
+  const storedBody = prepareLegacyCardWrite({ body: row.body ?? null, msg_type: row.msg_type ?? 'text', subtype: row.subtype }).body;
+  const sentBody = prepareLegacyCardWrite({ body: sent.body, msg_type: sent.msgType, subtype: sent.subtype }).body;
+  return storedBody === sentBody
     && (row.ciphertext ?? null) === (sent.ciphertext ?? null)
     && (row.msg_type ?? "text") === sent.msgType
     && (row.subtype ?? null) === (sent.subtype ?? null)

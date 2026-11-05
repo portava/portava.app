@@ -2,6 +2,7 @@ package expo.modules.openmls
 
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import org.json.JSONArray
 
 // UniFFI-generated bindings. Generated into
 // android/src/main/java/uniffi/openmls/openmls.kt by the `generateUniffiBindings`
@@ -15,6 +16,7 @@ import uniffi.openmls.generateDeviceKeyPair
 import uniffi.openmls.generateIdentityKeyPair
 import uniffi.openmls.generateKeyPackage
 import uniffi.openmls.processWelcome
+import uniffi.openmls.sessionOwnerId
 
 /**
  * ExpoOpenmlsModule — Expo SDK 53+ native module for Android.
@@ -92,9 +94,27 @@ class ExpoOpenmlsModule : Module() {
       mapOf("plaintext" to result.plaintext, "updatedGroupStateB64" to result.updatedGroupStateB64)
     }
 
+    // Expo's Android string bridge can truncate raw embedded NUL characters.
+    // JSON is only a bridge envelope; OpenMLS still encrypts the original text.
+    AsyncFunction("encryptMessageJson") { groupStateB64: String, plaintextJson: String ->
+      val values = JSONArray(plaintextJson)
+      require(values.length() == 1 && values.get(0) is String) { "Invalid encoded plaintext." }
+      val result = encryptMessage(groupStateB64, values.getString(0))
+      mapOf("ciphertextB64" to result.ciphertextB64, "updatedGroupStateB64" to result.updatedGroupStateB64)
+    }
+
+    AsyncFunction("decryptMessageJson") { groupStateB64: String, ciphertextB64: String ->
+      val result = decryptMessage(groupStateB64, ciphertextB64)
+      mapOf("plaintextJson" to JSONArray().put(result.plaintext).toString(), "updatedGroupStateB64" to result.updatedGroupStateB64)
+    }
+
     // ── Safety number ────────────────────────────────────────────────────────
 
     // Derived from the group's real member signature keys — see src/openmls.udl.
+    AsyncFunction("sessionOwnerId") { groupStateB64: String ->
+      sessionOwnerId(groupStateB64)
+    }
+
     AsyncFunction("deriveSafetyNumber") { groupStateB64: String ->
       deriveSafetyNumber(groupStateB64)
     }

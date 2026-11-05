@@ -220,7 +220,7 @@ export const TELEGRAPH_SLOS: readonly TelegraphSlo[] = [
       "the tree can observe: a human confirming a proposed action through " +
       "/telegraph/commands/:id/confirm-action, which is the one place a " +
       "conversation becomes a canonical write. Whether anybody then met is not in " +
-      "this system. Labelled a proxy so it cannot be quoted as the outcome metric.",
+      "this counter. Optional durable plan feedback is reported separately in diagnostics as selfReportedOutcomes (4017), never as verified attendance. This command counter remains a proxy.",
   },
 
   // ── §30A.17's eight SLOs ────────────────────────────────────────────────────

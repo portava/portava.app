@@ -47,8 +47,8 @@ function makeDb(flags: Record<string, boolean>, opts: { places?: string[]; conse
         return { data: { enabled: Boolean(flags[flag]) }, error: null };
       }
       if (table === "places") {
-        const id = filters.find(([c]) => c === "id")?.[1];
-        return { data: places.has(id) ? { id } : null, error: null };
+        const rows=[...places].map(id=>({id,moderation_status:'visible',merged_into_place_id:null})).filter(match);
+        return {data:single?rows[0]??null:rows,error:null,count:rows.length};
       }
       if (table === "intel_contribution_consent") {
         if (consent === false) return { data: null, error: null };            // no consent row
@@ -78,6 +78,7 @@ function makeDb(flags: Record<string, boolean>, opts: { places?: string[]; conse
     }
 
     const b: any = {
+      limit() {return b;},
       select() { op = op === "insert" ? "insert_select" : op === "update" ? "update_select" : "select"; return b; },
       insert(row: any) { op = "insert"; payload = row; return b; },
       update(patch: any) { op = "update"; payload = patch; return b; },

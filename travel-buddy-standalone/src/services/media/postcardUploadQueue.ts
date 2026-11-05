@@ -42,7 +42,7 @@ export interface QueueRuntime {
   newId(): string;
   now(): number;
   /** The pipeline's effects, minus persistence (the queue owns that). */
-  deps(): Promise<Omit<PipelineDeps, 'persist'>>;
+  deps(accountId?: string, jobId?: string): Promise<Omit<PipelineDeps, 'persist'>>;
 }
 
 export interface QueueEvent {
@@ -66,6 +66,8 @@ export class PostcardUploadQueue {
   private readonly listeners = new Set<(e: QueueEvent) => void>();
   private readonly cancelled = new Set<string>();
   private draining: Promise<void> | null = null;
+  private drainAgain = false;
+  private active: { id: string; cancel?: () => void } | null = null;
   /** Serialises every read-modify-write of the stored list. */
   private writeChain: Promise<unknown> = Promise.resolve();
 
@@ -124,13 +126,15 @@ export class PostcardUploadQueue {
     const job = newPostcardUploadJob(this.rt.newId(), accountId, input, this.rt.now());
     await this.upsert(accountId, job);
     this.emit({ job });
+    if (this.draining) this.drainAgain = true;
     void this.resumePending();
     return job;
   }
 
-  /** Ask for a job to stop. Takes effect at the next stage boundary or retry wait. */
+  /** Stop the active transport immediately; cleanup persists at the next stage boundary. */
   cancel(jobId: string): void {
     this.cancelled.add(jobId);
+    if (this.active?.id === jobId) this.active.cancel?.();
   }
 
   /**
@@ -141,6 +145,7 @@ export class PostcardUploadQueue {
     if (!this.draining) {
       this.draining = this.drain().finally(() => {
         this.draining = null;
+        if (this.drainAgain) { this.drainAgain = false; return this.resumePending(); }
       });
     }
     return this.draining;
@@ -153,10 +158,14 @@ export class PostcardUploadQueue {
       .filter((j) => !TERMINAL_STAGES.has(j.stage))
       .sort((a, b) => a.createdAt - b.createdAt);
     if (pending.length === 0) return;
-    const deps = await this.rt.deps();
     for (const stored of pending) {
       // The account may have changed while an earlier job ran.
       if ((await this.rt.accountId()) !== accountId) return;
+      let deps: Omit<PipelineDeps, 'persist'>;
+      try { deps = await this.rt.deps(accountId, stored.id); } catch { return; }
+      if (deps.isCurrent?.() === false) { deps.dispose?.(); return; }
+      this.active = { id: stored.id, cancel: deps.cancel };
+      try {
       let job = stored;
       if (job.runs >= MAX_RUNS) {
         if (job.postId) await deps.discardShell(job.postId).catch(() => {});
@@ -175,14 +184,15 @@ export class PostcardUploadQueue {
         {
           onStage: (j) => {
             latest = j;
-            this.emit({ job: j });
+            if (deps.isCurrent?.() !== false) this.emit({ job: j });
           },
-          onProgress: (progress) => this.emit({ job: latest, progress }),
+          onProgress: (progress) => { if (deps.isCurrent?.() !== false) this.emit({ job: latest, progress }); },
           isCancelled: () => this.cancelled.has(stored.id),
         },
       );
       this.cancelled.delete(stored.id);
       // A paused job stays paused for this run; the next trigger resumes it.
+      } finally { this.active = null; deps.dispose?.(); }
     }
   }
 }

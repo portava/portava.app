@@ -681,7 +681,8 @@ export async function executeMemoryCommand(sc: any, cmd: MemoryCommand): Promise
   // chosen function reads and NULL for the other, so a command can never
   // present two subjects — the TypeScript half of 2993's one-subject CHECK.
   const highlight = isHighlightCommand(cmd.type);
-  const fn = COMMAND_KERNEL_FN[cmd.type];
+  const fn = cmd.type === 'CREATE_MEMORY' && typeof cmd.payload.telegraph_source_message_id === 'string'
+    ? 'telegraph_memory_draft_execute' : COMMAND_KERNEL_FN[cmd.type];
   const p_command = COMMAND_SUBJECT[cmd.type] === "owner_policy"
     ? {
         command_id: cmd.commandId,

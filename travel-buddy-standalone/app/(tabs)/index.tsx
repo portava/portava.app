@@ -246,7 +246,7 @@ function Pulse() {
       }
       // TTL guard: skip the network reload if data is still fresh (60 s).
       // Pull-to-refresh resets lastPulseFetchAt.current = 0 to bypass this.
-      if (Date.now() - lastPulseFetchAt.current >= FOCUS_REFETCH_TTL_MS) {
+      if (Date.now() - Math.max(lastPulseFetchAt.current, pulseFeed.lastRequestedAt?.current ?? 0) >= FOCUS_REFETCH_TTL_MS) {
         pulseFeed.reload();
         if (feedMode === 'following') followingFeed.reload();
         lastPulseFetchAt.current = Date.now();

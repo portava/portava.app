@@ -87,7 +87,7 @@ function makeFakeClient(cfg: FakeCfg): any {
       maybeSingle: async () => ({ data: null, error: null }),
       single: async () => ({ data: null, error: null }),
       insert: () => q, upsert: () => q, update: () => q, delete: () => q,
-      then: (r: any) => Promise.resolve({ data: [], error: null }).then(r),
+      then: (r: any) => Promise.resolve({ data: [], error: null, count: 0 }).then(r),
     };
     return q;
   }
@@ -121,10 +121,10 @@ function makeFakeClient(cfg: FakeCfg): any {
         let orUsed = false;
         const q: any = {
           select: () => q,
-          eq: () => q, in: () => q, is: () => q,
+          eq: () => q, in: () => q, is: () => q, limit: () => q,
           or: () => { orUsed = true; return q; },
           then: (r: any) =>
-            Promise.resolve({ data: orUsed ? (cfg.discoveryPlacesRows ?? []) : [], error: null }).then(r),
+            Promise.resolve({ data: orUsed ? (cfg.discoveryPlacesRows ?? []) : [], error: null, count: orUsed ? (cfg.discoveryPlacesRows ?? []).length : 0 }).then(r),
         };
         return q;
       }

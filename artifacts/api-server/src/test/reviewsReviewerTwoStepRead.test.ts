@@ -130,7 +130,10 @@ const auth = { getUser: async (token: string) => (token === TOKEN ? { data: { us
  * live-column check, the projection and the embed guard, is the double's own.
  */
 function installStrict(seed: Seed) {
-  const strict = makeSchemaStrictClient(seed);
+  // Local migration4009 adds the governance column after the checked-in live
+  // snapshot. Its shape/RLS is verified by placeGovernance.native.test.ts;
+  // reviews/profiles remain checked against live columns in this suite.
+  const strict = makeSchemaStrictClient(seed, { unchecked: ['places'] });
   const profileReads: Array<{ cols: string; ids: unknown[] }> = [];
   const reviewSelects: string[] = [];
   const from = (table: string) => {

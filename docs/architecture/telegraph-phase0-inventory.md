@@ -32,7 +32,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 
 ### 2. Migrations that touch a messaging table
 
-38 of 849 migration files reference at least one messaging table.
+43 of 863 migration files reference at least one messaging table.
 
 MEASURED ON THE SQL WITH COMMENTS STRIPPED. A table named only in a `--` or
 `/* */` comment is not counted; before this, 13 of the 37 files listed here
@@ -86,6 +86,11 @@ touch no messaging table.
 - `src/migrations/3825_telegraph_message_link_previews.sql`
 - `src/migrations/3941_telegraph_member_private_state_column_privileges.sql`
 - `src/migrations/3998_telegraph_conversation_snapshots.sql`
+- `src/migrations/4004_reported_content_audited_removal.sql`
+- `src/migrations/4005_telegraph_sequence_receipts.sql`
+- `src/migrations/4015_telegraph_memory_sources.sql`
+- `src/migrations/4016_telegraph_attachment_forwards.sql`
+- `src/migrations/4017_telegraph_outcome_feedback.sql`
 
 ### 3. Server routes that read or write a messaging table
 
@@ -99,7 +104,7 @@ touch no messaging table.
 | `src/routes/follows.ts` | 12 | message_thread_members |
 | `src/routes/groupChat.ts` | 6 | message_thread_members, message_threads, messages |
 | `src/routes/hiddenGems.ts` | 27 | messages |
-| `src/routes/highlights.ts` | 24 | message_thread_members, message_threads, messages |
+| `src/routes/highlights.ts` | 25 | message_thread_members, message_threads, messages |
 | `src/routes/meetups.ts` | 12 | message_threads, messages |
 | `src/routes/messaging.ts` | 32 | message_requests, message_thread_members, message_threads, message_translations, messages, saved_messages |
 | `src/routes/rentABuddy.ts` | 117 | message_thread_members, message_threads, messages |
@@ -108,9 +113,9 @@ touch no messaging table.
 | `src/routes/telegraphForward.ts` | 3 | message_thread_members, message_threads, messages |
 | `src/routes/telegraphGroups.ts` | 7 | message_thread_members, message_threads |
 | `src/routes/telegraphKinds.ts` | 4 | message_thread_members, messages |
-| `src/routes/telegraphLifecycle.ts` | 3 | message_thread_members, messages |
+| `src/routes/telegraphLifecycle.ts` | 4 | message_thread_members, messages |
 | `src/routes/telegraphLinkPreview.ts` | 2 | message_thread_members, message_threads, messages |
-| `src/routes/telegraphMemory.ts` | 2 | message_thread_members, messages, saved_messages |
+| `src/routes/telegraphMemory.ts` | 4 | message_thread_members, messages, saved_messages |
 | `src/routes/telegraphShare.ts` | 2 | message_thread_members, message_threads, messages |
 | `src/routes/telegraphSharedContext.ts` | 4 | message_thread_members, message_threads |
 | `src/routes/telegraphStream.ts` | 2 | message_thread_members, messages |
@@ -182,15 +187,18 @@ Processing and EXIF policy: `src/lib/mediaProcessing.ts`. Access: `src/lib/media
 
 ### 9. Current enum literals
 
-`msg_type`: `booking_card`, `card`, `circle_status_card`, `highlight_reply`, `media`, `system`, `text`, `voice`
+`msg_type`: `booking_card`, `card`, `circle_status_card`, `gif`, `highlight_reply`, `media`, `system`, `text`, `voice`
 
 `subtype` (static literals): `call_ended`, `call_started`, `compass_card`, `discovery_card`, `e2ee_welcome`, `event_context_card`, `hidden_gem`, `layover_suggestion`, `meetup`, `meetup_cancelled`, `meetup_confirmed`, `post_card`
 
-27 site(s) COMPUTE a message type rather than writing a literal, so no
+30 site(s) COMPUTE a message type rather than writing a literal, so no
 fixed enumeration of `subtype` is complete. They are declared in
 `src/domain/telegraph/policies/shareAuthorizationPolicy.ts` and re-derived by
 `check:telegraph-share-producers`:
 
+- `artifacts/api-server/src/routes/groupChat.ts` — `` subtype: m.subtype ?? null `` (parser / passthrough, writes no message)
+- `travel-buddy-standalone/src/features/telegraph/outbox/pendingMessages.ts` — `` subtype: entry.display.subtype `` (parser / passthrough, writes no message)
+- `travel-buddy-standalone/src/hooks/useGroupChat.ts` — `` subtype: failed.subtype ?? undefined `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/lib/threadMessage.ts` — `` subtype: params.subtype ?? null ``
 - `artifacts/api-server/src/routes/telegraphShare.ts` — `` msg_type: msgTypeOf("PORTAVA_OBJECT") | subtype: objectType.toLowerCase() | subtype: m.subtype ``
 - `artifacts/api-server/src/services/telegraph/groupFormation.ts` — `` msg_type: msgTypeOf("PORTAVA_OBJECT") | subtype: item.kind === "PLAN" ? "plan" : "place" ``

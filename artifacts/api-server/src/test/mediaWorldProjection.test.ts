@@ -51,7 +51,8 @@ type Dataset = Record<string, any[]>;
 
 function makeSc(data: Dataset) {
   const resolveRows = (table: string, filters: any[]): any[] => {
-    let rows = (data[table] ?? []).map((r) => ({ ...r }));
+    let rows = (data[table] ?? []).map((r) => table === "places"
+      ? { moderation_status: "visible", merged_into_place_id: null, ...r } : { ...r });
     for (const f of filters) {
       if (f.op === "eq") rows = rows.filter((r) => String(r[f.col]) === String(f.val));
       else if (f.op === "in")
@@ -82,7 +83,7 @@ function makeSc(data: Dataset) {
       maybeSingle() { return Promise.resolve({ data: resolveRows(table, filters)[0] ?? null, error: null }); },
       single() { return Promise.resolve({ data: resolveRows(table, filters)[0] ?? null, error: null }); },
       then(onF: any, onR: any) {
-        return Promise.resolve({ data: resolveRows(table, filters), error: null }).then(onF, onR);
+        return Promise.resolve({ data: resolveRows(table, filters), error: null, count: resolveRows(table, filters).length }).then(onF, onR);
       },
     };
     return b;
@@ -294,6 +295,10 @@ function baseData(extra: Dataset = {}): Dataset {
     trip_members: [],
     trips: [],
     feature_flags: [], // all flags off → live is fail-closed OFF
+    // A normal fixture post points at a real canonical catalog row. Individual
+    // moderation/missing-row cases override places explicitly.
+    places: [...new Set([PLACE_1, ...(extra.posts ?? []).map(r => r.canonical_place_id).filter(Boolean)])]
+      .map(id => ({ id, moderation_status: "visible", merged_into_place_id: null })),
     ...extra,
   };
 }
@@ -1379,6 +1384,7 @@ describe("a failed candidate read refuses; an empty one does not", () => {
     const client = makeFailClosedClient({
       rows: {
         profiles: [{ id: VIEWER, location_country: "VN", date_of_birth: "1990-01-01", account_status: "active" }],
+      places: [{ id: PLACE_1, moderation_status: "visible", merged_into_place_id: null }],
         posts: [makePost({ id: "p-visible", content: "rooftop" })],
         blocks: [], user_mutes: [], user_follows: [], trip_members: [], trips: [], feature_flags: [],
       },
@@ -1399,6 +1405,7 @@ describe("a failed candidate read refuses; an empty one does not", () => {
     const client = makeFailClosedClient({
       rows: {
         profiles: [{ id: VIEWER, location_country: "VN", date_of_birth: "1990-01-01", account_status: "active" }],
+      places: [{ id: PLACE_1, moderation_status: "visible", merged_into_place_id: null }],
         posts: [makePost({ id: "p-visible", content: "rooftop" })],
         blocks: [], user_mutes: [], user_follows: [], trip_members: [], trips: [], feature_flags: [],
       },
@@ -1415,6 +1422,7 @@ describe("a failed candidate read refuses; an empty one does not", () => {
     const { makeFailClosedClient } = await import("./helpers/failClosedSupabase.js");
     const rows = {
       profiles: [{ id: VIEWER, location_country: "VN", date_of_birth: "1990-01-01", account_status: "active" }],
+      places: [{ id: PLACE_1, moderation_status: "visible", merged_into_place_id: null }],
       posts: [makePost({ id: "p-roof", content: "rooftop" })],
       blocks: [], user_mutes: [], user_follows: [], trip_members: [], trips: [], feature_flags: [], hidden_gems: [],
     };
@@ -1471,6 +1479,7 @@ describe("a failed candidate read refuses; an empty one does not", () => {
     const { makeFailClosedClient } = await import("./helpers/failClosedSupabase.js");
     const rows = {
       profiles: [{ id: VIEWER, location_country: "VN", date_of_birth: "1990-01-01", account_status: "active" }],
+      places: [{ id: PLACE_1, moderation_status: "visible", merged_into_place_id: null }],
       posts: [makePost({ id: "p-trip", content: "rooftop", tripId: TRIP })],
       trips: [{ id: TRIP, title: "Vietnam", visibility: "public", owner_id: AUTHOR_A }],
       blocks: [], user_mutes: [], user_follows: [], trip_members: [], feature_flags: [], hidden_gems: [],

@@ -382,15 +382,8 @@ export async function updateGemAsGuide(
 export interface SaveGemResult {
   /** The save row already existed; nothing was written and nothing counted. */
   alreadySaved: boolean;
-  /**
-   * Whether `hidden_gems.save_count` actually moved for this save.
-   *
-   * `false` means the save row IS durable — the user's save happened and their
-   * saved list is correct — but the denormalised counter is now one BEHIND the
-   * number of `hidden_gem_saves` rows, and nothing repairs it. See the comment
-   * on the fallback below for why that is not a cosmetic loss. Always `false`
-   * when `alreadySaved` is true, because nothing was supposed to count.
-   */
+  /** A new save and its exact count commit together (migration 4012).
+   * False for an existing bookmark, whose count does not move. */
   saveCountIncremented: boolean;
 }
 
@@ -423,62 +416,20 @@ export async function saveGem(
   const { error } = await db
     .from("hidden_gem_saves")
     .insert({ gem_id: gemId, user_id: userId });
-  if (error) throw error;
-
-  // ── save_count ──────────────────────────────────────────────────────────
-  // At this point the save row is COMMITTED. Whatever happens to the counter,
-  // throwing from here would tell the caller "your save failed" about a save
-  // that did happen, so this function does not throw past the insert. It
-  // reports instead.
-  //
-  // Losing this increment is NOT cosmetic. `save_count` is a threshold input
-  // to `deriveHiddenGemState` (lib/hiddenGemState.ts):
-  //
-  //     saves >= NO_LONGER_HIDDEN_SAVE_THRESHOLD &&
-  //     visits >= NO_LONGER_HIDDEN_VISIT_THRESHOLD  ->  "no_longer_hidden"
-  //
-  // and "no_longer_hidden" is the state that stops the system pushing a small
-  // real place that has already been discovered out. An UNDER-count is the
-  // harmful direction: the gem keeps reading as still hidden and keeps being
-  // recommended into a place that is already overloaded. Nothing recomputes
-  // save_count from `hidden_gem_saves`, so a lost increment is permanent.
-  //
-  // So: attempt the atomic RPC, fall back to read-then-write (which mirrors
-  // the RPC's `+1` semantics; it is NOT atomic and loses concurrent saves —
-  // see the migration note in the report), and RETURN whether it landed.
-  // supabase-js returns `{ error }`, it never throws, so every leg is checked.
-  let saveCountIncremented = false;
-
-  const { error: rpcError } = await db.rpc("increment_counter" as any, {
-    table_name: "hidden_gems", column_name: "save_count", row_id: gemId,
-  });
-  if (!rpcError) {
-    saveCountIncremented = true;
-  } else {
-    // Fallback: manual increment.
-    const { data: cur, error: readError } = await db
-      .from("hidden_gems").select("save_count").eq("id", gemId).maybeSingle();
-    if (readError) {
-      // ERROR, not warn: the counter is now permanently one behind and the
-      // gem is one save closer to being wrongly recommended.
-      logger.error(
-        { err: readError, rpcErr: rpcError, gemId, userId, code: "save_count_increment_lost" },
-        "saveGem: save_count increment LOST — fallback read failed; hidden_gems.save_count is behind hidden_gem_saves",
-      );
-    } else {
-      const next = ((cur as any)?.save_count ?? 0) + 1;
-      const { error: updError } = await db
-        .from("hidden_gems").update({ save_count: next }).eq("id", gemId);
-      if (updError) {
-        logger.error(
-          { err: updError, rpcErr: rpcError, gemId, userId, code: "save_count_increment_lost" },
-          "saveGem: save_count increment LOST — fallback update failed; hidden_gems.save_count is behind hidden_gem_saves",
-        );
-      } else {
-        saveCountIncremented = true;
-      }
+  if (error) {
+    // Concurrent idempotent save: only accept the unique collision when the
+    // committed bookmark can actually be read back.
+    if (error.code === "23505") {
+      const again = await db.from("hidden_gem_saves").select("gem_id").eq("gem_id", gemId).eq("user_id", userId).maybeSingle();
+      if (!again.error && again.data) return { alreadySaved: true, saveCountIncremented: false };
     }
+    throw error;
   }
+
+  // Migration 4012 commits the private collection membership and exact save
+  // count in the insert transaction. A second application increment would
+  // double-count, and a failed trigger rolls back the save itself.
+  const saveCountIncremented = true;
 
   // Feed into Trust Engine (fire-and-forget; flag-gated internally)
   void recordTrustEvent(db, {

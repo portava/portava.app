@@ -8,7 +8,7 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
-import { CachedImage } from '../../components/CachedImage.tsx';
+import { ContentMedia } from '../../components/ui/ContentMedia.tsx';
 import { color, radius, space, type as t, typography } from '../../theme/tokens.ts';
 import {
   addSharedMomentContribution, approveSharedMomentContribution, listContributablePosts,
@@ -99,7 +99,7 @@ export function PendingContributionsPanel({ momentId, canManage, reloadKey, onAp
       <ListStatus state={state} onRetry={load} empty={canManage ? 'Nothing to review.' : 'Nothing waiting.'} testIDPrefix="moment-pending" />
       {state.kind === 'ready' ? state.items.map((c) => (
         <View key={c.id} style={s.card}>
-          {c.thumbnailUrl || c.mediaUrl ? <CachedImage source={{ uri: c.thumbnailUrl ?? c.mediaUrl ?? '' }} style={s.image} /> : null}
+          <ContentMedia uri={c.mediaUrl} thumbnailUri={c.thumbnailUrl} style={s.image} alt={c.caption ?? 'Contribution photo'} />
           <Text style={s.body}>{c.caption ?? (c.mine ? 'Your contribution' : 'A contribution')}</Text>
           {canManage ? (
             <View style={s.row}>
@@ -194,7 +194,7 @@ export function MomentFeedPanel({ momentId, canManage, reloadKey }: { momentId: 
           <Text style={s.body} testID="moment-feed-empty">Approved contributions will appear here. Source posts remain private unless they are already safe for you to view.</Text>
         ) : state.items.map((item) => (
           <View key={item.id} style={s.card}>
-            {item.thumbnailUrl || item.mediaUrl ? <CachedImage source={{ uri: item.thumbnailUrl ?? item.mediaUrl ?? '' }} style={s.image} /> : null}
+            <ContentMedia uri={item.mediaUrl} thumbnailUri={item.thumbnailUrl} style={s.image} alt={item.caption ?? 'Contribution photo'} />
             <Text style={s.body}>{item.caption ?? 'Shared a contribution'}</Text>
             {canManage ? (
               <Pressable testID={`moment-contribution-remove-${item.id}`} onPress={() => remove(item)} accessibilityRole="button" style={s.link}>

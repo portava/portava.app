@@ -30,11 +30,13 @@ const mockTransportReset = jest.fn();
 const mockStop = jest.fn();
 let mockCaptureDeps: { submit: (p: unknown) => void | Promise<void> } | null = null;
 let mockStarts = 0;
+let mockConsentGate: Promise<void> | null = null;
 const mockZoneSources: Array<unknown> = [];
 
 // NOTE: exhaustive-by-design — the real module reads the server over the network.
 jest.mock('../../sensingConsent.ts', () => ({
   readSensingConsent: async () => {
+    if (mockConsentGate) await mockConsentGate;
     if (mockConsent === 'unreadable') return { status: 'unreadable', reason: 'network' };
     const c = mockConsent;
     const entry = (on: boolean) => ({ granted: on, effective: on, version: 'v', serverVersion: 'v' });
@@ -74,6 +76,7 @@ jest.mock('../sensingZoneHint.ts', () => ({
 jest.mock('../../apiToken.ts', () => ({ freshToken: async () => 'test-token' }));
 
 import { AppState } from 'react-native';
+import { setDiscoveryViewerFromSession } from '../../discoveryViewerScope.ts';
 import { installSensingCapture } from '../installSensingCapture.ts';
 
 const PAYLOAD = { features: { dwellMs: 1 } };
@@ -82,6 +85,8 @@ const changeConsent = async (c: Consent) => { mockConsent = c; for (const fn of 
 
 let disposeAll: Array<() => void> = [];
 beforeEach(() => {
+  Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'active' });
+  setDiscoveryViewerFromSession('sensing-test-user');
   process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.test';
   mockConsent = { capture: false, upload: false, surface: false };
   mockListeners.clear();
@@ -90,6 +95,7 @@ beforeEach(() => {
   mockStop.mockClear();
   mockCaptureDeps = null;
   mockStarts = 0;
+  mockConsentGate = null;
   mockZoneSources.length = 0;
 });
 afterEach(() => { for (const d of disposeAll) d(); disposeAll = []; });
@@ -131,7 +137,7 @@ describe('installSensingCapture obeys OD-MAP-6 on the device', () => {
     expect(mockTransportSubmit).toHaveBeenCalledWith(PAYLOAD);
   });
 
-  it('withdrawing UPLOAD in Settings: the next submit is dropped and the transport session is reset; the loop keeps running', async () => {
+  it('withdrawing UPLOAD in Settings: the next submit is dropped and the transport session is reset; a fresh local loop resumes only after revalidation', async () => {
     mockConsent = { capture: true, upload: true, surface: false };
     await install();
     await mockCaptureDeps!.submit(PAYLOAD);
@@ -140,7 +146,7 @@ describe('installSensingCapture obeys OD-MAP-6 on the device', () => {
     expect(mockTransportReset).toHaveBeenCalled();
     await mockCaptureDeps!.submit(PAYLOAD);
     expect(mockTransportSubmit).toHaveBeenCalledTimes(1);
-    expect(mockStop).not.toHaveBeenCalled();
+    expect(mockStop).toHaveBeenCalled();
   });
 
   it('withdrawing CAPTURE in Settings: the loop is stopped and the zone hint is cleared', async () => {
@@ -185,7 +191,7 @@ describe('installSensingCapture obeys OD-MAP-6 on the device', () => {
       mockConsent = { capture: false, upload: false, surface: false }; // no change-channel event: decided on another device
       onAppState!('background');
       await flush();
-      expect(mockStop).not.toHaveBeenCalled();
+      expect(mockStop).toHaveBeenCalled();
       onAppState!('active');
       await flush();
       expect(mockStop).toHaveBeenCalled();
@@ -219,5 +225,45 @@ describe('installSensingCapture obeys OD-MAP-6 on the device', () => {
     h.dispose();
     expect(mockStop).toHaveBeenCalled();
     expect(mockListeners.size).toBe(0);
+  });
+});
+
+
+describe('capture lifecycle and account boundary', () => {
+  it('never starts while the app is initially backgrounded', async () => {
+    Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'background' });
+    mockConsent = { capture: true, upload: true, surface: false };
+    await install();
+    expect(mockStarts).toBe(0);
+  });
+  it('drops the old account loop and upload synchronously on sign-out', async () => {
+    mockConsent = { capture: true, upload: true, surface: false };
+    await install(); const oldSubmit = mockCaptureDeps!.submit;
+    setDiscoveryViewerFromSession(null);
+    expect(mockStop).toHaveBeenCalledTimes(1);
+    expect(mockZoneSources.at(-1)).toBeNull();
+    await oldSubmit(PAYLOAD); await flush();
+    expect(mockTransportSubmit).not.toHaveBeenCalled();
+    expect(mockStarts).toBe(1);
+  });
+  it('does not let an account change reuse an old consent read', async () => {
+    mockConsent = { capture: true, upload: true, surface: false };
+    let resolve!: () => void;
+    mockConsentGate = new Promise<void>(done => { resolve = done; });
+    const h = installSensingCapture(); disposeAll.push(() => h.dispose());
+    setDiscoveryViewerFromSession(null);
+    resolve(); await flush();
+    expect(mockStarts).toBe(0);
+  });
+  it('stops immediately when consent changes, before a delayed read completes', async () => {
+    mockConsent = { capture: true, upload: true, surface: false };
+    await install(); const oldSubmit = mockCaptureDeps!.submit;
+    let resolve!: () => void;
+    mockConsentGate = new Promise<void>(done => { resolve = done; });
+    mockConsent = { capture: false, upload: false, surface: false };
+    for (const fn of [...mockListeners]) fn();
+    expect(mockStop).toHaveBeenCalledTimes(1);
+    await oldSubmit(PAYLOAD); expect(mockTransportSubmit).not.toHaveBeenCalled();
+    resolve(); await flush(); expect(mockStarts).toBe(1);
   });
 });

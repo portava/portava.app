@@ -7,24 +7,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Animated, AccessibilityInfo } from 'react-native';
 import {
-  MapPin, Users, Gem, ShieldCheck, Crown, Ticket, Lock, Sparkles,
+  Lock,
 } from 'lucide-react-native';
-import type { ComponentType } from 'react';
+import { resolveStampArtworkIcon as resolveIcon } from './stamps/artworkIcons.ts';
 import type { PassportStamp } from '../types/models.ts';
 import { resolveArtwork } from '../lib/stampArtworkResolver.ts';
 import { STAMP_RARITY_COLORS } from '../types/stampArtwork.ts';
 import { StampSvgFrame } from './StampSvgFrame.tsx';
 import { dot } from '../theme/tokens.ts';
-
-type IconCmp = ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
-
-const ICON_MAP: Record<string, IconCmp> = {
-  MapPin, Users, Gem, ShieldCheck, Crown, Ticket, Sparkles,
-};
-
-function resolveIcon(key: string): IconCmp {
-  return ICON_MAP[key] ?? MapPin;
-}
 
 interface StampCardProps {
   stamp: PassportStamp;
@@ -95,13 +85,16 @@ export function StampCard({ stamp, size = 88, rotate = 0, onPress }: StampCardPr
       />
 
       {/* Content stack */}
-      <View style={styles.content} pointerEvents="none">
+      <View style={[styles.content, { paddingHorizontal: size * 0.18 }]} pointerEvents="none">
         <View style={{ opacity: art.locked ? 0.5 : 1 }}>
           <Icon size={iconSize} color={art.accent} strokeWidth={2.2} />
         </View>
         <Text
-          style={[styles.label, { color: art.accent, fontSize: labelSize }]}
-          numberOfLines={1}
+          style={[styles.label, { color: art.accent, fontSize: labelSize, lineHeight: labelSize * 1.1 }]}
+          numberOfLines={2}
+          adjustsFontSizeToFit
+          minimumFontScale={0.75}
+          allowFontScaling={false}
         >
           {stamp.label}
         </Text>
@@ -109,6 +102,7 @@ export function StampCard({ stamp, size = 88, rotate = 0, onPress }: StampCardPr
           <Text
             style={[styles.caption, { color: art.accent, fontSize: captionSize }]}
             numberOfLines={1}
+            allowFontScaling={false}
           >
             {art.captionText}
           </Text>
@@ -162,7 +156,7 @@ const styles = StyleSheet.create({
     fontFamily: 'Courier',
     fontWeight: '700',
     textAlign: 'center',
-    letterSpacing: 0.8,
+    letterSpacing: 0,
   },
   caption: {
     fontFamily: 'Courier',

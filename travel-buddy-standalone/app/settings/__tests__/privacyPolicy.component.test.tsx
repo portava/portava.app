@@ -1,6 +1,6 @@
 import React from 'react';
-import { StyleSheet } from 'react-native';
-import { fireEvent, render, within } from '@testing-library/react-native';
+import { Linking, StyleSheet } from 'react-native';
+import { fireEvent, render, within, waitFor } from '@testing-library/react-native';
 
 jest.mock('expo-router', () => ({
   ...jest.requireActual('expo-router'),
@@ -17,9 +17,12 @@ jest.mock('react-native-safe-area-context', () => ({
 import { router } from 'expo-router';
 import { VERIFICATION_KEPT, VERIFICATION_NEVER_STORED } from '../../../src/lib/verificationDisclosure';
 import PrivacyInformationScreen from '../privacy-policy';
+const policyKeys = ['EXPO_PUBLIC_PRIVACY_POLICY_URL', 'EXPO_PUBLIC_IDENTITY_PROVIDER_PRIVACY_URL', 'EXPO_PUBLIC_PRIVACY_CONTACT_URL'] as const;
+const previousPolicyEnv = Object.fromEntries(policyKeys.map(key => [key, process.env[key]]));
 
 beforeEach(() => {
   jest.clearAllMocks();
+  for (const key of policyKeys) delete process.env[key];
   jest.mocked(router.canGoBack).mockReturnValue(true);
   jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network is forbidden in this test'));
 });
@@ -27,6 +30,48 @@ beforeEach(() => {
 afterEach(() => {
   expect(globalThis.fetch).not.toHaveBeenCalled();
   jest.restoreAllMocks();
+  for (const key of policyKeys) {
+    if (previousPolicyEnv[key] === undefined) delete process.env[key];
+    else process.env[key] = previousPolicyEnv[key];
+  }
+});
+
+describe('Owner-configured privacy destinations', () => {
+  it('opens the exact published destinations only after a deliberate tap', async () => {
+    process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL = 'https://policy.example.com/privacy';
+    process.env.EXPO_PUBLIC_IDENTITY_PROVIDER_PRIVACY_URL = 'https://provider.example.com/privacy';
+    process.env.EXPO_PUBLIC_PRIVACY_CONTACT_URL = 'https://support.example.com/privacy';
+    const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
+    const screen = await render(<PrivacyInformationScreen />);
+    expect(screen.getByText('Published privacy policy')).toBeTruthy();
+    expect(screen.queryByText('Not an approved privacy policy')).toBeNull();
+    expect(open).not.toHaveBeenCalled();
+    for (const [label, url] of [
+      ['Read privacy policy', process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL],
+      ['Verification service privacy policy', process.env.EXPO_PUBLIC_IDENTITY_PROVIDER_PRIVACY_URL],
+      ['Contact about privacy', process.env.EXPO_PUBLIC_PRIVACY_CONTACT_URL],
+    ]) {
+      await fireEvent.press(screen.getByRole('link', { name: label }));
+      expect(open).toHaveBeenLastCalledWith(url);
+    }
+  });
+  it('withholds malformed or credential-bearing links and preserves the unavailable state', async () => {
+    process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL = 'http://policy.example.com/privacy';
+    process.env.EXPO_PUBLIC_IDENTITY_PROVIDER_PRIVACY_URL = 'javascript:alert(1)';
+    process.env.EXPO_PUBLIC_PRIVACY_CONTACT_URL = 'https://user:secret@support.example.com/privacy';
+    const screen = await render(<PrivacyInformationScreen />);
+    expect(screen.getByText('Not an approved privacy policy')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Read privacy policy' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Verification service privacy policy' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Contact about privacy' })).toBeNull();
+  });
+  it('reports external-link failure without claiming the policy was opened', async () => {
+    process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL = 'https://policy.example.com/privacy';
+    jest.spyOn(Linking, 'openURL').mockRejectedValue(new Error('offline'));
+    const screen = await render(<PrivacyInformationScreen />);
+    await fireEvent.press(screen.getByRole('link', { name: 'Read privacy policy' }));
+    await waitFor(() => expect(screen.getByText('Could not open this link. Please try again.')).toBeTruthy());
+  });
 });
 
 describe('TV-7c — limited privacy information, not a published policy', () => {

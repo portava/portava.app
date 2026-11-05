@@ -9,7 +9,7 @@
  *   - loadMore — load the next page (cursor-based, de-duped by id)
  *   - hasMore — true when the last page returned a full limit
  */
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, type MutableRefObject } from 'react';
 import { getPulseData, pulsePostToFeedItem, placeCardToFeedItem } from '../services/pulse.ts';
 import type { PulseFeedItem } from '../types/models.ts';
 import { useBlockedIds } from '../context/BlockedIdsContext.tsx';
@@ -36,6 +36,8 @@ export interface UsePulseFeedResult {
   markDeleted: (id: string) => void;
   /** Session UUID returned by the most recent successful feed response. Forward to outcome calls. */
   sessionId: string | null;
+  /** Includes the initial hook load, so focus does not start a second request. */
+  lastRequestedAt: MutableRefObject<number>;
 }
 
 export function usePulseFeed(opts: {
@@ -54,6 +56,8 @@ export function usePulseFeed(opts: {
   const [errorKind, setErrorKind] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const pageAbortRef = useRef<AbortController | null>(null);
+  const lastRequestedAt = useRef(0);
   // Cursor = createdAt of the oldest item on the current page
   const cursorRef = useRef<string | null>(null);
   // IDs deleted this session — excluded from every reload so they never reappear
@@ -78,14 +82,17 @@ export function usePulseFeed(opts: {
 
   const reload = useCallback(() => {
     abortRef.current?.abort();
+    pageAbortRef.current?.abort();
+    setLoadingMore(false);
     const ac = new AbortController();
     abortRef.current = ac;
     cursorRef.current = null;
     fetchGenRef.current += 1; // invalidate any in-flight loadMore
+    lastRequestedAt.current = Date.now();
 
     setLoading(true);
     setHasMore(false);
-    getPulseData({ city: opts.city, lat: opts.lat, lng: opts.lng, limit: PAGE_SIZE })
+    getPulseData({ city: opts.city, lat: opts.lat, lng: opts.lng, limit: PAGE_SIZE, signal: ac.signal })
       .then((result) => {
         if (ac.signal.aborted) return;
         if (result.ok) {
@@ -103,12 +110,13 @@ export function usePulseFeed(opts: {
           setError(null);
           setErrorKind(null);
         } else {
+          lastRequestedAt.current = 0;
           setError(result.error);
           setErrorKind(result.errorKind ?? null);
         }
       })
       .catch(() => {
-        if (!ac.signal.aborted) { setError('Network error'); setErrorKind('network'); }
+        if (!ac.signal.aborted) { lastRequestedAt.current = 0; setError('Network error'); setErrorKind('network'); }
       })
       .finally(() => {
         if (!ac.signal.aborted) setLoading(false);
@@ -118,13 +126,15 @@ export function usePulseFeed(opts: {
   const loadMore = useCallback(() => {
     if (loadingMore || !hasMore || !cursorRef.current) return;
     setLoadingMore(true);
+    const ac = new AbortController();
+    pageAbortRef.current = ac;
     const before = cursorRef.current;
     const gen = fetchGenRef.current;
-    getPulseData({ city: opts.city, lat: opts.lat, lng: opts.lng, limit: PAGE_SIZE, before })
+    getPulseData({ city: opts.city, lat: opts.lat, lng: opts.lng, limit: PAGE_SIZE, before, signal: ac.signal })
       .then((result) => {
         // A reload started while this page was in flight — its rows belong to
         // the old list, so discard them (no append, no cursor write).
-        if (gen !== fetchGenRef.current) return;
+        if (ac.signal.aborted || gen !== fetchGenRef.current) return;
         if (result.ok) {
           const mapped = result.data.posts.map(pulsePostToFeedItem);
           // De-dupe by id and exclude locally-deleted posts and blocked authors
@@ -144,13 +154,13 @@ export function usePulseFeed(opts: {
         }
       })
       .catch(() => {})
-      .finally(() => setLoadingMore(false));
+      .finally(() => { if (!ac.signal.aborted) setLoadingMore(false); });
   }, [loadingMore, hasMore, opts.city, opts.lat, opts.lng, isNotBlocked]);
 
   useEffect(() => {
     reload();
-    return () => { abortRef.current?.abort(); };
+    return () => { abortRef.current?.abort(); pageAbortRef.current?.abort(); };
   }, [reload]);
 
-  return { items, placeCards, loading, loadingMore, hasMore, error, errorKind, reload, loadMore, markDeleted, sessionId };
+  return { items, placeCards, loading, loadingMore, hasMore, error, errorKind, reload, loadMore, markDeleted, sessionId, lastRequestedAt };
 }

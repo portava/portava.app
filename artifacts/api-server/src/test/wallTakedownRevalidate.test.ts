@@ -75,7 +75,7 @@ function livePost(over: Record<string, unknown> = {}) {
 function freshWorld(): World {
   return {
     posts: [livePost()],
-    profiles: [{ id: AUTHOR, account_status: "active" }],
+    profiles: [{ id: AUTHOR, account_status: "active", is_private: false, user_account_states: [] }],
     blocks: [],
     rankEvents: [],
     follows: [],
@@ -118,6 +118,9 @@ function fakeClient() {
       }
       if (world.errorTables.has(table) || (batch && world.errorBatchTables.has(table))) {
         return { data: null, error: { code: "PGRST100", message: "boom" } };
+      }
+      if (table === 'profiles' && single && eqs.id === VIEWER) {
+        return { data: { id: VIEWER, account_status: 'active', is_private: false, user_account_states: [] }, error: null };
       }
       const rows = rowsFor();
       return { data: single ? (rows[0] ?? null) : rows, error: null };
@@ -226,6 +229,19 @@ describe("POST /wall/revalidate — takedowns reach the cached page (§31/§37)"
     assert.equal(res.status, 200);
     assert.deepEqual(res.json.eligibleObjectIds, ["post-1"]);
     assert.equal(typeof res.json.generatedAt, "string");
+  });
+
+  it('revokes cached public content when its author becomes private, restoring only for approved followers', async () => {
+    world.profiles[0].is_private = true;
+    assert.deepEqual((await revalidate(['post-1'])).json.eligibleObjectIds, []);
+    world.follows = [{ follower_id: VIEWER, following_id: AUTHOR }];
+    assert.deepEqual((await revalidate(['post-1'])).json.eligibleObjectIds, ['post-1']);
+  });
+  it('canonical restriction and malformed account-state evidence revoke the cached projection', async () => {
+    for (const states of [[{ state: 'banned', expires_at: null }], null]) {
+      world.profiles[0].user_account_states = states;
+      assert.deepEqual((await revalidate(['post-1'])).json.eligibleObjectIds, []);
+    }
   });
 
   // ── The requirement itself ────────────────────────────────────────────────

@@ -175,13 +175,13 @@ export function sensingPepperPosture(): { ok: true } | { ok: false; reason: Sens
 }
 
 /** Cached POSITIVE probe result. Never caches absence — see the header. */
-let _storePresent = false;
+let _storePresent = new WeakSet<object>();
 /** So the absence is logged once per process rather than once per pass. */
 let _loggedAbsent = false;
 
 /** Test hook: forget the cached probe. Must only be called from test files. */
 export function _resetSensingStorePresence(): void {
-  _storePresent = false;
+  _storePresent = new WeakSet<object>();
   _loggedAbsent = false;
 }
 
@@ -197,7 +197,7 @@ export function _resetSensingStorePresence(): void {
  */
 export async function sensingStorePresent(db: any): Promise<boolean> {
   if (!db) return false;
-  if (_storePresent) return true;
+  if (_storePresent.has(db)) return true;
   try {
     const { error } = await db
       .from(SENSING_TABLE)
@@ -213,7 +213,7 @@ export async function sensingStorePresent(db: any): Promise<boolean> {
       }
       return false;
     }
-    _storePresent = true;
+    _storePresent.add(db);
     return true;
   } catch {
     // A thrown probe is indistinguishable from an absent table for our purposes,

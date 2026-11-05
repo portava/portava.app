@@ -100,6 +100,7 @@ export const CLIENT_SCHEMA_MIRROR: readonly MirroredSchema[] = [
   m('object.share', 1, 'portava_object', 'PORTAVA_OBJECT'),
   m('media_album', 1, 'envelope', 'MEDIA_ALBUM'),
   m('gif', 1, 'envelope', 'GIF'),
+  m('gif', 2, 'envelope', 'GIF'),
   m('voice', 1, 'envelope', 'VOICE'),
   m('action', 1, 'envelope', 'ACTION'),
   m('announcement', 1, 'envelope', 'ANNOUNCEMENT'),
@@ -143,7 +144,7 @@ export function storedMsgTypeOf(s: MirroredSchema): string {
 /** `<family>.v<n>` for every schema the surface draws, in the mirror's order. */
 export function declaredSchemaTokens(drawn: readonly string[]): string[] {
   return CLIENT_SCHEMA_MIRROR
-    .filter((s) => drawn.includes(storedMsgTypeOf(s)) && s.version === CLIENT_PARSED_VERSION[s.carrier])
+    .filter((s) => drawn.includes(storedMsgTypeOf(s)) && (s.version === CLIENT_PARSED_VERSION[s.carrier] || s.id === 'gif.v2'))
     .map((s) => s.id);
 }
 
@@ -170,6 +171,14 @@ export function telegraphReadHeaders(surface: TelegraphReadSurface): Record<stri
   return {
     [CLIENT_SCHEMAS_HEADER]: tokenList(declaredSchemaTokens(SURFACE_STRUCTURED_MSG_TYPES[surface])),
     [CLIENT_ACTIONS_HEADER]: tokenList(actionTokens(streamPerformedActions())),
+  };
+}
+
+/** Index readers consume server-built text/link metadata for the known v1 families. */
+export function telegraphIndexHeaders(): Record<string, string> {
+  return {
+    [CLIENT_SCHEMAS_HEADER]: tokenList(CLIENT_SCHEMA_MIRROR.filter(s => (s.version === CLIENT_PARSED_VERSION[s.carrier] || s.id === 'gif.v2')).map(s => s.id)),
+    [CLIENT_ACTIONS_HEADER]: 'none',
   };
 }
 

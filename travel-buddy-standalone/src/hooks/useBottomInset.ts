@@ -41,7 +41,7 @@
  * hidden, so all returned values remain safe to use.
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { Keyboard, View, type LayoutChangeEvent } from 'react-native';
+import { Keyboard, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NAV_BAR_FILLER_HEIGHT } from './useNavBarCollapse.ts';
 import {
@@ -49,6 +49,7 @@ import {
   LAYOVER_PILL_HEIGHT,
 } from '../components/layover/layoverPillGeometry.ts';
 import { useLayoverSessionContext } from '../context/LayoverSessionContext.tsx';
+import { floatingTabBarMetrics } from '../components/navigation/floatingTabBarGeometry.ts';
 
 /** Breathing room above the layover pill top edge (pt). */
 const LAYOVER_PILL_TOP_GAP = 16;
@@ -62,7 +63,8 @@ export const BOTTOM_BREATHING_ROOM = 24;
  */
 export function useBottomInset(): number {
   const insets = useSafeAreaInsets();
-  return NAV_BAR_FILLER_HEIGHT + insets.bottom;
+  const { fontScale } = useWindowDimensions();
+  return NAV_BAR_FILLER_HEIGHT + floatingTabBarMetrics(fontScale).extraHeight + insets.bottom;
 }
 
 /**
@@ -88,11 +90,13 @@ export function useBottomInset(): number {
 export function useLayoverAwareBottomInset(): number {
   const insets = useSafeAreaInsets();
   const { session } = useLayoverSessionContext();
+  const { fontScale } = useWindowDimensions();
+  const extra = floatingTabBarMetrics(fontScale).extraHeight;
 
   if (session) {
-    return insets.bottom + LAYOVER_PILL_BOTTOM_OFFSET + LAYOVER_PILL_HEIGHT + LAYOVER_PILL_TOP_GAP;
+    return insets.bottom + LAYOVER_PILL_BOTTOM_OFFSET + extra + LAYOVER_PILL_HEIGHT + LAYOVER_PILL_TOP_GAP;
   }
-  return NAV_BAR_FILLER_HEIGHT + insets.bottom;
+  return NAV_BAR_FILLER_HEIGHT + extra + insets.bottom;
 }
 
 /**

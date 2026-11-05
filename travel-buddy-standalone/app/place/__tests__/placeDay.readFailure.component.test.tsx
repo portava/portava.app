@@ -100,3 +100,12 @@ describe('Place Day — read failures', () => {
     expect(mockPush).not.toHaveBeenCalled();
   });
 });
+
+it('Place Day photos open their originals full screen and close in place', async () => {
+  mockDay.mockResolvedValue({ day: DAY, navigation: NAV });
+  mockFeed.mockResolvedValue({ items: [{ id: 'p1', caption: 'Morning', mediaUrl: 'https://example.com/original.jpg', thumbnailUrl: 'https://example.com/thumb.jpg', mediaType: 'image', createdAt: '2026-11-01T10:00:00Z' }] });
+  await mount(); await fireEvent.press(screen.getByLabelText('View photo full screen'));
+  expect(screen.getByTestId('fullscreen-photo-canvas')).toBeTruthy();
+  await fireEvent.press(screen.getByLabelText('Close full-screen photo'));
+  expect(screen.queryByTestId('fullscreen-photo-canvas')).toBeNull(); expect(screen.getByText('Morning')).toBeTruthy();
+});

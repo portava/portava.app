@@ -120,7 +120,7 @@ function fakeClient(flags: Record<string, boolean> = FLAGS) {
         else if (table === "trip_members") data = [];
         else if (table === "blocks") data = [];
         else data = []; // feature_flags list (loadRankingFlags), ranking_config, etc.
-        return Promise.resolve({ data, error: null }).then(onF, onR);
+        return Promise.resolve({ data: table === "places" ? data.map(row => ({ moderation_status: "visible", merged_into_place_id: null, ...row })) : data, error: null, count: data.length }).then(onF, onR);
       },
     };
     return b;

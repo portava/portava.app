@@ -1,4 +1,5 @@
 import './configuredSupabaseEnvFixture.ts';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
 import * as native from 'expo-openmls';
 import { supabase } from '../../lib/supabase.ts';
@@ -27,6 +28,24 @@ jest.mock('../../lib/secureStore.ts', () => {
     isNative: jest.fn(() => true),
     SECURE_KEYS: { MLS_GROUP_STATE_PREFIX: 'group:', DEVICE_ED25519_PRIVATE_KEY: 'priv', DEVICE_ED25519_PUBLIC_KEY: 'pub', MLS_PENDING_KEY_PACKAGE: 'pending' },
     getSecure: jest.fn(), setSecure: jest.fn(), deleteSecure: jest.fn(),
+  };
+});
+
+jest.mock('../../lib/e2ee/nativeSessionStore.ts', () => {
+  // NOTE: this suite suspends storage boundaries to exercise the REAL native
+  // operation guards. SQLCipher account/transaction semantics have their own suite.
+  const actual = jest.requireActual('../../lib/e2ee/nativeSessionStore.ts');
+  const store = jest.requireMock('../../lib/secureStore.ts');
+  return { ...actual,
+    readCryptoSecret: async (owner: import('../observedOwnerSnapshot.ts').MessagingOwnerRequest, key: string) => {
+      actual.cryptoOwner(owner); const value = await store.getSecure(key); actual.cryptoOwner(owner); return value;
+    },
+    readNativeSession: async (owner: import('../observedOwnerSnapshot.ts').MessagingOwnerRequest, thread: string) => {
+      actual.cryptoOwner(owner); const value = await store.getSecure(`group:${thread}`); actual.cryptoOwner(owner); return value;
+    },
+    commitNativeSession: async (owner: import('../observedOwnerSnapshot.ts').MessagingOwnerRequest, thread: string, state: string) => {
+      actual.cryptoOwner(owner); await store.setSecure(`group:${thread}`, state); actual.cryptoOwner(owner);
+    },
   };
 });
 
@@ -120,12 +139,13 @@ function expectNoLaterDispatch(operation: Operation) {
   expect(deleteSecure).not.toHaveBeenCalled();
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await AsyncStorage.clear();
   disposeMessagingOwnerObserver();
   _resetDiscoveryViewerScopeForTests();
   setDiscoveryViewerFromSession('owner-A');
   global.atob = value => Buffer.from(value, 'base64').toString('binary');
-  process.env.EXPO_PUBLIC_API_BASE_URL = 'http://example.invalid';
+  process.env.EXPO_PUBLIC_API_BASE_URL = 'https://example.invalid';
   currentSession = session();
   stored = new Map([['group:thread-A', 'A-initial'], ['priv', 'A-private-key'], ['pub', 'A-public-key']]);
   auth.getSession.mockReset().mockImplementation(async () => ({ data: { session: currentSession } }));
@@ -236,14 +256,14 @@ describe.each(operations)('%s actual native controls', operation => {
     else if (stage === 'native') nativeGate.resolve(nativeResult);
     else storageGate.resolve();
     expect((await pending).ok).toBe(true);
-    expect(setSecure).toHaveBeenCalledTimes(1);
+    expect(setSecure.mock.calls.filter(([key]) => key.startsWith('group:'))).toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledTimes(operation === 'send' ? 1 : 4);
     const sent = fetchMock.mock.calls[operation === 'send' ? 0 : 2][1];
-    expect(JSON.parse(String(sent?.body))).toEqual(operation === 'send'
+    expect(JSON.parse(String(sent?.body))).toMatchObject(operation === 'send'
       ? { ciphertext: 'ciphertext-only', clientId: 'client-A', replyToId: 'reply-A', idempotencyKey: 'client-A' }
       : { body: 'welcome-only', msgType: 'system', subtype: 'e2ee_welcome' });
     expect((sent?.headers as Record<string, string>).Authorization).toBe(`Bearer ${currentSession?.access_token}`);
-    expect(deleteSecure).not.toHaveBeenCalled();
+    expect(deleteSecure.mock.calls.filter(([key]) => !key.startsWith('telegraph.outbox.'))).toHaveLength(0);
   });
 
   it.each(['state', 'native', 'persistence'])('preserves the original %s rejection at the opted-in real port', async stage => {
@@ -272,7 +292,7 @@ describe.each(operations)('%s actual native controls', operation => {
   it('refuses an already stale opted-in port before any storage/native work', async () => {
     const assertion = capturedAssertion();
     change('replacement');
-    await expect(invokePort(operation, assertion)).rejects.toThrow('signed-in messaging session changed');
+    await expect(invokePort(operation, assertion)).rejects.toThrow(/session changed/);
     expect(getSecure).not.toHaveBeenCalled();
     expect(encryptMessage).not.toHaveBeenCalled();
     expect(createGroup).not.toHaveBeenCalled();
@@ -286,12 +306,12 @@ describe.each(operations)('%s actual native controls', operation => {
     await reached(setSecure);
     change('replacement');
     gate.resolve();
-    await expect(pending).rejects.toThrow('signed-in messaging session changed');
+    await expect(pending).rejects.toThrow(/session changed/);
     expect(setSecure).toHaveBeenCalledTimes(1);
     expect(deleteSecure).not.toHaveBeenCalled();
   });
 
-  it('leaves explicitly unscoped real-port callers unchanged', async () => {
+  it('captures the observed owner for callers without an explicit owner', async () => {
     const gate = deferred<NativeResult>();
     const nativeOperation = operation === 'send' ? encryptMessage : createGroup;
     nativeOperation.mockReturnValueOnce(gate.promise);
@@ -299,8 +319,8 @@ describe.each(operations)('%s actual native controls', operation => {
     await reached(nativeOperation);
     change('replacement');
     gate.resolve(nativeResult);
-    expect(await pending).toEqual(operation === 'send' ? 'ciphertext-only' : { welcomeB64: 'welcome-only' });
-    expect(setSecure).toHaveBeenCalledTimes(1);
+    await expect(pending).rejects.toThrow(/session changed/);
+    expect(setSecure).not.toHaveBeenCalled();
     expect(deleteSecure).not.toHaveBeenCalled();
   });
 

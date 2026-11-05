@@ -101,6 +101,7 @@
  * requests keep the legacy unranked order; this module is not consulted.
  */
 import { rankCandidates, normaliseGeoLabel } from "./portavaRank.js";
+import { governDiscoveryPlaces } from './discoveryPlaceGovernance.js';
 import type { RankCandidate, ViewerContext, ScoredCandidate } from "./portavaRank.js";
 import { rankItems as drsRankItems } from "../services/ranking/DiscoveryRankingService.js";
 import type { RankingInput, RankingViewerContext } from "../services/ranking/DiscoveryRankingService.js";
@@ -1026,8 +1027,10 @@ export async function loadViewerNeighborhood(
   try {
     const { data, error } = await sc.from("places").select("id, neighborhood").in("id", ids);
     if (readFailed(degraded, "viewer_neighborhood", error)) return null;
+    const governed = await governDiscoveryPlaces(sc, (data as any[]) ?? [], row => String(row.id));
+    if (!governed.readable) { degraded.push('viewer_neighborhood'); return null; }
     const byKey = new Map<string, { label: string; views: number }>();
-    for (const row of (data as any[]) ?? []) {
+    for (const row of governed.rows) {
       const label = (row?.neighborhood ?? null) as string | null;
       const key = normaliseGeoLabel(label);
       if (!key || !label) continue;

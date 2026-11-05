@@ -192,3 +192,18 @@ describe('SharedEventLinkPreview', () => {
     await waitFor(() => expect(view.getByText('Rooftop supper')).toBeTruthy());
   });
 });
+
+test('participant photos open the full gallery and close without leaving the event', async () => {
+  mockApi.getEventPosts.mockResolvedValue({ ok: true, data: { posts: [] } });
+  mockApi.getEventMedia.mockResolvedValue({ ok: true, data: { media: [
+    { id: 'photo-one', media_url: 'https://example.com/one.jpg', media_type: 'image', caption: 'First' },
+    { id: 'photo-two', media_url: 'https://example.com/two.jpg', media_type: 'image', caption: 'Second' },
+  ] } });
+  const view = await render(<EventCommunitySection event={going} />);
+  await fireEvent.press(view.getByLabelText('Photos'));
+  await fireEvent.press(view.getAllByLabelText('View photo full screen')[0]);
+  expect(view.getByText('1 of 2')).toBeTruthy();
+  await fireEvent.press(view.getByLabelText('Next photo')); expect(view.getByText('2 of 2')).toBeTruthy();
+  await fireEvent.press(view.getByLabelText('Close full-screen photo')); expect(view.queryByTestId('fullscreen-photo-canvas')).toBeNull();
+  expect(view.getByTestId('event-community')).toBeTruthy();
+});

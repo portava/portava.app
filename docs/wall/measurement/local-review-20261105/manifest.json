@@ -1,0 +1,37 @@
+{
+  "reviewer": "Codex AI local review",
+  "date": "2026-11-05",
+  "native_device_proof": false,
+  "human_participant_study": false,
+  "render_digest": "c910833f6aa8570d",
+  "screenshots": {
+    "wall-320-typical-final.png": "935a162af95b9edab6508ef11d6baf53f26cfd4da59373b365bce8f8cbd97164",
+    "wall-320-ceiling-final.png": "7c9721a449a2481f0fa164069bfa961e551550c6006de7ab6e1a5cc699bc73ab",
+    "wall-360-typical-final.png": "4e0b27b78187c5613bdddb94aea662ab5d5ba3754603a132b6a2bdc25ef00dd8",
+    "wall-360-ceiling-final.png": "5d1fbbc1ab546bb7e3424adfeec60edbf68d89bae1f51d52714ac7cd36cc2d4f",
+    "wall-390-typical-final.png": "0961ba68a2628e434fd1a206a03091dcbded089617f061459ad9966b64db42b3",
+    "wall-390-ceiling-final.png": "bfca26b769cbc2db2ddcb87deed6727ce2c11b8ec369b61aeeca683d46fbed35",
+    "wall-411-typical-final.png": "c61da2962afd2eb3eca9e0795f4469045c037d27606e2dc60f4dd8676b858af1",
+    "wall-411-ceiling-final.png": "aa2aaaa64ba798c285b495170a55b0fe94f772a06f5235d3e37ccc92e2bc7b19",
+    "wall-430-typical-final.png": "80e258541d0403d409e231b1ae3b4e841eeb02d27cb13cadd0e95fa0be01fb08",
+    "wall-430-ceiling-final.png": "54cac30501066bc8ed8bd8e4c885a0d3a7e01707bdb19e394019b704924746fe",
+    "passport-320-before.png": "98ac907862c396f94696d50f72f56cf7f0aee0c5e012be72cab8452ffbf8bf4e",
+    "passport-320-fixed.png": "c5c8e00af484f278433ad8ad2a0b658457cf63a13b902a4b91ea3b5eca5ff521",
+    "passport-320-pending.png": "781002b0d58d998774cb20be60e066506d0096ced452203bc238ca84113d5454",
+    "passport-430-final.png": "ad93a26c8cd008e367ed022f732715fb9db8b25ba81225553599b1e39d5aa951",
+    "passport-320-large-final.png": "c74fec666a8344ea8969888cef2483e5c89f22eeebb061a4eadc2a4cbf4932a4",
+    "passport-390-large-final.png": "e81a852aace760ebd54d7430423b628fa39442f7ab0dd28e7575102213d4ecad",
+    "tabs-320-passport-audit.png": "a15223317cd92ce43e8e91f910cef5ec3e33df021513b9c958fb2962472be43f",
+    "tabs-320-large-audit.png": "8026319b2c01cc6af9604d7b65b9a4d2dae0295110f991a5808820aeaf26e3c5"
+  },
+  "sources": {
+    "travel-buddy-standalone/src/components/PassportHero.tsx": "d4b01bb4c242c0ceffeddaf744ff9315d0e91b55cd13d3c65f183fb57483ab29",
+    "travel-buddy-standalone/src/components/StampCard.tsx": "b2168e0e48e775a8135e94a824787f760f667566ad93aadec746dcbba454707e",
+    "travel-buddy-standalone/src/components/stamps/StampGrid.tsx": "52e9d6ac72c25b5340036f6efe12a53422a88a60a20fa9ddb641b77ef893ea66",
+    "travel-buddy-standalone/src/components/StampsTab.tsx": "fb451d5044e7675f93435a6583aeac5f7fa93017d307d25a156699c75eaff012",
+    "travel-buddy-standalone/app/u/[username].tsx": "a27a4364976d994676e519209ae08bc0f1323ee7e3fea2ab0cc628ef5940f293",
+    "travel-buddy-standalone/src/features/wall/components/objects/wallItemShared.tsx": "b3280ceaaa7e2c61ec7a68a1d84085bd14439e3c3467c7d5014722cc40e6a926",
+    "travel-buddy-standalone/src/features/wall/components/objects/VideoWallItem.tsx": "058b8403c09846b46a86e2a6f261dce7a79ea1ad3acd6402d181ed52db69f05d",
+    "travel-buddy-standalone/src/features/wall/certification/wallCertFixtures.ts": "8d3d7d9eca27b8d0343ff61a61efaa60bb25e5c1dd84524851d4e65f280f4173"
+  }
+}

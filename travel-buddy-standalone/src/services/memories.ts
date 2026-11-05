@@ -247,6 +247,8 @@ export interface MemoryOwner {
 }
 
 export interface Memory {
+  /** Owner-only link to a current private chat source; never published with the Memory. */
+  telegraphSource?: boolean | null;
   id: string;
   ownerId: string;
   title: string | null;

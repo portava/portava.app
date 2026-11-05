@@ -948,6 +948,9 @@ export default function ApplyToBeBuddy() {
 
             <TravelCard style={{ padding: space.lg, marginBottom: space.lg }}>
               <Text style={s.policyTitle}>Safety & Community Guidelines</Text>
+              <Pressable accessibilityRole="link" onPress={() => router.push('/settings/community-guidelines')}>
+                <Text style={s.policyBody}>Read Community Guidelines</Text>
+              </Pressable>
               <Text style={s.policyBody}>
                 As a Buddy you agree to:
                 {'\n\n'}• Respond to booking requests within 24 hours.

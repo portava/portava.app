@@ -21,6 +21,10 @@ import React from 'react';
 import { render, waitFor, act } from '@testing-library/react-native';
 import { Text } from 'react-native';
 
+// NOTE: intentionally isolated boundary; the real auth, native storage, routing or API module would start side effects outside this controlled fixture.
+jest.mock('../../features/telegraph/outbox/runtime.ts', () => ({ clearTelegraphOutboxForOwner: jest.fn().mockResolvedValue(undefined) }));
+import { clearTelegraphOutboxForOwner } from '../../features/telegraph/outbox/runtime.ts';
+
 let mockAuthCallback: ((uid: string | null) => void) | null = null;
 
 // NOTE: intentionally exhaustive — services/profile.ts pulls in the API client
@@ -83,6 +87,7 @@ function Probe() {
 }
 
 beforeEach(() => {
+  jest.mocked(clearTelegraphOutboxForOwner).mockReset().mockResolvedValue(undefined);
   mockAuthCallback = null;
   signOutFromUi = null;
   _resetDiscoveryViewerScopeForTests();
@@ -165,4 +170,27 @@ describe('Layover device cache boundary', () => {
     await act(async () => { await signOutFromUi!(); });
     expect(await AsyncStorage.getItem('layover.return-route.v1.old-session')).toBeNull();
   });
+});
+
+
+it('waits for the old account outbox erase before publishing the replacement account', async () => {
+  const view = await mountProvider();
+  let release!: () => void;
+  jest.mocked(clearTelegraphOutboxForOwner).mockReturnValue(new Promise<void>((resolve) => { release = resolve; }));
+  await act(async () => { mockAuthCallback!('replacement'); });
+  expect(clearTelegraphOutboxForOwner).toHaveBeenCalledWith('user-x');
+  expect(view.queryByText('replacement')).toBeNull();
+  // Request fences move immediately, even while encrypted storage is being erased.
+  expect(currentDiscoveryScope().viewer).toBe('u:replacement');
+  await act(async () => { release(); });
+  await waitFor(() => expect(view.getByText('replacement')).toBeTruthy());
+});
+
+it('continues account replacement on a secure erase failure with old requests already fenced', async () => {
+  const view = await mountProvider();
+  jest.mocked(clearTelegraphOutboxForOwner).mockRejectedValue(new Error('Keychain locked'));
+  await act(async () => { mockAuthCallback!('replacement'); });
+  await waitFor(() => expect(view.getByText('replacement')).toBeTruthy());
+  expect(currentDiscoveryScope().viewer).toBe('u:replacement');
+  expect(clearTelegraphOutboxForOwner).toHaveBeenCalledWith('user-x');
 });

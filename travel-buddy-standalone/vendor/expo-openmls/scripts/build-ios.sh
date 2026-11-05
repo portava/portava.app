@@ -78,7 +78,7 @@ cd "$MODULE_DIR"
 # --- up-to-date check --------------------------------------------------------
 # The podspec runs this on every `pod install`; a full OpenMLS release build is
 # minutes, so skipping a no-op matters. Newest source vs oldest required output.
-newest_src=$(find src build.rs uniffi-bindgen.rs Cargo.toml Cargo.lock -type f -newer /dev/null -print0 2>/dev/null \
+newest_src=$(find src build.rs uniffi-bindgen.rs Cargo.toml Cargo.lock uniffi.toml -type f -newer /dev/null -print0 2>/dev/null \
   | xargs -0 stat -f %m 2>/dev/null | sort -rn | head -1 || echo 0)
 needs_build=0
 [ -f "$UNIFFI_DIR/openmls.swift" ] || needs_build=1
@@ -111,7 +111,7 @@ done
 log "generating UniFFI Swift bindings from src/openmls.udl"
 mkdir -p "$UNIFFI_DIR"
 "$CARGO" run --quiet --bin uniffi-bindgen -- \
-  generate src/openmls.udl --language swift --out-dir "$UNIFFI_DIR"
+  generate src/openmls.udl --config uniffi.toml --language swift --out-dir "$UNIFFI_DIR"
 
 # Fail loudly rather than let CocoaPods glob an empty directory and hand Xcode a
 # module with no function definitions — the exact silent failure this fixes.

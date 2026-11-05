@@ -82,6 +82,7 @@ function likeRx(pattern: string, flags = ""): RegExp {
 }
 
 export function makeFakeCandidateDb(tables: Record<string, Row[]>, opts: FakeCandidateDbOptions = {}): FakeCandidateDb {
+  tables.places = (tables.places ?? []).map(row => ({ moderation_status: 'visible', merged_into_place_id: null, ...row }));
   const erroring = new Set(opts.erroring ?? []);
   const db: FakeCandidateDb = {
     tables,
@@ -158,6 +159,7 @@ export function makeFakeCandidateDb(tables: Record<string, Row[]>, opts: FakeCan
         const rf = opts.readFailure?.[table];
         if (rf) return { data: null, error: { ...rf } };
         let out = (db.tables[table] ?? []).filter((r) => preds.every((p) => p(r)));
+        const count = out.length;
         if (orders.length > 0) {
           out = [...out].sort((a, z) => {
             for (const o of orders) { const d = cmp(a[o.col], z[o.col]); if (d !== 0) return o.asc ? d : -d; }
@@ -170,7 +172,7 @@ export function makeFakeCandidateDb(tables: Record<string, Row[]>, opts: FakeCan
         if (one) return data.length > 1
           ? { data: null, error: { code: "PGRST116", message: "JSON object requested, multiple (or no) rows returned" } }
           : { data: data[0] ?? null, error: null };
-        return countRequested ? { data, error: null, count: data.length } : { data, error: null };
+        return countRequested ? { data, error: null, count } : { data, error: null };
       }
       return b;
     },

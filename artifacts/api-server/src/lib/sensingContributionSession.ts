@@ -154,6 +154,7 @@ export function validateSensingSession(
   row: SensingContributionSessionRow | null | undefined,
   credential: string,
   nowMs: number,
+  deferBudgetToAtomicWrite = false,
 ): SessionValidation {
   if (!row) return { ok: false, reason: "unknown" };
   if (!credential || deriveSensingCredentialHash(credential) !== row.credential_hash) {
@@ -165,7 +166,7 @@ export function validateSensingSession(
   if (!Number.isFinite(starts) || !Number.isFinite(expires)) return { ok: false, reason: "expired" }; // fail-closed
   if (nowMs < starts) return { ok: false, reason: "not_started" };
   if (nowMs >= expires) return { ok: false, reason: "expired" };
-  if (!Number.isInteger(row.budget_cohorts_remaining) || row.budget_cohorts_remaining <= 0) {
+  if (!Number.isInteger(row.budget_cohorts_remaining) || row.budget_cohorts_remaining < 0 || (!deferBudgetToAtomicWrite && row.budget_cohorts_remaining === 0)) {
     return { ok: false, reason: "budget_exhausted" };
   }
   return { ok: true };
@@ -186,7 +187,8 @@ export function consumeSensingSessionBudget(
  * The full ingest-side check for one contribution: the session must be valid
  * and the contribution admitted under the session's OWN scopes (not the
  * caller's claim about them). Pure; consumes no budget — budget is consumed
- * only after a non-duplicate write, by the caller, atomically in SQL.
+ * inside the same SQL transaction as a non-duplicate write. Only that path
+ * may defer the zero-budget check to permit a no-cost retry of the last write.
  */
 export function admitWithSensingSession(
   row: SensingContributionSessionRow | null | undefined,
@@ -194,8 +196,9 @@ export function admitWithSensingSession(
   input: SensingAdmissionInput,
   nowMs: number,
   policy: IntelligenceContributionPolicy = SENSING_ANON_POLICY_V1,
+  deferBudgetToAtomicWrite = false,
 ): SensingAdmission | { admitted: false; reason: `session_${SessionRefusal}` } {
-  const v = validateSensingSession(row, credential, nowMs);
+  const v = validateSensingSession(row, credential, nowMs, deferBudgetToAtomicWrite);
   if (!v.ok) return { admitted: false, reason: `session_${v.reason}` };
   const requested = input.purposeScopes ?? row!.purpose_scopes;
   for (const s of requested) {

@@ -82,6 +82,45 @@ describe('SharedVideoPlayer — no player until the source is loadable', () => {
     expect(screen.queryByTestId('mock-video')).toBeNull();
   });
 
+  it('ignores a retired signature error and end event after its replacement mounts', async () => {
+    const onEnd = jest.fn();
+    mockResolved = { [MOV]: SIGNED_A };
+    const view = await render(<SharedVideoPlayer uri={MOV} onEnd={onEnd} />);
+    const retired = mockStatus;
+    mockResolved = { [MOV]: SIGNED_B };
+    await act(async () => { view.rerender(<SharedVideoPlayer uri={MOV} onEnd={onEnd} />); });
+    await act(async () => {
+      retired?.({ isLoaded: false, error: 'Expired old signature' });
+      retired?.({ isLoaded: true, isPlaying: false, didJustFinish: true });
+    });
+    expect(screen.queryByText('Video unavailable')).toBeNull();
+    expect(screen.getByTestId('mock-video').props.accessibilityHint).toBe(SIGNED_B);
+    expect(onEnd).not.toHaveBeenCalled();
+  });
+
+  it('rejects an old callback even when the source URL cycles back to the same value', async () => {
+    mockResolved = { [MOV]: SIGNED_A };
+    const view = await render(<SharedVideoPlayer uri={MOV} />);
+    const retired = mockStatus;
+    for (const url of [SIGNED_B, SIGNED_A]) {
+      mockResolved = { [MOV]: url };
+      await act(async () => { view.rerender(<SharedVideoPlayer uri={MOV} />); });
+    }
+    await act(async () => { retired?.({ isLoaded: false, error: 'Old decoder failed' }); });
+    expect(screen.queryByText('Video unavailable')).toBeNull();
+    expect(screen.getByTestId('mock-video').props.accessibilityHint).toBe(SIGNED_A);
+  });
+
+  it('does not advance the parent after the player unmounts', async () => {
+    const onEnd = jest.fn();
+    mockResolved = { [MOV]: SIGNED_A };
+    const view = await render(<SharedVideoPlayer uri={MOV} onEnd={onEnd} />);
+    const retired = mockStatus;
+    await act(async () => { view.unmount(); });
+    await act(async () => { retired?.({ isLoaded: true, isPlaying: false, didJustFinish: true }); });
+    expect(onEnd).not.toHaveBeenCalled();
+  });
+
   it("R5 production's row for 1792727980484.mov (post_media.public_url, thumbnail_url) plays once signed", async () => {
     const row = { media_type: 'video', url: MOV, thumbnail_url: POSTER };
     const view = await render(<SharedVideoPlayer uri={row.url} poster={row.thumbnail_url} />);

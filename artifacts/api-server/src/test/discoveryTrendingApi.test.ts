@@ -144,11 +144,12 @@ function makeDb(
       calls[table] = (calls[table] ?? 0) + 1;
       if (err) return { data: null, error: err };
       let out = (tables[table] ?? []).filter((r) => filters.every((f) => f(r)));
+      const count = out.length;
       for (const o of [...orders].reverse()) {
         out = [...out].sort((a, b) => (String(a[o.col] ?? "") < String(b[o.col] ?? "") ? -1 : String(a[o.col] ?? "") > String(b[o.col] ?? "") ? 1 : 0) * (o.asc ? 1 : -1));
       }
       if (limitN !== null) out = out.slice(0, limitN);
-      return { data: out.map((r) => (selected.length > 0 ? Object.fromEntries(selected.filter((c) => c in r).map((c) => [c, r[c]])) : { ...r })), error: null };  // §75: project to the SELECTED columns, as PostgREST does, so a column the read did not name cannot reach the code
+      return { data: out.map((r) => (selected.length > 0 ? Object.fromEntries(selected.filter((c) => c in r).map((c) => [c, r[c]])) : { ...r })), error: null, count };  // Count is before limit; data projects only selected columns.
     };
     const b: any = {
       select(cols?: string) { selected = String(cols ?? "").split(",").map((c) => c.trim()).filter(Boolean); return b; },

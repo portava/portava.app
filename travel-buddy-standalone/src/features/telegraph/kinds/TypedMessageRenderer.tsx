@@ -1,3 +1,7 @@
+import { ProviderGifMedia } from '../gifs/ProviderGifMedia.tsx';
+import { refPlaysAsVideo } from '../../../lib/media/videoPosterRef.ts';
+import { ContentMedia } from '../../../components/ui/ContentMedia.tsx';
+import { GifMessageMedia } from './GifMessageMedia.tsx';
 /**
  * Telegraph §6.2 — renderers for the typed kinds this tree can carry.
  *
@@ -16,7 +20,7 @@
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { DisplayMediaImage } from '../../../components/ui/DisplayMediaImage.tsx'; import { messageTreeMediaOrNull } from '../media/messageTreeMedia.ts';
+import { messageTreeMediaOrNull } from '../media/messageTreeMedia.ts';
 import { space, radius, type as t } from '../../../theme/tokens.ts';
 import { useReducedMotionSetting } from '../../wall/hooks/useReducedMotionSetting.ts';
 import { useTelegraphPalette, type TelegraphPalette } from '../theme/telegraphTheme.ts';
@@ -30,9 +34,7 @@ const CARD_MAX_WIDTH = 280; // census-telegraph cites :33/:65/:129/:164 — the 
  * Pure, and deliberately so: "reduced motion OR data saver" is a rule, and a
  * rule that lives inside a component cannot be asserted without rendering one.
  */
-export function isGifAnimated(opts: { reduceMotion: boolean; dataSaver: boolean }): boolean {
-  return !opts.reduceMotion && !opts.dataSaver;
-}
+export { isGifAnimated } from './GifMessageMedia.tsx';
 
 export interface TypedMessageRendererProps {
   msgType: string | null;
@@ -60,6 +62,27 @@ export function rendersTypedKind(msgType: string | null | undefined): boolean {
   return [
     ...TYPED_RENDERED_MSG_TYPES, // renderedKinds.ts — the §30A.16 header declares from the same list
   ].includes(msgType.toLowerCase() as (typeof TYPED_RENDERED_MSG_TYPES)[number]);
+}
+
+function MessageAlbum({ assets, caption, styles }: { assets: Array<{ url?: string; thumbnailUrl?: string; mediaType?: string }>; caption?: string; styles: ReturnType<typeof makeStyles> }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const safeAssets = assets.filter(asset => asset && typeof asset === 'object').map(asset => ({
+    uri: messageTreeMediaOrNull(asset.url), thumbnail: messageTreeMediaOrNull(asset.thumbnailUrl), mediaType: asset.mediaType,
+  }));
+  const photos = safeAssets.filter(asset => asset.uri && !refPlaysAsVideo(asset.uri, { mediaType: asset.mediaType })).map(asset => asset.uri!);
+  return <View style={styles.wrap} testID="telegraph-kind-album">
+    <Text style={styles.kindWord}>ALBUM · {assets.length}</Text>
+    <View style={styles.albumGrid}>
+      {(expanded ? safeAssets : safeAssets.slice(0, 4)).map((asset, index) => (
+        <ContentMedia key={`${asset.uri}-${index}`} uri={messageTreeMediaOrNull(asset.uri)} thumbnailUri={asset.thumbnail} mediaType={asset.mediaType} photos={photos}
+          style={[styles.albumCell, { width: 110, height: 110 }]} alt={`Album item ${index + 1} of ${assets.length}`} />
+      ))}
+    </View>
+    {!expanded && assets.length > 4 ? <Pressable accessibilityRole="button" accessibilityLabel={`Show all ${assets.length} album items`} onPress={() => setExpanded(true)}>
+      <Text style={styles.meta}>+{assets.length - 4} more</Text>
+    </Pressable> : null}
+    {caption ? <Text style={styles.caption}>{caption}</Text> : null}
+  </View>;
 }
 
 export function TypedMessageRenderer({
@@ -180,23 +203,11 @@ export function TypedMessageRenderer({
       );
 
     case 'GIF': {
-      const animated = isGifAnimated({ reduceMotion, dataSaver });
-      const uri = messageTreeMediaOrNull(animated ? p.url : (p.stillUrl ?? p.url)); // census T446: a provider's or sender's host is never fetched
       return (
         <View style={styles.wrap} testID="telegraph-kind-gif">
           <Text style={styles.kindWord}>GIF</Text>
-          <DisplayMediaImage
-            uri={uri}
-            width={CARD_MAX_WIDTH - space.md * 2}
-            height={160}
-            alt={p.altText ?? 'GIF'}
-            style={styles.gif}
-          />
-          {!animated ? (
-            <Text style={styles.meta} testID="telegraph-kind-gif-still">
-              {reduceMotion ? 'Still frame — reduced motion is on' : 'Still frame — data saver is on'}
-            </Text>
-          ) : null}
+          {p.provider==='giphy'&&p.providerId?<ProviderGifMedia providerId={p.providerId} reduceMotion={reduceMotion} dataSaver={dataSaver} style={[styles.gif,{width:CARD_MAX_WIDTH-space.md*2,height:160}]} textStyle={styles.meta}/>:<GifMessageMedia url={p.url} stillUrl={p.stillUrl} altText={p.altText} reduceMotion={reduceMotion} dataSaver={dataSaver}
+            style={[styles.gif, { width:CARD_MAX_WIDTH - space.md * 2, height:160 }]} textStyle={styles.meta} />}
           {p.provider ? <Text style={styles.meta}>via {p.provider}</Text> : null}
         </View>
       );
@@ -214,28 +225,8 @@ export function TypedMessageRenderer({
         />
       );
 
-    case 'MEDIA_ALBUM': {
-      const assets: any[] = Array.isArray(p.assets) ? p.assets : [];
-      return (
-        <View style={styles.wrap} testID="telegraph-kind-album">
-          <Text style={styles.kindWord}>ALBUM · {assets.length}</Text>
-          <View style={styles.albumGrid}>
-            {assets.slice(0, 4).map((a, i) => (
-              <DisplayMediaImage
-                key={`${a.url}-${i}`}
-                uri={messageTreeMediaOrNull(a.thumbnailUrl ?? a.url)}
-                width={110}
-                height={110}
-                alt={`Album item ${i + 1} of ${assets.length}`}
-                style={styles.albumCell}
-              />
-            ))}
-          </View>
-          {assets.length > 4 ? <Text style={styles.meta}>+{assets.length - 4} more</Text> : null}
-          {p.caption ? <Text style={styles.caption}>{p.caption}</Text> : null}
-        </View>
-      );
-    }
+    case 'MEDIA_ALBUM':
+      return <MessageAlbum key={body} assets={Array.isArray(p.assets) ? p.assets : []} caption={p.caption} styles={styles} />;
 
     case 'MEMORY_NOTE':
       return (

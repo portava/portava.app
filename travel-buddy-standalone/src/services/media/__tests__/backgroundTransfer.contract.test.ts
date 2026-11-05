@@ -164,3 +164,15 @@ describe('MD284 — native file-range boundary uses complete staged bytes only',
     assert.deepEqual((await readdir(disk.cachePath)).sort(), names.sort());
   });
 });
+
+it('staging rejects oversized parts and batches before any source bytes enter JS memory', async (context) => {
+  const disk = await diskFs(context);
+  const descriptor: PartDescriptor = { kind: 'file-range', uri: disk.sourceUri, start: 0, end: 9 * 1024 * 1024 };
+  const transport = backgroundPartTransport(async () => ({ status: 200, body: {}, retryAfter: null }), disk.fs);
+  await assert.rejects(transport.putPart('https://storage.test/part', descriptor, 'video/mp4'), /staging limit/);
+  for (const parts of [Array.from({ length: 33 }, () => ({ url: 'signed', part: { ...descriptor, end: 1 } })), Array.from({ length: 26 }, () => ({ url: 'signed', part: { ...descriptor, end: 4 * 1024 * 1024 } }))]) {
+    const results = await putPartsInBackground(disk.fs, parts, 'video/mp4');
+    assert.ok(results.every((r) => 'error' in r && /staging limit/.test(r.error)));
+  }
+  assert.deepEqual(disk.reads, []); assert.deepEqual(disk.uploads, []);
+});

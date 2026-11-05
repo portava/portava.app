@@ -58,8 +58,10 @@ import {
 } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { CachedImage } from '../../CachedImage.tsx';
+import { ContentMedia } from '../../ui/ContentMedia.tsx';
 import { color, space, radius, type as t, shadow, typography, icon, aspect, dot} from '../../../theme/tokens.ts';
 import { getPlaceTimeline } from '../../../services/places.ts';
+import { usePrivateSurfaceKey } from '../../../hooks/usePrivateSurfaceKey.ts';
 import { useIntelPrompts } from '../../../hooks/useIntelPrompts.ts';
 import { DecisionExposureChips, buildLiveClaims } from '../../intel/DecisionExposureChips.tsx'; import { PlaceLivePanel } from '../../../features/live/PlaceLivePanel.tsx'; import { listedHoursText } from '../../../features/discovery/listedHours.ts';
 import type {
@@ -884,7 +886,8 @@ function PostThumb({ post, onPress }: { post: GridPost; onPress?: () => void }) 
   return (
     <Pressable
       style={({ pressed }) => [pg.thumb, pressed && { opacity: 0.85 }]}
-      onPress={onPress}
+      accessibilityRole="button" accessibilityLabel="Open place post"
+      onPress={onPress ?? (() => router.push(`/post/${encodeURIComponent(post.id)}`))}
     >
       {url && !imgFailed ? (
         <CachedImage
@@ -912,7 +915,7 @@ function DedupGroupCard({ group }: { group: LivingDedupGroup }) {
           <Users size={18} color={color.mute} />
         </View>
         <Text style={pg.dedupText}>
-          ＋{group.memberCount - 1} more travelers captured this view
+          Similar community photos
         </Text>
         {expanded
           ? <ChevronUp size={14} color={color.mute} />
@@ -924,14 +927,10 @@ function DedupGroupCard({ group }: { group: LivingDedupGroup }) {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={pg.dedupStrip}
         >
-          {group.sampleUrls.slice(0, 5).map((url, i) => (
-            <View key={`${group.groupId}-${i}`} style={pg.dedupThumb}>
-              <CachedImage
-                source={{ uri: url }}
-                style={pg.dedupThumbImage}
-                resizeMode="cover"
-              />
-            </View>
+          {(group.samples ?? []).slice(0, 3).map((sample) => (
+            <ContentMedia key={sample.mediaId} uri={sample.mediaUrl} thumbnailUri={sample.thumbnailUrl}
+              mediaType={sample.mediaType} photos={(group.samples ?? []).map(item => item.mediaUrl)}
+              style={pg.dedupThumb} alt="Similar community photo" />
           ))}
         </ScrollView>
       )}
@@ -1100,19 +1099,9 @@ const bef = StyleSheet.create({
 
 // ── Week-timeline module-level cache ─────────────────────────────────────────
 
-/** How long a cached week-timeline result is considered fresh (5 minutes). */
-const WEEK_TIMELINE_CACHE_TTL_MS = 5 * 60 * 1000;
-
-interface WeekTimelineCacheEntry {
-  posts: LivingTimelinePost[];
-  expiresAt: number;
-}
-
-/**
- * Module-level cache — persists across PlaceBucketTabs mounts for the app's
- * lifetime, so navigating away and back within the TTL skips the network call.
- */
-const weekTimelineCache = new Map<string, WeekTimelineCacheEntry>();
+// Community previews require a current server policy read on each visit. The
+// server caches candidate IDs, then batch-revalidates their source; the client
+// must not replay five-minute image/caption grants across visits or accounts.
 
 // ── PlaceBucketTabs ───────────────────────────────────────────────────────────
 
@@ -1132,41 +1121,23 @@ function PlaceBucketTabs({ living, placeName, placeId }: PlaceBucketTabsProps) {
   const [activeTab, setActiveTab] = useState<ContentTab>({ type: 'featured' });
   const [weekPosts, setWeekPosts] = useState<LivingTimelinePost[] | null>(null);
   const [weekLoading, setWeekLoading] = useState(false);
+  const [weekError, setWeekError] = useState(false);
+  const [weekRetry, setWeekRetry] = useState(0);
 
-  // Fetch week-slice timeline whenever the top_week tab becomes active.
-  // Results are stored in the module-level weekTimelineCache so that
-  // navigating away and back within the TTL skips the network request.
   useEffect(() => {
     if (activeTab.type !== 'top_week') return;
-    if (weekPosts !== null) return; // already hydrated for this mount
-
-    // Serve from cache if the entry is still fresh
-    const cached = weekTimelineCache.get(placeId);
-    if (cached && Date.now() < cached.expiresAt) {
-      setWeekPosts(cached.posts);
-      return;
-    }
-
-    let cancelled = false;
-    setWeekLoading(true);
-    getPlaceTimeline(placeId, 'week')
+    const controller = new AbortController();
+    setWeekPosts(null); setWeekLoading(true); setWeekError(false);
+    getPlaceTimeline(placeId, 'week', { signal: controller.signal, isCurrent: () => !controller.signal.aborted })
       .then((result) => {
-        if (cancelled) return;
-        const posts = result?.posts ?? [];
-        weekTimelineCache.set(placeId, {
-          posts,
-          expiresAt: Date.now() + WEEK_TIMELINE_CACHE_TTL_MS,
-        });
-        setWeekPosts(posts);
+        if (controller.signal.aborted) return;
+        if (!result) { setWeekError(true); return; }
+        setWeekPosts(result.posts);
       })
-      .catch(() => {
-        if (!cancelled) setWeekPosts([]);
-      })
-      .finally(() => {
-        if (!cancelled) setWeekLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [activeTab.type, placeId, weekPosts]);
+      .catch(() => { if (!controller.signal.aborted) setWeekError(true); })
+      .finally(() => { if (!controller.signal.aborted) setWeekLoading(false); });
+    return () => controller.abort();
+  }, [activeTab.type, placeId, weekRetry]);
 
   const tabs: ContentTab[] = [
     { type: 'featured' },
@@ -1195,8 +1166,8 @@ function PlaceBucketTabs({ living, placeName, placeId }: PlaceBucketTabsProps) {
     if (activeTab.type === 'featured') {
       const photos = (living.bestOf?.photos ?? []).slice(0, 20);
       const videos = (living.bestOf?.videos ?? []).slice(0, 10);
-      return [...videos, ...photos].map((item, i) => ({
-        id: String(item.id ?? i),
+      return [...videos, ...photos].filter((item) => item.postId || item.id).map((item) => ({
+        id: String(item.postId ?? item.id),
         mediaUrl: item.mediaUrl,
         thumbnailUrl: item.thumbnailUrl ?? null,
         caption: item.caption ?? null,
@@ -1258,8 +1229,13 @@ function PlaceBucketTabs({ living, placeName, placeId }: PlaceBucketTabsProps) {
         <View style={bt.loadingWrap}>
           <ActivityIndicator size="small" color={color.mute} />
         </View>
+      ) : activeTab.type === 'top_week' && weekError ? (
+        <View style={bt.emptyWrap}><Text style={bt.emptyText}>This week's posts are temporarily unavailable.</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="Retry week posts" onPress={() => setWeekRetry(value => value + 1)}><Text style={bt.tabText}>Try again</Text></Pressable>
+        </View>
       ) : (
         <>
+          {living.dedupStatus === 'unavailable' ? <Text style={pg.caption}>Similar photos are temporarily unavailable. Reopen this place to retry.</Text> : null}
           {/* Grid */}
           <PlacePostGrid
             posts={activePosts}
@@ -1415,31 +1391,30 @@ function PlaceTimelinePicker({ placeId, initial }: PlaceTimelinePickerProps) {
   const [weatherBrief, setWeatherBrief] = useState<string | null>(initial.weatherBrief);
   const [loading, setLoading] = useState(false);
 
-  const selectSlice = useCallback(async (slice: TimelineSlice) => {
-    if (slice === activeSlice) return;
-    setActiveSlice(slice);
-
+  const [readError, setReadError] = useState(false);
+  const request = useRef<{ version: number; controller: AbortController | null }>({ version: 0, controller: null });
+  useEffect(() => () => { request.current.version++; request.current.controller?.abort(); }, []);
+  useEffect(() => {
+    if (activeSlice === 'today') { setPosts(initial.posts); setCrowdLevel(initial.crowdLevel); setWeatherBrief(initial.weatherBrief); }
+  }, [initial, activeSlice]);
+  const selectSlice = useCallback(async (slice: TimelineSlice, retry = false) => {
+    if (slice === activeSlice && !retry) return;
+    request.current.controller?.abort();
+    const controller = new AbortController(); const version = ++request.current.version;
+    request.current.controller = controller;
+    const isCurrent = () => !controller.signal.aborted && request.current.version === version;
+    setActiveSlice(slice); setReadError(false); setPosts([]); setCrowdLevel(null); setWeatherBrief(null);
     if (slice === 'today') {
-      // Already have today's data from the initial payload
-      setPosts(initial.posts);
-      setCrowdLevel(initial.crowdLevel);
-      setWeatherBrief(initial.weatherBrief);
-      return;
+      setLoading(false); setPosts(initial.posts); setCrowdLevel(initial.crowdLevel); setWeatherBrief(initial.weatherBrief); return;
     }
-
     setLoading(true);
     try {
-      const result = await getPlaceTimeline(placeId, slice);
-      if (result) {
-        setPosts(result.posts);
-        setCrowdLevel(result.crowdLevel);
-        setWeatherBrief(result.weatherBrief);
-      }
-    } catch {
-      // keep previous posts on error
-    } finally {
-      setLoading(false);
-    }
+      const result = await getPlaceTimeline(placeId, slice, { signal: controller.signal, isCurrent });
+      if (!isCurrent()) return;
+      if (!result) { setReadError(true); return; }
+      setPosts(result.posts); setCrowdLevel(result.crowdLevel); setWeatherBrief(result.weatherBrief);
+    } catch { if (isCurrent()) setReadError(true); }
+    finally { if (isCurrent()) setLoading(false); }
   }, [activeSlice, placeId, initial]);
 
   return (
@@ -1479,6 +1454,10 @@ function PlaceTimelinePicker({ placeId, initial }: PlaceTimelinePickerProps) {
       {loading ? (
         <View style={tp.loadingRow}>
           <ActivityIndicator size="small" color={color.signal} />
+        </View>
+      ) : readError ? (
+        <View style={bt.emptyWrap}><Text style={bt.emptyText}>Posts for this period are temporarily unavailable.</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="Retry timeline posts" onPress={() => void selectSlice(activeSlice, true)}><Text style={bt.tabText}>Try again</Text></Pressable>
         </View>
       ) : (
         <PlacePostGrid posts={posts} />
@@ -1552,7 +1531,7 @@ function PlaceBestOfShelf({ title, items, onItemPress }: PlaceBestOfShelfProps) 
       {laid && (
         <FlatList
           data={items}
-          keyExtractor={(item, i) => String(item.id ?? i)}
+          keyExtractor={(item, i) => String(item.postId ?? item.id ?? i)}
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={shelf.list}
@@ -1561,7 +1540,10 @@ function PlaceBestOfShelf({ title, items, onItemPress }: PlaceBestOfShelfProps) 
             return (
               <Pressable
                 style={({ pressed }) => [shelf.card, pressed && { opacity: 0.85 }]}
-                onPress={onItemPress ? () => onItemPress(item) : undefined}
+                accessibilityRole="button"
+                accessibilityLabel="Open featured place post"
+                disabled={!onItemPress && !item.postId && !item.id}
+                onPress={() => onItemPress ? onItemPress(item) : router.push(`/post/${encodeURIComponent(String(item.postId ?? item.id))}` as never)}
               >
                 {url ? (
                   <CachedImage
@@ -1697,7 +1679,12 @@ export interface LivingDestinationPageProps {
   placeDaysEnabled?: boolean;
 }
 
-export function LivingDestinationPage({ place, living, placeDaysEnabled = false }: LivingDestinationPageProps) {
+export function LivingDestinationPage(props: LivingDestinationPageProps) {
+  const scope = usePrivateSurfaceKey();
+  return <LivingDestinationForViewer key={`${scope}:${props.place.id}`} {...props} />;
+}
+
+function LivingDestinationForViewer({ place, living, placeDaysEnabled = false }: LivingDestinationPageProps) {
   const scrollY = useRef(new Animated.Value(0)).current;
 
   // Compact header opacity — fades in as the hero scrolls away
@@ -1787,6 +1774,7 @@ export function LivingDestinationPage({ place, living, placeDaysEnabled = false 
             <View style={ld.sectionHeader}>
               <Text style={ld.sectionTitle}>Community</Text>
             </View>
+            {living.communityStatus === 'unavailable' ? <Text style={pg.caption}>Community posts are temporarily unavailable. Reopen this place to retry.</Text> : null}
             <PlaceBucketTabs living={living} placeName={place.name} placeId={living.placeId} />
 
             {/* ── Timeline ── */}

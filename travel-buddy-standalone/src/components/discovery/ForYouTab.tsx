@@ -101,6 +101,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     return getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode) === null;
   });
   const [refreshing, setRefreshing] = useState(false);
+  const [placesError, setPlacesError] = useState<string | null>(null);
   // 'refused' is a FOURTH state and not a flavour of 'none'.
   //
   // Owner ruling, 2026-09-14: "A distinguishable response body alone is
@@ -203,8 +204,8 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
         screen: 'discovery_for_you',
         city: destination ?? undefined,
       }).catch(() => {});
-      compass.refresh?.();
-    }, [destination, compass.refresh]),
+      compass.refreshIfStale?.();
+    }, [destination, compass.refreshIfStale]),
   );
 
   const community = useCommunityDiscovery(destination ?? null, sortBy, railRefreshKey);
@@ -220,6 +221,9 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   // Monotonically-increasing counter so stale async callbacks from an old
   // load() call can detect they've been superseded and bail out safely.
   const loadIdRef = React.useRef(0);
+  // GPS updates are relevant to the request only for Nearest sorting.
+  const nearestUserLat = sortBy === 'nearest' ? userLat : null;
+  const nearestUserLng = sortBy === 'nearest' ? userLng : null;
 
   // When the Compass feed resolves with enabled items, silently upgrade the feed
   // to Compass source — runs independently of load() so it never wipes existing
@@ -247,11 +251,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     const stale = () => loadIdRef.current !== myId;
 
     if (!isRefresh) setLoading(true);
-
-    // Pass user's actual coords as separate userLat/userLng params when sortBy=nearest.
-    // lat/lng always remain the destination coords — Overpass query centre must not use user position.
-    const nearestUserLat = sortBy === 'nearest' ? userLat : null;
-    const nearestUserLng = sortBy === 'nearest' ? userLng : null;
+    setPlacesError(null);
 
     // Fire OSM as baseline. Compass upgrades items via its own useEffect when enabled.
     const osmPromise = getDiscoveryPlaces(
@@ -263,6 +263,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     // Show OSM content the instant it resolves — clears skeleton immediately.
     osmPromise.then((osm) => {
       if (stale()) return;
+      setPlacesError(osm.ok ? null : osm.error);
       setLoading(false);
       setRefreshing(false); setLiveUnchecked(osm.ok && liveClaimsUnchecked(osm.data));  // §91 (A07)
       setItems((prev) => {
@@ -280,10 +281,10 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
         return [];
       });
     }).catch(() => {
-      if (!stale()) { setLoading(false); setRefreshing(false); }
+      if (!stale()) { setLoading(false); setRefreshing(false); setPlacesError('Could not load places'); }
     });
 
-  }, [destination, isAuthed, sortBy, lat, lng, userLat, userLng, contextMode, intentMode]);
+  }, [destination, isAuthed, sortBy, lat, lng, nearestUserLat, nearestUserLng, contextMode, intentMode]);
 
   // Reset state and start loading when destination, auth, or sort/coord changes.
   // load() identity changes when any dependency changes, so this effect fires
@@ -317,6 +318,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     } else {
       load(true); // keep personalized items; refresh OSM baseline without a skeleton
     }
+    return () => { loadIdRef.current += 1; };
   }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRefresh = () => {
@@ -327,16 +329,16 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
 
   if (!destination) return null;
 
-  if (loading && items.length === 0) {
-    return <PlaceSkeletonList count={5} />;
-  }
-
   if (viewMode === 'map') {
     return (
       <>
         <DiscoveryMapView
           key={destination}
           places={mapPlaces}
+          placesLoading={loading || community.loading}
+          placesError={placesError ?? (source === 'refused' ? 'Places did not load' : null)}
+          placesPartial={osmPartial || community.incomplete || community.refused}
+          onRetryPlaces={handleRefresh}
           onSelectPlace={(p) => {
             // Strip "comm/" prefix so PlaceDetailSheet uses the bare UUID
             // for save/bookmark calls — the prefix only exists for map rendering.
@@ -362,6 +364,10 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
         />
       </>
     );
+  }
+
+  if (loading && items.length === 0) {
+    return <PlaceSkeletonList count={5} />;
   }
 
   return (

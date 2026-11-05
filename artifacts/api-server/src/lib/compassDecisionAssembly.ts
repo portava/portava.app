@@ -1,3 +1,4 @@
+import { readCanonicalPlaceVisibility } from "./places/placeGovernance.js";
 /**
  * Assemble the inputs of a Compass decision and run the engine — ONCE, for the
  * two surfaces that emit decisions.
@@ -53,6 +54,9 @@ export type AssembledDecision =
   | { ok: false; reason: "db_error" | "not_found" };
 
 async function readPlace(sc: any, id: string): Promise<{ ok: true; row: PlaceRow | null } | { ok: false }> {
+  const visibility=await readCanonicalPlaceVisibility(sc,[id]);
+  if(!visibility.ok) return {ok:false};
+  if(!visibility.visibleIds.has(id)) return {ok:true,row:null};
   const { data, error } = await sc.from("places").select("id, name, latitude, longitude, status").eq("id", id).maybeSingle();
   if (error) return { ok: false };
   return { ok: true, row: (data as PlaceRow | null) ?? null };

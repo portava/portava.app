@@ -1,71 +1,13 @@
 package expo.modules.openmls
 
 /*
- * ============================================================================
- *  THIS TEST HAS NEVER BEEN EXECUTED. ITS PASSING IS UNPROVEN.
- * ============================================================================
+ * Real Android instrumentation: packaged Rust library, generated UniFFI calls,
+ * two-party MLS exchange, and receive-ratchet replay rejection after restoring
+ * serialized state. These tests are wired by android/build.gradle.
  *
- * Do not read the presence of this file, or any green CI badge on this
- * repository, as evidence that the FFI boundary works. Nothing in this
- * repository's automated checks runs this test, and nothing can.
- *
- * WHY IT HAS NEVER RUN
- *
- * The environment this was authored in has none of what an instrumented
- * Android test requires. Audited 2026-08-08:
- *
- *   - No Android SDK. adb, emulator, sdkmanager, avdmanager all absent.
- *   - No Java and no Gradle. The module cannot be assembled locally at all.
- *   - No Rust toolchain. cargo and rustc absent, so libexpo_openmls.so cannot
- *     even be produced here, let alone loaded.
- *   - No /dev/kvm. There is no nested virtualisation, so an emulator could not
- *     run even if the SDK were installed.
- *   - No androidTest harness. This directory did not exist before this file;
- *     the module has never had instrumentation tests, and the androidx.test
- *     dependencies required to compile this file are deliberately NOT added to
- *     android/build.gradle (see PREREQUISITES).
- *
- * WHAT THAT MEANS FOR ISSUE #3556
- *
- * #3556 ("prove the FFI") stays OPEN. Bar 2 is NOT cleared. This file is the
- * written acceptance criterion, not evidence of meeting it. A compiling test is
- * not a loading test, and this one has not even been compiled.
- *
- * DELIBERATELY NOT WIRED IN
- *
- * This test is not referenced by check:all, by docs/test-gate-baseline.md, or
- * by any CI job. That is intentional. A test that cannot run must not be able
- * to report success by being skipped — a green "0 failed" from a suite that
- * silently executed nothing is the exact false-green pattern that produced
- * findings 9, 10, 13 and 16 on this project.
- *
- * PREREQUISITES FOR ACTUALLY RUNNING IT
- *
- *   1. A real Android runtime: a physical device, or an emulator on a host with
- *      KVM. A device farm (Firebase Test Lab, AWS Device Farm) or an EAS
- *      pipeline configured for instrumented tests both satisfy this. EAS does
- *      not run connectedAndroidTest by default — that is configuration work,
- *      not a flag.
- *   2. android/build.gradle needs an androidTest dependency block:
- *        androidTestImplementation "androidx.test.ext:junit:1.1.5"
- *        androidTestImplementation "androidx.test:runner:1.5.2"
- *      plus defaultConfig.testInstrumentationRunner
- *        "androidx.test.runner.AndroidJUnitRunner"
- *      Not added here so that a file which cannot run cannot alter the module's
- *      build, and so the currently-green EAS build is not put at risk.
- *   3. The Rust cross-compile must have produced libexpo_openmls.so for the
- *      target ABI and AGP must have packaged it (findings 8-13 were all
- *      failures of exactly this chain).
- *
- * WHAT IT ASSERTS — the four bars, in order
- *
- *   Bar 1  launches in an actual Android runtime
- *   Bar 2  loads the produced native .so
- *   Bar 3  crosses the UniFFI boundary
- *   Bar 4  returns a known value
- *
- * Each is a separate test so a partial pass is legible. "Bar 3 passed, bar 4
- * failed" is a real diagnosis; one monolithic green tick is not.
+ * Executed on the Android 36 ARM64 emulator during the 2026-11-05 completion
+ * work. See docs/telegraph/completion-work-20261105.md for results and commands.
+ * An emulator run is not signed release-app or physical-device certification.
  */
 
 import android.os.Build
@@ -74,9 +16,11 @@ import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
+import java.util.zip.ZipFile
+import uniffi.openmls.OpenMlsException
 
 import uniffi.openmls.createGroup
 import uniffi.openmls.decryptMessage
@@ -84,6 +28,7 @@ import uniffi.openmls.encryptMessage
 import uniffi.openmls.generateDeviceKeyPair
 import uniffi.openmls.generateKeyPackage
 import uniffi.openmls.processWelcome
+import uniffi.openmls.sessionOwnerId
 
 private const val SO_NAME = "libexpo_openmls.so"
 private const val LIB_NAME = "expo_openmls"
@@ -126,12 +71,22 @@ class FfiBar2InstrumentedTest {
     @Test
     fun bar2_loadsTheProducedNativeSo() {
         val ctx = InstrumentationRegistry.getInstrumentation().targetContext
-        val nativeDir = File(ctx.applicationInfo.nativeLibraryDir)
-
-        val packaged = nativeDir.listFiles()?.map { it.name } ?: emptyList()
+        val testContext = InstrumentationRegistry.getInstrumentation().context
+        // extractNativeLibs=false maps .so files directly out of the APK. An
+        // empty nativeLibraryDir is valid; inspect the actual installed APKs.
+        val apkPaths = listOf(ctx, testContext).flatMap { context ->
+            listOf(context.applicationInfo.sourceDir) +
+                (context.applicationInfo.splitSourceDirs?.toList() ?: emptyList())
+        }.distinct()
+        val compatibleEntries = Build.SUPPORTED_ABIS.map { abi -> "lib/$abi/$SO_NAME" }
+        val packaged = apkPaths.any { path ->
+            ZipFile(path).use { apk ->
+                compatibleEntries.any { entry -> (apk.getEntry(entry)?.size ?: 0L) > 0L }
+            }
+        }
         assertTrue(
-            "$SO_NAME not packaged. nativeLibraryDir=$nativeDir contained: $packaged",
-            packaged.contains(SO_NAME),
+            "$SO_NAME missing for supported ABIs ${Build.SUPPORTED_ABIS.toList()} in $apkPaths",
+            packaged,
         )
 
         // Throws UnsatisfiedLinkError if the linker rejects it. Not caught —
@@ -203,6 +158,9 @@ class FfiBar2InstrumentedTest {
         val bobState = processWelcome(group.welcomeB64, bobKeyPackage.pendingStateB64)
         assertTrue("bob's joined group state came back empty", bobState.isNotEmpty())
 
+        assertEquals("alice", sessionOwnerId(group.groupStateB64))
+        assertEquals("bob", sessionOwnerId(bobState))
+
         val encrypted = encryptMessage(group.groupStateB64, known)
         assertTrue("ciphertext came back empty", encrypted.ciphertextB64.isNotEmpty())
         assertTrue(
@@ -217,5 +175,31 @@ class FfiBar2InstrumentedTest {
             known,
             decrypted.plaintext,
         )
+    }
+
+    @Test
+    fun persistedReceiveStateRejectsConsumedCiphertext() {
+        System.loadLibrary(LIB_NAME)
+        val alice = generateDeviceKeyPair()
+        val bob = generateDeviceKeyPair()
+        val pending = generateKeyPackage("bob", bob.ed25519PrivB64, bob.ed25519PubB64)
+        val group = createGroup("alice", alice.ed25519PrivB64, alice.ed25519PubB64, pending.keyPackageB64)
+        val bobState = processWelcome(group.welcomeB64, pending.pendingStateB64)
+        val first = encryptMessage(group.groupStateB64, "first generation")
+        val second = encryptMessage(first.updatedGroupStateB64, "next generation")
+        val received = decryptMessage(bobState, first.ciphertextB64)
+        assertEquals("first generation", received.plaintext)
+
+        // Every bridge invocation restores from the returned persisted snapshot;
+        // this specifically catches a lost receive-secret-tree write.
+        try {
+            decryptMessage(received.updatedGroupStateB64, first.ciphertextB64)
+            fail("Consumed ciphertext decrypted again from persisted receive state")
+        } catch (_: OpenMlsException.DecryptFailed) {
+            // The protocol rejects the consumed generation; unrelated bridge or
+            // linkage failures must fail the test instead of counting as a pass.
+        }
+        val next = decryptMessage(received.updatedGroupStateB64, second.ciphertextB64)
+        assertEquals("next generation", next.plaintext)
     }
 }

@@ -45,7 +45,7 @@ import {
   STRUCTURED_SCHEMAS_FLAG,
   UNKNOWN_SCHEMA_FALLBACK,
 } from "../services/telegraph/structuredSchemas.js";
-import { applyFallback, decoratePlatformReads, negotiateQuotedBody } from "../services/telegraph/platformReadDecorations.js";
+import { applyFallback, decoratePlatformReads, negotiateQuotedBody, negotiateStoredMessageRows } from "../services/telegraph/platformReadDecorations.js";
 import { ENVELOPE_KINDS } from "../services/telegraph/messageKinds.js";
 import { COORDINATION_KINDS } from "../services/telegraph/coordination.js";
 import { buildPortavaObjectBody, SHAREABLE_OBJECT_TYPES } from "../services/telegraph/shareables.js";
@@ -89,8 +89,9 @@ describe("T429 — the registry", () => {
   });
 
   it("the BASELINE is frozen: a registered v2 is never served to a client that declared nothing", () => {
-    // Every family in the registry today is in the baseline at exactly its version…
-    for (const x of STRUCTURED_SCHEMAS) assert.equal(BASELINE_CLIENT_SCHEMAS[x.family], x.version, x.id);
+    // The original v1 families stay frozen when a new version is registered.
+    for (const x of STRUCTURED_SCHEMAS.filter(x=>x.version===1)) assert.equal(BASELINE_CLIENT_SCHEMAS[x.family], x.version, x.id);
+    assert.equal(clientRendersSchema(parseClientCapabilities({}),schemaById("gif.v2")!),false);
     // …and a future version of one of them is not.
     const baseline = parseClientCapabilities({});
     const v2 = { ...schemaById("location.scope.v1")!, id: "location.scope.v2", version: 2 };
@@ -139,7 +140,7 @@ describe("T429/T431 — storedSchemaOf + negotiateRender", () => {
     const neg = negotiateRender(row, onlyPlaces);
     assert.ok(neg.fallback);
     assert.equal(neg.fallback && neg.reason, "client_unsupported_schema");
-    const m: Record<string, any> = { id: "m", body: locationBody, displayBody: locationBody, msgType: "location", subtype: "exact", mediaUrl: null, tags: [{ x: 1 }] };
+    const m: Record<string, any> = { id: "m", body: locationBody, displayBody: locationBody, msgType: "location", subtype: "exact", mediaUrl: null, tags: [{ x: 1 }], card: { state: 'live', projection: { title: '3rd floor', latitude: LAT, longitude: LNG } } };
     applyFallback(m, neg as any);
     const s = JSON.stringify(m);
     assert.ok(!s.includes(String(LAT)) && !s.includes(String(LNG)), "exact coordinates reached a client that cannot render their precision");
@@ -163,6 +164,17 @@ describe("T429/T431 — storedSchemaOf + negotiateRender", () => {
     const row = { msg_type: "location", body: JSON.stringify({ kind: "LOCATION", envelopeVersion: "1", payload: { lat: 999 } }) };
     const neg = negotiateRender(row, baseline);
     assert.equal(neg.fallback && neg.reason, "invalid_payload");
+  });
+
+  it('an entirely new carrier falls back even without a named schema', () => {
+    for (const body of ['private future payload', JSON.stringify({ kind: 'FUTURE_KIND', schema: 'future.v1', payload: { lat: LAT } })]) {
+      for (const caps of [baseline, onlyPlaces]) {
+        const neg = negotiateRender({ msg_type: 'future_kind', body }, caps);
+        assert.ok(neg.fallback);
+        assert.equal(neg.reason, 'unknown_schema');
+        assert.equal(neg.label, UNKNOWN_SCHEMA_FALLBACK);
+      }
+    }
   });
 
   it("a declared schema that disagrees with the object it carries is invalid (no place.share label on a trip)", () => {
@@ -252,6 +264,33 @@ describe("T431 — decoratePlatformReads on the thread page", () => {
   });
 });
 
+describe('T431 — sibling readers negotiate stored rows before projecting text or media', () => {
+  const row = { id: 'location', msg_type: 'location', subtype: 'exact', body: locationBody, media_url: 'https://private.test/image', media_thumbnail_url: 'https://private.test/thumb', cardIndexText: 'Our flat, 3rd floor' };
+  it('removes unsupported payload, media and index text without mutating the stored source', async () => {
+    const before = JSON.stringify(row);
+    const [value] = await negotiateStoredMessageRows(flagClient({ [STRUCTURED_SCHEMAS_FLAG]: true }), [row], { [CLIENT_SCHEMAS_HEADER]: 'none' });
+    assert.equal(value.body, 'Shared a location');
+    assert.equal(value.msg_type, 'text');
+    assert.equal(value.media_url, null);
+    assert.ok(!JSON.stringify(value).includes('3rd floor'));
+    assert.ok(!JSON.stringify(value).includes(String(LAT)));
+    assert.equal(JSON.stringify(row), before);
+  });
+  it('preserves supported v1 data, but a newer stored version never becomes baseline-supported', async () => {
+    const client = flagClient({ [STRUCTURED_SCHEMAS_FLAG]: true });
+    const [known] = await negotiateStoredMessageRows(client, [row], { [CLIENT_SCHEMAS_HEADER]: 'location.scope.v1' });
+    assert.equal(known.body, locationBody);
+    const future = { ...row, body: JSON.stringify({ kind: 'LOCATION', envelopeVersion: '1', schema: 'location.scope.v2', payload: { label: 'future private location' } }) };
+    const [unknown] = await negotiateStoredMessageRows(client, [future], {});
+    assert.ok(!JSON.stringify(unknown).includes('future private location'));
+  });
+  it('keeps flag-off and tombstone behavior unchanged', async () => {
+    assert.deepEqual(await negotiateStoredMessageRows(flagClient({}), [row], { [CLIENT_SCHEMAS_HEADER]: 'none' }), [row]);
+    const tombstone = { ...row, body: null, deleted_at: '2026-11-05T00:00:00Z' };
+    assert.deepEqual(await negotiateStoredMessageRows(flagClient({ [STRUCTURED_SCHEMAS_FLAG]: true }), [tombstone], { [CLIENT_SCHEMAS_HEADER]: 'none' }), [tombstone]);
+  });
+});
+
 // ── the write side, through the real routes ──────────────────────────────────
 
 interface WState { schemas?: boolean }
@@ -336,6 +375,25 @@ after(async () => {
 const announcement = { kind: "ANNOUNCEMENT", payload: { title: "Bus leaves at 9" } };
 
 describe("T429 — the write side stamps and validates", () => {
+  it('provider GIFs remain disabled until configured, then store only an id under v2 even with the legacy switch off',async()=>{
+    const old=process.env.TELEGRAPH_GIF_PROVIDER;
+    try{
+      const c=writeClient({});_setTestClient(c,true);delete process.env.TELEGRAPH_GIF_PROVIDER;
+      const payload={kind:'GIF',payload:{provider:'giphy',providerId:'Ab123'}};
+      assert.equal((await call('POST',`/threads/${THREAD}/typed-messages`,ALICE,payload)).status,503);assert.equal(c._db.messages.length,0);
+      process.env.TELEGRAPH_GIF_PROVIDER='giphy';
+      const sent=await call('POST',`/threads/${THREAD}/typed-messages`,ALICE,payload);assert.equal(sent.status,201,JSON.stringify(sent.body));
+      const stored=JSON.parse(c._db.messages[0].body);assert.equal(stored.schema,'gif.v2');assert.deepEqual(stored.payload,payload.payload);
+      assert.equal((await call('POST',`/threads/${THREAD}/typed-messages`,ALICE,{...payload,schema:'gif.v1'})).status,400);assert.equal(c._db.messages.length,1);
+    }finally{if(old===undefined)delete process.env.TELEGRAPH_GIF_PROVIDER;else process.env.TELEGRAPH_GIF_PROVIDER=old;}
+  });
+  it('v2 GIF references and quotes fall back for old clients even when the legacy schema switch is off',async()=>{
+    const c=writeClient({});const row={id:'gif-reference',msg_type:'gif',body:JSON.stringify({kind:'GIF',envelopeVersion:'1',schema:'gif.v2',payload:{provider:'giphy',providerId:'Ab123'}})};
+    const old=await negotiateStoredMessageRows(c,[row]);assert.equal(old[0].msg_type,'text');assert.ok(!old[0].body.includes('Ab123'));
+    const current=await negotiateStoredMessageRows(c,[row],{'x-telegraph-client-schemas':'gif.v2'});assert.equal(current[0].body,row.body);
+    const messages=[{id:'reply',msgType:'text',body:'reply',replyToBody:row.body}];await decoratePlatformReads(c,[{id:'reply',msg_type:'text',body:'reply'}],messages,{});assert.ok(!messages[0].replyToBody.includes('Ab123'));assert.ok(!messages[0].replyToBody.startsWith('{'));
+  });
+
   it("flag OFF (the seed): the typed body is exactly the old envelope, and a `schema` field is ignored", async () => {
     const c = writeClient({});
     _setTestClient(c, true);

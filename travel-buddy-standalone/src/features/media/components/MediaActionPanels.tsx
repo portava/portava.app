@@ -21,7 +21,10 @@
  * Pure presentational + one service call each; every failure is shown as a
  * plain sentence, never swallowed into a fake success.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { captureMessagingOwnerRequest } from '../../../services/messagingOwnerRequest.ts';
+import { currentDiscoveryScope } from '../../../services/discoveryViewerScope.ts';
+import { type OwnedApiContext } from '../../../services/ownedApiRequest.ts';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator, TextInput, Linking, Platform } from 'react-native';
 import {
   ChevronLeft,
@@ -73,25 +76,50 @@ export const SECTION21_ACTION_ICONS = {
 } satisfies Partial<Record<MediaActionId, LucideIcon>>;
 
 /** Go There on this device: the Places page's directions, opened in the maps app. */
-export function openRailDirections(placeId: string, onOpened: () => void): Promise<DirectionsOutcome> {
+export function openRailDirections(placeId: string, onOpened: () => void, isCurrent: () => boolean = () => true, context?: OwnedApiContext): Promise<DirectionsOutcome> {
+  const owner = captureMessagingOwnerRequest();
   return openDirectionsForPlace(placeId, {
     platform: Platform.OS,
-    loadDirections: async (id) => (await getPlaceLiving(id))?.directionsUrl ?? null,
-    openUrl: (url) => Linking.openURL(url),
-    onOpened,
+    loadDirections: async (id) => { const place = await getPlaceLiving(id, { ...context, owner: owner ?? undefined, isCurrent }); if (!place) throw new Error('Place unavailable'); return place.directionsUrl ?? null; },
+    openUrl: (url) => owner?.isCurrent() && isCurrent() ? Linking.openURL(url) : Promise.reject(new Error('Directions cancelled')),
+    onOpened: () => { if (owner?.isCurrent() && isCurrent()) onOpened(); },
   });
 }
 
 /** Save Route on this device: stops completed through the canonical place record. */
-export function saveRailRoute(input: {
+export async function saveRailRoute(input: {
   title: string;
   stops: RouteStopRef[];
   mediaId: string | null;
-}): Promise<SaveMediaRouteResult> {
-  return saveMediaRoute(input, {
-    resolveCoords: async (placeId) => (await getCanonicalPlace(placeId))?.coordinates ?? null,
-    createRoute: (payload) => createRoutePlan(payload),
-  });
+}, context?: OwnedApiContext): Promise<SaveMediaRouteResult> {
+  const owner = context?.owner ?? captureMessagingOwnerRequest();
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  context?.signal?.addEventListener('abort', cancel, { once: true });
+  const timeout = setTimeout(cancel, 10_000);
+  const current = () => !!owner?.isCurrent() && !controller.signal.aborted && !context?.signal?.aborted && context?.isCurrent?.() !== false;
+  const request = { ...context, owner: owner ?? undefined, signal: controller.signal, isCurrent: current };
+  try { return await saveMediaRoute(input, {
+    resolveCoords: async (placeId) => current() ? (await getCanonicalPlace(placeId, request))?.coordinates ?? null : null,
+    createRoute: (payload) => createRoutePlan(payload, request),
+    isCurrent: current,
+  }); } finally { clearTimeout(timeout); context?.signal?.removeEventListener('abort', cancel); }
+
+}
+
+function usePanelRequest(key: unknown) {
+  const lifetime = useMemo(() => ({ owner: captureMessagingOwnerRequest(), controller: new AbortController(), active: true }), [key]);
+  const latest = useRef(lifetime);
+  latest.current = lifetime;
+  const current = useCallback(() => latest.current === lifetime && lifetime.active && !lifetime.controller.signal.aborted && !!lifetime.owner?.isCurrent(), [lifetime]);
+  const stop = useCallback(() => { lifetime.active = false; lifetime.controller.abort(); }, [lifetime]);
+  useEffect(() => {
+    lifetime.active = true;
+    if (lifetime.controller.signal.aborted) lifetime.controller = new AbortController();
+    return stop;
+  }, [lifetime, stop]);
+  const context = useMemo<OwnedApiContext>(() => ({ owner: lifetime.owner ?? undefined, isCurrent: current, get signal() { return lifetime.controller.signal; } }), [current, lifetime]);
+  return { current, stop, context };
 }
 
 function BackRow({ label, onBack }: { label: string; onBack: () => void }) {
@@ -111,7 +139,10 @@ function hhmm(iso: string): string {
 
 // ── Do This Experience: choose the trip ───────────────────────────────────────
 
-export function TripChoicePanel({
+export function TripChoicePanel(props: React.ComponentProps<typeof TripChoiceForPlan>) {
+  return <TripChoiceForPlan key={JSON.stringify(props.plan)} {...props} />;
+}
+function TripChoiceForPlan({
   plan,
   onBack,
   onApplied,
@@ -120,6 +151,11 @@ export function TripChoicePanel({
   onBack: () => void;
   onApplied: (tripId: string) => void;
 }) {
+  const request = usePanelRequest(plan);
+  const locked = useRef(false);
+  const attemptedTrips = useRef(new Set<string>());
+  const [reviewTrip, setReviewTrip] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const [trips, setTrips] = useState<EditableTripRow[] | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [busyTrip, setBusyTrip] = useState<string | null>(null);
@@ -127,39 +163,46 @@ export function TripChoicePanel({
 
   useEffect(() => {
     let live = true;
-    fetchPlanEditableTrips()
+    setLoadError(false);
+    fetchPlanEditableTrips(request.context)
       .then((rows) => {
-        if (!live) return;
+        if (!live || !request.current()) return;
         // Only the trips the SERVER named — its gate is the plan endpoint's own.
         setTrips(rows.filter((r) => plan.eligibleTripIds.includes(r.id)));
       })
       .catch(() => {
-        if (live) setLoadError(true);
+        if (live && request.current()) setLoadError(true);
       });
     return () => {
       live = false;
     };
-  }, [plan]);
+  }, [plan, request.context, request.current, attempt]);
 
   const choose = useCallback(
     async (tripId: string) => {
-      if (busyTrip) return;
+      if (!request.current() || locked.current || attemptedTrips.current.has(tripId)) return;
+      locked.current = true;
+      attemptedTrips.current.add(tripId);
       setBusyTrip(tripId);
-      const { created, failed } = await applyCompiledPlan(plan, tripId, createPlanItem);
+      const { created, failed } = await applyCompiledPlan(plan, tripId, (id, item) => createPlanItem(id, item, request.context), request.current);
+      if (!request.current()) return;
+      locked.current = false;
       setBusyTrip(null);
       if (created === 0) {
-        setResult('Nothing was added — the trip refused these stops.');
+        setReviewTrip(tripId);
+        setResult('Couldn’t confirm these stops. Open the trip to check before adding them again.');
         return;
       }
-      setResult(failed > 0 ? `Added ${created} of ${created + failed} stops.` : null);
+      if (failed > 0) { setReviewTrip(tripId); setResult(`Added ${created} of ${created + failed} stops. Open the trip to review them before adding more.`); return; }
+      setResult(null);
       onApplied(tripId);
     },
-    [busyTrip, plan, onApplied],
+    [plan, onApplied, request.context, request.current],
   );
 
   return (
     <View>
-      <BackRow label={plan.source.title ?? 'Do this experience'} onBack={onBack} />
+      <BackRow label={plan.source.title ?? 'Do this experience'} onBack={() => { request.stop(); onBack(); }} />
       {plan.stops.map((st) => (
         <View key={`${st.order}-${st.sourceId}`} style={s.stop}>
           <Text style={s.stopTime}>{hhmm(st.startsAt)}</Text>
@@ -173,7 +216,7 @@ export function TripChoicePanel({
       </Text>
       <Text style={s.section}>Add to which trip?</Text>
       {loadError ? (
-        <Text style={s.caption}>Couldn’t read your trips. Try again later.</Text>
+        <View><Text style={s.caption}>Couldn’t read your trips.</Text><Pressable accessibilityRole="button" accessibilityLabel="Retry trips" onPress={() => setAttempt(value => value + 1)}><Text style={s.caption}>Try again</Text></Pressable></View>
       ) : trips === null ? (
         <ActivityIndicator size="small" color={color.mute} />
       ) : trips.length === 0 ? (
@@ -184,6 +227,7 @@ export function TripChoicePanel({
             key={trip.id}
             style={({ pressed }) => [s.row, pressed && s.rowPressed]}
             onPress={() => void choose(trip.id)}
+            disabled={busyTrip !== null || attemptedTrips.current.has(trip.id)}
             accessibilityRole="button"
             accessibilityLabel={`Add to ${trip.title}`}
           >
@@ -193,13 +237,17 @@ export function TripChoicePanel({
         ))
       )}
       {result ? <Text style={s.caption}>{result}</Text> : null}
+      {reviewTrip ? <Pressable accessibilityRole="button" accessibilityLabel="Open trip to review stops" onPress={() => { if (request.current()) onApplied(reviewTrip); }}><Text style={s.rowLabel}>Open trip</Text></Pressable> : null}
     </View>
   );
 }
 
 // ── Invite people ─────────────────────────────────────────────────────────────
 
-export function InvitePanel({
+export function InvitePanel(props: React.ComponentProps<typeof InviteForMoment>) {
+  return <InviteForMoment key={`${props.momentId}:${props.mediaId}`} {...props} />;
+}
+function InviteForMoment({
   momentId,
   mediaId,
   onBack,
@@ -208,6 +256,8 @@ export function InvitePanel({
   mediaId: string | null;
   onBack: () => void;
 }) {
+  const request = usePanelRequest(`${momentId}:${mediaId}`);
+  const invitations = useRef(new Set<string>());
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<TravelerSearchResult[]>([]);
   const [searching, setSearching] = useState(false); const [outcome, setOutcome] = useState<'idle' | 'ok' | 'failed'>('idle'); const seqRef = useRef(0); // census-discovery §106 (tm-people): what the latest search came to; its generation
@@ -215,10 +265,12 @@ export function InvitePanel({
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => () => {
+    seqRef.current += 1;
     if (debounce.current) clearTimeout(debounce.current);
   }, []);
 
   const onChange = useCallback((q: string) => {
+    if (!request.current()) return;
     setQuery(q); const seq = ++seqRef.current; setOutcome('idle'); // a new query: whatever is in flight answers a question no longer asked
     if (debounce.current) clearTimeout(debounce.current);
     if (q.trim().length < 2) {
@@ -227,26 +279,29 @@ export function InvitePanel({
     }
     debounce.current = setTimeout(() => {
       setSearching(true);
-      searchUsers(q.trim(), 10)
-        .then((r) => { if (seq !== seqRef.current) return; if (r.ok && r.data) { setResults(r.data); setOutcome('ok'); } else { setResults([]); setOutcome('failed'); } }) // only the latest request writes; a failed read is not an empty list
-        .catch(() => { if (seq === seqRef.current) { setResults([]); setOutcome('failed'); } })
-        .finally(() => { if (seq === seqRef.current) setSearching(false); });
+      searchUsers(q.trim(), 10, { ...request.context, owner: request.context.owner, signal: request.context.signal!, scope: currentDiscoveryScope(), isCurrent: () => request.current() && seq === seqRef.current })
+        .then((r) => { if (!request.current() || seq !== seqRef.current) return; if (r.ok && r.data) { setResults(r.data); setOutcome('ok'); } else { setResults([]); setOutcome('failed'); } })
+        .catch(() => { if (request.current() && seq === seqRef.current) { setResults([]); setOutcome('failed'); } })
+        .finally(() => { if (request.current() && seq === seqRef.current) setSearching(false); });
     }, 300);
-  }, []);
+  }, [request.current, request.context]);
 
   const invite = useCallback(
     async (userId: string) => {
-      if (state[userId] === 'sending' || state[userId] === 'sent') return;
+      if (!request.current() || invitations.current.has(userId)) return;
+      invitations.current.add(userId);
       setState((m) => ({ ...m, [userId]: 'sending' }));
-      const ok = await inviteToSharedMoment(momentId, userId, mediaId).catch(() => false);
+      const ok = await inviteToSharedMoment(momentId, userId, mediaId, request.context).catch(() => false);
+      if (!request.current()) return;
+      if (!ok) invitations.current.delete(userId);
       setState((m) => ({ ...m, [userId]: ok ? 'sent' : 'failed' }));
     },
-    [momentId, mediaId, state],
+    [momentId, mediaId, request.current, request.context],
   );
 
   return (
     <View>
-      <BackRow label="Invite people" onBack={onBack} />
+      <BackRow label="Invite people" onBack={() => { request.stop(); onBack(); }} />
       <TextInput
         value={query}
         onChangeText={onChange}
@@ -265,8 +320,10 @@ export function InvitePanel({
             key={u.id}
             style={({ pressed }) => [s.row, pressed && s.rowPressed]}
             onPress={() => void invite(u.id)}
+            disabled={st === 'sending' || st === 'sent'}
             accessibilityRole="button"
-            accessibilityLabel={`Invite ${u.displayName ?? u.username ?? 'traveller'}`}
+            accessibilityLabel={`${st === 'sent' ? 'Invitation sent to' : st === 'sending' ? 'Sending invitation to' : 'Invite'} ${u.displayName ?? u.username ?? 'traveller'}`}
+            accessibilityState={{ disabled: st === 'sending' || st === 'sent', busy: st === 'sending' }}
           >
             <Text style={s.rowLabel} numberOfLines={1}>
               {u.displayName ?? u.username ?? 'Traveller'}
@@ -382,30 +439,36 @@ export function EventLinkPanel({
   onBack: () => void;
   onLinked: (eventId: string) => void;
 }) {
+  const request = usePanelRequest(mediaId);
+  const locked = useRef(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
 
   const link = useCallback(
     async (eventId: string) => {
-      if (busy) return;
+      if (!request.current() || locked.current) return;
+      locked.current = true;
       setBusy(eventId);
       setFailed(null);
-      const r = await linkMediaToEvent(mediaId, eventId);
+      const r = await linkMediaToEvent(mediaId, eventId, { signal: request.context.signal });
+      if (!request.current()) return;
+      locked.current = false;
       setBusy(null);
       if (r.ok) onLinked(eventId);
       else setFailed(r.errorKind === 'refused' ? 'This post can’t be linked to that event.' : 'Couldn’t link it. Try again.');
     },
-    [busy, mediaId, onLinked],
+    [mediaId, onLinked, request.context, request.current],
   );
 
   return (
     <View>
-      <BackRow label="Which event is this from?" onBack={onBack} />
+      <BackRow label="Which event is this from?" onBack={() => { request.stop(); onBack(); }} />
       {candidates.map((ev) => (
         <Pressable
           key={ev.eventId}
           style={({ pressed }) => [s.row, pressed && s.rowPressed]}
           onPress={() => void link(ev.eventId)}
+          disabled={busy !== null}
           accessibilityRole="button"
           accessibilityLabel={`Link to ${ev.title ?? 'this event'}`}
         >

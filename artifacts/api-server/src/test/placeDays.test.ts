@@ -95,7 +95,7 @@ function makeClient(state: State) {
 
       function source(): any[] {
         if (table === "feature_flags") return state.flags;
-        if (table === "places")        return state.places;
+        if (table === "places")        return state.places.map(r=>({moderation_status:"visible",merged_into_place_id:null,...r}));
         if (table === "place_days")    return state.place_days;
         if (table === "blocks")        return state.blocks;
         if (table === "posts")         return state.posts;
@@ -103,6 +103,7 @@ function makeClient(state: State) {
         return [];
       }
 
+      let totalCount=0;
       function applyAll(rows: any[]) {
         let r = rows;
         for (const f of eqFilters)  r = r.filter(f);
@@ -117,6 +118,7 @@ function makeClient(state: State) {
             return 0;
           });
         }
+        totalCount=r.length;
         return r.slice(0, _limit);
       }
 
@@ -181,7 +183,7 @@ function makeClient(state: State) {
           return Promise.resolve({ data: applyAll(source())[0] ?? null, error: null });
         },
         then(onF: any, onR?: any) {
-          return Promise.resolve({ data: applyAll(source()), error: null }).then(onF, onR);
+          return Promise.resolve({ data: applyAll(source()), error: null, count:totalCount }).then(onF, onR);
         },
       };
 

@@ -1,3 +1,5 @@
+import { POST_REFERENCE_MEDIA_TYPE } from '../../services/postDestinations.ts';
+import { PostReferenceCover } from '../PostReferenceCard.tsx';
 /**
  * PassportHighlightsStrip — Travel highlights in passport document style.
  * Shows highlight circles as travel-memory bubbles. Wraps existing highlight
@@ -14,6 +16,7 @@ import { DisplayMediaImage } from '../ui/DisplayMediaImage.tsx';
 interface Highlight {
   id: string;
   thumbnailUrl?: string | null;
+  mediaType?: string | null;
   mediaUrl?: string | null;
   caption?: string | null;
 }
@@ -61,7 +64,7 @@ function HighlightBubble({
           the signed-URL hydration layer (DisplayMediaImage/useHydratedMedia)
           rather than binding straight to <Image>. */}
       <View style={b.bubble}>
-        <DisplayMediaImage
+        {highlight.mediaType === POST_REFERENCE_MEDIA_TYPE ? <PostReferenceCover /> : <DisplayMediaImage
           uri={src}
           width={BUBBLE_SIZE}
           height={BUBBLE_SIZE}
@@ -69,7 +72,7 @@ function HighlightBubble({
           resizeMode="cover"
           fallback={<View style={[StyleSheet.absoluteFill, b.placeholderBg]} />}
           testID="highlight-bubble-image"
-        />
+        />}
       </View>
     </Pressable>
   );

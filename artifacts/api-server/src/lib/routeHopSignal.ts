@@ -1,3 +1,4 @@
+import { loadPersonalProtectedZones, personalPointSuppressed } from './mapPersonalProtection.js';
 /**
  * routeHopSignal — the SECOND §10 Crowd Flow signal family: `accepted_plan`.
  *
@@ -611,9 +612,17 @@ export async function readAcceptedPlanHops(
       return empty("read_failed");
     }
 
+    const protections = await loadPersonalProtectedZones(sc, consentedPlans.map(plan => plan.actorId));
+    if (protections === null) return empty("read_failed");
+    const actorByPlan = new Map(consentedPlans.map(plan => [plan.planId, plan.actorId]));
+    const safeStops = (stopsRes.data as any[]).filter(stop => {
+      const owner = actorByPlan.get(stop.route_plan_id);
+      const point = stop.structured_location;
+      return owner && point && typeof point.lat === 'number' && typeof point.lng === 'number' && !personalPointSuppressed(protections.get(owner), point);
+    });
     // The quarantine boundary. Everything past this line is coordinate-free.
     const { stopZones, unresolvedStopIds } = resolveStopZones(
-      (stopsRes.data as any[]).map((s) => ({
+      safeStops.map((s) => ({
         stopId: String(s.id),
         structuredLocation: s.structured_location,
         updatedAt: s.updated_at ?? null,

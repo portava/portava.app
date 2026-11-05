@@ -497,6 +497,21 @@ export default function ModerationReportsScreen() {
                   <Text style={s.actionText}>Inspect review removal…</Text>
                 </Pressable>
               ) : null}
+              {r.subject_type === 'place' && r.subject_id ? (
+                <Pressable style={s.actionBtn} accessibilityRole="button" onPress={() => router.push({ pathname: '/admin/reported-place', params: { reportId: r.id, placeId: r.subject_id! } })}>
+                  <Text style={s.actionText}>Inspect canonical place action…</Text>
+                </Pressable>
+              ) : null}
+              {['post', 'comment', 'message', 'buddy_listing', 'media', 'event'].includes(r.subject_type)
+                && ['open', 'reviewing'].includes(r.status) && r.subject_snapshot?.state === 'ok' ? (
+                <Pressable style={s.actionBtn} accessibilityRole="button" testID={`modq-content-removal-${r.id}`}
+                  onPress={() => {
+                    blurRemoval();
+                    router.push({ pathname: '/admin/reported-content', params: { reportId: r.id, subjectType: r.subject_type, subjectId: r.subject_id } });
+                  }}>
+                  <Text style={s.actionText}>{r.subject_type === 'buddy_listing' ? 'Inspect listing suspension…' : 'Inspect content removal…'}</Text>
+                </Pressable>
+              ) : null}
               {reportModerationHandoff(r) ? (
                 <Pressable
                   style={s.actionBtn}

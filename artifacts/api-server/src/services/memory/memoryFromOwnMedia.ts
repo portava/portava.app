@@ -32,6 +32,8 @@
  */
 import { readFlagState, isMissingSchemaError } from "../../lib/capability/schemaCapability.js";
 import { SCHEMA_PROBE_SENTINEL_ID } from "../../lib/capability/schemaRequirement.js";
+import { authorizeMediaAccess } from "../../lib/mediaAccess.js";
+import { storageRefOf } from "./memoryMediaOrigin.js";
 
 export const MEMORY_FROM_OWN_MEDIA_FLAG = "memory_from_own_media_enabled";
 export const SOURCE_POST_COLUMN = "source_post_id";
@@ -94,5 +96,9 @@ export async function resolveOwnPostMedia(
   const media = Array.isArray(post.media_urls) ? (post.media_urls as unknown[]) : [];
   const url = media[input.mediaIndex];
   if (typeof url !== "string" || !url) return refuse("no_such_media", `the post carries no media at index ${input.mediaIndex}`);
+  const ref = storageRefOf(url);
+  if (ref && !(await authorizeMediaAccess(sc, input.viewerId, ref.bucket, ref.path))) {
+    return refuse("not_found", "the source media is no longer available");
+  }
   return { ok: true, value: { postId: String(post.id), mediaUrl: url, mediaType: memoryItemMediaTypeFor(post.media_type) } };
 }

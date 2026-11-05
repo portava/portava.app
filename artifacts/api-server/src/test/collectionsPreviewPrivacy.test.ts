@@ -68,6 +68,9 @@ interface Builder extends PromiseLike<Result> {
 function project(row: Row, cols: string | null): Row {
   if (cols === null || cols.trim() === "*") return { ...row };
   const out: Row = {};
+  // Model the one bounded account-state embed selected by the shared author gate.
+  const accountEmbed = /user_account_states!user_account_states_user_id_fkey\(state,\s*expires_at\)/;
+  if (accountEmbed.test(cols)) { out.user_account_states = row.user_account_states ?? []; cols = cols.replace(accountEmbed, ''); }
   for (const raw of cols.split(",")) {
     const c = raw.trim();
     if (c === "") continue;
@@ -711,3 +714,27 @@ describe("collection preview of a saved EVENT — block, canViewEvent, eligibili
   });
 });
 
+
+
+describe('saved post previews follow current account privacy', () => {
+  it('a newly-private account withdraws its public-post preview until an approved follow exists', async () => {
+    const t=baseTables(SAVER,'post',P_ID);t.posts={rows:[postRow()]};t.profiles={rows:[{id:OWNER,is_private:true}]};
+    assert.equal((await previews(t,'saver-token'))[0].title,null);await close();
+    t.user_follows={rows:[{follower_id:SAVER,following_id:OWNER}]};
+    assert.equal((await previews(t,'saver-token'))[0].title,'A bar with no sign');await close();
+    t.user_follows={rows:[],failSelect:true};assert.equal((await previews(t,'saver-token'))[0].title,null);
+  });
+  it('a tombstoned post never leaks through a saved preview', async () => {
+    const t=baseTables(SAVER,'post',P_ID);t.posts={rows:[postRow({deleted_at:'2026-11-05'})]};
+    assert.equal((await previews(t,'saver-token'))[0].title,null);
+  });
+  it('a current author ban withdraws a saved preview and an expired ban does not', async () => {
+    const t = baseTables(SAVER, 'post', P_ID);
+    t.posts = { rows: [postRow()] };
+    const author = { id: OWNER, is_private: false, account_status: 'active', user_account_states: [{ state: 'banned', expires_at: null as string | null }] };
+    t.profiles = { rows: [author] };
+    assert.equal((await previews(t, 'saver-token'))[0].title, null); await close();
+    author.user_account_states[0].expires_at = '2000-01-01T00:00:00Z';
+    assert.equal((await previews(t, 'saver-token'))[0].title, 'A bar with no sign');
+  });
+});

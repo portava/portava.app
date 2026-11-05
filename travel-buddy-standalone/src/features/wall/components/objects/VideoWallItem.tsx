@@ -121,9 +121,9 @@ export function VideoWallItem({ projection }: { projection: VideoProjection }) {
             {projection.text}
           </Text>
         ) : null}
-        <PlaceLine projection={projection} />
+        <PlaceLine projection={projection} onDark />
         <ContextualActionChips projection={projection} />
-        <SocialActionRow projection={projection} />
+        <SocialActionRow projection={projection} onDark />
         {projection.contextThread ? (
           <ContextThreadView thread={projection.contextThread} projection={projection} />
         ) : null}

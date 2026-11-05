@@ -43,7 +43,7 @@
  * effectively size 1, so a second person trying to start an E2EE thread before
  * the pool is replenished gets `no_key_package` and the negotiation fails
  * VISIBLY. That is the correct direction to fail, but it is a real limitation
- * and the replenish-on-consume path is follow-up work.
+ * and the account-bound initialization hook replenishes after a successful join.
  */
 
 /**
@@ -57,6 +57,7 @@
  */
 export interface CryptoPort {
   isNative(): boolean;
+  reconcileMessage?(threadId: string, messageId: string, ciphertext: string | null, deleted: boolean): Promise<void>;
   hasGroupSession(threadId: string): Promise<boolean>;
   encryptForThread(threadId: string, plaintext: string): Promise<string | null>;
   decryptFromThread(threadId: string, ciphertextB64: string): Promise<string | null>;
@@ -73,8 +74,9 @@ export interface CryptoPort {
   /** The device's Ed25519 signing pair, or null before crypto identity exists. */
   getDeviceSigningKeys(): Promise<{ priv: string; pub: string } | null>;
   getPendingKeyPackageState(): Promise<string | null>;
+  getPendingKeyPackageStates?(): Promise<string[]>;
   setPendingKeyPackageState(stateB64: string): Promise<void>;
-  clearPendingKeyPackageState(): Promise<void>;
+  clearPendingKeyPackageState(usedState?: string): Promise<void>;
 }
 
 /** Marks the system message that carries an MLS Welcome. */
@@ -188,12 +190,9 @@ export async function decryptIncoming(
 ): Promise<DecryptedMessage> {
   if (!msg.ciphertext) return { id: msg.id, body: msg.body ?? null, failed: false };
 
-  if (!port.isNative() || !(await port.hasGroupSession(threadId))) {
-    return { id: msg.id, body: null, failed: true };
-  }
-
   let plaintext: string | null = null;
   try {
+    if (!port.isNative() || !(await port.hasGroupSession(threadId))) return { id: msg.id, body: null, failed: true };
     plaintext = await port.decryptFromThread(threadId, msg.ciphertext);
   } catch {
     plaintext = null;
@@ -227,18 +226,14 @@ export async function joinFromWelcomeIfNeeded(
   const welcome = messages.find(isWelcomeMessage);
   if (!welcome?.body) return false;
 
-  const pending = await port.getPendingKeyPackageState();
-  if (!pending) {
-    // The KeyPackage this Welcome was encrypted to is not on this device —
-    // a reinstall, or it was replaced by a newer one. Unrecoverable by design
-    // (decision C1: no key backup), so leave the thread unreadable rather than
-    // pretend otherwise.
-    return false;
+  const candidates = port.getPendingKeyPackageStates ? await port.getPendingKeyPackageStates() : [await port.getPendingKeyPackageState()].filter((value): value is string => !!value);
+  for (const pending of candidates) {
+    let joined = false;
+    try { joined = await port.initGroupAsRecipient(threadId, welcome.body, pending); }
+    catch { continue; } // A delayed legacy Welcome may need the second retained key.
+    if (joined) { await port.clearPendingKeyPackageState(pending); return true; }
   }
-
-  const joined = await port.initGroupAsRecipient(threadId, welcome.body, pending);
-  if (joined) await port.clearPendingKeyPackageState();
-  return joined;
+  return false;
 }
 
 // ── Negotiation ─────────────────────────────────────────────────────────────

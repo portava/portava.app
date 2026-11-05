@@ -1,3 +1,4 @@
+import { isProviderGifPayload } from '../services/telegraph/messageKinds.js';
 /**
  * Telegraph §6 — typed message kinds, the content drawer, and object-aware
  * search.
@@ -53,6 +54,7 @@ import {
 import { isFlagEnabled } from "../lib/featureFlags.js"; import { applySharedCardTruth, sharedCardIndexText } from "../services/telegraph/sharedCardTruth.js"; // census-telegraph T448/T359 (lane w-tg-cardtruth)
 import { getServiceClient } from "../lib/supabase.js"; import { notifyNewMessage } from "../services/telegraph/messageNotifications.js"; // census-telegraph T256
 import { schemaToStamp } from "../services/telegraph/structuredSchemas.js";
+import { negotiateStoredMessageRows } from "../services/telegraph/platformReadDecorations.js";
 import {
   applyHistoryWindow,
   historyBoundEnabled,
@@ -108,7 +110,7 @@ async function memberWindow(
 }
 
 const DRAWER_COLUMNS =
-  "id, thread_id, sender_id, body, created_at, deleted_at, msg_type, subtype, media_url, media_type, media_thumbnail_url, media_duration_seconds";
+  "id, thread_id, sender_id, body, content_ref, created_at, deleted_at, msg_type, subtype, media_url, media_type, media_thumbnail_url, media_duration_seconds";
 
 interface DrawerRow {
   id: string;
@@ -147,6 +149,7 @@ async function readIndexableRows(
   threadId: string,
   visibleFrom: string | null,
   viewerId: string,
+  headers?: Record<string, unknown>,
 ): Promise<{ ok: true; rows: any[] } | { ok: false; message: string }> {
   let q = client
     .from("messages")
@@ -166,7 +169,9 @@ async function readIndexableRows(
   if (error) return { ok: false, message: error.message ?? "messages read failed" };
   const rows = (await withholdLocationAcrossBlocks(client, viewerId, ((data as any[]) ?? []).filter((r) =>
     withinWindow(r.created_at, visibleFrom, { senderId: r.sender_id, viewerId })))).rows; // PR-TREL-5: the drawer and in-thread search index the placeholder, never the place
-  const cards = await applySharedCardTruth(client, viewerId, rows, { threadId }); /* census-telegraph T448/T359: a shared card is indexed as its source is NOW for this viewer — a card that is not live (revoked, unreadable, or naming no source) leaves the drawer and search, and a live one is indexed by its projection, never its snapshot */ return { ok: true, rows: cards.rows.flatMap((r) => { const t = cards.truth.get(String(r.id)); return !t ? [r] : t.state === "live" ? [{ ...r, cardIndexText: sharedCardIndexText(t, r) }] : []; }) };
+  const cards = await applySharedCardTruth(client, viewerId, rows, { threadId }); /* census-telegraph T448/T359: a shared card is indexed as its source is NOW for this viewer. */
+  const indexable = cards.rows.flatMap((r) => { const t = cards.truth.get(String(r.id)); return !t ? [r] : t.state === "live" ? [{ ...r, cardIndexText: sharedCardIndexText(t, r) }] : []; });
+  return { ok: true, rows: await negotiateStoredMessageRows(getServiceClient() ?? client, indexable, headers) };
 }
 
 // ── POST /api/threads/:threadId/typed-messages ───────────────────────────────
@@ -233,8 +238,12 @@ router.post(
     // §30A.16 (T429): with the flag ON the envelope carries its NAMED schema, and a client
     // naming one this server does not write for this kind is refused, never re-labelled.
     // OFF (the seed): the body is byte-for-byte what it was, and a `schema` field is ignored.
-    if (await isFlagEnabled(getServiceClient() ?? client, "telegraph_structured_schemas_enabled")) {
-      const stamp = schemaToStamp({ kind: validated.envelope.kind }, parsed.data.schema);
+    const providerGif = validated.envelope.kind === 'GIF' && isProviderGifPayload(validated.envelope.payload);
+    if (providerGif && process.env.TELEGRAPH_GIF_PROVIDER !== 'giphy') {
+      sendError(res, 'degraded_unavailable', 'GIF sharing is not available right now.');return;
+    }
+    if (providerGif || await isFlagEnabled(getServiceClient() ?? client, "telegraph_structured_schemas_enabled")) {
+      const stamp = schemaToStamp({ kind: validated.envelope.kind, payload: validated.envelope.payload }, parsed.data.schema);
       if (!stamp.ok) {
         sendError(res, "invalid_payload", stamp.error);
         return;
@@ -339,7 +348,7 @@ router.get(
       return;
     }
 
-    const read = await readIndexableRows(client, threadId, gate.visibleFrom, gate.viewerId);
+    const read = await readIndexableRows(client, threadId, gate.visibleFrom, gate.viewerId, req.headers);
     if (!read.ok) {
       log.error({ threadId, message: read.message }, "drawer read failed");
       sendError(res, "db_error", "Could not read this conversation's content");
@@ -409,7 +418,7 @@ router.get(
       return;
     }
 
-    const read = await readIndexableRows(client, threadId, gate.visibleFrom, gate.viewerId);
+    const read = await readIndexableRows(client, threadId, gate.visibleFrom, gate.viewerId, req.headers);
     if (!read.ok) {
       log.error({ threadId, message: read.message }, "search read failed");
       sendError(res, "db_error", "Could not search this conversation");

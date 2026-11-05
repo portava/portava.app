@@ -203,6 +203,8 @@ export interface ShareProducerDeclaration {
  * A literal is listed once even when several files write it.
  */
 export const TELEGRAPH_SHARE_PRODUCERS: readonly ShareProducerDeclaration[] = [
+  { literal: "gif", column: "msg_type", family: "PUBLIC", sourceDomain: "gif_provider", authorizedBy: null,
+    note: "Public provider asset selected by the sender. The provider ID is validated and rendered only after explicit load consent; no private canonical source is shared." },
   // ── Chrome and plain content ───────────────────────────────────────────────
   { literal: "text", column: "msg_type", family: "OPERATIONAL", sourceDomain: null, authorizedBy: null,
     note: "Sender-authored prose. No source object." },
@@ -296,6 +298,15 @@ export interface DynamicShareProducer {
 }
 
 export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] = [
+  { file: "artifacts/api-server/src/routes/groupChat.ts", produces: [],
+    expression: "subtype: m.subtype ?? null", family: "OPERATIONAL", sourceDomain: null, writesMessages: false,
+    note: "Projects an existing authorized message's subtype into the sender response; does not create a new message family." },
+  { file: "travel-buddy-standalone/src/features/telegraph/outbox/pendingMessages.ts", produces: [],
+    expression: "subtype: entry.display.subtype", family: "OPERATIONAL", sourceDomain: null, writesMessages: false,
+    note: "Renders the account-scoped encrypted outbox's existing display subtype; no server write or new source family." },
+  { file: "travel-buddy-standalone/src/hooks/useGroupChat.ts", produces: [],
+    expression: "subtype: failed.subtype ?? undefined", family: "OPERATIONAL", sourceDomain: null, writesMessages: false,
+    note: "Retries the original prepared request and restores its existing subtype. Server authorization runs again; this creates no new family." },
   {
     file: "artifacts/api-server/src/lib/threadMessage.ts",
     expression: "subtype: params.subtype ?? null",

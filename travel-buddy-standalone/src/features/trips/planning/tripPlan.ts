@@ -1,6 +1,7 @@
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase.ts';
 import type { TripPlanItem, TripPlanCategory, TripPlanItemStatus, TripPlanSourceType, TripPlanLockType } from '../../../types/models.ts'; import type { TripPlanPrivacyScope } from './tripPlanPrivacy.ts';
 import { freshToken as freshApiToken } from '../../../services/apiToken.ts';
+import { fetchOwnedApi, type OwnedApiContext } from '../../../services/ownedApiRequest.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
@@ -112,16 +113,16 @@ export async function fetchTripPlanMap(tripId: string): Promise<TripPlanItem[]> 
 export async function createPlanItem(
   tripId: string,
   payload: CreatePlanItemPayload,
+  context?: OwnedApiContext,
 ): Promise<TripPlanItem> {
-  const res = await authedFetch(planUrl(tripId, 'items'), {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+  const res = await fetchOwnedApi(`/api/trips/${encodeURIComponent(tripId)}/plan/items`, { ...context, method: 'POST', body: payload });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.message ?? `createPlanItem ${res.status}`);
   }
-  return res.json();
+  const item = await res.json();
+  if (!item || typeof item.id !== 'string' || !item.id) throw new Error('Couldn’t confirm the added stop.');
+  return item;
 }
 
 export async function updatePlanItem(
@@ -208,9 +209,9 @@ export interface EditableTripRow {
   coverUrl: string | null;
 }
 
-export async function fetchPlanEditableTrips(): Promise<EditableTripRow[]> {
-  if (!isSupabaseConfigured) return [];
-  const res = await authedFetch(`${apiBase()}/api/me/plan-editable-trips`);
+export async function fetchPlanEditableTrips(context?: OwnedApiContext): Promise<EditableTripRow[]> {
+  if (!isSupabaseConfigured) throw new Error('Trips are unavailable.');
+  const res = await fetchOwnedApi('/api/me/plan-editable-trips', context);
   // "You have no trips you can add this to" is a permission claim. A request
   // that failed has not established it.
   if (!res.ok) throw new Error(`Could not read your editable trips (HTTP ${res.status})`);

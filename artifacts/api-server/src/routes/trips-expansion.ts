@@ -7,6 +7,7 @@
  * Mounted alongside the existing trips router via routes/index.ts.
  */
 import { Router } from "express";
+import { governDiscoveryPlaces } from "../lib/discoveryPlaceGovernance.js";
 import { isBlockedBetween } from "../lib/blockGuard.js";
 import { z } from "zod";
 import crypto from "node:crypto";
@@ -1905,14 +1906,17 @@ router.get("/trips/:tripId/nearby-places", async (req, res) => {
   const { data: places, error: placesErr } = await sc
     .from("discovery_places")
     .select("id, name, category, lat, lng, city, image_url, rating")
+    .eq("status", "active")
     .ilike("city", `%${t.destination_city}%`)
     .order("rating", { ascending: false })
     .limit(30);
   if (placesErr) throw readUnavailable("discovery_places", placesErr);
+  const governedPlaces = await governDiscoveryPlaces(sc, places ?? [], (place: any) => place.id);
+  if (!governedPlaces.readable) throw readUnavailable("places", new Error("Place visibility could not be checked"));
 
   // Live discovery_places has image_url (not cover_url) and no country column —
   // preserve the response shape the client expects.
-  const shapedPlaces = ((places ?? []) as any[]).map((p) => ({
+  const shapedPlaces = governedPlaces.rows.map((p: any) => ({
     ...p,
     cover_url: p.image_url ?? null,
     country: t.destination_country ?? null,

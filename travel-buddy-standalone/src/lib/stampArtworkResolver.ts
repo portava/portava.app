@@ -149,7 +149,7 @@ export function resolveArtwork(stamp: PassportStamp): StampArtworkDef {
     background:    locked ? STAMP_LOCKED_BG    : theme.background,
     pattern:       locked ? 'solid'             : theme.pattern,
     texture:       locked ? 'worn'              : RARITY_TEXTURE[rarity],
-    iconKey:       theme.iconKey,
+    iconKey:       stamp.artworkIconKey ?? theme.iconKey,
     categoryLabel: theme.label,
     rarity,
     hasShimmer:    !locked && (rarity === 'epic' || rarity === 'legendary'),

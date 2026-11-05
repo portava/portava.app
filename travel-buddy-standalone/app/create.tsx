@@ -2,6 +2,7 @@ import React from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
 import { UnifiedPostComposer } from '../src/components/PulseCreate';
 import type { Place } from '../src/lib/location/placeTypes';
+import { canonicalUrl } from '../src/constants/canonicalUrl';
 
 /**
  * /create — full-screen post composer page.
@@ -36,12 +37,17 @@ export default function Create() {
     }
   }
 
-  const { placeId, placeName, bucket, tripId } = useLocalSearchParams<{
+  const { placeId, placeName, bucket, tripId, sharePostId } = useLocalSearchParams<{
     placeId?: string;
     placeName?: string;
     bucket?: string;
     tripId?: string;
+    sharePostId?: string;
   }>();
+  // Sharing carries a reference, never the source author's copied text or media.
+  // The user can add a note and choose the new post's audience before publishing.
+  const sharedLink = typeof sharePostId === 'string' && /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(sharePostId)
+    ? canonicalUrl(`/posts/${sharePostId}`) : '';
 
   // Build a minimal Place snapshot from the query params so the composer
   // opens with the location chip pre-populated.
@@ -69,7 +75,8 @@ export default function Create() {
     <UnifiedPostComposer
       onClose={dismiss}
       onSuccess={dismiss}
-      openCameraOnMount={!initialPlace}
+      openCameraOnMount={!initialPlace && !sharedLink}
+      initialText={sharedLink}
       initialPlace={initialPlace}
       initialBucket={bucket ?? null}
       tripId={typeof tripId === 'string' && tripId ? tripId : null}

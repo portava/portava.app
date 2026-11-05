@@ -19,9 +19,12 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { _setTestClient } from "../lib/http.js";
 import telegraphGroupsRouter from "../routes/telegraphGroups.js";
+import { resolveConversationCapabilities } from '../domain/telegraph/policies/conversationCapabilityPolicy.js';
+import { assembleContextKernel } from '../services/telegraph/contextKernel.js';
 import {
   RELATIONSHIP_ORIGINS,
   RELATIONSHIP_STATES,
@@ -37,6 +40,7 @@ const EV_LIVE = "e1000000-0000-4000-8000-000000000001";
 const EV_DONE = "e1000000-0000-4000-8000-000000000002";
 const BP_B = "b1000000-0000-4000-8000-000000000001"; // B's buddy profile
 const MEET = "m1000000-0000-4000-8000-000000000001";
+const THREAD = 'd1000000-0000-4000-8000-000000000001';
 
 const none: RelationshipFacts = {
   blocked: false, viewerMessagingRestricted: false, isFriend: false, viewerFollows: false, otherFollows: false,
@@ -180,5 +184,80 @@ describe("GET /users/:id/telegraph-relationship — derived from data that exist
     assert.equal((await rel()).body.error, "feature_disabled");
     use({}, { errors: { feature_flags: { message: "x" } } });
     assert.equal((await rel()).status, 503);
+  });
+});
+
+// Relationship evidence narrows existing permissions, without replacing gates.
+describe('§30A.1 relationship is a conversation permission input', () => {
+  function conversation(over: Partial<Record<string, any[]>> = {}, opts: FakeDbOptions = {}) {
+    return makeFakeClient(seed({
+      message_threads: [{ id:THREAD, thread_type:'direct', status:'active', trip_id:null, is_e2ee:false }],
+      message_thread_members: [A,B].map(user_id => ({ thread_id:THREAD, user_id, role:'member', left_at:null, visible_from_at:null })),
+      messages: [], ...over,
+    }), opts);
+  }
+  const resolve = (sc: any) => resolveConversationCapabilities(sc, {viewerId:A,conversationId:THREAD});
+  it('request-only still permits an already admitted thread and records the input', async () => {
+    const result = await resolve(conversation());
+    assert.equal(result.degraded, false);
+    assert.equal(result.capabilities.canSendMessage, true);
+    assert.ok(result.inputsRead.includes('relationshipPolicy'));
+  });
+  it('a finished event does not revoke an existing conversation', async () => {
+    const result = await resolve(conversation({event_attendees:[{event_id:EV_DONE,user_id:A},{event_id:EV_DONE,user_id:B}],events:[{id:EV_DONE,state:'completed'}]}));
+    assert.equal(result.capabilities.canSendMessage, true);
+    assert.ok(result.inputsRead.includes('relationshipPolicy'));
+  });
+  it('an active relationship cannot grant access to an archived thread or exact location', async () => {
+    const result = await resolve(conversation({message_requests:[{id:'r1',sender_id:A,recipient_id:B,status:'accepted'}],message_threads:[{id:THREAD,thread_type:'direct',status:'archived'}]}));
+    assert.equal(result.capabilities.canSendMessage, false);
+    assert.equal(result.reasons.canSendMessage, 'TELEGRAPH_POLICY_THREAD_ARCHIVED');
+    assert.equal(result.capabilities.canShareExactLocation, false);
+  });
+  it('RESTRICTED uses the shared new-contact rule, preserving an accepted conversation', async () => {
+    const restriction = [{user_id:A,restriction_type:'messaging',lifted_at:null,expires_at:null}];
+    const allowed = await resolve(conversation({trust_restrictions:restriction,message_requests:[{id:'r1',sender_id:A,recipient_id:B,status:'accepted'}]}));
+    const denied = await resolve(conversation({trust_restrictions:restriction}));
+    assert.equal(allowed.capabilities.canSendMessage, true);
+    assert.equal(denied.capabilities.canSendMessage, false);
+  });
+  it('unreadable relationship denies uncertain actions with a retryable reason, preserving history', async () => {
+    const result = await resolve(conversation({}, {errors:{event_attendees:{message:'offline'}}}));
+    assert.equal(result.degraded, true);
+    for (const key of ['canSendMessage','canCall','canCreatePlan','canCreateBooking'] as const) {
+      assert.equal(result.capabilities[key], false);
+      assert.equal(result.reasons[key], 'TELEGRAPH_DEGRADED_RELATIONSHIP_UNREADABLE');
+    }
+    assert.equal(result.capabilities.canViewPreMembershipHistory, true);
+    assert.ok(!result.inputsRead.includes('relationshipPolicy'));
+  });
+  it('a disabled relationship gate reads no relationship source tables', async () => {
+    const reads: string[] = [];
+    const result = await resolve(conversation({feature_flags:[]}, {onRead:table=>{reads.push(table);}}));
+    assert.equal(result.capabilities.canSendMessage, true);
+    assert.ok(!result.inputsRead.includes('relationshipPolicy'));
+    assert.ok(!reads.includes('event_attendees'));
+  });
+  it('group membership does not fabricate a pairwise relationship', async () => {
+    const reads: string[] = [];
+    const result = await resolve(conversation({message_threads:[{id:THREAD,thread_type:'circle',status:'active'}]}, {onRead:table=>{reads.push(table);}}));
+    assert.equal(result.capabilities.canSendMessage, true);
+    assert.ok(!result.inputsRead.includes('relationshipPolicy'));
+    assert.ok(!reads.includes('event_attendees'));
+  });
+  it('a block refuses before any relationship sources are gathered', async () => {
+    const reads: string[] = [];
+    const result = await resolve(conversation({blocks:[{blocker_id:B,blocked_id:A}]}, {onRead:table=>{reads.push(table);}}));
+    assert.equal(result.reasons.canSendMessage, 'TELEGRAPH_AUTH_BLOCKED');
+    assert.ok(Object.values(result.capabilities).every(value=>value === false));
+    assert.ok(!reads.includes('event_attendees'));
+    assert.ok(!result.inputsRead.includes('relationshipPolicy'));
+  });
+  it('the context kernel reuses its permission read instead of gathering origins twice', async () => {
+    const sc = conversation();
+    const result = await assembleContextKernel(sc as unknown as SupabaseClient, {viewerId:A,conversationId:THREAD,nowMs:Date.parse('2026-11-05T12:00:00Z')});
+    assert.equal(result.ok, true);
+    // Context has its own richer shared-event read; the origins-only read is once.
+    assert.equal(sc._observed.selects.filter(q=>q.table === 'event_attendees' && q.sel === 'event_id').length, 1);
   });
 });

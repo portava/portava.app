@@ -127,6 +127,12 @@ router.get("/telegraph/diagnostics", asyncHandler(async (req, res) => {
     }
   }
 
+  const feedback = await readFlagState(ctx.sc, 'telegraph_outcome_feedback_enabled');
+  let selfReportedOutcomes: unknown = { state: feedback === 'unknown' ? 'unavailable' : 'disabled', evidence: 'self_reported', verifiedAttendance: false };
+  if (feedback === 'on') {
+    const result = await ctx.sc.rpc('telegraph_outcome_summary');
+    selfReportedOutcomes = result.error ? { state: 'unavailable', evidence: 'self_reported' } : result.data;
+  }
   const emitter = telegraphEmitterStats();
   const slos = telegraphSloSnapshot(emitter as unknown as Record<string, number>);
 
@@ -152,6 +158,7 @@ router.get("/telegraph/diagnostics", asyncHandler(async (req, res) => {
       "in-process, per-instance, reset on restart — not a telemetry sink, and not aggregated across instances",
     slos,
     realtimeEmitter: emitter,
+    selfReportedOutcomes,
     projections: TELEGRAPH_PROJECTIONS.map((p) => ({
       id: p.id,
       name: p.name,

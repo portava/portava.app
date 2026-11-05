@@ -11,6 +11,7 @@
  * All failures (flag off, 404, network error, parse error) resolve to null —
  * this function never throws.
  */
+import { fetchOwnedApi, type OwnedApiContext } from './ownedApiRequest.ts';
 import { isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 import type { CanonicalPlace, NormalizedOpeningHours } from '../types/canonicalPlace.ts';
@@ -141,14 +142,14 @@ async function freshToken(): Promise<string | null> {
  *          Null cases: flag OFF (403), not found (404), network error,
  *          parse failure, unauthenticated, or API not configured.
  */
-export async function getCanonicalPlace(id: string): Promise<CanonicalPlace | null> {
+export async function getCanonicalPlace(id: string, context?: OwnedApiContext): Promise<CanonicalPlace | null> {
   if (!isSupabaseConfigured || !apiBase()) return null;
 
-  const token = await freshToken();
-  if (!token) return null;
+  const token = context ? null : await freshToken();
+  if (!token && !context) return null;
 
   try {
-    const res = await fetch(
+    const res = context ? await fetchOwnedApi(`/api/places/canonical/${encodeURIComponent(id)}`, context) : await fetch(
       `${apiBase()}/api/places/canonical/${encodeURIComponent(id)}`,
       { headers: { Authorization: `Bearer ${token}` } },
     );
@@ -172,13 +173,13 @@ export async function getCanonicalPlace(id: string): Promise<CanonicalPlace | nu
  *
  * Returns the full page payload on success, null on any failure.
  */
-export async function getPlaceLiving(placeId: string): Promise<PlaceLivingResponse | null> {
+export async function getPlaceLiving(placeId: string, context?: OwnedApiContext): Promise<PlaceLivingResponse | null> {
   if (!isSupabaseConfigured || !apiBase()) return null;
-  const token = await freshToken();
-  if (!token) return null;
+  const token = context ? null : await freshToken();
+  if (!token && !context) return null;
 
   try {
-    const res = await fetch(
+    const res = context ? await fetchOwnedApi(`/api/places/${encodeURIComponent(placeId)}/living`, context) : await fetch(
       `${apiBase()}/api/places/${encodeURIComponent(placeId)}/living`,
       { headers: { Authorization: `Bearer ${token}` } },
     );
@@ -203,25 +204,18 @@ export async function getPlaceLiving(placeId: string): Promise<PlaceLivingRespon
 export async function getPlaceTimeline(
   placeId: string,
   slice: TimelineSlice,
+  context?: OwnedApiContext,
 ): Promise<PlaceTimelineResponse | null> {
   if (!isSupabaseConfigured || !apiBase()) return null;
-  const token = await freshToken();
-  if (!token) return null;
-
   try {
     const params = new URLSearchParams({ slice });
-    const res = await fetch(
-      `${apiBase()}/api/places/${encodeURIComponent(placeId)}/living/timeline?${params}`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    );
+    const res = await fetchOwnedApi(`/api/places/${encodeURIComponent(placeId)}/living/timeline?${params}`, context ?? {});
     if (!res.ok) return null;
     const json = await res.json().catch(() => null);
-    if (!json || typeof json !== 'object') return null;
-    if (typeof (json as any).placeId !== 'string') return null;
+    if (!json || typeof json !== 'object' || typeof (json as any).placeId !== 'string'
+      || (json as any).slice !== slice || !Array.isArray((json as any).posts)) return null;
     return json as PlaceTimelineResponse;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 export async function getPlaceDay(

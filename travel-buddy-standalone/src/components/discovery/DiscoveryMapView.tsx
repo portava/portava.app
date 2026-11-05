@@ -78,6 +78,11 @@ export interface DiscoveryMapViewProps { children?: React.ReactNode;
   fallbackLng?: number | null;
   fallbackZoom?: number;
   places: DiscoveryPlace[];
+  /** The basemap mounts independently of the place request. */
+  placesLoading?: boolean;
+  placesError?: string | null;
+  placesPartial?: boolean;
+  onRetryPlaces?: () => void;
   onSelectPlace: (place: DiscoveryPlace) => void;
   /** Pixels to shift map-overlay UI down so it clears a floating header/tab bar. */
   topInset?: number;
@@ -266,7 +271,7 @@ function computeViewport(places: DiscoveryPlace[]) {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function DiscoveryMapView({
-  places, children,
+  places, children, placesLoading = false, placesError, placesPartial = false, onRetryPlaces,
   onSelectPlace,
   fallbackLat,
   fallbackLng,
@@ -714,9 +719,15 @@ export function DiscoveryMapView({
         <View style={s.badge}>
           <MapPin size={10} color="#fff" />
           <Text style={s.badgeText}>
-            {visiblePlaces.length} {visiblePlaces.length === 1 ? 'place' : 'places'}
+            {placesError ? 'Places did not load' : placesLoading ? 'Loading places…'
+              : `${visiblePlaces.length} ${visiblePlaces.length === 1 ? 'place' : 'places'}${placesPartial ? ' · Some unavailable' : ''}`}
           </Text>
         </View>
+        {placesError && onRetryPlaces && (
+          <Pressable style={s.badge} onPress={onRetryPlaces} accessibilityRole="button" accessibilityLabel="Retry loading places">
+            <Text style={s.badgeText}>Try again</Text>
+          </Pressable>
+        )}
         {travelerCount > 0 && filter !== 'osm' && (
           <View style={[s.badge, s.dbBadge]}>
             <Star size={10} color="#fff" fill="#fff" />

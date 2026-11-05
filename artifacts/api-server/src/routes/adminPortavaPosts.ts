@@ -16,6 +16,8 @@
  */
 
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
+import { planPostMediaUploads } from "../lib/media/storageBackedPostMedia.js";
 import { z } from "zod";
 import { sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
@@ -62,7 +64,7 @@ async function resolvePortavaId(sc: any): Promise<string | null> {
 // ── Column lists (static strings required by check:write-path-columns) ────────
 
 const PORTAVA_POST_SELECT_COLUMNS =
-  "id, author_id, canonical_place_id, content, category, post_status, publish_after_time, published_at, visibility, media_urls, media_type, location_city, location_country, status, created_at, updated_at";
+  "id, author_id, canonical_place_id, content, category, post_status, publish_after_time, published_at, visibility, media_urls, media_type, media_count, location_city, location_country, status, created_at, updated_at";
 
 // ── Shared response mapper ────────────────────────────────────────────────────
 
@@ -77,6 +79,7 @@ function mapPost(row: any): Record<string, unknown> {
     publishedAt:     row.published_at ?? null,
     visibility:      row.visibility,
     mediaUrls:       row.media_urls ?? [],
+    mediaCount:      row.media_count ?? (row.media_urls ?? []).length,
     mediaType:       row.media_type ?? null,
     locationCity:    row.location_city ?? null,
     locationCountry: row.location_country ?? null,
@@ -89,6 +92,7 @@ function mapPost(row: any): Record<string, unknown> {
 // ── POST /admin/portava/posts ─────────────────────────────────────────────────
 
 const createPortavaPostSchema = z.object({
+  operationId: z.string().uuid().optional(),
   content: z.string().min(1, "Post body is required").max(3000),
   category: portavaPostCategory.nullish(),
   mediaUrls: z.array(appMediaRef).max(10).optional(),
@@ -130,64 +134,32 @@ router.post("/admin/portava/posts", asyncHandler(async (req, res) => {
     return;
   }
 
-  let postStatus: string;
-  let publishAfterTime: string | null = null;
-  let publishEligibleAt: string | null = null;
-  let publishedAt: string | null = null;
-
-  if (p.scheduledAt) {
-    postStatus = "pending_delay";
-    publishAfterTime = new Date(p.scheduledAt).toISOString();
-    publishEligibleAt = publishAfterTime;
-  } else {
-    postStatus = "published";
-    publishedAt = new Date().toISOString();
-  }
-
-  const { data, error } = await sc
-    .from("posts")
-    .insert({
-      author_id:               portavaId,
-      created_by:              portavaId,
-      updated_by:              admin.userId,
-      content:                 p.content,
-      category:                p.category ?? null,
-      media_urls:              p.mediaUrls ?? [],
-      media_type:              p.mediaType ?? null,
-      visibility:              p.visibility,
-      status:                  "active",
-      source:                  "admin_portava",
-      post_status:             postStatus,
-      publish_after_time:      publishAfterTime,
-      publish_eligible_at:     publishEligibleAt,
-      published_at:            publishedAt,
-      // Location fields
-      location_name:           p.locationName ?? null,
-      location_city:           p.locationCity ?? null,
-      location_country:        p.locationCountry ?? null,
-      location_lat:            p.locationLat ?? null,
-      location_lng:            p.locationLng ?? null,
-      public_location_label:   p.locationCity ?? p.locationName ?? null,
-      location_source:         "manual",
-      location_verified:       !!(p.locationLat && p.locationLng),
-      location_verified_at:    (p.locationLat && p.locationLng) ? new Date().toISOString() : null,
-      location_privacy_mode:   "city_only",
-      location_sensitivity_level: "low",
-      add_to_passport:         false,
-      geofence_radius_meters:  150,
-      publish_after_exit:      false,
-      geotag_verified:         !!(p.locationLat && p.locationLng),
-      geotag_credit_awarded:   false,
-    })
-    .select("id, author_id, content, category, post_status, publish_after_time, published_at, visibility, media_urls, media_type, location_city, location_country, status, created_at, updated_at")
-    .single();
-
+  const plan = planPostMediaUploads(p.mediaUrls ?? [], admin.userId, p.mediaType ?? null);
+  if (!plan.ok) { sendError(res, plan.code, plan.message); return; }
+  const { data: receipt, error } = await sc.rpc("create_official_post_with_media", {
+    p_actor_id: admin.userId,
+    p_operation_id: p.operationId ?? randomUUID(),
+    p_fields: {
+      content: p.content, category: p.category ?? null, visibility: p.visibility,
+      scheduledAt: p.scheduledAt ?? null, locationName: p.locationName ?? null,
+      locationCity: p.locationCity ?? null, locationCountry: p.locationCountry ?? null,
+      locationLat: p.locationLat ?? null, locationLng: p.locationLng ?? null,
+    },
+    p_upload_paths: plan.uploads.map(upload => upload.path),
+    p_external_refs: plan.external,
+  });
   if (error) {
-    req.log.error({ err: error }, "Failed to insert @portava post");
-    sendError(res, "db_error", error.message);
+    req.log.error({ err: error }, "Official post command failed");
+    const message = String(error.message ?? "");
+    if (/official_post_forbidden|official_media_not_owned/.test(message)) sendError(res, "forbidden", "You may only attach your own uploads as an administrator.");
+    else if (/official_post_intent_conflict/.test(message)) sendError(res, "conflict", "This submission has changed. Start a new post.");
+    else if (/official_post_invalid/.test(message)) sendError(res, "invalid_payload", "Check the post content, schedule and media references.");
+    else if (/official_media_unavailable|official_post_unavailable|no rows/.test(message)) sendError(res, "conflict", "An upload or post is no longer available. Choose a ready upload and try again.");
+    else sendError(res, "degraded_unavailable", "The post could not be saved. Please try again.");
     return;
   }
-
+  if (!receipt?.post?.id) { sendError(res, "degraded_unavailable", "The post result could not be verified. Retry the same submission."); return; }
+  const data = receipt.post;
   res.status(201).json({ post: mapPost(data as any) });
 }));
 
@@ -213,7 +185,7 @@ router.get("/admin/portava/posts", asyncHandler(async (req, res) => {
 
   let query = sc
     .from("posts")
-    .select("id, author_id, content, category, post_status, publish_after_time, published_at, visibility, media_urls, media_type, location_city, location_country, status, created_at, updated_at", { count: "exact" })
+    .select("id, author_id, content, category, post_status, publish_after_time, published_at, visibility, media_urls, media_type, media_count, location_city, location_country, status, created_at, updated_at", { count: "exact" })
     .eq("author_id", portavaId)
     .neq("status", "deleted")
     .order("created_at", { ascending: false })
@@ -307,7 +279,7 @@ router.patch("/admin/portava/posts/:id", asyncHandler(async (req, res) => {
   if (p.content    !== undefined) patch.content    = p.content;
   if (p.category   !== undefined) patch.category   = p.category ?? null;
   if (p.visibility !== undefined) patch.visibility  = p.visibility;
-  if (p.mediaUrls  !== undefined) { const refusal = postMediaHoldRefusal(await postMediaModerationHold(sc, p.mediaUrls)); if (refusal) { sendError(res, refusal.code, refusal.message); return; } patch.media_urls  = p.mediaUrls; } // census-media MD269 (a), lead ruling D-82: an edit cannot put held media into a post
+  if (p.mediaUrls  !== undefined) { const refusal = postMediaHoldRefusal(await postMediaModerationHold(sc, p.mediaUrls)); if (refusal) { sendError(res, refusal.code, refusal.message); return; } const plan = planPostMediaUploads(p.mediaUrls, admin.userId); if (!plan.ok) { sendError(res, plan.code, plan.message); return; } if (plan.uploads.length) { sendError(res, "invalid_payload", "Photos and videos are attached when the post is created."); return; } patch.media_urls = plan.external; } // census-media MD269 (a), lead ruling D-82: an edit cannot put held media into a post
 
   // Scheduling update: re-enter pipeline or publish immediately
   if (p.scheduledAt !== undefined) {

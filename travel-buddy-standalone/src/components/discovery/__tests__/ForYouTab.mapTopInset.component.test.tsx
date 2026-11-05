@@ -98,9 +98,15 @@ jest.mock('../PlaceSkeleton', () => ({ PlaceSkeletonList: Null }));
 jest.mock('../../compass/CompassPicksSection', () => ({ CompassPicksSection: Null }));
 
 const mockMapProps: Array<Record<string, unknown>> = [];
+const mockMapMount = jest.fn();
+const mockMapUnmount = jest.fn();
 // NOTE: intentionally exhaustive — the real map mounts MapLibre (native); the stub records the props it is handed.
 jest.mock('../DiscoveryMapView', () => ({
-  DiscoveryMapView: (props: Record<string, unknown>) => { mockMapProps.push(props); return null; },
+  DiscoveryMapView: (props: Record<string, unknown>) => {
+    const React_ = jest.requireActual('react');
+    React_.useEffect(() => { mockMapMount(); return () => mockMapUnmount(); }, []);
+    mockMapProps.push(props); return null;
+  },
 }));
 
 // ── Imports after mocks ───────────────────────────────────────────────────────
@@ -117,6 +123,7 @@ const PDE_PAGE = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockMapProps.length = 0;
   mockFlags.on = new Set();
   mockGetCachedDiscoveryPlaces.mockReturnValue(null);
   mockGetDiscoveryPlaces.mockResolvedValue(PDE_PAGE);
@@ -129,6 +136,31 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => {}); });
 
 describe('ForYouTab — map view top inset', () => {
+  it('mounts the map before places arrive and keeps it mounted when they finish', async () => {
+    let finish!: (result: typeof PDE_PAGE) => void;
+    mockGetDiscoveryPlaces.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    mockUseCompassFeed.mockReturnValue({ data: null, compassEnabled: false });
+    await render(<ForYouTab destination="Lisbon" lat={38.72} lng={-9.14} onAddToPlan={jest.fn()} viewMode="map" />);
+    expect(mockMapMount).toHaveBeenCalledTimes(1);
+    expect(mockMapProps.at(-1)?.placesLoading).toBe(true);
+    await act(async () => { finish(PDE_PAGE); });
+    expect(mockMapProps.at(-1)?.placesLoading).toBe(false);
+    expect(mockMapProps.at(-1)?.places).toHaveLength(1);
+    expect(mockMapMount).toHaveBeenCalledTimes(1);
+    expect(mockMapUnmount).not.toHaveBeenCalled();
+  });
+
+  it('does not reload recommendations for unrelated GPS updates', async () => {
+    mockUseCompassFeed.mockReturnValue({ data: null, compassEnabled: false });
+    const props = { destination: 'Lisbon', lat: 38.72, lng: -9.14, onAddToPlan: jest.fn(), viewMode: 'map' as const };
+    const view = await render(<ForYouTab {...props} userLat={38.7} userLng={-9.1} />);
+    await view.rerender(<ForYouTab {...props} userLat={38.701} userLng={-9.101} />);
+    expect(mockGetDiscoveryPlaces).toHaveBeenCalledTimes(1);
+    await view.rerender(<ForYouTab {...props} sortBy="nearest" userLat={38.701} userLng={-9.101} />);
+    expect(mockGetDiscoveryPlaces).toHaveBeenCalledTimes(2);
+    expect(mockGetDiscoveryPlaces.mock.calls.at(-1)?.slice(10, 12)).toEqual([38.701, -9.101]);
+  });
+
   it('hands DiscoveryMapView the same top inset the list is padded by', async () => {
     mockMapProps.length = 0;
     await render(<ForYouTab destination="Lisbon" onAddToPlan={jest.fn()} viewMode="map" listTopInset={120} />);

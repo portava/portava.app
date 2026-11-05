@@ -35,6 +35,7 @@ import {
   _resetSensingStorePresence,
 } from "../lib/sensingAnonService.js";
 import {
+  readSensingCohort,
   deriveContributorToken,
   deriveEpochSecret,
   revocationCommitment,
@@ -515,5 +516,18 @@ describe("cohort aggregation — a decision, and never a publication", () => {
     for (const literal of ["minUniqueActors", "minIndependentGroups", "maxSingleGroupShare", "meetsKAnonymity"]) {
       assert.ok(!code.includes(literal), `the privacy threshold "${literal}" is restated here`);
     }
+  });
+});
+
+
+describe("cohort completeness and schema identity", () => {
+  it("a successful probe on one client does not authorize a different database",async()=>{
+    assert.equal(await sensingStorePresent(client()),true);
+    const other=client({present:false}); assert.equal(await sensingStorePresent(other),false); assert.equal(other.state.probes,1);
+  });
+  for(const [data,count] of [[null,0],[[],null],[[],7]] as const) it("malformed or count-truncated data never claims complete coverage",async()=>{
+    const q:any={select:()=>q,eq:()=>q,gt:()=>q,limit:async()=>({data,count,error:null})};
+    const result=await readSensingCohort({from:()=>q} as any,"cohort",new Date().toISOString());
+    assert.equal(result.complete,false);
   });
 });

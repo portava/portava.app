@@ -41,7 +41,7 @@ import { E2EE_VERIFICATION_UI_ENABLED } from '../lib/e2ee/verificationGate.ts';
 interface Props {
   visible: boolean;
   onClose: () => void;
-  threadType: 'direct' | 'trip' | 'circle';
+  threadType: 'direct' | 'trip' | 'circle' | 'group' | 'rent_buddy_booking';
   otherUserId?: string | null;
   otherUserName?: string | null;
   isMuted: boolean;
@@ -50,6 +50,8 @@ interface Props {
   onToggleHideAi: () => void;
   onBlock?: () => void;
   onLeave?: () => void;
+  onAddPeople?: () => void;
+  onManageGroup?: () => void;
   onDeleteForMe?: () => void;
   /** Legacy fallback — used for group thread reporting when no user subject is available. */
   onReport?: (reason: string) => Promise<void>;
@@ -76,6 +78,8 @@ export function ThreadSafetySheet({
   onToggleHideAi,
   onBlock,
   onLeave,
+  onAddPeople,
+  onManageGroup,
   onDeleteForMe,
   onReport,
   isE2ee,
@@ -155,6 +159,8 @@ export function ThreadSafetySheet({
             <Pressable onPress={onClose} hitSlop={8}><X size={18} color={color.mute} /></Pressable>
           </View>
 
+          {onAddPeople && <Pressable accessibilityRole="button" style={sh.row} onPress={onAddPeople}><Text style={sh.rowLabel}>Start a group with more people</Text></Pressable>}
+          {onManageGroup && <Pressable accessibilityRole="button" style={sh.row} onPress={onManageGroup}><Text style={sh.rowLabel}>Group settings and members</Text></Pressable>}
           {/* Hide AI suggestions toggle */}
           <View style={sh.toggleRow}>
             <View style={sh.toggleLeft}>
@@ -237,7 +243,7 @@ export function ThreadSafetySheet({
           )}
 
           {/* Leave — group only */}
-          {(threadType === 'trip' || threadType === 'circle') && onLeave && (
+          {(threadType === 'trip' || threadType === 'circle' || threadType === 'group') && onLeave && (
             <Pressable style={sh.row} onPress={handleLeave}>
               <LogOut size={18} color="#EF4444" />
               <Text style={[sh.rowLabel, sh.destructive]}>Leave group</Text>

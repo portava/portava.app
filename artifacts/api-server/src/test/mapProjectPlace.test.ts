@@ -96,6 +96,7 @@ function placeRow(over: Partial<PlaceRowLike> & { id?: string } = {}): PlaceRowL
     latitude: RAW.lat,
     longitude: RAW.lng,
     status: "active",
+    moderation_status: "visible",
     merged_into_place_id: null,
     ...over,
   };
@@ -209,13 +210,14 @@ function specOf(state: FakeState, table: string): TableSpec {
 function buildQuery(spec: TableSpec) {
   let rows = [...(spec.rows ?? [])];
   const err = spec.error ?? null;
-  const result = () => (err ? { data: null, error: err } : { data: rows, error: null });
+  let limit = Infinity; let offset = 0;
+  const result = () => (err ? { data: null, error: err, count: null } : { data: rows.slice(offset, offset + limit), error: null, count: rows.length });
 
   const q: any = {
     select() { return q; },
     order() { return q; },
-    limit(n: number) { rows = rows.slice(0, n); return q; },
-    range() { return q; },
+    limit(n: number) { limit = n; return q; },
+    range(from: number, to: number) { offset = from; limit = to-from+1; return q; },
     eq(col: string, val: any) { rows = rows.filter((r) => r[col] === val); return q; },
     neq(col: string, val: any) { rows = rows.filter((r) => r[col] !== val); return q; },
     in(col: string, vals: any[]) { rows = rows.filter((r) => vals.includes(r[col])); return q; },
@@ -430,9 +432,9 @@ describe("projectPlace — what must NOT become an object", () => {
       assert.equal(projectPlace(placeRow({ status })), null, `status=${status} must not project`);
     }
     assert.equal(projectPlace(placeRow({ merged_into_place_id: "some-other-id" })), null);
-    // A row with no status field at all is not refused — the read filters on
-    // status, and the projector only re-checks a value it was actually given.
-    assert.ok(projectPlace(placeRow({ status: undefined })));
+    assert.equal(projectPlace(placeRow({ status: undefined })), null);
+    assert.equal(projectPlace(placeRow({ moderation_status: "withheld" })), null);
+    assert.equal(projectPlace(placeRow({ moderation_status: null })), null);
   });
 
   test("isServable is the last gate inside the producer: an unnamed row never leaves it", () => {

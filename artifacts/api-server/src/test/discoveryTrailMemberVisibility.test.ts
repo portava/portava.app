@@ -80,6 +80,8 @@ function makeDb(seed: Record<string, Row[]>, erroring: string[] = []) {
     profiles: PEOPLE.map((id) => ({ id, account_status: "active" })),
     ...seed,
   };
+  tables.discovery_places = tables.discovery_places!.map(row => ({ status: 'active', ...row }));
+  tables.places = tables.places!.map(row => ({ status: 'active', moderation_status: 'visible', merged_into_place_id: null, ...row }));
   const broken = new Set(erroring);
   const reads: string[] = [];
   let n = 0;
@@ -132,7 +134,7 @@ function makeDb(seed: Record<string, Row[]>, erroring: string[] = []) {
         return w;
       },
       then(res: (r: any) => any, rej?: (e: any) => any) {
-        return Promise.resolve(broken.has(table) ? fail() : { data: rows(), error: null }).then(res, rej);
+        return Promise.resolve(broken.has(table) ? fail() : { data: rows(), error: null, count: store().filter(row => filters.every(filter => filter(row))).length }).then(res, rej);
       },
     };
     return b;
@@ -434,6 +436,7 @@ describe("C — no public number counts a member the viewer is not served", () =
         member("m-pl", { source_type: "place", source_id: PLACE, contributor_id: null, created_at: ago(9 * 86_400_000) }),
         member("m-e", { created_at: ago(9 * 86_400_000) }),
       ],
+      discovery_places: [{ id: PLACE, status: "active", submitted_by: null }],
       events: [hidden()],
     });
     _setTestClient(db, true);
@@ -448,6 +451,7 @@ describe("C — no public number counts a member the viewer is not served", () =
         member("m-pl", { source_type: "place", source_id: PLACE, contributor_id: null, created_at: ago(30 * 86_400_000) }),
         member("m-e", { created_at: ago(60_000) }),
       ],
+      discovery_places: [{ id: PLACE, status: "active", submitted_by: null }],
       events: [hidden()],
     });
     _setTestClient(db, true);
@@ -482,6 +486,7 @@ describe("C — no public number counts a member the viewer is not served", () =
         member("m-pl", { source_type: "place", source_id: PLACE, contributor_id: null }),
         member("m-e"),
       ],
+      discovery_places: [{ id: PLACE, status: "active", submitted_by: null }],
       events: [hidden()], rank_events: surge,
     });
     _setTestClient(db, true);

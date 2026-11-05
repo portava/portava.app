@@ -1,73 +1,13 @@
-/**
- * Telegraph §7 — receipts, and unsend-before-seen.
- *
- *   §7.3 "For direct chats, show Sent/Delivered/Seen. For groups, derive
- *         'Seen by N' and optionally list viewers when policy allows. Do not
- *         create permanent row-per-message-per-user receipt explosions."
- *   §7.4 "A sender may unsend only while no eligible recipient has seen the
- *         message. In a group, one recipient seeing the message closes the
- *         unseen-unsend window for everyone. The server resolves read-vs-unsend
- *         races transactionally."
- *
- * ── WHAT §7.4's ALGORITHM MAPS ONTO, AND WHAT IT DOES NOT ───────────────────
- * §7.4 is written against a schema this tree does not have:
- *
- *     assert maxRecipientSeenSequence < message.sequence
- *     set lifecycle = UNSENT
- *
- * There is no `sequence` column and no `lifecycle` column on `public.messages`
- * (baseline 20260819: id, thread_id, sender_id, body, …, edited_at, deleted_at,
- * msg_type, subtype, …). What EXISTS is `message_thread_members.last_read_at`,
- * a per-member timestamp, and `messages.created_at`. So the assertion becomes:
- *
- *     max(other active members' last_read_at) < message.created_at
- *
- * That is a faithful translation of the RULE — ordering by time instead of by
- * sequence — and it needs no migration, which is why the permission half of
- * §7.4 can be true on every deployment of this tree.
- *
- * The two halves §7.4 asks for that this translation does NOT deliver are
- * stated here rather than left to be discovered:
- *
- *   1. THERE IS NO `UNSENT` LIFECYCLE STATE. An unsent message is a tombstone —
- *      `deleted_at` set, `body` blanked — which is exactly what a delete
- *      produces. Nothing distinguishes them in storage because no column can
- *      hold the distinction. §7.1's six-state lifecycle stays unbuilt.
- *   2. "REMOVE FROM NORMAL RETRIEVAL" IS NOT ACHIEVED. The existing readers
- *      return a deleted row as a redacted slot, so an unsend leaves a visible
- *      gap rather than nothing. Changing that is a change to every reader, not
- *      to this file.
- *
- * ── THE RACE, AND HOW IT IS CLOSED NOW ──────────────────────────────────────
- * §7.4 says the server resolves read-vs-unsend races transactionally, and this
- * file used to say that was impossible here: PostgREST gives no transaction
- * across two tables and no `SELECT … FOR UPDATE`, so a lock would need a
- * SECURITY DEFINER function, "i.e. a migration no database has".
- *
- * That migration exists. 2325 created
- * `telegraph_unsend_message_before_seen`, which takes FOR UPDATE locks on the
- * recipient receipt rows BEFORE reading them, and 3000 made it write the whole
- * row. Nothing called it: two route handlers each did their own read-then-write
- * instead, and each produced a different row. `unsendBeforeSeen` below is now
- * the only path, for both of them.
- *
- * So the COMPENSATION scheme this file used to carry is gone, and with it the
- * two outcomes that only existed because of it — a window in which a recipient
- * could fetch a tombstone that was about to be put back, and the `unverifiable`
- * refusal for when the re-read failed. The lock has no window to be unsure
- * about. `detectReadRace` and `restorePatch` were its two halves and are
- * deleted rather than left where a future handler could reach for them.
- *
- * `planUnsend` stays, and is no longer a decision: it is the same rule stated
- * in TypeScript, over data a caller already has, for the places that need to
- * say WHY before calling — and it is what the §7.3 receipts endpoint's own
- * vocabulary is built from. The authoritative answer is the function's.
- */
+/** Telegraph receipts and authoritative unsend. Sequence watermarks are used
+ * after migration 4005's explicit cutover; older deployments retain the
+ * timestamp contract. The database function serializes receipt/unsend writes. */
 
 /** One row of `message_thread_members`, as the receipt logic needs it. */
 export interface ReceiptMember {
   user_id: string;
   last_read_at: string | null;
+  delivered_sequence?: number | string | null;
+  seen_sequence?: number | string | null;
   left_at?: string | null;
 }
 
@@ -77,6 +17,7 @@ export interface LifecycleMessage {
   thread_id: string;
   sender_id: string;
   created_at: string;
+  sequence?: number | string | null;
   deleted_at?: string | null;
   /**
    * Set by the unsend function alongside `deleted_at`, never on its own. It is
@@ -101,10 +42,10 @@ export interface LifecycleMessage {
  */
 export interface MessageReceipt {
   messageId: string;
-  /** SENT or SEEN. There is no DELIVERED to report. */
-  status: "SENT" | "SEEN";
-  delivered: null;
-  deliveredUnavailableReason: string;
+  /** DELIVERED requires a durable device ACK. */
+  status: "SENT" | "DELIVERED" | "SEEN";
+  delivered: boolean | null;
+  deliveredUnavailableReason: string | null;
   /** How many eligible recipients have seen it. §7.3's "Seen by N". */
   seenBy: number;
   /** The eligible recipients, for a direct chat or a policy that allows it. */
@@ -149,6 +90,7 @@ export function seenByRecipients(
   if (Number.isNaN(createdMs)) return [];
   return eligibleRecipients(members, message.sender_id)
     .filter((m) => {
+      if (message.sequence != null && 'seen_sequence' in m) return BigInt(m.seen_sequence ?? 0) >= BigInt(message.sequence);
       if (!m.last_read_at) return false;
       const readMs = Date.parse(m.last_read_at);
       return !Number.isNaN(readMs) && readMs >= createdMs;
@@ -159,11 +101,14 @@ export function seenByRecipients(
 /** §7.3's receipt for one message. */
 export function receiptFor(message: LifecycleMessage, members: ReceiptMember[]): MessageReceipt {
   const seen = seenByRecipients(message, members);
+  const recipients = eligibleRecipients(members, message.sender_id);
+  const known = message.sequence != null && recipients.every(m => 'delivered_sequence' in m);
+  const delivered = known ? recipients.some(m => BigInt(m.delivered_sequence ?? 0) >= BigInt(message.sequence!)) : null;
   return {
     messageId: message.id,
-    status: seen.length > 0 ? "SEEN" : "SENT",
-    delivered: null,
-    deliveredUnavailableReason: DELIVERED_UNAVAILABLE,
+    status: seen.length > 0 ? "SEEN" : delivered ? "DELIVERED" : "SENT",
+    delivered,
+    deliveredUnavailableReason: known ? null : DELIVERED_UNAVAILABLE,
     seenBy: seen.length,
     seenByUserIds: seen,
     recipientCount: eligibleRecipients(members, message.sender_id).length,

@@ -104,7 +104,9 @@ function makeDb(
     // census-discovery §61: attach now requires the content to EXIST. The
     // place ids these stories attach are canonical `places` rows here, one of
     // the two tables a place member may name.
-    places: [PLACE_A, PLACE_B, PLACE_E2E].map((id) => ({ id })),
+    places: [...new Set([PLACE_A, PLACE_B, PLACE_E2E, P_HOT, P_COLD, P_THIRD,
+      ...Array.from({ length: 5 }, (_, i) => `33333333-3333-4333-8333-33333333330${i}`)])]
+      .map((id) => ({ id, status: 'active', moderation_status: 'visible', merged_into_place_id: null })),
     ...seed,
   };
   const missing = new Set(missingTables);

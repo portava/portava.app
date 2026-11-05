@@ -1,40 +1,4 @@
-/**
- * §2 "save" — the Wall's bookmark writes to the CANONICAL save store.
- *
- * It did not. `SocialActionRow` held a `React.useState(false)`, flipped it, and
- * fired analytics; nothing was written anywhere, so the bookmark reset the
- * moment the row unmounted — which, in a virtualised feed, is as soon as you
- * scroll past it. One of §2's eight named real-world actions was an animation.
- *
- * WHAT IS PROVEN HERE
- *   • the initial state comes from the SERVER (`projection.viewerSaved`), not
- *     from component state, so a save survives a remount;
- *   • pressing writes through `services/collections` → the canonical
- *     `post_saves` endpoint, with the CANONICAL object id;
- *   • un-saving writes the delete, not a second save;
- *   • an object type with no canonical post save is never written for;
- *   • a failed write does not leave the icon claiming a save the server does
- *     not hold.
- *
- * ONE PRESS, ONE FILE. The renderer's press budget (see
- * .agents/memory/rntl-react19-renderer-budget.md) allows ~2 reliable presses per
- * file and ONE press-derived visual commit, so the press scenario lives here on
- * its own and everything else is asserted through the exported
- * `persistWallSave`, which needs no renderer at all.
- *
- * MUTATION PROOF (each verified: revert → RED, restore → GREEN)
- *   • restore `React.useState(false)` as the initial save state AND remove the
- *     `viewerSaved` re-sync effect → the server-truth test RED. (Either alone
- *     leaves the other holding: the initial value and the effect are two paths
- *     to the same server fact, which is why a remount cannot lose it.)
- *   • delete the `persistWallSave` call from `toggleSave` → the write-through
- *     test RED.
- *   • always call `saveItem` (never `unsaveItem`) → the unsave test RED.
- *   • drop the POST_SAVEABLE_TYPES guard → the no-write-for-a-buddy test RED.
- *   • stop excluding `save` from `ContextualActionChips` → the one-Save test RED
- *     (a second Save chip would appear on every post in the feed).
- *   • drop the `if (!ok) setSaved(!next)` revert → the failed-write test RED.
- */
+/** Wall saves use the shared collection picker and confirm canonical writes. */
 
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
@@ -58,7 +22,13 @@ jest.mock('../../../services/wallApi.ts', () => ({
 jest.mock('../../../../../services/collections.ts', () => ({
   saveItem: jest.fn(async () => true),
   unsaveItem: jest.fn(async () => true),
+  readCollections: jest.fn(async () => ({ ok: true, data: [{ id: 'food', name: 'Food', itemCount: 0 }] })),
+  checkSaved: jest.fn(async () => ({ saved: false, collectionIds: [] })),
 }));
+
+// NOTE: rank outcomes are captured to ensure Wall never impersonates Pulse.
+jest.mock('../../../../../hooks/useRankOutcome.ts', () => ({ fireRankOutcome: jest.fn() }));
+import { fireRankOutcome } from '../../../../../hooks/useRankOutcome.ts';
 
 import { saveItem, unsaveItem } from '../../../../../services/collections.ts';
 import { ContextualActionChips, SocialActionRow, persistWallSave } from '../wallItemShared.tsx';
@@ -151,7 +121,7 @@ describe('§7/§35 — a server `save` action does not become a second Save chip
     );
     // Exactly one Save affordance, and it is the bookmark — not a chip row that
     // would now appear on every post in the feed.
-    expect(view.getAllByLabelText('Save')).toHaveLength(1);
+    expect(view.getAllByLabelText('Save to collection')).toHaveLength(1);
   });
 });
 
@@ -162,14 +132,18 @@ describe('SocialActionRow — the bookmark is server truth', () => {
     // Server says "already saved" → the control says Saved on first paint,
     // with no fetch and no component-state guess.
     const saved = await render(<SocialActionRow projection={projection({ viewerSaved: true })} />);
-    expect(saved.getByLabelText('Saved')).toBeTruthy();
-    expect(saved.queryByLabelText('Save')).toBeNull();
+    expect(saved.getByLabelText('Manage saved collections')).toBeTruthy();
+    expect(saved.queryByLabelText('Save to collection')).toBeNull();
 
     // A second, unsaved object — and the file's ONE press.
     const view = await render(<SocialActionRow projection={projection({ viewerSaved: false })} />);
-    fireEvent.press(view.getByLabelText('Save'));
+    fireEvent.press(view.getByLabelText('Save to collection'));
 
-    await waitFor(() => expect(saveMock).toHaveBeenCalledWith('post', 'post-1'));
+    expect(saveMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(view.getByLabelText('Save to Food')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('Save to Food'));
+    await waitFor(() => expect(saveMock).toHaveBeenCalledWith('post', 'post-1', 'food'));
+    expect(fireRankOutcome).not.toHaveBeenCalled();
     expect(unsaveMock).not.toHaveBeenCalled();
   });
 });

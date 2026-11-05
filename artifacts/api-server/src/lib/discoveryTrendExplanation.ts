@@ -49,6 +49,7 @@
  * degrades this way, with the reason stated.
  */
 import { isMissingColumnError, isMissingSchemaError } from "./capability/schemaCapability.js";
+import { governDiscoveryPlaces, readDiscoveryPlaceFacts } from './discoveryPlaceGovernance.js';
 import { PRIVACY_THRESHOLD_V1 } from "./intelContracts.js";
 import { meetsKAnonymity } from "./kAnonymity.js";
 import { MOMENTUM_CACHE_TTL_MS } from "./discoveryLocalMomentum.js";
@@ -309,7 +310,11 @@ export async function readTrendSnapshot(sc: any, itemIds: readonly string[]): Pr
       .eq("computed_at", top["computed_at"])
       .in("place_id", [...new Set(itemIds)]);
     if (body?.error) return failureOf(body.error);
-    const snapRows = await applyPlaceTrendReviewsToRows(sc, Array.isArray(body?.data) ? (body.data as TrendSnapshotRow[]) : []);  /* §93 (H-W10T-1): a suppressed place reads `unknown`; an unread review drops the row */ if (run.modelVersion === TREND_STATE_MODEL_VERSION_V2) return { ok: true, run, rows: snapRows, areas: await readAreaRows(sc, top["computed_at"] as string, snapRows) }; return { ok: true, run, rows: snapRows };
+    const governed = await governDiscoveryPlaces(sc, Array.isArray(body?.data) ? (body.data as TrendSnapshotRow[]) : [], row => row.place_id);
+    if (!governed.readable) return { ok: false, reason: 'trend_read_failed' };
+    const snapRows = await applyPlaceTrendReviewsToRows(sc, governed.rows);
+    if (run.modelVersion === TREND_STATE_MODEL_VERSION_V2) return { ok: true, run, rows: snapRows, areas: await readAreaRows(sc, top["computed_at"] as string, snapRows) };
+    return { ok: true, run, rows: snapRows };
   } catch {
     // resolves-not-throws-ok: a throw is an unknown answer, stated as one.
     return { ok: false, reason: "trend_read_failed" };
@@ -381,7 +386,9 @@ async function readAreaRows(sc: any, computedAt: string, rows: readonly TrendSna
     const { data, error } = await sc.from("area_momentum")
       .select("cell_key, cell_label, trend_state, driver, recent_unique_travelers, window_unique_travelers")
       .eq("source_surface", "discovery").eq("computed_at", computedAt).in("cell_key", cells);
-    return error || !Array.isArray(data) ? [] : (data as TrendAreaRow[]);
+    if (error || !Array.isArray(data)) return [];
+    const clear = await zoneClearCells(sc, computedAt, null, cells);
+    return clear === null ? [] : (data as TrendAreaRow[]).filter(row => clear.has(row.cell_key));
   } catch {
     // resolves-not-throws-ok: no neighbourhood is named, which is the safe direction.
     return [];
@@ -455,7 +462,9 @@ export async function readLocatedRun(sc: any, destination: string, states: reado
       .select(`${SNAPSHOT_COLUMNS}, driver, lifecycle_state, cell_key, velocity`)
       .eq("source_surface", "discovery").eq("computed_at", head.run.computedAt).eq("city", destination).in("trend_state", [...states]);
     if (error) return failureOf(error);
-    return { ok: true, run: head.run, unavailable: null, rows: await applyPlaceTrendReviewsToRows(sc, Array.isArray(data) ? (data as LocatedRow[]) : []) };  // §93 (H-W10T-1)
+    const governed = await governDiscoveryPlaces(sc, Array.isArray(data) ? (data as LocatedRow[]) : [], row => row.place_id);
+    if (!governed.readable) return { ok: false, reason: 'trend_read_failed' };
+    return { ok: true, run: head.run, unavailable: null, rows: await applyPlaceTrendReviewsToRows(sc, governed.rows) };
   } catch {
     // resolves-not-throws-ok: a throw is an unknown answer, stated as one.
     return { ok: false, reason: "trend_read_failed" };
@@ -480,9 +489,8 @@ export async function eligibleListPlaces(sc: any, viewerId: string, placeIds: re
   const out = new Map<string, EligiblePlace>();
   if (ids.length === 0) return out;
   try {
-    const { data, error } = await sc.from("discovery_places")
-      .select("id, name, status, submitted_by, lat, lng, category, place_type").in("id", ids).eq("status", "active");
-    if (error || !Array.isArray(data)) return null;
+    const data = await readDiscoveryPlaceFacts(sc, ids);
+    if (data === null) return null;
     const blocked = await fetchBlockedSet(sc, viewerId);
     const inactive = await inactiveSubmitterIds(sc, (data as Array<{ submitted_by?: unknown }>).map((r) => r.submitted_by));
     if (blocked === null || inactive === null) return null;
@@ -642,7 +650,7 @@ export function zoneAllowsPosition(
  * so in a real run every cell with a reading has places behind it.
  */
 async function zoneClearCells(
-  sc: any, computedAt: string, destination: string, cellKeys: readonly string[],
+  sc: any, computedAt: string, destination: string | null, cellKeys: readonly string[],
 ): Promise<Set<string> | null> {
   const wanted = new Set(cellKeys);
   if (wanted.size === 0) return new Set<string>();
@@ -651,8 +659,10 @@ async function zoneClearCells(
     // from free text, and a comma or a quote in it would carry a PostgREST
     // filter delimiter into the expression. The run and the (validated)
     // destination bound the read; the cells are matched in process.
-    const { data, error, count } = await sc.from("place_momentum").select("place_id, cell_key", { count: "exact" })
-      .eq("source_surface", "discovery").eq("computed_at", computedAt).eq("city", destination);
+    let query = sc.from("place_momentum").select("place_id, cell_key", { count: "exact" })
+      .eq("source_surface", "discovery").eq("computed_at", computedAt);
+    if (destination !== null) query = query.eq('city', destination);
+    const { data, error, count } = await query;
     if (error || !Array.isArray(data) || count !== data.length) return null;
     const cellsOf = new Map<string, string[]>();   // place key → the wanted cells it fed
     const withheld = new Set<string>();
@@ -668,15 +678,17 @@ async function zoneClearCells(
     const accounted = new Set<string>([...cellsOf.values()].flat());
     const ids = [...cellsOf.keys()];
     if (ids.length === 0) return new Set<string>();   // nothing accounted for: nothing cleared
-    const places = await sc.from("discovery_places").select("id, lat, lng, name").in("id", ids);
-    if (places?.error || !Array.isArray(places?.data)) return null;
+    // An aggregate can contain historical business states. Every contributing
+    // position still needs current moderation and protected-zone clearance.
+    const places = await readDiscoveryPlaceFacts(sc, ids, { includeInactive: true });
+    if (places === null) return null;
     const zones = await loadActiveProtectedZones(sc);
     // An unreadable policy is a failed read, stated as one. The place lists
     // drop positioned places silently because a list of places can be short;
     // a pulse of cells cannot say "this one is missing", so it says 503.
     if (zones === null) return null;
     const cleared = new Set<string>();
-    for (const r of places.data as Array<Record<string, unknown>>) {
+    for (const r of places) {
       if (zoneAllowsPosition(String(r["id"]), String(r["name"] ?? r["id"]), r["lat"], r["lng"], zones)) {
         cleared.add(String(r["id"]).toLowerCase());
       }

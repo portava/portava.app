@@ -201,30 +201,65 @@ describe('§6.3 / §11.3 — GIFs and motion', () => {
     await render(
       <TypedMessageRenderer
         msgType="gif"
-        body={env('GIF', { url: 'https://g/x.gif', stillUrl: 'https://g/x.jpg', provider: 'giphy' })}
+        body={env('GIF', { url: 'post-media/u/x.gif', stillUrl: 'post-media/u/x.jpg', provider: 'giphy' })}
         mine={false}
       />,
     );
     expect(screen.getByTestId('telegraph-kind-gif-still')).toBeTruthy();
-    expect(screen.getByText('Still frame — reduced motion is on')).toBeTruthy();
+    expect(screen.getByText('Reduced motion is on')).toBeTruthy();
   });
 
   it('a GIF shows its still frame under data saver, and says why', async () => {
     await render(
       <TypedMessageRenderer
         msgType="gif"
-        body={env('GIF', { url: 'https://g/x.gif', stillUrl: 'https://g/x.jpg' })}
+        body={env('GIF', { url: 'post-media/u/x.gif', stillUrl: 'post-media/u/x.jpg' })}
         mine={false}
         dataSaver
       />,
     );
-    expect(screen.getByText('Still frame — data saver is on')).toBeTruthy();
+    expect(screen.getByText('Data saver is on')).toBeTruthy();
   });
 
   it('with neither on, no still-frame notice appears', async () => {
     await render(
-      <TypedMessageRenderer msgType="gif" body={env('GIF', { url: 'https://g/x.gif' })} mine={false} />,
+      <TypedMessageRenderer msgType="gif" body={env('GIF', { url: 'post-media/u/x.gif' })} mine={false} />,
     );
     expect(screen.queryByTestId('telegraph-kind-gif-still')).toBeNull();
   });
+});
+
+it('photo albums can open and close originals and reveal every item beyond the first four', async () => {
+  const assets = Array.from({ length: 5 }, (_, index) => ({ url: `post-media/user/photo-${index}.jpg`, thumbnailUrl: `post-media/user/thumb-${index}.jpg`, mediaType: 'image' }));
+  await render(<TypedMessageRenderer msgType="media_album" body={env('MEDIA_ALBUM', { assets })} mine={false} />);
+  expect(screen.getAllByLabelText('View photo full screen')).toHaveLength(4);
+  await fireEvent.press(screen.getAllByLabelText('View photo full screen')[0]); expect(screen.getByText('1 of 5')).toBeTruthy();
+  await fireEvent.press(screen.getByLabelText('Close full-screen photo'));
+  await fireEvent.press(screen.getByLabelText('Show all 5 album items')); expect(screen.getAllByLabelText('View photo full screen')).toHaveLength(5);
+  await fireEvent.press(screen.getAllByLabelText('View photo full screen')[4]); expect(screen.getByText('5 of 5')).toBeTruthy();
+});
+
+it('a GIF opens the still source when reduced motion is enabled', async () => {
+  mockedReduceMotion.mockReturnValue(true);
+  await render(<TypedMessageRenderer msgType="gif" body={env('GIF', { url: 'post-media/user/animated.gif', stillUrl: 'post-media/user/still.jpg' })} mine={false} />);
+  await fireEvent.press(screen.getByLabelText('View photo full screen')); expect(screen.getByTestId('fullscreen-photo-canvas')).toBeTruthy();
+  await fireEvent.press(screen.getByLabelText('Close full-screen photo')); expect(screen.getByTestId('telegraph-kind-gif-still')).toBeTruthy();
+});
+
+
+it('reduced motion with no still never loads the animation until Play GIF is pressed', async () => {
+  mockedReduceMotion.mockReturnValue(true);
+  await render(<TypedMessageRenderer msgType="gif" body={env('GIF', {url:'post-media/u/motion.gif'})} mine={false} />);
+  expect(screen.queryByLabelText('View photo full screen')).toBeNull();
+  expect(screen.getByText('GIF paused')).toBeTruthy();
+  await fireEvent.press(screen.getByLabelText('Play GIF'));
+  expect(screen.getByLabelText('View photo full screen')).toBeTruthy();
+  await fireEvent.press(screen.getByLabelText('Pause GIF'));
+  expect(screen.queryByLabelText('View photo full screen')).toBeNull();
+});
+
+it('data saver rejects an animated or same-file still instead of claiming it is static', async () => {
+  await render(<TypedMessageRenderer msgType="gif" body={env('GIF', {url:'post-media/u/motion.gif',stillUrl:'post-media/u/motion.gif'})} mine={false} dataSaver />);
+  expect(screen.queryByLabelText('View photo full screen')).toBeNull();
+  expect(screen.getByLabelText('Play GIF')).toBeTruthy();
 });

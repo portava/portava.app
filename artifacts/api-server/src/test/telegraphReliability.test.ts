@@ -787,6 +787,31 @@ describe("T233 reconnect resume by sequence (telegraph_sequence_resume_enabled +
     assert.equal(r.body.resume, undefined);
   });
 
+  it("canonical pages use sequence cursors even when timestamps tie", async () => {
+    state.flags = { ...ON_ALL, telegraph_sequence_state_enabled: true };
+    seedConversation(DM, 3, [OTHER]);
+    for (const message of state.messages) message.created_at = "2026-11-05T01:00:00Z";
+    const first = await call("GET", `/threads/${DM}/messages?withSequence=1&limit=2`, ME);
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    assert.deepEqual(first.body.messages.map((m: any) => m.sequence), [3, 2]);
+    assert.equal(first.body.messages[0].deliveryAcknowledgementRequired, true);
+    const next = await call("GET", `/threads/${DM}/messages?withSequence=1&beforeSequence=2`, ME);
+    assert.equal(next.status, 200, JSON.stringify(next.body));
+    assert.deepEqual(next.body.messages.map((m: any) => m.sequence), [1]);
+  });
+
+  it("ciphertext and client ids survive reads, while tombstones redact ciphertext", async () => {
+    state.flags = { ...ON_ALL, telegraph_sequence_state_enabled: true };
+    seedConversation(DM, 2, [OTHER]);
+    Object.assign(state.messages[0], {ciphertext:'encrypted-a', client_message_id:'client-a'});
+    Object.assign(state.messages[1], {ciphertext:'encrypted-b', client_message_id:'client-b', deleted_at:'2026-11-05T01:00:00Z'});
+    const response = await call("GET", `/threads/${DM}/messages?withSequence=1`, ME);
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.messages[0].ciphertext, null);
+    assert.equal(response.body.messages[1].ciphertext, 'encrypted-a');
+    assert.equal(response.body.messages[1].clientId, 'client-a');
+  });
+
   for (const [label, flags] of [
     ["resume flag OFF", { telegraph_message_kernel_enabled: true }],
     ["kernel flag OFF", { telegraph_sequence_resume_enabled: true }],

@@ -51,6 +51,7 @@
  * All privacy judgement lives in features/map/presence/*. Nothing here
  * re-derives a ceiling, a decay stage or an identity rule.
  */
+import { currentDiscoveryScope, isCurrentDiscoveryScope } from './discoveryViewerScope.ts';
 import {
   PROXIMITY_BUCKETS,
   PROXIMITY_BUCKET_RANGE,
@@ -193,12 +194,16 @@ interface CallOptions {
 }
 
 async function call<T>(opts: CallOptions): Promise<LocateFriendsResult<T>> {
+  const owner = currentDiscoveryScope();
+  const current = () => isCurrentDiscoveryScope(owner) && !opts.signal?.aborted;
+  if (!current()) return { ok: false, error: 'aborted' };
+  try {
   const t = await resolveTransport(opts.transport);
   if (!t.baseUrl) return { ok: false, error: 'API is not configured' };
   const token = await t.token();
+  if (!current()) return { ok: false, error: 'aborted' };
   if (!token) return { ok: false, error: 'Not authenticated' };
 
-  try {
     const res = await t.fetch(`${t.baseUrl}/api/locate-friends${opts.path}`, {
       method: opts.method,
       headers: {
@@ -208,6 +213,7 @@ async function call<T>(opts: CallOptions): Promise<LocateFriendsResult<T>> {
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
       signal: opts.signal,
     });
+    if (!current()) return { ok: false, error: 'aborted' };
     if (!res.ok) {
       const detail = await res.json().catch(() => ({}) as any);
       return {
@@ -215,7 +221,8 @@ async function call<T>(opts: CallOptions): Promise<LocateFriendsResult<T>> {
         error: (detail as any)?.message ?? `Request failed (${res.status})`,
       };
     }
-    return { ok: true, data: (await res.json()) as T };
+    const data = (await res.json()) as T;
+    return current() ? { ok: true, data } : { ok: false, error: 'aborted' };
   } catch (err: any) {
     if (err?.name === 'AbortError') return { ok: false, error: 'aborted' };
     return { ok: false, error: err?.message ?? 'Network error' };
@@ -604,6 +611,7 @@ export interface PublishOutcome {
 }
 
 export interface PublishPositionInput extends Omit<PublishDecisionInput, 'now'> {
+  signal?: AbortSignal;
   sessionId: string;
   now?: number;
 }
@@ -637,7 +645,7 @@ export async function publishLocateFriendsPosition(
   const res = await call<any>({
     method: 'POST',
     path: `/sessions/${encodeURIComponent(input.sessionId)}/position`,
-    transport,
+    transport, signal: input.signal,
     body: {
       rung: decision.rung,
       precision: decision.precision,
@@ -1081,6 +1089,10 @@ export function createLocateFriendsSync(
   const publishMs = options.publishIntervalMs ?? LOCATE_FRIENDS_PUBLISH_INTERVAL_MS;
 
   let running = false;
+  let stopped = false;
+  let generation = 0;
+  let reading: AbortController | null = null;
+  let publishing: AbortController | null = null;
   let readHandle: any = null;
   let publishHandle: any = null;
   let state: LocateFriendsLiveState = { ...IDLE_LIVE_STATE, members: [] };
@@ -1092,6 +1104,10 @@ export function createLocateFriendsSync(
 
   function stop(): void {
     running = false;
+    stopped = true;
+    generation += 1;
+    reading?.abort(); reading = null;
+    publishing?.abort(); publishing = null;
     if (readHandle !== null) {
       clearIntervalImpl(readHandle);
       readHandle = null;
@@ -1103,7 +1119,14 @@ export function createLocateFriendsSync(
   }
 
   async function refresh(): Promise<void> {
-    const res = await readLocateFriendsSession(options.sessionId, options.transport);
+    if (reading || stopped) return;
+    const expected = generation;
+    const request = new AbortController(); reading = request;
+    let res: Awaited<ReturnType<typeof readLocateFriendsSession>>;
+    try { res = await readLocateFriendsSession(options.sessionId, options.transport, request.signal); }
+    catch { res = { ok: false, error: 'Could not refresh the group. Please try again.' }; }
+    finally { if (reading === request) reading = null; }
+    if (expected !== generation || request.signal.aborted) return;
 
     if (!res.ok) {
       // RULE 4. The members already on screen stay on screen; the panel is told
@@ -1153,15 +1176,18 @@ export function createLocateFriendsSync(
   }
 
   async function publishOnce(): Promise<PublishOutcome | null> {
-    if (!options.sampleSignal) return null;
+    if (!running || publishing || !options.sampleSignal) return null;
+    const expected = generation;
+    const request = new AbortController(); publishing = request;
+    try {
     const signal = await options.sampleSignal();
     if (!signal) return null;
     // The screen may have gone away while the sampler was awaiting a fix.
-    if (!running) return null;
+    if (!running || expected !== generation || request.signal.aborted) return null;
 
     const res = await publishLocateFriendsPosition(
       {
-        sessionId: options.sessionId,
+        sessionId: options.sessionId, signal: request.signal,
         rung: signal.rung,
         observedAt: signal.observedAt,
         position: signal.position ?? null,
@@ -1176,13 +1202,19 @@ export function createLocateFriendsSync(
       },
       options.transport,
     );
-    return res.ok ? res.data : null;
+    return expected === generation && !request.signal.aborted && res.ok ? res.data : null;
+    } catch { return null; }
+    finally { if (publishing === request) publishing = null; }
   }
 
   return {
     start(): void {
       if (running) return;
       running = true;
+      stopped = false;
+      generation += 1;
+      reading?.abort(); reading = null;
+      publishing?.abort(); publishing = null;
       void refresh();
       readHandle = setIntervalImpl(() => {
         if (!running) return;

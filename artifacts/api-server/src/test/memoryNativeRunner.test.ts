@@ -15,6 +15,9 @@ const manifests = [
   { profile: "review", file: "src/test/reportedReviewRemoval.native.test.ts", name: "reported-review audited removal: PostgreSQL 17", variable: "PORTAVA_TEST_POSTGRES_BIN" },
   { profile: "media-translation", file: "src/test/mediaCaptionTranslationHardDelete.native.test.ts", name: "Caption translation retained hard-delete recovery", variable: "PORTAVA_TEST_POSTGRES_BIN" },
   { profile: "account-media", file: "src/test/accountDeletionMediaBoundary.native.test.ts", name: "Account Media deletion native source barrier", variable: "PORTAVA_TEST_POSTGRES_BIN" },
+  { profile: "content", file: "src/test/reportedContentRemoval.native.test.ts", name: "reported-content audited removal: PostgreSQL 17", variable: "PORTAVA_TEST_POSTGRES_BIN" },
+  { profile: "sensing", file: "src/test/sensingAtomicAdmission.native.test.ts", name: "Sensing atomic admission: real PostgreSQL 17", variable: "PORTAVA_TEST_POSTGRES_BIN" },
+  { profile: "place", file: "src/test/placeGovernance.native.test.ts", name: "canonical place governance: real PostgreSQL17", variable: "PORTAVA_TEST_POSTGRES_BIN" },
 ];
 const files = manifests.slice(0, 4).map((manifest) => manifest.file);
 const imports = 'import assert from "node:assert/strict"; import { describe, it } from "node:test";';
@@ -124,7 +127,9 @@ describe("Memory native runner fail-closed executable controls", () => {
   it("registers dedicated commands with exact literal paths and runner controls", async () => {
     const { scripts } = JSON.parse(await readFile(join(apiRoot, "package.json"), "utf8"));
     for (const { profile, file } of manifests) {
-      const command = profile === "review" ? "test:reported-review-native"
+      const command = profile === "place" ? "test:place-governance-native" : profile === "review" ? "test:reported-review-native"
+        : profile === "content" ? "test:reported-content-native"
+        : profile === "sensing" ? "test:sensing-privacy-native"
         : profile === "media-translation" ? "test:media-translation-native"
           : profile === "account-media" ? "test:account-media-native" : `test:memory-${profile}-native`;
       assert.equal(scripts[command], `node scripts/run-memory-native-tests.mjs ${profile} ${file}`);

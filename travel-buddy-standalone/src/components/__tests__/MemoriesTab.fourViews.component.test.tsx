@@ -193,3 +193,12 @@ it('Map states how many memories it cannot place instead of dropping them', asyn
   expect(note).toBeTruthy();
   expect(screen.getByText(/1 memory is not on the map/)).toBeTruthy();
 });
+
+it('adds fullscreen photo viewing while preserving the Memory photo edit action', async () => {
+  await render(<MemoriesTab memories={[mem({ title: 'Photo memory', photoUrl: 'https://example.com/original.jpg', mediaType: 'image' })]} onReload={jest.fn()} />);
+  await fireEvent.press(screen.getByLabelText('View photo full screen'));
+  expect(screen.getByTestId('fullscreen-photo-canvas')).toBeTruthy(); expect(screen.queryByText('Edit Memory')).toBeNull();
+  await fireEvent.press(screen.getByLabelText('Close full-screen photo'));
+  expect(screen.queryByTestId('fullscreen-photo-canvas')).toBeNull();
+  await fireEvent.press(screen.getByLabelText('Edit Memory photo')); expect(screen.getByText('Edit Memory')).toBeTruthy();
+});

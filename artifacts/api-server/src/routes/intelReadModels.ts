@@ -1,3 +1,4 @@
+import { readCanonicalPlaceRow, readCanonicalPlaceVisibility } from "../lib/places/placeGovernance.js";
 /**
  * Intelligence Gathering — §19 read models (internal decision-support APIs).
  *
@@ -110,29 +111,14 @@ function stateSourceLabel(state: "live" | "emerging" | "typical" | "unknown"): s
  * and one not is strictly worse than neither resolving: it makes two endpoints
  * in the SAME file disagree about one experience.
  *
- * One hop, like loadPlaceGroup: `merged_into_place_id` names the survivor, and
- * a survivor is not itself merged away. Fail-SAFE in every other case — a
- * missing row or a failed read falls back to the requested id, which can only
- * under-serve (state 'unknown'); it can never invent a subject or widen what is
- * exposed, and every privacy/flag gate still lives wholly in the reader.
+ * Current visibility is checked before any stored Intel result or 304. Follow
+ * bounded merge chains; missing/withheld subjects are unavailable and failed
+ * catalog reads return 503. Neither condition may replay old place metadata.
  */
-async function resolveSurvivorSubjectId(sc: any, placeId: string): Promise<string> {
-  try {
-    const { data, error } = await sc
-      .from("places")
-      .select("merged_into_place_id")
-      .eq("id", placeId)
-      .maybeSingle();
-    if (error) {
-      logger.warn({ err: error, placeId }, "intel read model: merge resolution read failed; using the requested id");
-      return placeId;
-    }
-    const survivor = (data as any)?.merged_into_place_id;
-    return typeof survivor === "string" && survivor.length > 0 ? survivor : placeId;
-  } catch (err) {
-    logger.warn({ err, placeId }, "intel read model: merge resolution threw; using the requested id");
-    return placeId;
-  }
+async function resolveSurvivorSubjectId(sc: any, placeId: string, res:any): Promise<string|null> {
+  const group=await readCanonicalPlaceRow(sc,placeId);
+  if(!group.ok){sendError(res,group.reason==='not_found'?'not_found':'degraded_unavailable','Canonical subject unavailable');return null;}
+  return group.place.id;
 }
 
 // ── GET /v1/experiences/:id/live-state ────────────────────────────────────────
@@ -150,7 +136,8 @@ router.get("/v1/experiences/:id/live-state", asyncHandler(async (req, res) => {
   // Resolve a merged place id to its survivor FIRST — the place card does the
   // same before this very reader, and skipping it is the one way an alias that
   // adds no gates can still disagree with the card (see resolveSurvivorSubjectId).
-  const subjectId = await resolveSurvivorSubjectId(sc, id.data);
+  const subjectId = await resolveSurvivorSubjectId(sc, id.data,res);
+  if(!subjectId)return;
   // ONE call. Every gate (flags, kill switch, pilot promotion, privacy_eligible,
   // TTL) and the degradation order Live → Emerging → Typical → Unknown are the
   // reader's; this route adds none of its own and can therefore never disagree
@@ -235,7 +222,8 @@ router.get("/v1/experiences/:id/typical-patterns", asyncHandler(async (req, res)
   // endpoints in THIS file disagree about one experience: /live-state resolves
   // and answers state 'typical' WITH patterns, while /typical-patterns does not
   // resolve and answers []. One subject, one answer — resolve here too.
-  const subjectId = await resolveSurvivorSubjectId(sc, id.data);
+  const subjectId = await resolveSurvivorSubjectId(sc, id.data,res);
+  if(!subjectId)return;
 
   const { data, error } = await sc
     .from("intel_historical_patterns")
@@ -328,7 +316,10 @@ router.get("/v1/neighborhoods/:id/pulse", asyncHandler(async (req, res) => {
     .eq("neighborhood", neighborhood.data)
     .limit(MAX_NEIGHBORHOOD_PLACES);
   if (placeErr) { logger.warn({ err: placeErr }, "pulse: place read failed"); return sendError(res, "db_error", "place read failed"); }
-  const subjectIds = ((placeRows as any[]) ?? []).map((r) => String(r.id));
+  const requestedIds = ((placeRows as any[]) ?? []).map((r) => String(r.id));
+  const visibility=await readCanonicalPlaceVisibility(sc,requestedIds);
+  if(!visibility.ok){sendError(res,'degraded_unavailable');return;}
+  const subjectIds=requestedIds.filter(id=>visibility.visibleIds.has(id));
 
   let snapshots: PulseSnapshotInput[] = [];
   if (subjectIds.length > 0) {
@@ -401,7 +392,8 @@ router.get("/v1/intel/prompt-eligibility", asyncHandler(async (req, res) => {
   // open (no match ⇒ "not throttled" ⇒ a prompt we already earned the right to
   // suppress). Resolving here keeps eligibility answering about the same
   // experience the place card and /live-state answer about.
-  const canonicalSubjectId = await resolveSurvivorSubjectId(sc, subjectId.data);
+  const canonicalSubjectId = await resolveSurvivorSubjectId(sc, subjectId.data,res);
+  if(!canonicalSubjectId)return;
 
   // This actor's recent observations for this subject — the "recent prompt" signal.
   const { data: obsData, error: obsErr } = await sc

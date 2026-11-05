@@ -14,6 +14,7 @@
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import type { MessagingOwnerRequest } from './messagingOwnerRequest.ts';
 import {
   VIDEO_MAX_SIZE_BYTES,
   IMAGE_MAX_SIZE_BYTES,
@@ -150,7 +151,9 @@ export function validateMedia(
  * @param validateOpts  Surface-specific validation options (e.g. `{ surface: 'event' }`).
  *   When omitted, the legacy highlight limit (10 s) is applied for backward compatibility.
  */
-export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMediaOptions): Promise<MediaUploadResult> {
+export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMediaOptions, owner?: MessagingOwnerRequest): Promise<MediaUploadResult> {
+  const staleOwner = (): MediaUploadResult => ({ ok: false, url: null, mediaType: null, errorKind: 'unauthenticated', message: 'Your signed-in session changed. Reopen the uploader.' });
+  if (owner && !owner.isCurrent()) return staleOwner();
   if (!(_testConfiguredOverride ?? isSupabaseConfigured)) {
     return { ok: false, url: null, mediaType: null, errorKind: 'config_error', message: 'Backend not configured' };
   }
@@ -167,7 +170,10 @@ export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMed
   // Get a fresh bearer token (mirrors createPost / createTrip pattern).
   // _testTokenProvider bypasses supabase.auth in unit tests.
   let token: string | null;
-  if (_testTokenProvider) {
+  if (owner) {
+    const { messagingOwnerToken } = await import('./messagingOwnerRequest.ts');
+    token = await messagingOwnerToken(owner);
+  } else if (_testTokenProvider) {
     token = await _testTokenProvider();
   } else {
     token = await freshApiToken();
@@ -192,6 +198,7 @@ export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMed
   }
 
   // POST the raw binary to the API server — it uploads with service-role key.
+  if (owner && !owner.isCurrent()) return staleOwner();
   let apiRes: Response;
   try {
     apiRes = await fetch(`${base}/api/media/upload`, {
@@ -235,6 +242,7 @@ export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMed
   }
 
   const body = await apiRes.json().catch(() => ({}));
+  if (owner && !owner.isCurrent()) return staleOwner();
   const url: string | null = (body as any)?.url ?? null;
   if (!url) {
     return { ok: false, url: null, mediaType: null, errorKind: 'upload_failed', message: 'Upload succeeded but no URL returned' };
@@ -248,6 +256,8 @@ export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMed
   if (!thumbnailUrl && media.type === 'video') {
     thumbnailUrl = await extractAndUploadVideoThumbnail(media.uri, token, (body as any)?.path ?? null);
   }
+
+  if (owner && !owner.isCurrent()) return staleOwner();
 
   return {
     ok: true,

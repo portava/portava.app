@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Platform, useColorScheme } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Platform, useColorScheme, useWindowDimensions } from 'react-native';
 import Animated, { useAnimatedStyle, interpolate, useSharedValue, withTiming } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { BlurView } from 'expo-blur';
@@ -22,6 +22,8 @@ import { CreateHubSheet } from '../../src/components/create/CreateHubSheet';
 import { useLocationContext } from '../../src/context/LocationContext';
 import { getDiscoveryCategoryCountsBatch, getDiscoveryPlaces } from '../../src/services/discovery';
 import { LocationPermissionPrompt } from '../../src/components/LocationPermissionPrompt';
+import { floatingTabBarMetrics, FLOATING_TAB_BAR_MAX_FONT_SCALE } from '../../src/components/navigation/floatingTabBarGeometry.ts';
+import { isTabPathActive } from '../../src/navigation/tabPath.ts';
 
 const NAV_ITEMS = [
   { href: '/(tabs)/', label: 'Pulse', icon: Activity, match: ['/(tabs)', '/(tabs)/'] },
@@ -80,12 +82,15 @@ function DesktopSidebar({
 
       <View style={ds.navLinks}>
         {sidebarItems.map(({ href, label, icon: Icon, match }) => {
-          const active = match.some((m) => pathname === m || pathname.startsWith(m + '/'));
+          const active = isTabPathActive(pathname, match);
           return (
             <Pressable
               key={href}
               style={[ds.navItem, active && ds.navItemActive]}
               onPress={() => router.push(href as any)}
+              accessibilityRole="button"
+              accessibilityLabel={label}
+              accessibilityState={{ selected: active }}
             >
               <Icon size={20} color={active ? color.signal : color.mute} />
               <Text style={[ds.navLabel, active && ds.navLabelActive]}>{label}</Text>
@@ -113,21 +118,22 @@ function DesktopSidebar({
 
 /* ─── Floating tab bar ─────────────────────────────────────────────────── */
 
-const FLOAT_PILL_H = 64;
-
 interface FloatBarProps {
   newHighlights: number;
   pendingTripInvites: number;
   unreadNotifications: number;
 }
 
-function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications }: FloatBarProps) {
+export function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications }: FloatBarProps) {
   const { isEnabled } = useFeatureFlags();
   const wallEnabled = isEnabled('wall_enabled');
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
+  const { width, fontScale } = useWindowDimensions();
+  const metrics = floatingTabBarMetrics(fontScale);
+  const compactLabels = wallEnabled && width < 360;
 
   const pillBg      = isDark ? '#1a1a1a' : '#ffffff';
   const pillBorder  = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
@@ -149,16 +155,15 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
     pillBorderSV.value = pillBorder;
   }, [pillBg, pillBorder]);
 
-  const isActive = (match: readonly string[]) =>
-    match.some((m) => pathname === m || pathname.startsWith(m + '/'));
+  const isActive = (match: readonly string[]) => isTabPathActive(pathname, match);
 
   // Animated styles driven by the module-level navBarProgress shared value.
-  // Collapse is primarily VERTICAL: 64 → 40 px. Anything below ~40 px clips
-  // the icons (their layout box stays 20 px + label height even at opacity 0).
+  // Expanded height grows with text size. Collapsed height still leaves a
+  // 44pt tab target inside the pill's two-pixel vertical padding.
   const animatedPillStyle = useAnimatedStyle(() => {
     const progress = navBarProgress.value;
     return {
-      height:          interpolate(progress, [0, 1], [64, 40]),
+      height:          interpolate(progress, [0, 1], [metrics.height, 48]),
       borderRadius:    interpolate(progress, [0, 1], [36, 22]),
       paddingVertical: interpolate(progress, [0, 1], [6, 2]),
       backgroundColor: pillBgSV.value,
@@ -176,7 +181,7 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
     const progress = navBarProgress.value;
     return {
       opacity: interpolate(progress, [0, 0.4], [1, 0], 'clamp'),
-      height:  interpolate(progress, [0, 1], [13, 0]),
+      height:  interpolate(progress, [0, 1], [metrics.labelHeight, 0]),
     };
   });
 
@@ -219,8 +224,9 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
         hitSlop={TAB_HITSLOP}
         accessibilityRole="button"
         accessibilityLabel={label}
+        accessibilityState={{ selected: active }}
       >
-        <Animated.View style={[fb.itemInner, active && { backgroundColor: activeHighlight }, animatedItemInnerStyle]}>
+        <Animated.View style={[fb.itemInner, compactLabels && { paddingHorizontal: 0 }, active && { backgroundColor: activeHighlight }, animatedItemInnerStyle]}>
           <Animated.View style={animatedIconStyle}>
             <View>
               <Icon size={20} color={active ? iconActive : iconMuted} />
@@ -232,7 +238,9 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
             </View>
           </Animated.View>
           <Animated.View style={[fb.labelClip, animatedLabelStyle]}>
-            <Text style={[fb.label, active && fb.labelActive, { color: active ? iconActive : iconMuted }]}>{label}</Text>
+            <Text numberOfLines={1} ellipsizeMode="tail" adjustsFontSizeToFit minimumFontScale={0.9}
+              maxFontSizeMultiplier={FLOATING_TAB_BAR_MAX_FONT_SCALE}
+              style={[fb.label, compactLabels && { fontSize: 9 }, active && fb.labelActive, { color: active ? iconActive : iconMuted }]}>{label}</Text>
           </Animated.View>
         </Animated.View>
       </Pressable>
@@ -241,10 +249,10 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
 
   return (
     <View
-      style={[fb.wrapper, { bottom: insets.bottom + 12 }]}
+      style={[fb.wrapper, { bottom: insets.bottom + 12 }, width < 360 && { left: 8, right: 8 }]}
       pointerEvents="box-none"
     >
-      <Animated.View style={[fb.pill, animatedPillStyle]}>
+      <Animated.View testID="floating-tab-pill" style={[fb.pill, animatedPillStyle]}>
         {/* Glass blur layer — iOS: real blur; Android: rgba only */}
         {Platform.OS === 'ios' && (
           <BlurView
@@ -324,13 +332,8 @@ export default function TabLayout() {
 
           // Find active tab index
           const p = pathnameRef.current;
-          let currentIdx = 0;
-          for (let i = 0; i < NAV_ITEMS.length; i++) {
-            if (NAV_ITEMS[i].match.some((m) => p === m || p.startsWith(m + '/'))) {
-              currentIdx = i;
-              break;
-            }
-          }
+          const currentIdx = NAV_ITEMS.findIndex(item => isTabPathActive(p, item.match));
+          if (currentIdx < 0) return;
 
           // Skip when on Roam — Watch feed owns its own horizontal gestures
           if (NAV_ITEMS[currentIdx].label === 'Roam') return;
@@ -359,9 +362,7 @@ export default function TabLayout() {
   const prefetchCity = resolvedLocation.place.city ?? null;
   useEffect(() => {
     if (!prefetchCity) return;
-    const onAdjacentTab =
-      pathname === '/(tabs)' || pathname === '/(tabs)/' ||
-      pathname.startsWith('/(tabs)/trips');
+    const onAdjacentTab = isTabPathActive(pathname, [...NAV_ITEMS[0].match, ...NAV_ITEMS[3].match]);
     if (!onAdjacentTab) return;
     const timer = setTimeout(() => {
       // Warm the batch counts endpoint (1 request covers all 7 category tabs)
@@ -424,6 +425,8 @@ export default function TabLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
+        // Keep visited tabs mounted without spending render work on hidden screens.
+        freezeOnBlur: Platform.OS !== 'web',
         tabBarShowLabel: false,
         tabBarStyle: isDesktop
           ? { display: 'none' }
@@ -532,24 +535,30 @@ const fb = StyleSheet.create({
   },
   item: {
     flex: 1,
+    minWidth: 0,
+    minHeight: 44,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   itemInner: {
     alignItems: 'center',
     gap: 3,
-    paddingHorizontal: 10,
+    paddingHorizontal: 2,
     paddingVertical: 7,
     borderRadius: 24,
-    minWidth: 52,
+    minWidth: 0,
+    width: '100%',
   },
   itemInnerActive: {
     backgroundColor: 'rgba(0,0,0,0.07)',
   },
   labelClip: {
-    // Carries the animated height (13 → 0) + opacity; clips the static Text
+    // Carries the scaled line height → 0 + opacity; clips the static Text
     // inside. Web-safe: RN web handles height animation on Views reliably.
     overflow: 'hidden',
     alignItems: 'center',
+    width: '100%',
+    minWidth: 0,
   },
   label: {
     fontSize: 10,
@@ -557,6 +566,8 @@ const fb = StyleSheet.create({
     fontWeight: '600',
     color: color.mute,
     letterSpacing: 0.1,
+    width: '100%',
+    textAlign: 'center',
   },
   labelActive: {
     color: color.ink,

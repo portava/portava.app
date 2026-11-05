@@ -90,7 +90,9 @@ export const CAPABILITY_INPUTS = [
   "safetyState",
   "conversationType",
 ] as const;
-export type CapabilityInput = (typeof CAPABILITY_INPUTS)[number];
+/** §30A.1 adds a gated input; an off gate is not a relationship read. */
+export const OPTIONAL_CAPABILITY_INPUTS = ['relationshipPolicy'] as const;
+export type CapabilityInput = (typeof CAPABILITY_INPUTS)[number] | (typeof OPTIONAL_CAPABILITY_INPUTS)[number];
 
 /**
  * For each capability, WHERE the refusal actually happens. Not decoration: the

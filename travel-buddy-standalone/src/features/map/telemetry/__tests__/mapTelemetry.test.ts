@@ -973,6 +973,23 @@ describe('mapTelemetry — createFetchTelemetryTransport', () => {
     assert.equal(mapTelemetryDiagnostics().queueDepth, 1);
   });
 
+  it('bounds stalled token refresh without dispatching after the deadline', async () => {
+    let release!: (token: string) => void; let calls = 0;
+    const transport = createFetchTelemetryTransport({ baseUrl: 'https://fixture.invalid', timeoutMs: 5,
+      getToken: () => new Promise(resolve => { release = resolve; }),
+      fetchImpl: (async () => { calls++; return { ok: true }; }) as unknown as typeof fetch });
+    await assert.rejects(() => transport({ events: [], meta: { schemaVersion: '1.0', mapSessionId: null, dropped: 0, droppedTotal: 0, droppedByReason: {}, queueDepth: 0 } }), /telemetry_timeout/);
+    release('later'); await Promise.resolve(); await Promise.resolve(); assert.equal(calls, 0);
+  });
+
+  it('aborts a stalled fetch and frees the emitter to retry later', async () => {
+    let signal: AbortSignal | undefined;
+    const transport = createFetchTelemetryTransport({ baseUrl: 'https://fixture.invalid', timeoutMs: 5, getToken: async () => 'tok-1',
+      fetchImpl: (async (_url: unknown, init: RequestInit) => { signal = init.signal as AbortSignal; return await new Promise(() => {}); }) as unknown as typeof fetch });
+    await assert.rejects(() => transport({ events: [], meta: { schemaVersion: '1.0', mapSessionId: null, dropped: 0, droppedTotal: 0, droppedByReason: {}, queueDepth: 0 } }), /telemetry_timeout/);
+    assert.equal(signal?.aborted, true);
+  });
+
   it('rejects when signed out rather than posting anonymously', async () => {
     const t = createFetchTelemetryTransport({
       baseUrl: 'https://api.example',

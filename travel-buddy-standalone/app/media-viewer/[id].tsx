@@ -53,6 +53,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { fetchMediaFeedItemById } from '../../src/services/mediaFeed.ts';
 import { VerifiedLocationStamp } from '../../src/components/media/VerifiedLocationStamp.tsx';
 import { useMediaSave } from '../../src/hooks/useMediaSave.ts';
+import { SaveToCollectionSheet } from '../../src/components/SaveToCollectionSheet.tsx';
+import { usePrivateSurfaceKey } from '../../src/hooks/usePrivateSurfaceKey.ts';
 import { StampButton } from '../../src/components/stamps/StampButton.tsx';
 import { recordMediaShare } from '../../src/services/mediaInteractions.ts'; import { UNREAD_COUNT_MARK, unreadCountLabel } from '../../src/lib/unreadCount.ts';
 import { MediaCommentSheet } from '../../src/components/media/MediaCommentSheet.tsx';
@@ -507,7 +509,7 @@ function ViewerPage({ item, isActive, isMuted, postData }: ViewerPageProps) {
             ref={videoRef}
             source={{ uri: mediaUrl }}
             style={pg.video}
-            resizeMode={ResizeMode.COVER}
+            resizeMode={ResizeMode.CONTAIN}
             shouldPlay={isActive}
             isLooping
             isMuted={isMuted}
@@ -526,7 +528,7 @@ function ViewerPage({ item, isActive, isMuted, postData }: ViewerPageProps) {
           ) : null}
         </>
       ) : (
-        <CachedImage source={{ uri: mediaUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackBg={color.mute} />
+        <CachedImage source={{ uri: mediaUrl }} style={StyleSheet.absoluteFill} resizeMode="contain" fallbackBg={color.ink} />
       )}
     </View>
   );
@@ -558,6 +560,11 @@ const pg = StyleSheet.create({
 // ── Main MediaViewer ──────────────────────────────────────────────────────────
 
 export default function MediaViewer() {
+  const scope = usePrivateSurfaceKey();
+  return <MediaViewerForSession key={scope} />;
+}
+
+function MediaViewerForSession() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
   const session = useSession();
@@ -666,13 +673,14 @@ export default function MediaViewer() {
 
   // ── Comment sheet ──────────────────────────────────────────────────────────
   const [commentItemId, setCommentItemId] = useState<string | null>(null);
+  const [saveItemId, setSaveItemId] = useState<string | null>(null);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
   const handleSave = useCallback(() => {
     const item = items[activeIndex];
-    if (item) saveHook.toggleSave(item.id);
-  }, [activeIndex, items, saveHook]);
+    if (item) setSaveItemId(item.id);
+  }, [activeIndex, items]);
 
   const handleComment = useCallback(() => {
     const item = items[activeIndex];
@@ -785,6 +793,14 @@ export default function MediaViewer() {
       />
 
       {/* ── Comment sheet ─────────────────────────────────────────── */}
+      {saveItemId ? <SaveToCollectionSheet
+        key={saveItemId}
+        visible entityType="post" entityId={saveItemId}
+        onStatusRead={saved => saveHook.setSaved(saveItemId, saved)}
+        onSaved={() => saveHook.setSaved(saveItemId, true)}
+        onUnsaved={() => saveHook.setSaved(saveItemId, false)}
+        onClose={() => setSaveItemId(null)}
+      /> : null}
       <MediaCommentSheet
         mediaId={commentItemId}
         visible={commentItemId !== null}
@@ -797,6 +813,7 @@ export default function MediaViewer() {
           mediaId={activeItem?.id ?? null}
           visible={actionsOpen}
           onClose={() => setActionsOpen(false)}
+          onSavedChange={saveHook.setSaved}
         />
       ) : null}
 

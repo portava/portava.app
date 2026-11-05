@@ -33,6 +33,7 @@ import { runWallAction } from './objects/wallItemShared.tsx';
 import type { ContextThread, ContextThreadKind } from '../types/contextThread.ts';
 import type { FreshnessState, WallProjection } from '../types/wallProjection.ts';
 import { truthQualifierLabel } from '../types/wallProjection.ts';
+import { useWallActionOptions } from './WallActionContext.tsx';
 
 const KIND_ICON: Record<ContextThreadKind, React.ComponentType<{ size: number; color: string }>> = {
   live_place: Radio,
@@ -69,6 +70,7 @@ export function ContextThreadView({
   thread: ContextThread;
   projection: WallProjection;
 }) {
+  const actionOptions = useWallActionOptions();
   // A Context Thread earns its space or it does not: track "shown" on mount, and
   // "ignored" on unmount when it was scrolled past without being acted on (§32).
   const actedRef = React.useRef(false);
@@ -112,7 +114,7 @@ export function ContextThreadView({
       askCompassFromWall(projection);
       return;
     }
-    if (thread.action) runWallAction(thread.action, projection);
+    if (thread.action) void runWallAction(thread.action, projection, actionOptions);
   };
 
   const body = (

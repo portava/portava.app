@@ -4,7 +4,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mapStamp } from '../passportStampMappers.ts';
+import { mapStamp, toLegacyStamp } from '../passportStampMappers.ts';
+import { resolveArtwork } from '../../lib/stampArtworkResolver.ts';
 
 const baseRow = {
   id: 'stamp-1',
@@ -13,6 +14,25 @@ const baseRow = {
   earned_at: '2026-01-01T00:00:00Z',
   created_at: '2026-01-01T00:00:00Z',
 };
+
+test('fallback artwork preserves earned rarity and distinguishes first post, postcard and trip achievements', () => {
+  const cases = [['first_post', 'MessageCircle'], ['first_postcard', 'Image'], ['trip_planner', 'Route']];
+  for (const [slug, icon] of cases) {
+    const legacy = toLegacyStamp(mapStamp({ ...baseRow, definition: { slug, name: slug, stamp_type: 'social', category: 'community', rarity: 'common' } }));
+    const artwork = resolveArtwork(legacy);
+    assert.equal(legacy.rarity, 'common');
+    assert.equal(artwork.rarity, 'common');
+    assert.equal(artwork.borderStyle, 'single');
+    assert.equal(artwork.iconKey, icon);
+    assert.notEqual(legacy.kind, 'city');
+  }
+});
+
+test('thumbnail artwork survives API mapping for small stamp cards', () => {
+  const stamp = mapStamp({ ...baseRow, universal_stamp_catalog: { active_artwork_url: 'https://cdn.example/full.png', thumbnail_url: 'https://cdn.example/small.png' } });
+  assert.equal(stamp.thumbnailUrl, 'https://cdn.example/small.png');
+  assert.equal(stamp.activeArtworkUrl, 'https://cdn.example/full.png');
+});
 
 test('maps snake_case universal_artwork_url onto definition', () => {
   const s = mapStamp({

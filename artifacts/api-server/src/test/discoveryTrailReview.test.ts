@@ -305,6 +305,32 @@ describe("A — the admin", () => {
     assert.deepEqual((q.body.trails as any[]).map((t) => t.id), [PENDING]);
     assert.equal((await get("/admin/discovery/trail-reviews/pending", OTHER)).status, 403);
   });
+  it("A5. the review queue pages beyond fifty Trails with an unambiguous cursor", async () => {
+    const s = seed();
+    const createdAt = '2026-11-05T09:00:00.000Z';
+    s.trails = Array.from({ length: 51 }, (_, i) => trail(`aaaaaaaa-0000-4000-8000-${String(i + 1).padStart(12, '0')}`, { review_state: 'pending', created_at: createdAt }));
+    const expectedLastFirstPage = s.trails[49]!.id;
+    const expectedRemainder = [s.trails[50]!.id, 'aaaaaaaa-0000-4000-8000-000000000000'];
+    s.trails.push(trail(String(expectedRemainder[1]), { review_state: 'pending', created_at: '2026-11-05T10:00:00.000Z' }));
+    s.trails.reverse(); // Created time orders first; UUID breaks ties only.
+    use(s);
+    const first = await get('/admin/discovery/trail-reviews/pending', ADMIN);
+    assert.equal(first.status, 200); assert.equal(first.body.trails.length, 50);
+    assert.equal(first.body.next.id, expectedLastFirstPage);
+    const params = new URLSearchParams({ afterCreatedAt: first.body.next.createdAt, afterId: first.body.next.id });
+    const second = await get(`/admin/discovery/trail-reviews/pending?${params}`, ADMIN);
+    assert.equal(second.status, 200);
+    assert.deepEqual(second.body.trails.map((r: any) => r.id), expectedRemainder);
+    assert.equal(second.body.next, null);
+  });
+  it("A6. incomplete and unsafe review cursors are rejected before queue access", async () => {
+    for (const query of [`afterId=${PENDING}`, 'afterCreatedAt=2026-11-05T09:00:00Z', `afterId=${PENDING}&afterCreatedAt=bad,or(id.neq.null)`]) {
+      const c = use();
+      const answer = await get(`/admin/discovery/trail-reviews/pending?${query}`, ADMIN);
+      assert.equal(answer.status, 400);
+      assert.equal(c._observed.selects.filter(r => r.table === 'trails').length, 0);
+    }
+  });
 });
 
 describe("F — a failed read is a refusal", () => {

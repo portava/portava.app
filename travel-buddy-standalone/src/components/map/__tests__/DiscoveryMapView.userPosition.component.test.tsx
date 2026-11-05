@@ -43,7 +43,7 @@
  *   or: npx jest --forceExit src/components/map/__tests__/DiscoveryMapView.userPosition.component.test.tsx
  */
 import React from 'react';
-import { render, screen } from '@testing-library/react-native';
+import { render, screen, fireEvent } from '@testing-library/react-native';
 import { DiscoveryMapView } from '../../discovery/DiscoveryMapView';
 import { USER_POSITION_TEST_ID } from '../UserPositionMarker.tsx';
 import type { DiscoveryPlace } from '../../../services/discovery.ts';
@@ -117,6 +117,27 @@ function markedPoints(): string[] {
 const VIEWER_POINT = JSON.stringify([LNG, LAT]);
 
 describe('§6 blue dot — the real map canvas', () => {
+  it('shows the basemap and loading status without claiming there are zero places', async () => {
+    const view = await render(<DiscoveryMapView fallbackLat={LAT} fallbackLng={LNG} places={[]} placesLoading onSelectPlace={() => {}} />);
+    expect(screen.getByTestId('ml:map')).toBeTruthy();
+    expect(screen.getByText('Loading places…')).toBeTruthy();
+    expect(screen.queryByText('0 places')).toBeNull();
+    await view.rerender(<DiscoveryMapView fallbackLat={LAT} fallbackLng={LNG} places={[PLACE]} onSelectPlace={() => {}} />);
+    expect(screen.getByTestId('ml:map')).toBeTruthy();
+    expect(screen.getByText('1 place')).toBeTruthy();
+    expect(screen.queryByText('Loading places…')).toBeNull();
+  });
+
+  it('keeps the basemap with an actionable retry when the place read fails', async () => {
+    const retry = jest.fn();
+    await render(<DiscoveryMapView fallbackLat={LAT} fallbackLng={LNG} places={[]} placesError="Offline" onRetryPlaces={retry} onSelectPlace={() => {}} />);
+    expect(screen.getByTestId('ml:map')).toBeTruthy();
+    expect(screen.getByText('Places did not load')).toBeTruthy();
+    expect(screen.queryByText('0 places')).toBeNull();
+    await fireEvent.press(screen.getByLabelText('Retry loading places'));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
   it('draws the viewer with no entities and no places on the map at all', async () => {
     // The whole point of the row: where the viewer is does not depend on how
     // many other objects the projection returned.

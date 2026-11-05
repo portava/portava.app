@@ -1,3 +1,4 @@
+import { prepareLegacyCardWrite } from '../services/telegraph/legacyCardWrite.js';
 /**
  * threadMessage — write ONE plain-text message into an existing thread.
  *
@@ -104,13 +105,15 @@ export async function postPlainThreadMessage(
   }
   if (isE2ee) return { ok: false, reason: "e2ee" };
 
+  const prepared = prepareLegacyCardWrite({ body, msg_type: "text", subtype: params.subtype });
   const now = new Date().toISOString();
   const { data: msg, error: msgErr } = await sc
     .from("messages")
     .insert({
       thread_id: threadId,
       sender_id: senderId,
-      body,
+      body: prepared.body,
+      content_ref: prepared.contentRef,
       created_at: now,
       msg_type: "text",
       subtype: params.subtype ?? null,

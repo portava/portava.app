@@ -1,3 +1,5 @@
+import { filterMapPlaceGovernance } from '../lib/mapPlaceGovernance.js';
+import { readCanonicalPlaceVisibility } from '../lib/places/placeGovernance.js';
 /**
  * GET /api/map/projection — the Map Intelligence Gateway (Map spec §19).
  *
@@ -332,7 +334,8 @@ async function loadViewportPlaces(sc: any, bbox: BBox): Promise<any[] | null> {
     .lte("longitude", bbox.east)
     .limit(MAX_INDEXED_PLACES);
   if (error || !Array.isArray(data)) return null;
-  return data as any[];
+  const visibility = await readCanonicalPlaceVisibility(sc, data.map((row: any) => String(row.id)));
+  return visibility.ok ? data.filter((row: any) => visibility.visibleIds.has(String(row.id))) : null;
 }
 
 /**
@@ -963,7 +966,8 @@ router.get(
     await Promise.all(tasks);
 
     // §19 order: shape → drop the unservable → rank → (aggregate) → page.
-    let objects = servableOnly(collected);
+    const governance = await filterMapPlaceGovernance(sc, servableOnly(collected));
+    let objects = governance.objects;
 
     // §9 / Table 7 event-adjacency source. Captured from the servable set BEFORE
     // filterKinds so an "Active event nearby" line still appears on a place when
@@ -1413,6 +1417,8 @@ router.get(
       }
     }
 
+    const finalGovernance = await filterMapPlaceGovernance(sc, served);
+    served = finalGovernance.objects;
     // WHICH BRANCH RAN, as a header as well as a body field: an operator
     // watching the edge must be able to see the trip layer flip from the
     // canonical `trips` read to the §19.4 projection without parsing a body.
@@ -1430,6 +1436,7 @@ router.get(
     res.json({
       enabled: true,
       objects: served,
+      placeGovernance: { readable: governance.readable && finalGovernance.readable },
       viewport: { bbox, zoom, center: { lat, lng }, radiusKm },
       total: servable.length,
       nextCursor,
@@ -1542,7 +1549,10 @@ async function nameFlowEndpoints(
   ]);
   if (read === null || protectedZones === null) return attachFlowEndpoints(flows, zones, null, null);
 
+  const currentPlaces = await readCanonicalPlaceVisibility(sc, read.rows.map(row => String(row.id)));
+  if (!currentPlaces.ok) return attachFlowEndpoints(flows, zones, null, null);
   const disclosed = read.rows.filter((row) => {
+    if (!currentPlaces.visibleIds.has(String(row.id))) return false;
     const obj = projectPlace(row);
     return obj !== null && classifyAgainstProtected(obj, protectedZones).action === "allow";
   });

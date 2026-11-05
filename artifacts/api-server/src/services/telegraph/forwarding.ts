@@ -45,18 +45,15 @@
  *   LOCATION, SAFETY        audience-scoped by construction (§29: no location
  *                           without purpose/AUDIENCE/precision/expiry); a
  *                           forward changes the audience.
- *   VOICE                   a person's voice is an audio object in our storage —
- *                           copying it is COPIED_ATTACHMENT (below).
- *   IMAGE / VIDEO / media   COPIED_ATTACHMENT. The vocabulary carries it; the
- *                           write refuses it: a copy that preserved the source's
- *                           storage path would name the source author's uid in
- *                           the URL (the path convention is `<owner uid>/…`),
- *                           and a real copy needs a server-side object copy plus
- *                           an EXIF policy (§30.8). OWNER DECISION.
+ *   VOICE / external GIF    require a distinct format / provider policy.
+ *   IMAGE / VIDEO / album  copied through the same metadata-removal policy as
+ *                           uploads, private destination paths, durable journal
+ *                           and atomic authorization recheck (4016).
  *   everything else         coordination, actions, announcements, system
  *                           notices, legacy cards: they are about THIS thread.
  */
-import { buildPortavaObjectBody, parsePortavaObjectBody } from "./shareables.js";
+import { forwardAttachmentsOf } from "./forwardAttachmentShape.js";
+import { buildPortavaObjectBody, parsePortavaObjectRow } from "./shareables.js";
 import type { TelegraphObjectType } from "./vocabulary.js";
 
 export const FORWARDING_FLAG = "telegraph_forwarding_enabled";
@@ -76,6 +73,7 @@ export function isContentCapability(v: unknown): v is ContentCapability {
 
 /** The source row, as the forward decision needs it. */
 export interface ForwardSource {
+  content_ref?: string | null;
   id: string;
   thread_id: string;
   sender_id: string;
@@ -83,6 +81,7 @@ export interface ForwardSource {
   msg_type: string | null;
   subtype: string | null;
   media_url?: string | null;
+  media_type?: string | null;
   deleted_at?: string | null;
   unsent_at?: string | null;
 }
@@ -110,7 +109,7 @@ export type ForwardRefusal =
 export type ForwardDecision =
   | {
       ok: true;
-      provenance: Exclude<ForwardProvenance, "COPIED_ATTACHMENT">;
+      provenance: ForwardProvenance;
       /** The capability the derivative inherits. Never NO_FORWARD. */
       capability: Exclude<ContentCapability, "NO_FORWARD">;
       body: string;
@@ -124,7 +123,7 @@ export const FORWARD_REFUSAL_MESSAGES: Readonly<Record<ForwardRefusal, string>> 
   source_unavailable: "That message is no longer available.",
   forward_restricted: "This message can't be forwarded.",
   kind_not_forwardable: "This kind of message can't be forwarded.",
-  attachment_copy_unsupported: "Photos and videos can't be forwarded yet.",
+  attachment_copy_unsupported: "This attachment format cannot be forwarded.",
   e2ee_source: "Messages from an end-to-end encrypted conversation can't be forwarded.",
 };
 
@@ -138,7 +137,7 @@ const MEDIA_MSG_TYPES = new Set(["media", "image", "video", "voice", "media_albu
 export function forwardShapeOf(source: ForwardSource): "text" | "object" | "attachment" | "other" {
   const mt = (source.msg_type ?? "text").toLowerCase();
   if (source.media_url || MEDIA_MSG_TYPES.has(mt)) return "attachment";
-  if (mt === "portava_object") return parsePortavaObjectBody(source.body) ? "object" : "other";
+  if (mt === "portava_object") return parsePortavaObjectRow(source) ? "object" : "other";
   if (mt === "text") {
     // A text row whose subtype marks it as a card is a legacy structured message, not words.
     if (source.subtype && source.subtype !== "") return "other";
@@ -170,11 +169,15 @@ export function decideForward(input: {
   if (capability === "NO_FORWARD") return refuse("forward_restricted");
 
   const shape = forwardShapeOf(source);
-  if (shape === "attachment") return refuse("attachment_copy_unsupported");
+  if (shape === "attachment") {
+    if (capability === "SOURCE_POLICY" && input.forwarderId !== source.sender_id) return refuse("forward_restricted");
+    if (!forwardAttachmentsOf(source)) return refuse("attachment_copy_unsupported");
+    return { ok: true, provenance: "COPIED_ATTACHMENT", capability, body: "", msgType: source.msg_type?.toLowerCase() === "media_album" ? "media_album" : "media", subtype: null };
+  }
   if (shape === "other") return refuse("kind_not_forwardable");
 
   if (shape === "object") {
-    const ref = parsePortavaObjectBody(source.body)!;
+    const ref = parsePortavaObjectRow(source)!;
     // Whatever the capability, nobody re-shares what they cannot open (§5.3, at the send end).
     if (input.objectAvailableToForwarder !== true) return refuse("source_unavailable");
     // The author's caption is the author's words — a reshare carries the object, not them.

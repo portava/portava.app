@@ -54,8 +54,7 @@ export const COMPOSER_ENTRIES: readonly ComposerEntry[] = [ // §6.1's eight, in
     label: 'GIF',
     kind: 'GIF',
     available: false,
-    unavailableReason:
-      'No GIF provider is configured in this build. The GIF message kind exists and renders (with a still frame under reduced motion or data saver); what is missing is a picker to choose one from.',
+    unavailableReason: 'GIF sharing is not available in this build yet.',
   },
   { id: 'VOICE', label: 'Voice', kind: 'VOICE', available: true, unavailableReason: null },
   { id: 'MEMORY_NOTE', label: 'Memory Note', kind: 'MEMORY_NOTE', available: true, unavailableReason: null },
@@ -96,10 +95,10 @@ export function availableEntryCount(): number {
 export const ENTERTAINMENT_ENTRY_IDS: readonly ComposerEntryId[] = ['GIF'];
 
 /** The entries the + menu offers, given whether the conversation's safety mode puts entertainment away. */
-export function composerEntriesFor(opts: { deprioritizeEntertainment: boolean; portavaTripsAvailable?: boolean }): readonly ComposerEntry[] {
+export function composerEntriesFor(opts: { deprioritizeEntertainment: boolean; portavaTripsAvailable?: boolean; gifsAvailable?:boolean }): readonly ComposerEntry[] {
   return COMPOSER_ENTRIES
     .filter((entry) => !opts.deprioritizeEntertainment || !ENTERTAINMENT_ENTRY_IDS.includes(entry.id))
     .map((entry) => entry.id === 'PORTAVA' && opts.portavaTripsAvailable === true
       ? { ...entry, label: 'Portava (Trips)', available: true, unavailableReason: null }
-      : entry);
+      : entry.id === 'GIF' && opts.gifsAvailable ? {...entry,available:true,unavailableReason:null} : entry);
 }

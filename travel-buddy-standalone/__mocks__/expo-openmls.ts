@@ -15,6 +15,7 @@
 
 import type {
   KeyPairBytes,
+  KeyPackageResult,
   DeviceKeyPairBytes,
   GroupCreateResult,
   EncryptResult,
@@ -53,10 +54,10 @@ export const generateDeviceKeyPair = jest.fn(async (): Promise<DeviceKeyPairByte
 }));
 
 export const generateKeyPackage = jest.fn(async (
-  _identityPrivB64: string,
+  _userId: string,
   _deviceEd25519PrivB64: string,
-  _deviceX25519PrivB64: string,
-): Promise<string> => FAKE_KEY_PACKAGE);
+  _deviceEd25519PubB64: string,
+): Promise<KeyPackageResult> => ({ keyPackageB64: FAKE_KEY_PACKAGE, pendingStateB64: 'synthetic-pending-private-state' }));
 
 export const createGroup = jest.fn(async (
   _myIdentityPrivB64: string,
@@ -69,10 +70,8 @@ export const createGroup = jest.fn(async (
 }));
 
 export const processWelcome = jest.fn(async (
-  _myIdentityPrivB64: string,
-  _myDeviceEd25519PrivB64: string,
-  _myDeviceX25519PrivB64: string,
   _welcomeB64: string,
+  _pendingStateB64: string,
 ): Promise<string> => FAKE_GROUP_STATE);
 
 export const encryptMessage = jest.fn(async (
@@ -108,3 +107,5 @@ export const deriveSafetyNumber = jest.fn(async (
 ): Promise<string> => FAKE_SAFETY_NUMBER);
 
 export { FAKE_IDENTITY_PUB, FAKE_IDENTITY_PRIV, FAKE_ED25519_PUB, FAKE_KEY_PACKAGE, FAKE_GROUP_STATE, FAKE_WELCOME, FAKE_SAFETY_NUMBER };
+
+export async function sessionOwnerId(_groupStateB64: string): Promise<string> { return 'user-under-test'; }

@@ -170,7 +170,7 @@ function client(tables: Record<string, any[]>, flags: Record<string, boolean>) {
     reads.push(table);
     const f: Record<string, any> = {};
     const b: any = {
-      select: () => b, neq: () => b, in: () => b, not: () => b, is: () => b, or: () => b,
+      select: () => b, neq: () => b, in: (column: string, values: unknown[]) => { f[`in:${column}`] = values; return b; }, not: () => b, is: () => b, or: () => b,
       gte: () => b, lte: () => b, gt: () => b, lt: () => b, order: () => b, limit: () => b,
       range: () => b,
       eq(col: string, val: any) { f[col] = val; return b; },
@@ -187,7 +187,10 @@ function client(tables: Record<string, any[]>, flags: Record<string, boolean>) {
         return Promise.resolve({ data: null, error: null });
       },
       then: (onF: any, onR: any) =>
-        Promise.resolve({ data: tables[table] ?? [], error: null }).then(onF, onR),
+        Promise.resolve().then(() => {
+          const rows = (tables[table] ?? []).filter(row => table !== 'places' || !f['in:id'] || f['in:id'].includes(row.id));
+          return { data: table === 'places' ? rows.map(row => ({ moderation_status: 'visible', merged_into_place_id: null, ...row })) : rows, error: null, count: rows.length };
+        }).then(onF, onR),
     };
     return b;
   }

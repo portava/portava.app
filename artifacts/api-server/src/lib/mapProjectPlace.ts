@@ -146,7 +146,7 @@ export const PLACE_PRIVACY_CLASS: PrivacyClass = "place_level";
  * on this very table.
  */
 export const PLACE_SELECT_COLUMNS =
-  "id, name, primary_category, city, neighborhood, country_code, latitude, longitude, status, merged_into_place_id";
+  "id, name, primary_category, city, neighborhood, country_code, latitude, longitude, status, moderation_status, merged_into_place_id";
 
 /**
  * The most rows one viewport read returns. The same bound
@@ -169,6 +169,7 @@ export interface PlaceRowLike {
   latitude?: number | string | null;
   longitude?: number | string | null;
   status?: string | null;
+  moderation_status?: string | null;
   merged_into_place_id?: string | null;
 }
 
@@ -210,7 +211,7 @@ export function projectPlace(row: PlaceRowLike | null | undefined): MapObject | 
   const lng = coordinate(row.longitude);
   if (lat === null || lng === null) return null;
 
-  if (row.status != null && row.status !== "active") return null;
+  if (row.status !== "active" || row.moderation_status !== "visible") return null;
   if (row.merged_into_place_id != null) return null;
 
   const name = typeof row.name === "string" ? row.name.trim() : "";
@@ -306,6 +307,7 @@ export async function loadViewportPlaceRows(
     .from("places")
     .select(PLACE_SELECT_COLUMNS)
     .eq("status", "active")
+    .eq("moderation_status", "visible")
     .is("merged_into_place_id", null)
     .gte("latitude", bbox.south)
     .lte("latitude", bbox.north)

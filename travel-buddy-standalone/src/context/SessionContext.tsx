@@ -11,6 +11,7 @@ import { clearCachedFeed } from '../services/compass.ts';
 import { SECURE_KEYS, deleteSecure } from '../lib/secureStore.ts';
 import { isAccountScopedStorageEnabled } from '../config/accountScopedStorageFlag.ts';
 import { setDiscoveryViewerFromSession } from '../services/discoveryViewerScope.ts';
+import { clearTelegraphOutboxForOwner } from '../features/telegraph/outbox/runtime.ts';
 // Prefixes of the per-account scoped keys introduced for reminders,
 // discoveryBookmarks, and the checkpoint-arrival queue (see each service's
 // scoped*Key() helper). Telegraph's suggestion cache is per-(thread,account)
@@ -107,7 +108,21 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     // The Discovery device caches follow the auth event itself, BEFORE any screen
     // re-renders: a synchronous cache read at mount must never paint the previous
     // account's page (services/discoveryViewerScope.ts).
-    const unsub = onAuthChange((uid) => { const epoch = ++authEpoch; const changed = lastUid !== undefined && uid !== lastUid; if (changed) clearThreadCursors(); lastUid = uid; setDiscoveryViewerFromSession(uid); const publish = () => { if (active && epoch === authEpoch) { setUserId(uid); setLoading(false); } }; if (changed) void clearLayoverOfflineStorage().then(publish); else publish(); }); // Account switches clear device-only Layover data before the next account's screens mount; stale auth promises cannot overwrite a newer event.
+    const unsub = onAuthChange((uid) => {
+      const epoch = ++authEpoch;
+      const outgoingUserId = lastUid;
+      const changed = outgoingUserId !== undefined && uid !== outgoingUserId;
+      if (changed) clearThreadCursors();
+      lastUid = uid;
+      setDiscoveryViewerFromSession(uid);
+      const publish = () => { if (active && epoch === authEpoch) { setUserId(uid); setLoading(false); } };
+      if (changed) {
+        // Invalidate pending writes immediately; await storage erasure before
+        // mounting the replacement account. A cleanup failure cannot prevent logout.
+        const outbox = outgoingUserId ? clearTelegraphOutboxForOwner(outgoingUserId) : Promise.resolve();
+        void Promise.allSettled([clearLayoverOfflineStorage(), outbox]).then(publish);
+      } else publish();
+    });
     return () => { active = false; unsub(); };
   }, []);
 
@@ -294,6 +309,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     // Clear per-user caches before wiping the userId so we can still
     // reference the outgoing user's id inside the clear calls.
     if (userId) {
+      await clearTelegraphOutboxForOwner(userId).catch(() => {
+        console.warn('Telegraph local cleanup could not finish; pending messages remain account-bound.');
+      });
       clearSavedForUser(userId);
       // Remove the personalised Compass feed cache so it doesn't persist
       // private recommendation data (event addresses, place details) to disk.

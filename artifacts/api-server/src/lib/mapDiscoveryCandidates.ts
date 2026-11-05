@@ -104,7 +104,7 @@ import type {
   DiscoveryCandidate,
   DiscoveryRankedBy,
 } from "./discoveryCandidate.js";
-import type { PdePlace, PdeReadFailure } from "./discoveryPde.js";
+import type { PdePlace } from "./discoveryPde.js";
 
 /**
  * The rung a canonical place leaves lib/mapProjectPlace at. An object that is
@@ -183,7 +183,7 @@ export interface DiscoveryCandidateReport {
    * lib/discoveryPde's own names. Present exactly when the reader ran (see the
    * header); `[]` there means every viewer read succeeded.
    */
-  degraded?: readonly PdeReadFailure[];
+  degraded?: CandidateReadOutcome<never>['degraded'];
 }
 
 /** A finite coordinate or null — geometry is already validated upstream. */

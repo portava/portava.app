@@ -17,6 +17,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchLiveForYou } from '../services/wallApi.ts';
 import type { LiveForYouItem } from '../types/liveForYou.ts';
+import { useInputAccountEpoch } from '../../../platform/input-assistance/hooks/useInputAccountEpoch.ts';
+import { currentDiscoveryScope, isCurrentDiscoveryScope } from '../../../services/discoveryViewerScope.ts';
 
 const DEFAULT_TTL_MS = 60_000; // refetch cadence
 const CLOCK_TICK_MS = 20_000; // how often to re-evaluate validUntil
@@ -58,16 +60,28 @@ export function useLiveForYou(opts: UseLiveForYouOptions = {}): UseLiveForYouRes
   const [degraded, setDegraded] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
-  const genRef = useRef(0);
-  const inFlightRef = useRef(false);
+  const accountEpoch = useInputAccountEpoch();
+  const context = useMemo(() => ({
+    active: false,
+    scope: currentDiscoveryScope(),
+    request: null as AbortController | null,
+    queued: false,
+  }), [enabled, limit, accountEpoch]);
+  const dataContext = useRef<typeof context | null>(null);
 
-  const refetch = useCallback(async () => {
-    if (!enabled || inFlightRef.current) return;
-    inFlightRef.current = true;
-    const gen = ++genRef.current;
+  const refetch = useCallback(async (queueIfBusy = false) => {
+    if (!enabled || !context.active || !isCurrentDiscoveryScope(context.scope)) return;
+    if (context.request) {
+      if (queueIfBusy) context.queued = true;
+      return;
+    }
+    const request = new AbortController();
+    context.request = request;
+    const current = () => context.active && context.request === request && isCurrentDiscoveryScope(context.scope);
     try {
-      const res = await fetchLiveForYou({ limit });
-      if (gen !== genRef.current) return;
+      const res = await fetchLiveForYou({ limit, signal: request.signal });
+      if (!current()) return;
+      dataContext.current = context;
       if (res.ok) {
         setError(null);
         setDegraded(res.degraded);
@@ -77,18 +91,33 @@ export function useLiveForYou(opts: UseLiveForYouOptions = {}): UseLiveForYouRes
         setError(res.error);
         setDegraded(true);
       }
+    } catch {
+      if (current()) {
+        dataContext.current = context;
+        setError('Live updates could not load. Please try again.');
+        setDegraded(true);
+      }
     } finally {
-      if (gen === genRef.current) setLoading(false);
-      inFlightRef.current = false;
+      if (current()) {
+        setLoading(false);
+        context.request = null;
+        if (context.queued) {
+          context.queued = false;
+          void refetch();
+        }
+      }
     }
-  }, [enabled, limit]);
+  }, [enabled, limit, context]);
 
   // Initial + periodic refetch.
   useEffect(() => {
+    context.active = true;
+    setRawItems([]);
+    setError(null);
+    setDegraded(false);
+    setLoading(enabled);
     if (!enabled) {
-      setRawItems([]);
-      setLoading(false);
-      return;
+      return () => { context.active = false; };
     }
     void refetch();
     const timer = setInterval(() => {
@@ -96,9 +125,12 @@ export function useLiveForYou(opts: UseLiveForYouOptions = {}): UseLiveForYouRes
     }, ttlMs);
     return () => {
       clearInterval(timer);
-      genRef.current += 1; // invalidate in-flight
+      context.active = false;
+      context.queued = false;
+      context.request?.abort();
+      context.request = null;
     };
-  }, [enabled, ttlMs, refetch]);
+  }, [enabled, ttlMs, refetch, context]);
 
   // Ticking clock so items expire between refetches.
   useEffect(() => {
@@ -108,15 +140,17 @@ export function useLiveForYou(opts: UseLiveForYouOptions = {}): UseLiveForYouRes
   }, [enabled]);
 
   const items = useMemo(
-    () => rawItems.filter((it) => isValid(it, nowMs)).slice(0, MAX_LIVE_ITEMS),
-    [rawItems, nowMs],
+    () => enabled && dataContext.current === context
+      ? rawItems.filter((it) => isValid(it, nowMs)).slice(0, MAX_LIVE_ITEMS)
+      : [],
+    [rawItems, nowMs, context, enabled],
   );
 
   const stale = rawItems.length > 0 && items.length === 0;
 
   const refresh = useCallback(() => {
     setNowMs(Date.now());
-    void refetch();
+    void refetch(true);
   }, [refetch]);
 
   return { items, loading, error, degraded, stale, refresh };

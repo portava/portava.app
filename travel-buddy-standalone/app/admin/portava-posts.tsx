@@ -34,6 +34,7 @@ interface PortavaPost {
   publishedAt: string | null;
   visibility: string;
   mediaUrls: string[];
+  mediaCount?: number;
   locationCity: string | null;
   locationCountry: string | null;
   status: string;
@@ -276,8 +277,8 @@ export default function PortavaPostsScreen() {
                   {post.locationCity ? (
                     <Text style={s.metaText}>📍 {post.locationCity}{post.locationCountry ? `, ${post.locationCountry}` : ''}</Text>
                   ) : null}
-                  {post.mediaUrls.length > 0 ? (
-                    <Text style={s.metaText}>🖼 {post.mediaUrls.length} media</Text>
+                  {(post.mediaCount ?? post.mediaUrls.length) > 0 ? (
+                    <Text style={s.metaText}>🖼 {post.mediaCount ?? post.mediaUrls.length} media</Text>
                   ) : null}
                   {post.postStatus === 'pending_delay' && post.scheduledAt ? (
                     <Text style={s.metaText}>🕐 Scheduled: {fmtDate(post.scheduledAt)}</Text>

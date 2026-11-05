@@ -25,9 +25,22 @@ function viewerCtx(over: Partial<ProjectViewerContext> = {}): ProjectViewerConte
 
 /** Fake supabase whose only table is `blocks`. Returns the configured rows for
  *  the .or() query, or an error to exercise the fail-closed path. */
-function blocksClient(rows: Array<{ blocker_id: string; blocked_id: string }>, opts: { error?: unknown } = {}) {
+function blocksClient(rows: Array<{ blocker_id: string; blocked_id: string }>, opts: { error?: unknown; placeStatus?: "visible" | "withheld"; placeError?: boolean; profiles?: any[]; follows?: string[]; profileError?: boolean } = {}) {
   return {
     from(_table: string) {
+      if (_table === 'profiles' || _table === 'user_follows') {
+        let ids: string[] = [];
+        const q: any = { select: () => q, eq: () => q, in: (_column: string, values: string[]) => { ids = values; return q; },
+          then: (resolve: any) => resolve(_table === 'profiles' && opts.profileError ? { data: null, error: new Error('profile unavailable') }
+            : { data: _table === 'profiles' ? (opts.profiles ?? ids.map(id => ({ id, account_status: 'active', is_private: false, user_account_states: [] })))
+              : (opts.follows ?? []).map(following_id => ({ following_id })), error: null }) };
+        return q;
+      }
+      if (_table === 'places') {
+        let ids: string[] = []; const query: any = { select: () => query, in: (_column: string, values: string[]) => { ids = values; return query; }, limit: () => query,
+          then: (resolve: any) => resolve(opts.placeError ? { data: null, error: new Error('unreadable') } : { data: ids.map(id => ({ id, moderation_status: opts.placeStatus ?? 'visible', merged_into_place_id: null })), count: ids.length, error: null }) };
+        return query;
+      }
       const preds: Array<(r: any) => boolean> = []; const b: any = { // census-telegraph T220: eq/in narrow, as PostgREST does — the projection reads one direction per `.in()` now
         select() {
           return b;
@@ -50,6 +63,7 @@ function post(over: Partial<WallCandidate>): WallCandidate {
     objectType: "social_post",
     canonicalObjectId: "obj-" + Math.random().toString(36).slice(2),
     authorId: "author-x",
+    authorAccountStatus: 'active',
     visibility: "public",
     publishedAt: "2026-09-01T00:00:00.000Z",
     ...over,
@@ -57,6 +71,10 @@ function post(over: Partial<WallCandidate>): WallCandidate {
 }
 
 describe("WallProjectionService gate", () => {
+  it('refuses absent or null author status instead of treating it as active', async () => {
+    const out = await projectObjects(blocksClient([]), [post({ authorAccountStatus: undefined }), post({ authorAccountStatus: null })], viewerCtx());
+    assert.deepEqual(out, []);
+  });
   it("projects a public post from a non-blocked author", async () => {
     const c = post({ canonicalObjectId: "p1", authorId: "a1", visibility: "public" });
     const out = await projectObjects(blocksClient([]), [c], viewerCtx());
@@ -147,4 +165,30 @@ describe("WallProjectionService gate", () => {
     assert.ok(byId.get("pl")!.actions.some((a) => a.type === "see_place"));
     assert.ok(!byId.get("v")!.actions.some((a) => a.type === "see_place"));
   });
+});
+
+it('current canonical place withholding removes a projected Wall object, including readable cached metadata', async () => {
+  const candidate = post({ place: { placeId: 'canonical-place', name: 'Old published name' } });
+  assert.deepEqual(await projectObjects(blocksClient([], { placeStatus: 'withheld' }), [candidate], viewerCtx()), []);
+  await assert.rejects(projectObjects(blocksClient([], { placeError: true }), [candidate], viewerCtx()), /place_eligibility_unreadable/);
+});
+
+it('current private account policy overrides public post and stale follow metadata', async () => {
+  const candidate = post({ authorId: 'author' });
+  const profiles = [{ id: 'author', account_status: 'active', is_private: true, user_account_states: [] }];
+  const viewer = viewerCtx({ followedCreatorIds: new Set(['author']) });
+  assert.deepEqual(await projectObjects(blocksClient([], { profiles }), [candidate], viewer), []);
+  assert.equal((await projectObjects(blocksClient([], { profiles, follows: ['author'] }), [candidate], viewer)).length, 1);
+});
+it('canonical bans and current suspensions prevent post metadata even for its author', async () => {
+  const candidate = post({ authorId: VIEWER, visibility: 'private' });
+  for (const state of [{ state: 'banned', expires_at: null }, { state: 'suspended', expires_at: new Date(Date.now() + 60000).toISOString() }]) {
+    const profiles = [{ id: VIEWER, account_status: 'active', is_private: false, user_account_states: [state] }];
+    assert.deepEqual(await projectObjects(blocksClient([], { profiles }), [candidate], viewerCtx()), []);
+  }
+  const profiles = [{ id: VIEWER, account_status: 'active', user_account_states: [{ state: 'suspended', expires_at: '2000-01-01T00:00:00Z' }] }];
+  assert.equal((await projectObjects(blocksClient([], { profiles }), [candidate], viewerCtx())).length, 1);
+});
+it('unreadable current author policy becomes a degraded projection instead of a healthy empty feed', async () => {
+  await assert.rejects(projectObjects(blocksClient([], { profileError: true }), [post({})], viewerCtx()), /audience is unavailable/);
 });

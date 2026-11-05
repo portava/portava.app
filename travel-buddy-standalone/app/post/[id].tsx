@@ -21,6 +21,7 @@ import { PostWrongPlaceSheet } from '../../src/components/PostWrongPlaceSheet';
 import { CommentsSection } from '../../src/components/CommentsSheet';
 import { TranslatedContent } from '../../src/components/TranslatedContent.tsx';
 import { MediaStampOverlay } from '../../src/components/StampOverlayBadge';
+import { FullscreenPhoto } from '../../src/components/ui/FullscreenPhoto.tsx';
 import { SharedVideoPlayer } from '../../src/components/ui/SharedVideoPlayer';
 import { getPostById, type PostRow } from '../../src/services/posts'; import { deletePost } from '../../src/services/postEngagement'; // the feed's own delete
 import { useSession } from '../../src/context/SessionContext';
@@ -187,7 +188,7 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
               style={StyleSheet.absoluteFill}
             />
           ) : (
-            <>
+            <FullscreenPhoto uri={firstMedia} photos={post.media?.filter(item => item.media_type !== 'video').map(item => item.url)} style={StyleSheet.absoluteFill}>
               <DisplayMediaImage
                 uri={withRelayWidth(firstMedia, 1200)}
                 width={width}
@@ -196,7 +197,7 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
                 style={StyleSheet.absoluteFill}
               />
               <MediaStampOverlay raw={firstMediaItem?.stamp_overlay} />
-            </>
+            </FullscreenPhoto>
           )}
         </View>
       ) : (
