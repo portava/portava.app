@@ -644,8 +644,46 @@ PORTAVA_PERSONAL_TEAM=1 npx expo prebuild --platform ios --clean
 PORTAVA_PERSONAL_TEAM=1 npx expo run:ios --device --configuration Release
 ```
 
-If the build stops at "requires a development team", open `ios/Portava.xcworkspace`, add your
-Apple ID under Xcode → Settings → Accounts, choose your Personal Team under Signing &
-Capabilities, and run again (or Product → Run from Xcode with the phone selected). After the
-first install, trust the app under Settings → General → VPN & Device Management. Rebuild the
-same way whenever the 7 days run out.
+If the build stops at "requires a development team" or "No Accounts", add your Apple ID under
+Xcode → Settings → Accounts (the sign-in must show "<your name> (Personal Team)" under Teams),
+then run again; or open `ios/Portava.xcworkspace`, choose your Personal Team under Signing &
+Capabilities, and Product → Run with the phone selected. After the first install, trust the app
+under Settings → General → VPN & Device Management ("Apple Development: <your Apple ID>" →
+Trust); until then iOS refuses to launch it. Rebuild the same way whenever the 7 days run out.
+
+What the build cannot do, and the app knows it: `app.config.ts` records `extra.signInWithApple:
+false`, so the sign-in screen hides "Continue with Apple" (`src/lib/buildCapabilities.ts`); use
+email or Google. Push notifications are not registered, and rumazi.com links open the website.
+A free team can register the bundle ID only if no other Apple team owns it; on 2026-11-04 Xcode
+registered `com.passporttravelbuddy.app` to the Personal Team without complaint.
+
+### Xcode 27: build and install without Expo's run command
+
+Xcode 27.2 ships no Simulator.app (it is a separate download), and `expo run:ios --device`
+refuses to start without it ("Can't determine id of Simulator app"). Build and install with
+Apple's own tools instead; this is the path that put the app on an iPhone 17 Pro Max on
+2026-11-04. Your team ID is the ten-character code shown next to your Personal Team in Xcode →
+Settings → Accounts, or in `security find-identity -v -p codesigning` ("Apple Development: …
+(XXXXXXXXXX)"); the phone's identifier comes from the first command.
+
+```bash
+cd travel-buddy-standalone
+xcrun devicectl list devices                     # the iPhone's Identifier (plugged in, unlocked, trusted)
+xcodebuild -workspace ios/Portava.xcworkspace -scheme Portava -configuration Release \
+  -destination "id=<IDENTIFIER>" -derivedDataPath ios/build \
+  -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
+  CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=<TEAM_ID> build
+xcrun devicectl device install app --device <IDENTIFIER> ios/build/Build/Products/Release-iphoneos/Portava.app
+xcrun devicectl device process launch --device <IDENTIFIER> com.passporttravelbuddy.app
+```
+
+The `.env` values are inlined into the JavaScript bundle during the `xcodebuild` run (its
+"Bundle React Native code and images" phase), exactly as `expo run:ios` would. Rebuilding after
+a code change is the same `xcodebuild` and `install` pair.
+
+Xcode 27 also refuses pod resource bundles whose deployment target is below iOS 15 (SDWebImage,
+RNSVG, AsyncStorage and react-native-maps still declare older floors). The config plugin
+`plugins/withPodDeploymentTargetFloor.js` raises every pod target below the app's deployment
+target (15.1) to it at `pod install`, so the generated project builds as is; a project generated
+before that plugin existed needs `IPHONEOS_DEPLOYMENT_TARGET=15.1` appended to the `xcodebuild`
+command instead.
