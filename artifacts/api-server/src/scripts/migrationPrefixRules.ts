@@ -46,16 +46,16 @@
  *
  * What is NOT permitted is a second digit of 0 in the 2000s: 2000-2095 would be
  * genuinely ambiguous, and that is what the reserved buffer and the `2[1-9]`
- * arm keep out. 4000 and above are left unallocated deliberately; when 3999 is
- * reached, whoever needs 4000 should extend this the same way and write down
- * why, rather than reaching for a date.
+ * arm keep out. 4000 and above were left unallocated deliberately; 3999 was
+ * reached, and 4000-4999 was opened on 2026-10-24 the same way, with its
+ * reason written down (the note at the end of this file), not with a date.
  */
 
 export const RESERVED_BUFFER_MIN = 2096;
 export const RESERVED_BUFFER_MAX = 2099;
 
-/** New canonical 4-digit numeric prefixes must match this: 2100-2999 or 3000-3999. */
-export const NEW_NUMERIC_PREFIX_RE = /^(?:2[1-9]\d{2}|3\d{3})_/;
+/** New canonical 4-digit numeric prefixes must match this: 2100-2999, 3000-3999 or 4000-4999. */
+export const NEW_NUMERIC_PREFIX_RE = /^(?:2[1-9]\d{2}|[34]\d{3})_/;
 
 export interface PrefixBandViolation {
   file: string;
@@ -95,8 +95,8 @@ export function validatePrefixBand(filename: string): PrefixBandViolation | null
     return {
       file: filename,
       reason:
-        `prefix ${digits} is >= 2100 but outside the allocated ranges 2100-2999 and ` +
-        "3000-3999 (must match /^(?:2[1-9]\\d{2}|3\\d{3})_/). 4000 and above are not " +
+        `prefix ${digits} is >= 2100 but outside the allocated ranges 2100-2999, ` +
+        "3000-3999 and 4000-4999 (must match /^(?:2[1-9]\\d{2}|[34]\\d{3})_/). 5000 and above are not " +
         "allocated yet — extend NEW_NUMERIC_PREFIX_RE and say why, rather than " +
         "reaching for a dated prefix, which sorts BELOW every 2xxx file",
     };
@@ -109,3 +109,23 @@ export function validateAllPrefixBands(filenames: string[]): PrefixBandViolation
     .map(validatePrefixBand)
     .filter((v): v is PrefixBandViolation => v !== null);
 }
+
+/*
+ * ── 4000-4999, ADDED 2026-10-24 BECAUSE A FIX MUST SORT AFTER 3999 ──────────
+ * 3999_memory_items_source_post.sql is applied on portava-ci and production.
+ * 4000_memory_items_source_post_guard_post_media.sql rewrites 3999's guard
+ * function, so it must be applied after 3999 on EVERY path, including a fresh
+ * replay (local-db, beta), which applies in filename order. No 3xxx number can
+ * do that, and the two other ways out are ruled out in writing:
+ *   - an apply-order override: ORDER_OVERRIDES.json's `_rule` and
+ *     docs/migrations.md ("Adding an entry") forbid one for a NEW migration's
+ *     ordering — "it needs a later number, not an override";
+ *   - a gap number below 3999: the 2026-10-18 owner correction
+ *     (docs/ops/wave5-owner-decisions-20261018.md, "new migrations do not need
+ *     a band ruling") admits one only if it depends on nothing numbered above
+ *     it, and this file depends on 3999 by construction.
+ * The invariant survives unchanged: no YYYYMMDD in this millennium begins with
+ * "4", 4xxx sorts strictly after every 3xxx and 2xxx prefix, and it still
+ * reads as post-cutover under `filename >= "2100"`. 5000 and above stay
+ * unallocated; extend this the same way, with the reason, when one is needed.
+ */

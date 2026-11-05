@@ -37,9 +37,8 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { Film, WifiOff } from 'lucide-react-native';
-import { MasonryGrid, type MasonryGridHandle } from './MasonryGrid.tsx';
+import { MasonryGrid, MasonryGridSkeleton, type MasonryGridHandle } from './MasonryGrid.tsx';
 import { GridFilterBar } from './GridFilterBar.tsx';
-import { MediaGridSkeleton } from '../loading/MediaGridSkeleton.tsx';
 import { EmptyState } from '../ui/EmptyState.tsx';
 import { useGridFeed } from '../../hooks/useGridFeed.ts';
 import { useMediaStore } from '../../stores/mediaStore.ts';
@@ -142,7 +141,7 @@ export function GridFeed() {
     return (
       <View style={styles.container}>
         <GridFilterBar selectedFilter={filter} onFilterChange={handleFilterChange} />
-        <MediaGridSkeleton columns={2} count={6} />
+        <MasonryGridSkeleton />
       </View>
     );
   }
