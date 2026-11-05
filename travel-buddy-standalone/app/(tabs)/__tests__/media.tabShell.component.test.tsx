@@ -11,7 +11,8 @@
  *
  *   Part B — FAB button label
  *     5. In Watch mode (default) the FAB shows "Create a post".
- *     6. After selecting Gems, the FAB shows "Add a Gem".
+ *     6. Grid mode has a single "Create a post" button (the FAB).
+ *     7. After selecting Gems, the FAB shows "Add a Gem".
  *
  * Chip presence/absence is queried by testID (mode-chip-watch / mode-chip-grid /
  * mode-chip-gems) rather than by text, because the overlay AppHeader also renders
@@ -150,6 +151,14 @@ describe('MediaScreen — FAB button', () => {
   it('FAB label is "Create a post" in Watch mode (default)', async () => {
     await renderWithFlags(ALL_FLAGS_ON);
     expect(screen.getByRole('button', { name: 'Create a post' })).toBeTruthy();
+  });
+
+  it('Grid mode has one create button, the FAB (no second one in the selector row)', async () => {
+    await renderWithFlags(ALL_FLAGS_ON);
+
+    await act(async () => { fireEvent.press(screen.getByTestId('mode-chip-grid')); });
+
+    expect(screen.getAllByRole('button', { name: 'Create a post' })).toHaveLength(1);
   });
 
   it('FAB label switches to "Add a Gem" after selecting Gems mode', async () => {
