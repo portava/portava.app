@@ -30,8 +30,9 @@ export function FeedAutoplayVideo({ uri }: { uri: string }) {
   const [shownFor, setShownFor] = useState<string | null>(null);
   const [failedFor, setFailedFor] = useState<string | null>(null);
 
-  if (source.state !== 'ready' || failedFor === source.uri) return null;
-  const playbackUri = source.uri;
+  // The player gets the READY state's uri and nothing else (playbackUri.relay.test.ts P6).
+  const playbackUri = source.state === 'ready' ? source.uri : null;
+  if (playbackUri === null || failedFor === playbackUri) return null;
   const shown = shownFor === playbackUri;
 
   return (
