@@ -122,7 +122,7 @@ describe("what the coverage count says", () => {
    * fails because a scheduler gained health reporting, that is good news and
    * the number moves DOWN; update it and say so.
    */
-  it("pins today's real coverage: 68 started, 22 reported, 13 durable, 44 invisible", () => {
+  it("pins today's real coverage: 69 started, 23 reported, 14 durable, 44 invisible", () => {
     const cov = schedulerCoverage();
     // 59 -> 60 and 12 -> 13 on 2026-10-07 (lane R, census-layover L163):
     // startLayoverAuditRetentionScheduler deletes pseudonymised layover_events
@@ -137,15 +137,15 @@ describe("what the coverage count says", () => {
     // was added. 60 -> 61, 13 -> 14 and 6 -> 7 the same way at the merge of lane H with lane R (census-highlights-memories §AV): startMemoryDeletionRedriveScheduler reports AND writes job_health, so 45 holds.
     // 61 -> 62, 14 -> 15 and 7 -> 8 the same way on 2026-10-10 (lane H-REST, census H157): startHighlightExpiryEventScheduler reports AND writes job_health, so 45 holds. 62 -> 63, 15 -> 16 and 8 -> 9 the same way at the merge of lane T-REL (census-telegraph T154, 3655): startTelegraphOutboxDrainScheduler reports as `telegraphOutboxDrain` AND writes that job_health row, so 45 holds.
     // 63 -> 64 and 16 -> 17 with lane T-REL (census-telegraph T223, 3656): startMessageMediaPartsSweepScheduler reports to /healthz/schedulers as `messageMediaPartsSweep` and writes no job_health row, so 9 durable and 45 invisible hold.
-    assert.equal(cov.started, 68); // 67 -> 68 (census-discovery §133, 3922): startRankingDebugSamplePurgeScheduler reports AND writes job_health, so 45 holds. 66 -> 67: Layover operational metrics adds one reported scheduler; existing invisible jobs are unchanged.
-    assert.equal(cov.reported, 22); // 21 -> 22 (release 4 merge): memoryOutboxDrain (census-highlights-memories §CC, H161) now reports. 20 -> 21: rankingDebugSamplePurge (§133). 19 -> 20: layoverMetrics reports successful collection, delivery state, failures and stale collection.
+    assert.equal(cov.started, 69); // 68 -> 69 (lib/schedulerHeartbeat.ts): startSchedulerHeartbeat reports AND writes job_health, so 45 holds. 67 -> 68 (census-discovery §133, 3922): startRankingDebugSamplePurgeScheduler reports AND writes job_health, so 45 holds. 66 -> 67: Layover operational metrics adds one reported scheduler; existing invisible jobs are unchanged.
+    assert.equal(cov.reported, 23); // 22 -> 23 (release 4 merge): memoryOutboxDrain (census-highlights-memories §CC, H161) now reports. 21 -> 22: schedulerHeartbeat. 20 -> 21: rankingDebugSamplePurge (§133). 19 -> 20: layoverMetrics reports successful collection, delivery state, failures and stale collection.
     // Moved DOWN on 2026-10-03: startHealthMonitorLoop now writes its own
     // `stamp_health_monitor` job_health row, so the stamp health monitor is no
     // longer one of the jobs whose stopping leaves no trace. 4 durable -> 5,
     // 46 invisible -> 45.
-    assert.equal(cov.persisted, 13); // 12 -> 13 (release 4 merge): startMemoryOutboxScheduler writes its `memoryOutboxDrain` job_health row (census-highlights-memories §CC, H161). 11 -> 12: rankingDebugSamplePurge (§133). 9 -> 10 at the merge of main (63 / 16 / 9 / 45) with lane L-DATA (census-layover L261): startLayoverAuditRetentionScheduler, already reported, also writes job_health for its snapshot-compaction phase; no scheduler gained or lost a trace, so 45 holds
+    assert.equal(cov.persisted, 14); // 13 -> 14 (release 4 merge): startMemoryOutboxScheduler writes its `memoryOutboxDrain` job_health row (census-highlights-memories §CC, H161). 12 -> 13: scheduler_heartbeat. 11 -> 12: rankingDebugSamplePurge (§133). 9 -> 10 at the merge of main (63 / 16 / 9 / 45) with lane L-DATA (census-layover L261): startLayoverAuditRetentionScheduler, already reported, also writes job_health for its snapshot-compaction phase; no scheduler gained or lost a trace, so 45 holds
     assert.equal(cov.unobservable.length, 44); // 45 -> 44 (release 4 merge, census-highlights-memories §CC, H161): the Memory outbox drain now reports. 44 -> 45: startLayoverPresenceExpiryScheduler (census-layover L196), see the started line
-    assert.equal(cov.started, cov.unobservable.length + 24, "22 reported + 13 durable overlap on 11 rows"); // 23 -> 24 (release 4 merge): memoryOutboxDrain reports and writes job_health, so the overlap grows by one too
+    assert.equal(cov.started, cov.unobservable.length + 25, "23 reported + 14 durable overlap on 12 rows"); // 24 -> 25 (release 4 merge): memoryOutboxDrain reports and writes job_health, so the overlap grows by one too. 23 -> 24: the heartbeat reports and persists, so the overlap grows by one too
   });
 
   /**
