@@ -232,8 +232,8 @@ test.each(['image', 'video'] as const)('preserves the %s consumer while translat
   await complete(pending);
   expect(screen.getByTestId(`detail-${mediaType}`).props.uri).toBe(uri);
   if (mediaType === 'video') {
-    expect(screen.getByTestId('detail-video').props.autoplay).toBe(false);
-    expect(screen.getByTestId('detail-video').props.muted).toBe(true);
+    expect(screen.getByTestId('detail-video').props.autoplay).toBe(true); // opening the post plays it (2026-11-04)
+    expect(screen.getByTestId('detail-video').props.muted).toBe(false); // with sound; SharedVideoPlayer mutes it only on web
   }
   expect(screen.getByText(translated)).toBeTruthy();
   expect(fetchMock).toHaveBeenCalledTimes(1);

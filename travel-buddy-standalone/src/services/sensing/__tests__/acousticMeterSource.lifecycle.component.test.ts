@@ -1,4 +1,7 @@
 import { ACOUSTIC_SENSING_SCOPE, ACOUSTIC_PERMISSION_DENIED } from '../../../lib/sensing/acousticPermission.ts';
+// The reset writes the WHOLE playback mode: a partial { allowsRecordingIOS: false } kept the meter's
+// playsInSilentModeIOS: false, which silenced every video behind the iPhone's ringer switch.
+import { PLAYBACK_AUDIO_MODE } from '../../audio/playbackAudioMode.ts';
 
 const mockMode = jest.fn();
 const mockDelete = jest.fn();
@@ -89,7 +92,7 @@ describe('Sensing owned recorder lifetime and cache cleanup', () => {
       expect(mockRecordings[0].stopAndUnloadAsync).toHaveBeenCalledTimes(1);
       expect(mockRecordings[0].startAsync).toHaveBeenCalledTimes(stage === 'prepare' ? 0 : 1);
     }
-    expect(mockMode).toHaveBeenLastCalledWith({ allowsRecordingIOS: false });
+    expect(mockMode).toHaveBeenLastCalledWith(PLAYBACK_AUDIO_MODE);
   });
   test.each(['prepare', 'start'] as const)('%s rejection still releases the owned recorder', async (stage) => {
     if (stage === 'prepare') mockPrepare = async () => { throw Error('prepare'); };
@@ -97,7 +100,7 @@ describe('Sensing owned recorder lifetime and cache cleanup', () => {
     subscribe(); await settle();
     expect(mockRecordings[0].stopAndUnloadAsync).toHaveBeenCalledTimes(1);
     expect(mockRecordings[0].callback).toBeNull();
-    expect(mockMode).toHaveBeenLastCalledWith({ allowsRecordingIOS: false });
+    expect(mockMode).toHaveBeenLastCalledWith(PLAYBACK_AUDIO_MODE);
   });
   test('a successor waits for pending release and the old audio mode reset', async () => {
     const held = deferred(); mockUnload = () => held.promise;
@@ -127,7 +130,7 @@ describe('Sensing owned recorder lifetime and cache cleanup', () => {
     mockMode.mockRejectedValueOnce(Error('mode'));
     subscribe(); await settle();
     expect(mockRecordings).toHaveLength(0);
-    expect(mockMode).toHaveBeenLastCalledWith({ allowsRecordingIOS: false });
+    expect(mockMode).toHaveBeenLastCalledWith(PLAYBACK_AUDIO_MODE);
   });
   test('mode reset failure quarantines a later sensing recorder', async () => {
     const first = subscribe(); await settle(); mockMode.mockRejectedValueOnce(Error('mode reset'));
@@ -139,7 +142,7 @@ describe('Sensing owned recorder lifetime and cache cleanup', () => {
     const first = subscribe(); await settle(); first.stop(); await settle();
     expect(mockRecordings[0].stopAndUnloadAsync).toHaveBeenCalledTimes(1);
     expect(mockDelete).toHaveBeenCalledTimes(1);
-    expect(mockMode).toHaveBeenLastCalledWith({ allowsRecordingIOS: false });
+    expect(mockMode).toHaveBeenLastCalledWith(PLAYBACK_AUDIO_MODE);
     held.resolve(); await settle();
   });
   test('a detached callback that throws during cleanup cannot bypass recorder release', async () => {
