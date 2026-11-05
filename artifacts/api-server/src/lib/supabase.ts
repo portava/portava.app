@@ -11,12 +11,12 @@ export const isServiceClientReady = Boolean(supabaseUrl && serviceRoleKey);
  */
 let _testServiceClient: SupabaseClient | null = null;
 export function _setTestServiceClient(client: SupabaseClient | null): void {
-  _testServiceClient = client;
+  _testServiceClient = client; builtServiceClient = null; _resetHotPathCachesForTest(); // test-only: every injection starts clean (a newly built client, nothing remembered)
 }
 
 export function getServiceClient(): SupabaseClient | null {
   if (_testServiceClient) return auditedLayoverClient(_testServiceClient);
-  if (!isServiceClientReady) return null;
+  if (!isServiceClientReady) return null; if (builtServiceClient) return auditedLayoverClient(builtServiceClient); // built ONCE per process (see "The one service client" below)
   return auditedLayoverClient(createClient(supabaseUrl, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   }));
@@ -49,7 +49,7 @@ function createClient(
   options: { auth: { autoRefreshToken: boolean; persistSession: boolean } },
 ): SupabaseClient {
   const client: SupabaseClient = createSupabaseClient(url, key, options);
-  postgrestBackedClients.add(client);
+  postgrestBackedClients.add(client); markHotPathCacheableClient(client); builtServiceClient = client; // recorded, cacheable (lib/hotPathCache.ts), and the memo getServiceClient answers from
   return client;
 }
 
@@ -68,3 +68,40 @@ export function _markPostgrestBackedForTest(client: object): void {
 }
 
 import { auditedLayoverClient, originalLayoverAuditClient } from './layoverServiceAudit.js';
+
+// ---------------------------------------------------------------------------
+// The one service client
+// ---------------------------------------------------------------------------
+// Appended BELOW on purpose, like the section above: the lines above are cited
+// by line.
+//
+// getServiceClient used to build a NEW supabase-js client on every call — one
+// per request, and often several (every door that takes its own). It now builds
+// one per process, the first time it is asked, and answers every later call
+// with that object (wrapped by auditedLayoverClient exactly as before, which is
+// per call because the audit scope is per request). This is safe to share
+// because the service client holds no per-request state: it is built with
+// `persistSession: false, autoRefreshToken: false`, no runtime path in src/
+// calls a session-setting Auth method on it (signIn*, setSession, verifyOtp,
+// exchangeCodeForSession, refreshSession), and every call it makes is a
+// stateless request — PostgREST with the service key, `auth.getUser(token)` and
+// `auth.admin.*` with the token or key they are given. The one Realtime client
+// is not this one (lib/telegraphBroadcast.ts builds its own).
+//
+// Two consequences worth knowing:
+//   - The per-client-object memos elsewhere (lib/discoveryStopGate.ts,
+//     lib/discoveryCandidates/pipelineFlags.ts, lib/telegraphOutboxDrainScheduler.ts,
+//     services/highlights/highlightSchemaAvailability.ts, lib/intelConsent.ts)
+//     used to live one request, because their key was a client nobody reused;
+//     they now live for their own TTLs, as they were written to. The three flag
+//     caches among them also end on featureFlagWriteEpoch() (lib/hotPathCache.ts),
+//     so an admin flag write on this instance still takes effect at once.
+//   - The memo is recorded in `postgrestBackedClients` (one entry, not one per
+//     request) and is the only client whose answers lib/hotPathCache.ts keeps.
+//
+// `_setTestServiceClient` drops the memo (and empties lib/hotPathCache.ts), so a
+// test that clears its double and asks again gets a newly built client, as
+// every such test always has.
+let builtServiceClient: SupabaseClient | null = null;
+
+import { markHotPathCacheableClient, _resetHotPathCachesForTest } from "./hotPathCache.js";

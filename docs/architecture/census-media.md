@@ -18014,3 +18014,319 @@ MD293, MD385).
 **Cited in §56, graded elsewhere.**
 - NOT-GRADED: artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts — the account-deletion service, cited in §56.4 only for which storage columns it collects; the deletion census owns it, and no Media row rests on it.
 - NOT-GRADED: artifacts/api-server/src/lib/postMediaResolve.ts — the two-store URL merge, cited in §56.4 only to say its readers are not the defect's class; no Media row rests on it.
+
+## 57. B58 lane POSTS-LIKERS, 2026-10-14: a post's and a comment's likers follow the post's own read and its block, and GET /me/blocker-ids is the whole list or a refusal. NO ROW MOVES
+
+*Branch `claude/fix-post-likers-blocks`, cut from `origin/main` `7408f62e6`. Placed before §51 rather than at the
+foot, so it merges cleanly beside #745's §52 and #747's §53. `head_commit` is not re-declared.*
+
+**Why this census.** No row in any census grades who may list a post's likers. This census grades the post spine
+and its read decision, and the social layer on it (MD55, MD203), so the post half of `GET /engagement/likes` is
+recorded here. census-highlights-memories §BQ (PR #739, open) grades the Memory and Highlight halves of the same
+route; verifier V-739 found this half as an adjacent defect.
+
+### 57.1 The defects, re-verified on `7408f62e6`
+
+1. **The post likers gate read no block.** `post_like`, `post_reaction` and `comment_like` were gated by
+   `checkPostAccess`: the author, or `visibility = 'public'`, or any `trip_members` row for a trip_only post. Its
+   `posts` read excluded only `status = 'deleted'` and bound no error. The like route refuses a pair blocked in
+   EITHER direction with the post's own 404
+   (`artifacts/api-server/src/routes/posts.ts:2479#// Bidirectional block check — matches /stamps access control.`).
+   Executed on main (§57.3): a viewer the author blocked, a viewer who blocked the author, and a mutual block all
+   got 200 and the roster, for the post, its reactions and every comment on it.
+2. **The gate was cruder than the post's own read.** GET /posts/:postId
+   (`artifacts/api-server/src/routes/posts.ts:1875#router.get("/posts/:postId", async (req, res) => {`) reads
+   `status = 'active'` only, refuses a non-author an unpublished post, and decides visibility with
+   `artifacts/api-server/src/lib/postVisibility.ts:83#export function decidePostReadable(`. The likers gate served
+   anyone the likers of an ARCHIVED public post (`status = 'hidden'`) and of a public post not yet published
+   (`post_status`), counted an INVITED trip row as membership, and answered a missing, private or otherwise
+   unreadable post 403, so a blocked viewer's answer differed from a missing post's.
+3. **GET /me/blocker-ids stopped at 500.** BLOCKS-2 named it "found, not fixed" (census-telegraph §98, PR #754):
+   `.limit(500)`, no paging, and nothing on the response saying the list had stopped. PostgREST also cuts any
+   read at db-max-rows with no error, so a larger limit would only have moved the cut.
+
+### 57.2 What changed
+
+1. **The gate** (`artifacts/api-server/src/lib/postLikersGate.ts:82#export async function decidePostLikersAccess(`)
+   is the post's own read decision plus the like route's block check, in this order:
+   - GET's `status = 'active'` row; no row → the post's 404;
+   - the author is admitted;
+   - not published → the post's 404;
+   - a block in EITHER direction → the post's 404
+     (`artifacts/api-server/src/lib/postLikersGate.ts:95#if (await isBlockedBetween(sc, viewerId, row.author_id)) return POST_NOT_FOUND;`).
+     `isBlockedBetween` answers "blocked" when the read fails or throws, so an unreadable block state gets the same
+     answer;
+   - `decidePostReadable`, with the accepted trip membership and the follow read only when the tier needs them;
+     refused → the post's 404.
+
+   Every refusal is the same object, so a missing post and a refused one cannot be told apart.
+   - **Unreadable reads.** A failed `posts` read is "unreadable"
+     (`artifacts/api-server/src/lib/postLikersGate.ts:89#if (error) return "unreadable";`), answered 503 before the
+     row's existence is known. A failed trip-membership or follow read refuses with the post's 404
+     (`artifacts/api-server/src/lib/postLikersGate.ts:100#if (member === null) return POST_NOT_FOUND;`). A 503 there
+     would be served only for a post that exists and is otherwise readable, and would say so.
+   - **Not widened.** After the read comes main's likers rule: public, or a trip member of a trip_only post
+     (`artifacts/api-server/src/lib/postLikersGate.ts:118#if (row.visibility === "trip_only" && decision.reason === "trip_member") return true;`).
+     A follower of a followers_only post, and a legacy row with no visibility, can read the post and still get 403.
+     Membership is now GET's ACCEPTED test: an invited row no longer counts, and the trip's owner, who has no
+     `trip_members` row by design and whom GET and the like route already admit, now does. That is the one reader
+     newly admitted.
+   - **Comments** (`artifacts/api-server/src/lib/postLikersGate.ts:122#export async function decideCommentLikersAccess(`):
+     the comment's row (not soft-deleted), then its post's rule. Every refusal is the comment routes' own
+     "Comment not found"
+     (`artifacts/api-server/src/lib/postLikersGate.ts:132#return typeof verdict === "object" ? COMMENT_NOT_FOUND : verdict;`).
+2. **The route.** It answers the gate's refusal before `checkAccess`
+   (`artifacts/api-server/src/routes/engagement.ts:222#} if (await answerPostLikersRefusal(`), and `checkPostAccess`
+   (`artifacts/api-server/src/routes/engagement.ts:55#async function checkPostAccess(`) runs the same decision and
+   admits only on `true`. Both edits are line-neutral: PR #739's §BQ cites this file's later lines by number, and it
+   edits the import line, `checkAccess`'s signature and the refusal block, none of which this touches. The two
+   `checkPostAccess` entries leave the unchecked-reads allowlist. The likers list was already block-filtered
+   (`readBlockExclusions` over the page, 503 when unreadable) and is unchanged.
+3. **GET /me/blocker-ids**
+   (`artifacts/api-server/src/routes/blocks.ts:298#router.get("/me/blocker-ids", async (req, res) => {`) walks
+   `blocks` by keyset on `id` until an EMPTY page
+   (`artifacts/api-server/src/routes/blocks.ts:305#const read = await readAllByIdKeyset(`). A page that fails
+   fails the answer: db_error, as before, and never a prefix. Past 10,000 rows it refuses with 503
+   (`artifacts/api-server/src/routes/blocks.ts:313#if (read.truncated) {`). A 200 is always the whole list, and the
+   client's `!ok` path already marks the list "not known". Line-neutral, because census-telegraph cites this file by
+   line.
+
+### 57.3 Evidence
+
+- **`artifacts/api-server/src/test/engagementPostLikersReadGate.test.ts`**: 35 tests, registered, over the real
+  app (app.js). Its double gives `.or()` the real PostgREST grammar, because `isBlockedBetween` narrows entirely inside
+  it. Each refusal is byte-compared (status, body, content-type, content-length) with the real answers on the same
+  seed:
+  - POST /posts/:postId/like's refusal of the blocked pair;
+  - GET /posts/:postId for every state it refuses
+    (`artifacts/api-server/src/test/engagementPostLikersReadGate.test.ts:343#for (const c of REFUSED) {`);
+  - a missing post or comment.
+
+  **Red on main: 28 of 35.** The 7 green on both are controls: a roster is producible; a block with a LIKER only
+  drops that liker; the author; the roster's own 503 for the author and for a non-author; readers main admitted;
+  and NOT WIDENED. Green: 35/35.
+- **`artifacts/api-server/src/test/blockerIdsComplete.test.ts`**: 9 tests, registered. Its double caps every
+  response at db-max-rows, whatever `.limit()` asks. **Red on main: 6 of 9**: 501 blockers, 1,234 at a cap of
+  1,000, 2,500 at a cap of 400, exactly 10,000, 10,001, and a mid-walk failure. The 3 controls are green on both.
+  Green: 9/9.
+- **Neighbours changed to match:**
+  - `artifacts/api-server/src/test/engagement.test.ts`: the two private-post cases expect the post's or comment's
+    404 (they expected 403);
+  - `artifacts/api-server/src/test/exclusionFailClosedRoutes.test.ts`: the roster-refusal case reads the viewer's
+    own post, because on anyone else's the gate now refuses first. Line-neutral; its cited :510 holds;
+  - `artifacts/api-server/src/test/blocks.test.ts`: its double gains `.gt` and row ids.
+- **Mutants: 26 run, 25 killed**, each by an assertion. The runner is lane-private, asserts the worktree, restores
+  with `git checkout` and ends with the tree clean.
+  - The gate (17): the status filter, the unreadable read, the author line, the published check, the block, the
+    block asked about the wrong pair, an unreadable membership admitting, an unreadable follow answering 403,
+    widening, the read decision ignored, a comment refusal saying "Post not found", deleted comments readable, an
+    unreadable comment read answering 404, a refusal answered 403, unreadable falling through, `post_reaction`
+    ungated, and a membership outage escaping as 503.
+  - The route (3): the pre-gate removed, `checkPostAccess` always admitting, and the pre-gate removed together
+    with `checkPostAccess` admitting a truthy verdict.
+  - GET /me/blocker-ids (5): the ceiling raised, a truncated read served, no ceiling, the wrong direction, and a
+    failed walk served empty.
+  - **Survived, equivalent: `checkPostAccess` admitting any truthy verdict on its own.** The pre-gate answers every
+    non-boolean verdict first, so nothing reaches it. It is the belt for the pre-gate, and the paired mutant shows
+    the belt matters.
+
+### 57.4 Rows read, NOT moved
+
+- **MD55** (the social layer is owned by the post spine) and **MD203** (creator engagement) stay C. Their evidence
+  is the engagement routes on the post spine. Neither names the likers roster, and nothing either claims changes.
+  The defect was a privacy gap inside that layer, now closed.
+- **MD9** (privacy, blocks and eligibility resolve before client projection) stays C. It is graded on the Media
+  world projection, and the likers roster is not that projection.
+- Census-telegraph's rows on block reads are not regraded by this lane. `routes/blocks.ts` still reads `blocks`
+  directly, now through the shared keyset walker.
+
+**Headline unchanged: 450 = 415 C / 30 W / 5 N / 0 ?** (`check:census-integrity`).
+
+### 57.5 Found, not fixed (named for a follow-up)
+
+1. **GET /posts/:postId and GET /posts/:postId/comments read no block.** A viewer blocked either way by the author
+   is served the post (200) and its comments. The like route answers that pair 404, and comment creation answers
+   `blocked_user`. So the likers' 404 is no new signal, but the post read itself is a gap. It is a change to the
+   posts read, with its own question of what a blocked viewer is told.
+2. **A block between the viewer and a COMMENT's author** is read by no comment route; they read only the post
+   author's. The comment likers gate follows them. A refusal here alone would announce the block where the comment
+   list still shows the comment (the trade LR-B58-6 names).
+3. **GET /me/blocks** still reads `.limit(500)`: the viewer's own block list, and the client's `blockedIds` with
+   it, is cut at 500.
+4. **`readAllByIdKeyset` on main reads a page whose `data` is not a list as an empty page**, which ends the walk.
+   PR #754 makes it a failed read, and until it merges GET /me/blocker-ids inherits that.
+
+### 57.6 Owner questions
+
+- **OQ-POSTLIKERS-1.** May a reader the post admits beyond main's likers rule (a follower of a followers_only post)
+  see who liked it? The fail-closed default is implemented: no (403). Main's rule is kept, and nobody who could not
+  list these likers on main can now, except the trip's owner (§57.2).
+- **The 10,000-row ceiling on GET /me/blocker-ids** is Q-BLOCKS2-1's question (PR #754). The default is
+  implemented: refuse past it.
+
+Cited, not graded (check:census-scope-coverage):
+- NOT-GRADED: artifacts/api-server/src/routes/blocks.ts — §57.2 item 3 fixes GET /me/blocker-ids in it; census-telegraph watches the file and grades the block surfaces, and no Media row rests on it
+- NOT-GRADED: artifacts/api-server/src/test/blockerIdsComplete.test.ts — §57.3 names it as the blocker-ids proof; it proves census-telegraph's file, and no Media row rests on it
+- NOT-GRADED: artifacts/api-server/src/test/engagement.test.ts — §57.3 names two expectations changed in it; the route's original suite, a neighbour, and no Media row rests on it
+- NOT-GRADED: artifacts/api-server/src/test/exclusionFailClosedRoutes.test.ts — §57.3 names a fixture change in it; census-telegraph's exclusion suite, and no Media row rests on it
+- NOT-GRADED: artifacts/api-server/src/test/blocks.test.ts — §57.3 names a fixture change in its double; the blocks routes' suite, and no Media row rests on it
+
+## 58. B58 lane PRIV-FIX-2, 2026-10-14: the EXIF/GPS strip measured with a still that really carries GPS. No live leak; five vacuous fixtures; the worker's GPS refusal could not see a WebP. NO ROW CHANGES BUCKET
+
+Lane MEM-RENDITIONS reported that `photoCeilingExifStrip.test.ts` (line 100 on main) planted its GPS tags as
+`withExif({ GPS: { … } })`. sharp 0.35.3 has no `GPS` key; the GPS IFD is `IFD3`. Measured: that call writes an
+EXIF block whose IFD0 has **no 0x8825 pointer**, so the fixture carried no GPS. Four more fixtures had the same
+defect, each now fixed in place:
+- `artifacts/api-server/src/test/mediaLib.test.ts:22#IFD3: { GPSLatitudeRef: "N"`;
+- `artifacts/api-server/src/test/mediaUploadHardening.test.ts:238#.withExif({ IFD0: { Copyright: "x" }, IFD3:`;
+- `artifacts/api-server/src/test/mediaVideoPosterGeneral.test.ts:355#.withExif({ IFD0: { Copyright: "x" }, IFD3:`;
+- `artifacts/api-server/src/test/mediaVideoTransport.test.ts:405#.withExif({ IFD0: { Copyright: "x" }, IFD3:`.
+
+ The last three carried `as any`, which is how TypeScript's refusal of the key was
+silenced. No suite had ever passed a GPS IFD through the pipeline. Their EXIF-block assertions were real, because IFD0
+was planted. Their GPS claim was not. `artifacts/api-server/src/test/messageMediaTransport.test.ts:153#IFD3: { GPSLatitudeRef: "N"` used `IFD3` and was the
+one exception.
+
+### 58.1 Is there a live GPS leak? No. Measured on main `3c214ca80`, not argued
+
+`artifacts/api-server/src/test/geotaggedImageFixtures.ts:82#export function buildGeotaggedTiff(` builds the TIFF by
+hand, independently of sharp's writer. Each still carries all of these at once:
+- a GPS IFD with 6 entries (version, both refs, latitude, longitude, a processing-method sentinel);
+- an Exif sub-IFD MakerNote;
+- Orientation 6;
+- XMP (`exif:GPSLatitude`, `exif:GPSLongitude`, `photoshop:City`);
+- for JPEG: an IPTC-IIM 2:90 city, a COM comment and an APP11 (JUMBF/C2PA carrier) payload;
+- for PNG: `eXIf`, an `iTXt` XMP and a `tEXt` comment;
+- for WebP: VP8X with `EXIF` and `XMP ` chunks.
+
+`fixtureCarries` (`artifacts/api-server/src/test/geotaggedImageFixtures.ts:345#export async function fixtureCarries(`) refuses a fixture that
+lacks any of them. `locationLeaks` (`artifacts/api-server/src/test/geotaggedImageFixtures.ts:371#export async function locationLeaks(`) reports a leak through each of these
+checks:
+- sharp's parser;
+- `lib/exifFacts` (which never reads a value);
+- the raw bytes, scanned for every sentinel and the planted decimal coordinate;
+- a container allowlist: JPEG may keep APP0 JFIF only, PNG critical and colour chunks only, WebP image chunks only.
+
+Every server entry point that stores or derives a still from a user's bytes was fed JPEG, PNG and WebP. The new suite,
+`imageLocationStripGuard.test.ts`, does this over HTTP against a fake Storage that records every write. **Every stored
+object came back clean.** That run used main's code byte for byte; only the test files were added (46 of the suite's 50
+cases were green on main).
+
+| Entry point | Producer | Objects stored | Location carriers left |
+| --- | --- | --- | --- |
+| `POST /media/upload`: memories, stories, Telegraph media, and the message-media assemble (`artifacts/api-server/src/routes/messageMediaTransport.ts:200#await storeVerifiedMediaUpload(`) | `processImage`, `makeThumbnail`, `makeFeedVariant` (`artifacts/api-server/src/routes/posts.ts:163#const img = await processImage(rawBody, sniffed);`) | original, `.thumb.jpg`, `.feed.jpg` | none |
+| `POST /postcards/:id/media/:mediaId/complete`, over the bytes the signed-URL PUT or the resumable assemble left | `processImage` (`artifacts/api-server/src/routes/postcards.ts:734#img = await processImage(rawBuf, sniffed);`), re-stored in place (`artifacts/api-server/src/routes/postcards.ts:741#.upload(storagePath, img.buffer`), then `makeFeedVariant` | original (replaced), `.feed.jpg` | none |
+| `POST /me/avatar/upload` and `POST /me/cover/upload` | `processImage` at 1024 / 2048 (`artifacts/api-server/src/routes/profile.ts:36#return { img: await processImage(rawBody, sniffed, maxDim) };`) | one each | none |
+| `POST /postcards/:id/media/:mediaId/poster` | `makeVideoPoster` (`artifacts/api-server/src/routes/postcardMediaTransport.ts:193#poster = await makeVideoPoster(`) | `.poster.jpg` | none |
+| `POST /media/upload/poster` | `makeVideoPoster` (`artifacts/api-server/src/routes/mediaVideoPoster.ts:92#poster = await makeVideoPoster(`) | `.poster.jpg` | none |
+| The public OG card from a stored cover | `renderOgImagePng` (`artifacts/api-server/src/lib/ogImage.ts:141#return await sharp(bytes)`) | served, not stored | none |
+| Place-visual derivatives (provider imagery) | `buildDerivatives` | five WebP sizes | none |
+| The tiny rung (`makeTinyVariant`, on `claude/b58-mem-renditions` only, not on main) | verbatim copy, probed | n/a | none |
+
+**Limits, stated:**
+- **A pending postcard slot holds the raw bytes until `/complete`.** This is the signed-URL transport by design. If
+  `/complete` refuses the content, the raw object stays until the pending-upload sweep. Only its owner can be signed
+  for it: a row that is not `ready` is never served to anyone else
+  (`artifacts/api-server/src/lib/mediaAccess.ts:487#if (pmRows.length >= POST_MEDIA_ATTACHMENT_CAP) return false;`).
+  This is the owner's own photograph, held for the owner. It is not a disclosure.
+- **HEIC is refused, not stripped.** This libvips has no HEVC decoder, and both transports fail closed
+  (`artifacts/api-server/src/routes/posts.ts:185#FAIL-CLOSED FOR EVERY IMAGE, HEIC INCLUDED.`). No HEIC fixture could be built here, so the claim is the refusal, not a strip.
+- **Admin stamp artwork is stored as sent.** `POST /admin/stamps/catalog/:id/upload` stores the admin's bytes unchanged
+  in the public `stamp-artwork` bucket (`artifacts/api-server/src/routes/stampCatalog.ts:1053#.upload(path, buffer, { contentType: mimeType, upsert: false });`).
+  The route claims no strip, and no Media row covers it. A phone photo uploaded there would publish the admin's
+  capture location. This is listed as **OQ-PRIV2-1** (58.5) and not changed: the stated rule (MD217/MD258) is about
+  users' media.
+
+### 58.2 What changed
+
+**Tests:**
+- The five fixtures plant `IFD3`, line-neutrally in the three cited or `as any` files.
+- `photoCeilingExifStrip.test.ts` now does three things:
+  - plants the GPS IFD (`artifacts/api-server/src/test/photoCeilingExifStrip.test.ts:122#IFD3: { GPSLatitudeRef: "N", GPSLatitude: "51/1 30/1 0/1"`);
+  - makes it a precondition (`artifacts/api-server/src/test/photoCeilingExifStrip.test.ts:164#assert.equal(srcFacts?.hasGpsIfd, true,`);
+  - checks every output for a GPS IFD and for any EXIF through `lib/exifFacts` (`artifacts/api-server/src/test/photoCeilingExifStrip.test.ts:104#assert.equal(facts.hasGpsIfd, false,`);
+  - says in its header that its GPS half was vacuous until now.
+- The new `imageLocationStripGuard.test.ts` (50 cases) has five parts:
+  - A, the fixtures and the detector, with a `keepMetadata()` control;
+  - B, every producer, from the raw bytes and from the processed original;
+  - C, the set is closed:
+    - every exported `Promise<ProcessedImage>` producer in `lib/mediaProcessing.ts` must be registered;
+    - every production importer of sharp must be classified;
+    - no production `keepMetadata` / `withMetadata` / `keepExif` / `withExif(Merge)` / `keepXmp` / `withXmp` /
+      `keepGainMap` / `withGainMap`;
+    - no test may plant GPS under `GPS:` again;
+  - D, the routes above over HTTP;
+  - E, the detector.
+
+**Code: one change, in the DETECTOR, not the strip.** `lib/exifFacts` read a WebP `EXIF` chunk as libwebp writes it, with
+the JPEG `Exif\0\0` header before the TIFF block, as "no EXIF at all": "Ex" failed the byte-order check. Every WebP
+that sharp itself writes with EXIF has that header. Two consequences followed:
+- the media worker's refusal of a stored still that carries a GPS IFD
+  (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:172#if (exifFactsFrom(bytes)?.hasGpsIfd) {`, §30.4
+  step 2) passed a geotagged WebP;
+- `audit:storage-exif` counted such a WebP as clean.
+
+The header is now skipped, line-neutrally:
+- `artifacts/api-server/src/lib/exifFacts.ts:87#if (type === "EXIF") return withoutExifHeader(`;
+- the PNG `eXIf` branch at `artifacts/api-server/src/lib/exifFacts.ts:70#if (type === "eXIf") return withoutExifHeader(`;
+- the helper, appended at `artifacts/api-server/src/lib/exifFacts.ts:180#function withoutExifHeader(`.
+
+No pipeline output carries EXIF at all (58.1), so no stored WebP was affected through these routes. The hole was in
+the second line of defence. A side effect: `capturedAtFromImageBytes` now reads a WebP upload's DateTimeOriginal, so
+MD39's `captured_at` can be non-null for WebP where it was null. The plausibility window is unchanged.
+
+### 58.3 Rows: none moves
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD217 | **C** | **C** | Restated, not moved. The strip holds for every user-upload path and every carrier (58.1). The C's GPS evidence was vacuous until this section. It is now real: `src/test/imageLocationStripGuard.test.ts` (B, D) and `artifacts/api-server/src/test/photoCeilingExifStrip.test.ts:164#assert.equal(srcFacts?.hasGpsIfd, true,`. |
+| MD258 | **C** | **C** | Restated. The first of its three defences, stripping at upload, is now proved against a GPS IFD, XMP and IPTC location, not only against an IFD0 tag. |
+| MD268 | **C** | **C** | Restated. "Strip all EXIF" holds. XMP, IPTC, comments and unknown APPn are dropped as well, and the guard pins that (mutant A2: `.keepXmp()` passes `photoCeilingExifStrip` and fails the guard). |
+| MD338 | **C** | **C** | Restated. Its C rests on §28.9's RED WHEN (claim, complete, fail), which this does not touch. §30.4 step 2's sentence "a stored still that carries a GPS IFD … is refused" was false for a libwebp-written WebP. It is now true (58.2; `imageLocationStripGuard.test.ts` E, "the media worker therefore refuses a stored geotagged WebP"). |
+
+### 58.4 Evidence
+
+- **Red on main** (`3c214ca80`, a clean detached worktree, only the new and updated test files copied in):
+  - `imageLocationStripGuard` 4 of 50 red: the WebP detector ×3, and the `GPS:` ratchet over main's five fixtures;
+  - `photoCeilingExifStrip` 1 of 6 red: the WebP GPS precondition, which is the same detector;
+  - every producer and route case green, which is the 58.1 answer.
+- **Green on the branch:** the two suites, plus `mediaLib`, `exifFacts`, `mediaUploadHardening`,
+  `mediaVideoPosterGeneral`, `mediaVideoTransport`, `messageMediaTransport`, `mediaCapturedAtWriter` and
+  `mediaProcessingWorker`: 239 of 239.
+- **Mutants, 17 of 17 killed** (lane runner, worktree-asserted, every file restored and the tree checked clean):
+  - A1 `.keepExif()` in `processImage` (19 red);
+  - A2 `.keepXmp()` in `processImage` (17 red; **`photoCeilingExifStrip` alone stays green**);
+  - A3–A5 `.keepMetadata()` in thumbnail, feed and poster;
+  - A6–A11 each route storing its raw body or frame: `/media/upload`, `/complete`, avatar, cover, both posters;
+  - A12 the `exifFacts` fix reverted, which is main's detector (4 red, plus `photoCeilingExifStrip`'s WebP);
+  - A13 the `photoCeilingExifStrip` key back to `GPS:` (its precondition and the ratchet);
+  - A14 the fixture builder dropping its 0x8825 pointer (28 red);
+  - A15 `.keepMetadata()` on the OG card;
+  - A16 an unregistered producer appended to `mediaProcessing.ts` (the closed-set check);
+  - A17 the detector ignoring XMP (the fixture self-checks).
+
+### 58.5 Owner question (fail-closed default NOT applied, because it is not a user's media)
+
+- **OQ-PRIV2-1.** Should `POST /admin/stamps/catalog/:id/upload` re-encode admin artwork (dropping EXIF/XMP) before
+  storing it in the public `stamp-artwork` bucket? No change was made.
+
+### 58.6 Headline, restated from the rows
+
+Unchanged; no row changes bucket. `check:census-integrity` on this branch: **450 = 415 C / 30 W / 5 N / 0 X**.
+CONSTRUCTED 445 / 450 = 98.9 %; CORRECT 415 / 450 = 92.2 %.
+
+Merge hazards: none in this file beyond the section number. No open branch adds a census-media §58.
+
+Cited, not graded (check:census-scope-coverage):
+- NOT-GRADED: artifacts/api-server/src/routes/stampCatalog.ts — §58.1 cites the admin artwork upload as a path outside every Media row (OQ-PRIV2-1).
+- NOT-GRADED: artifacts/api-server/src/lib/ogImage.ts — §58.1 cites the OG renderer as clean; its card is graded nowhere in this census.
+
+### 58.7 Brought onto main 2026-11-04 (renumbered §52 → §58; #758's section is §57)
+
+Main gained four production importers of sharp after this lane: `lib/media/imageVariants/encoder.ts` and `encoderChild.ts` (the
+stored adaptive variants), `lib/media/vendors/imageUnderstandingPixels.ts` (bytes sent to the vision vendor) and
+`lib/media/visualIndex/canonicalImageAcquisition.ts` (a decode-only check). C's closed set now classifies all four. The two that store
+or send user bytes run through B from a geotagged still in all three formats, and every output is clean. `locationLeaks` could not
+read AVIF, which the variants include, so it now parses an AVIF's items and refuses `Exif` and `mime` (XMP). A new section F proves it:
+a clean AVIF reads clean, and one that kept the upload's metadata is caught. No production code changed. NO ROW MOVES.
+

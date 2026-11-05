@@ -14,10 +14,10 @@
  */
 import { useCallback, useSyncExternalStore } from 'react';
 
-import { readerFace, readerFacesVersion, subscribeReaderFaces } from './readerFaces.ts';
+import { readerFace, readerFacesVersion, subscribeReaderFaces } from './readerFaces.ts'; import { avatarImageUri } from '../../../lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97)
 
 export function useReaderAvatars(_readerIds: readonly string[]): (userId: string) => string | null {
   const version = useSyncExternalStore(subscribeReaderFaces, readerFacesVersion, readerFacesVersion);
   // `version` is the dependency that makes a new answer re-render the chips.
-  return useCallback((userId: string) => readerFace(userId), [version]); // eslint-disable-line react-hooks/exhaustive-deps
+  return useCallback((userId: string) => avatarImageUri(readerFace(userId)), [version]); // eslint-disable-line react-hooks/exhaustive-deps -- PRIV-FIX-3 (census-telegraph §97): a reader's face is Portava storage or not drawn (the chips include GroupChatScreen's raw <Image>)
 }

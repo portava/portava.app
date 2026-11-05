@@ -239,7 +239,7 @@ router.post("/auth/signup", signupLimiter, asyncHandler(async (req, res) => {
     });
 
     if (error) {
-      const msg: string = error.message ?? "";
+      const msg: string = error.message ?? ""; if (error.code === "weak_password") { res.status(422).json({ error: "weak_password", message: msg, reasons: Array.isArray(error.reasons) ? error.reasons : [] }); return; } // leaked-password protection (and Auth's strength rules) also answer 422: never report that as "email taken" (#817)
       if (error.status === 422 || msg.toLowerCase().includes("already registered") || msg.toLowerCase().includes("already exists")) {
         res.status(409).json({ error: "email_taken", message: msg });
       } else {

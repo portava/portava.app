@@ -227,3 +227,26 @@ export function _resetRateLimit(limiterId?: string, userId?: string): void {
     _buckets.clear();
   }
 }
+
+// ── Bucket eviction (sec/public-surface, 2026-11-04) ──────────────────────────
+// Appended at the foot so every line above keeps its number (docs cite
+// checkRateLimit by line).
+//
+// `_buckets` was never pruned. Every limiter above keys on a USER id, so the map
+// was bounded by the number of users. lib/publicRateLimit.ts keys on CLIENT
+// ADDRESSES, which callers on the internet can supply without limit, so it
+// sweeps its own expired buckets through this. A bucket whose window has fully
+// elapsed holds nothing the next hit needs: it starts a new window either way.
+
+/** Delete one limiter's buckets whose window began at least `windowMs` ago; returns how many went. */
+export function sweepRateLimitBuckets(limiterId: string, windowMs: number, now = Date.now()): number {
+  const prefix = `${limiterId}:`;
+  let removed = 0;
+  for (const [key, bucket] of _buckets) {
+    if (key.startsWith(prefix) && now - bucket.windowStart >= windowMs) {
+      _buckets.delete(key);
+      removed++;
+    }
+  }
+  return removed;
+}

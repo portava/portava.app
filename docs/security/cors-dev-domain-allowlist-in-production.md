@@ -1,6 +1,6 @@
 # SECURITY FINDING — production auto-allows any `*.kirk.replit.dev` origin, and the code says it cannot
 
-**Filed 2026-08-15. Open. Severity: LOW-TO-MODERATE and LATENT.**
+**Filed 2026-08-15. Severity: LOW-TO-MODERATE and LATENT. Fixed in code 2026-11-04 (sec/public-surface), not yet re-measured against production: items 1, 3 and 4 below are done (the comment in app.ts; `lib/corsOrigins.ts` allows the workspace previews only outside production, NODE_ENV=production or REPLIT_DEPLOYMENT present; `src/test/corsProductionOrigins.test.ts` refuses an invented kirk.replit.dev subdomain in production). Item 2 is the deployment's. The trigger below still stands: the bearer-only rule is now written next to `credentials: true` in app.ts.**
 
 > # 🔒 FUTURE-AUTHENTICATION TRIGGER — BLOCKING
 >

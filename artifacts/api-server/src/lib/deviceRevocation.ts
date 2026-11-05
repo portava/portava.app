@@ -218,7 +218,7 @@ export async function revokeDevice(sc: SupabaseClient, input: RevokeDeviceInput)
   } else {
     authSession = "unlinked";
   }
-  if (authSession === "failed") failed.push("auth_session");
+  if (authSession === "failed") failed.push("auth_session"); invalidateUserAuthCache(userId); // whatever the outcome: tokens this instance verified before the write carry the old app_metadata (lib/hotPathCache.ts)
   if (authSession === "unlinked") gaps.push(linkColumn ? "auth_session_unlinked" : "auth_session_link_column_absent");
 
   // ── push_tokens ───────────────────────────────────────────────────────────
@@ -369,3 +369,10 @@ export async function linkPushTokenToDevice(
   log?.warn?.({ err: error, userId }, "push: linking the token to its device failed — revoking that device will not drop it");
   return "failed";
 }
+
+// lib/hotPathCache.ts: a revocation (also the API's sign-out: DELETE
+// /me/crypto-devices/:id) ends what this instance remembers about the account's
+// verified tokens, so a revoked or signed-out session is refused here on its
+// next request; other instances refuse it within the cache's 30s bound.
+// Appended at the foot so no cited line moves.
+import { invalidateUserAuthCache } from "./hotPathCache.js";

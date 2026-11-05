@@ -2174,7 +2174,7 @@ router.post("/admin/circle/kill-switch", async (req, res) => {
     p_flag:          "find_your_circle_disabled",
     p_new_enabled:   enabled,
     p_changed_by_id: adminUserId,
-  });
+  }); invalidateFeatureFlagCache(); // whatever the outcome (an errored write may still have committed): lib/hotPathCache.ts
   if (error?.code === "42883") { req.log?.error?.({ pgCode: error.code }, "toggle_feature_flag_with_audit missing — apply migration 0119"); res.status(503).json({ error: "server_not_configured", message: "toggle_feature_flag_with_audit function is missing — apply migration 0119 to the database" }); return; }
   if (error && (error.code === "P0002" || error.message?.includes("Flag not found"))) { sendError(res, "not_found", "Flag 'find_your_circle_disabled' not found"); return; }
   if (error) { req.log?.error?.({ err: error }, "circle kill-switch toggle failed"); sendError(res, "db_error", error.message); return; }
@@ -2307,3 +2307,6 @@ router.post("/circle/internal/cleanup-presence", async (req, res) => {
 });
 
 export default router;
+
+// lib/hotPathCache.ts: every flag write above ends this instance's remembered flag rows (other instances: within 15s). At the foot so no cited line moves.
+import { invalidateFeatureFlagCache } from "../lib/hotPathCache.js";

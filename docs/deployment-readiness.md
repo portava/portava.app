@@ -26,7 +26,7 @@ entirely in `.replit`:
 | `deploymentTarget` | `autoscale` | `.replit:5#deploymentTarget` |
 | `build` | `bash scripts/build-production.sh` | `.replit:14#build` |
 | `run` | `pnpm --filter @workspace/api-server run start` | `.replit:15#run` |
-| production `ALLOWED_ORIGINS` | `https://portava.replit.app` | `.replit:159#ALLOWED_ORIGINS` |
+| production `ALLOWED_ORIGINS` | `https://rumazi.com,https://www.rumazi.com,https://portava.replit.app` | `.replit:159#ALLOWED_ORIGINS` |
 
 **VERIFIED.** `.replit` itself says these are best-effort: lines 11-13 of that
 file state that deployment settings configured in the Replit UI override the

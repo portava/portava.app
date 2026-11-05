@@ -450,20 +450,20 @@ describe('T295 — reader faces are the server\'s answer, not a profiles read', 
   it('a receipts answer\'s faces reach the chips; a face the server withholds is not drawn', async () => {
     mockFetchReceipts.mockResolvedValue({
       ok: true,
-      data: { threadId: T, receipts: [receipt(1, { status: 'SEEN', seenBy: 2, seenByUserIds: [THEM, 'blocked-3'] })], readerFaces: { [THEM]: 'https://cdn.example/them.jpg', 'blocked-3': null } },
+      data: { threadId: T, receipts: [receipt(1, { status: 'SEEN', seenBy: 2, seenByUserIds: [THEM, 'blocked-3'] })], readerFaces: { [THEM]: 'profile-media/avatars/them/a.jpg', 'blocked-3': null } },
     });
     await mount({ messages: [msg(1, ME, '2026-10-01T10:00:00Z')] });
     await waitFor(() => expect(mockFetchReceipts).toHaveBeenCalled());
     const chips = await renderHook(() => useReaderAvatars([THEM, 'blocked-3']));
-    await waitFor(() => expect(chips.result.current(THEM)).toBe('https://cdn.example/them.jpg'));
+    await waitFor(() => expect(chips.result.current(THEM)).toBe('profile-media/avatars/them/a.jpg'));
     expect(chips.result.current('blocked-3')).toBeNull();
   });
 
   it('a later answer that withholds a face (a block made since) takes it away', async () => {
-    mockFetchReceipts.mockResolvedValueOnce({ ok: true, data: { threadId: T, receipts: [], readerFaces: { [THEM]: 'https://cdn.example/them.jpg' } } });
+    mockFetchReceipts.mockResolvedValueOnce({ ok: true, data: { threadId: T, receipts: [], readerFaces: { [THEM]: 'profile-media/avatars/them/a.jpg' } } });
     const hook = await mount({ messages: [msg(1, ME, '2026-10-01T10:00:00Z')] });
     const chips = await renderHook(() => useReaderAvatars([THEM]));
-    await waitFor(() => expect(chips.result.current(THEM)).toBe('https://cdn.example/them.jpg'));
+    await waitFor(() => expect(chips.result.current(THEM)).toBe('profile-media/avatars/them/a.jpg'));
     mockFetchReceipts.mockResolvedValueOnce({ ok: true, data: { threadId: T, receipts: [], readerFaces: { [THEM]: null } } });
     await act(async () => { hook.result.current.refreshReceipts(); });
     await waitFor(() => expect(chips.result.current(THEM)).toBeNull());

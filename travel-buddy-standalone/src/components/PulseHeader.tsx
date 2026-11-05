@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { CachedImage } from './CachedImage.tsx';
+import { CachedImage } from './CachedImage.tsx'; import { avatarImageUri } from '../lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97): an avatar is Portava storage or nothing
 import Animated, { useAnimatedStyle, interpolate } from 'react-native-reanimated';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -98,8 +98,8 @@ export function PulseHeader({
           accessibilityRole="button"
           accessibilityLabel="Your profile"
         >
-          {avatarUrl ? (
-            <CachedImage source={{ uri: avatarUrl }} style={styles.avatar} />
+          {avatarImageUri(avatarUrl) ? (
+            <CachedImage source={{ uri: avatarImageUri(avatarUrl) ?? undefined }} style={styles.avatar} />
           ) : (
             <View style={[styles.avatar, styles.avatarFallback]}>
               <CircleUserRound size={20} color={pv.textMute} />

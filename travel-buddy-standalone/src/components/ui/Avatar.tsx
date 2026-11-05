@@ -25,7 +25,7 @@ import { View, Text, StyleSheet, type ImageStyle, type StyleProp, type ViewStyle
 import { Image as ExpoImage } from 'expo-image';
 import { Globe, Users } from 'lucide-react-native';
 import { color, type as t } from '../../theme/tokens.ts';
-import { useHydratedMedia } from '../../services/mediaUrl.ts';
+import { useHydratedMedia } from '../../services/mediaUrl.ts'; import { avatarImageUri } from '../../lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97): on this line so no cited line moves
 
 /** What the avatar stands for. Drives the fallback glyph, not just the tint. */
 export type AvatarKind = 'person' | 'trip' | 'circle' | 'group';
@@ -64,7 +64,7 @@ const KIND_NOUN: Record<AvatarKind, string> = {
 };
 
 export function Avatar({
-  uri,
+  uri: rawUri,
   name,
   kind = 'person',
   size = 38,
@@ -75,7 +75,7 @@ export function Avatar({
 }: AvatarProps) {
   // Screen readers get the kind as words, so "Trip chat" and "Maya" are never
   // ambiguous even though sighted users tell them apart by the glyph.
-  const label = accessibilityLabel
+  const uri = avatarImageUri(rawUri); const label = accessibilityLabel // PRIV-FIX-3 (census-telegraph §97): Portava storage or nothing — a host the person chose is never fetched by a viewer's device
     ?? (name ? `${name}, ${KIND_NOUN[kind]}` : KIND_NOUN[kind]);
 
   const box = { width: size, height: size, borderRadius: size / 2 };

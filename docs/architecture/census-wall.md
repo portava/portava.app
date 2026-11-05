@@ -2550,3 +2550,23 @@ Do not follow Input Intelligence §34.5's historical direct-module bootstrap rec
 reviewed privacy-safe native integration, explicit owner approval, a native build and real
 locale/API-level/device proof remain prerequisites. No native imports, package/lock/plugin changes,
 provider fallback, cloud consent, deployment or device success are claimed by this evidence.
+
+## §26 — 2026-10-14 (lane PRIV-FIX-3): the byline and the quick-media row draw a person's avatar only from Portava storage. NO ROW MOVES
+
+*Branch `claude/fix-priv-avatar-mine-blocks` from origin/main `3c214ca80`. `head_commit` is not re-declared. The full
+account is census-telegraph §97.*
+
+A person could point `profiles.avatar_url` at any host, and every Wall viewer's device fetched it. That covered the
+`ActorByline` on every object and the quick-media row's rings, and it told the host who looked and when. The server now
+accepts only the person's own upload (PATCH /api/me/profile; migration 3942, unapplied). The Wall draws an avatar only
+when it is Portava storage, and initials otherwise:
+- `travel-buddy-standalone/src/features/wall/components/objects/wallItemShared.tsx:334#avatarImageUri(actor?.avatarUrl)`;
+- `travel-buddy-standalone/src/features/wall/components/QuickMediaRow.tsx:64#avatarImageUri(entry.avatarUrl)`.
+
+Both edits are line-neutral. W31 (the creator is visually primary) and W72 (the quick-media row) are unchanged: the
+byline and the ring still render first and in place, and only the source an outside host could supply is withheld.
+
+| ID | Was | Now | Why |
+|---|---|---|---|
+| W31 | C | C | `ActorByline` still renders first; its avatar is Portava storage or initials. |
+| W72 | C | C | The row is unchanged; a ring's avatar is Portava storage or initials. |

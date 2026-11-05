@@ -82,7 +82,7 @@ export interface SearchMemoriesInput {
   namespace: RetrievalNamespace;
   /** The registered derivative to read. Must be legal for the namespace. */
   authorizedProjection: ProjectionId;
-  people?: readonly string[];
+  people?: readonly string[]; /** census-highlights-memories §BQ: who THIS viewer may see named in a shared derivative. Called once, after the read and BEFORE any filter, rank or count, with every person id the rows name; a person it says to withhold is absent from `people` (a `person_id` row is dropped). Must never reject. */ withholdPeople?: (personIds: readonly string[]) => Promise<(personId: string) => boolean>;
   place?: string | null;
   trip?: string | null;
   event?: string | null;
@@ -241,12 +241,20 @@ export async function searchMemories(
     };
   }
 
+  // 2b. census-highlights-memories §BQ. A SHARED derivative (above) is built once
+  //     for its audience, so who THIS viewer may see named in it is decided here,
+  //     per read — and before step 3, so the `people` filter, the counts and the
+  //     `person_relevance` dimension are all computed over the rows as this viewer
+  //     may see them. Withholding a person after the filter would leave the filter
+  //     matching them and the counts betraying them.
+  const rows = input.withholdPeople ? await withholdNamedPeople(payload.value.rows, input.withholdPeople) : payload.value.rows;
+
   // 3. Deterministic filters decide MEMBERSHIP.
   const from = input.dateRange?.from ? Date.parse(input.dateRange.from) : null;
   const to = input.dateRange?.to ? Date.parse(input.dateRange.to) : null;
   const people = input.people ?? [];
 
-  const selected = payload.value.rows.filter((row) => {
+  const selected = rows.filter((row) => {
     const occurred = asString(row.occurred_at);
     const t = Date.parse(occurred);
     if (from !== null && !Number.isNaN(from) && (Number.isNaN(t) || t < from)) return false;
@@ -338,4 +346,31 @@ export async function searchMemories(
       engine_version: RETRIEVAL_ENGINE_VERSION,
     },
   };
+}
+
+/**
+ * census-highlights-memories §BQ — the rows as THIS viewer may see their people.
+ *
+ * Asks `withhold` ONCE, with every person id any row names (a `people` entry or
+ * a `person_id`), and returns new rows: a withheld person is removed from
+ * `people`, and a row whose `person_id` is withheld is dropped (that row's whole
+ * subject is the person). The registered payload is never mutated — it is the
+ * shared artifact every other reader of this derivative reads.
+ */
+async function withholdNamedPeople(
+  rows: readonly ProjectedRow[],
+  withhold: (personIds: readonly string[]) => Promise<(personId: string) => boolean>,
+): Promise<ProjectedRow[]> {
+  const named = new Set<string>();
+  for (const row of rows) {
+    if (Array.isArray(row.people)) for (const p of row.people) named.add(asString(p));
+    if (row.person_id != null) named.add(asString(row.person_id));
+  }
+  const withheld = await withhold([...named]);
+  const out: ProjectedRow[] = [];
+  for (const row of rows) {
+    if (row.person_id != null && withheld(asString(row.person_id))) continue;
+    out.push(Array.isArray(row.people) ? { ...row, people: row.people.filter((p) => !withheld(asString(p))) } : row);
+  }
+  return out;
 }

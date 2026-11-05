@@ -510,13 +510,19 @@ default_checks() {
   # changes, zero functions are found and every one of them is trivially
   # referenced, which is a clean bill for a tree it can no longer see. So the
   # function count and the policy count are required as well as the verdict, and
-  # the check refuses below its own floors.
+  # the check refuses below its own floors. The `client EXECUTE withdrawn` line is 3985's ratchet
+  # (lib/definerClientExecuteWithdrawn.ts): a revoke IS safe for a role no
+  # policy calling the function applies to, 3985 withdraws exactly those, and the
+  # ratchet must show it replayed the policies and found the TO-authenticated
+  # callers it allows -- a parser that matched nothing would also report zero
+  # regressions.
   security_check "check:security-definer-oracles" \
     --guard "src/scripts/checkSecurityDefinerOracles.ts" \
     --codes "0 = every unreferenced SECURITY DEFINER function is ledgered with a classified reason; 1 = one is not, a ledger entry went stale, or the scan was vacuous" \
     --require '[1-9][0-9]* corpus file\(s\) read' \
     --require '[1-9][0-9]* SECURITY DEFINER function\(s\) alive' \
     --require '[1-9][0-9]* surviving policy/policies' \
+    --require 'client EXECUTE withdrawn by 3985_[a-z_]+\.sql: 0 regression\(s\) in [0-9]+ later migration\(s\); [1-9][0-9]* surviving policy/policies replayed, [1-9][0-9]* of them' \
     --require 'check:security-definer-oracles PASSED$' \
     --report-ere '([0-9]+) SECURITY DEFINER function\(s\) alive' \
     -- pnpm run check:security-definer-oracles

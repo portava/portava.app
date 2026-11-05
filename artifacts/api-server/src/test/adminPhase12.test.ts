@@ -346,7 +346,7 @@ function makeSignupFakeClient(opts: {
   disableSignups?: boolean;
   flagQueryError?: boolean;
   flagRowMissing?: boolean;
-  createUserError?: { status?: number; message: string } | null;
+  createUserError?: { status?: number; message: string; code?: string; reasons?: string[] } | null;
 }) {
   const { disableSignups = false, flagQueryError = false, flagRowMissing = false, createUserError = null } = opts;
 
@@ -775,6 +775,17 @@ describe("Kill switch: disable_signups (POST /auth/signup)", () => {
     const r = await req("POST", "/auth/signup", { email: "existing@example.com", password: "password123" });
     assert.equal(r.status, 409, `expected 409 email_taken, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.equal(r.body?.error, "email_taken");
+  });
+
+  it("a leaked or too-weak password (Auth's 422 weak_password) is weak_password, never email_taken (#817)", async () => {
+    const fc = makeSignupFakeClient({
+      createUserError: { status: 422, code: "weak_password", reasons: ["pwned"], message: "Password is known to be weak and easy to guess, please choose a different one." },
+    });
+    _setTestServiceClient(fc);
+    const r = await req("POST", "/auth/signup", { email: "new@example.com", password: "password123" });
+    assert.equal(r.status, 422, JSON.stringify(r.body));
+    assert.equal(r.body?.error, "weak_password");
+    assert.deepEqual(r.body?.reasons, ["pwned"]);
   });
 });
 

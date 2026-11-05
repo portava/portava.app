@@ -851,7 +851,7 @@ router.patch("/admin/compass/frontload-rules", async (req, res) => {
     }
 
     // Invalidate the Compass flags cache so routes pick up new values immediately
-    invalidateFlagsCache();
+    invalidateFlagsCache(); invalidateFeatureFlagCache(); // and the shared readers' remembered rows (lib/hotPathCache.ts)
 
     await logAdminAction(sc, userId, "update_frontload_rules", null, {
       rules: parsed.data.rules,
@@ -1089,3 +1089,6 @@ router.post("/admin/compass/testing-sandbox/preview", async (req, res) => {
 export default router;
 
 import { isHiddenInertFlag, refuseHiddenInertFlag } from "../lib/hiddenInertFlags.js";
+
+// lib/hotPathCache.ts: every flag write above ends this instance's remembered flag rows (other instances: within 15s). At the foot so no cited line moves.
+import { invalidateFeatureFlagCache } from "../lib/hotPathCache.js";

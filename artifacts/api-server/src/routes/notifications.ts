@@ -747,7 +747,7 @@ router.put('/admin/notification-defaults', async (req, res) => {
       p_flag:          flagName,
       p_new_enabled:   val,
       p_changed_by_id: admin.userId,
-    });
+    }); invalidateFeatureFlagCache(); // whatever the outcome (an errored write may still have committed): lib/hotPathCache.ts
     if (rpcErr) {
       if (rpcErr.code === '42883') {
         req.log.error({ flag: flagName, pgCode: rpcErr.code }, 'toggle_feature_flag_with_audit missing — apply migration 0119');
@@ -773,3 +773,6 @@ router.put('/admin/notification-defaults', async (req, res) => {
 });
 
 export default router;
+
+// lib/hotPathCache.ts: every flag write above ends this instance's remembered flag rows (other instances: within 15s). At the foot so no cited line moves.
+import { invalidateFeatureFlagCache } from "../lib/hotPathCache.js";

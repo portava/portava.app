@@ -14,11 +14,14 @@ import { join } from "node:path";
 
 import {
   BETA_AUTH_SETTINGS_URL,
+  BOOKING_STOPS,
   judgeProfilesProbe,
   LIVE_PLACES_REQUIREMENTS,
   NOT_CHECKED,
+  RENT_A_BUDDY_CHECK,
   betaPublishableKey,
   flagPolicyMismatch,
+  loadClientFeatureFlags,
   runBetaSmoke,
   smokeBaseRefusal,
   type SmokeFetch,
@@ -34,9 +37,13 @@ const DENIED = { status: 401, body: { code: "42501", message: "permission denied
 
 type Routes = Record<string, { status: number; body: unknown }>;
 
-/** The served flag map of a beta whose database holds the policy: every policy flag at its RAW value. */
+/**
+ * The served flag map of a beta whose database holds the policy: every CLIENT policy flag at its RAW value. Since
+ * sec/public-surface the public bundle carries only CLIENT_FEATURE_FLAGS (artifacts/api-server/src/lib/clientFeatureFlags.ts).
+ */
 const POLICY = loadFlagPolicy();
-const POLICY_FLAGS = Object.fromEntries(POLICY.flags.map((e) => [e.flag, e.enabled]));
+const CLIENT = loadClientFeatureFlags();
+const POLICY_FLAGS = Object.fromEntries(POLICY.flags.filter((e) => CLIENT.has(e.flag)).map((e) => [e.flag, e.enabled]));
 const KEY = betaPublishableKey();
 
 const HEALTHY: Routes = {
@@ -72,7 +79,7 @@ describe("beta-smoke", () => {
       ["health", true],
       ["sign-up closed (invite-only)", true],
       ["auth required", true],
-      ["Rent-a-Buddy booking stops engaged", true],
+      [RENT_A_BUDDY_CHECK, true],
       ["feature flags match the beta policy", true],
       ["Supabase Auth sign-up closed", true],
       ["profiles personal columns closed to the anon key", true],
@@ -92,7 +99,7 @@ describe("beta-smoke", () => {
     }
   });
 
-  const STOPS = "Rent-a-Buddy booking stops engaged";
+  const STOPS = RENT_A_BUDDY_CHECK;
   const MATCH = "feature flags match the beta policy";
   const AUTH_CLOSED = "Supabase Auth sign-up closed";
   const PROFILES_CLOSED = "profiles personal columns closed to the anon key";
@@ -108,16 +115,22 @@ describe("beta-smoke", () => {
     [["sign-up closed (invite-only)"], "/api/auth/signup-status", { status: 503, body: { signupsEnabled: false, inviteOnly: false } }],
     [["auth required"], "/api/verification/status", { status: 200, body: {} }],
     [["auth required"], "/api/verification/status", { status: 503, body: { error: "server_not_configured" } }],
-    // a stop wrong is ALSO a policy mismatch: both checks name it
-    [[STOPS, MATCH], "/api/feature-flags", flagsWith({ RENT_BUDDY_ADMIN_ONLY_MODE: false })],
-    [[STOPS, MATCH], "/api/feature-flags", flagsWithout("disable_rent_buddy_booking")],
+    // a server-only booking stop PUBLISHED (the bundle before sec/public-surface), even engaged, fails check 4 and,
+    // as a non-client flag served, check 5; so does Rent-a-Buddy served on
+    [[STOPS, MATCH], "/api/feature-flags", flagsWith({ RENT_BUDDY_ADMIN_ONLY_MODE: true })],
+    [[STOPS, MATCH], "/api/feature-flags", flagsWith({ disable_rab_bookings: true })],
     [[STOPS, MATCH], "/api/feature-flags", flagsWith({ rent_buddy_enabled: true })],
     [[STOPS, MATCH], "/api/feature-flags", { status: 503, body: { error: "server_not_configured" } }],
+    // rent_buddy_enabled absent: check 4 wants it served false; check 5 accepts an absent policy-OFF flag
+    [[STOPS], "/api/feature-flags", flagsWithout("rent_buddy_enabled")],
     // check 5 alone: the database does not hold THIS policy (config step not re-dispatched, or another database)
-    [[MATCH], "/api/feature-flags", flagsWith({ push_notifications_enabled: true })],
-    [[MATCH], "/api/feature-flags", flagsWith({ invite_only_beta: false })],
-    [[MATCH], "/api/feature-flags", flagsWithout("invite_only_beta")],
+    [[MATCH], "/api/feature-flags", flagsWith({ wall_enabled: true })],
+    [[MATCH], "/api/feature-flags", flagsWith({ map_search_enabled: false })],
+    [[MATCH], "/api/feature-flags", flagsWithout("map_search_enabled")],
     [[MATCH], "/api/feature-flags", flagsWith({ some_flag_the_policy_never_heard_of: true })],
+    // …or the API publishes a flag no client reads, at any value (a server-only gate, a kill switch)
+    [[MATCH], "/api/feature-flags", flagsWith({ invite_only_beta: true })],
+    [[MATCH], "/api/feature-flags", flagsWith({ push_notifications_enabled: false })],
     // check 6 alone: Supabase Auth still accepts new users (the app's own path)
     [[AUTH_CLOSED], AUTH, { status: 200, body: { disable_signup: false, external: { email: true } } }],
     [[AUTH_CLOSED], AUTH, { status: 200, body: { external: { email: true } } }],
@@ -136,9 +149,20 @@ describe("beta-smoke", () => {
     });
   }
 
-  it("an unknown flag served FALSE is acceptable (the config step forces flags it does not know OFF)", async () => {
-    const results = await runBetaSmoke(BASE, stub({ ...HEALTHY, "/api/feature-flags": flagsWith({ retired_somewhere_enabled: false }) }).fetch);
+  it("a client flag the policy does not know, served FALSE, is acceptable (the config step forces flags it does not know OFF)", async () => {
+    const clientFlags = new Set([...CLIENT, "retired_somewhere_enabled"]);
+    const results = await runBetaSmoke(BASE, stub({ ...HEALTHY, "/api/feature-flags": flagsWith({ retired_somewhere_enabled: false }) }).fetch, { clientFlags });
     assert.ok(results.every((r) => r.ok), JSON.stringify(results));
+  });
+
+  it("reads the API's CLIENT_FEATURE_FLAGS at this commit: the app's flags, no server-only stop", () => {
+    assert.ok(CLIENT.size >= 40, `parse found only ${CLIENT.size} names`);
+    for (const f of ["rent_buddy_enabled", "live_places_enabled", "external_places_enabled", "wall_enabled"]) assert.ok(CLIENT.has(f), f);
+    for (const f of [...BOOKING_STOPS, "invite_only_beta", "disable_signups"]) assert.ok(!CLIENT.has(f), f);
+    assert.deepEqual([...CLIENT].filter((f) => f.startsWith("disable_")), []);
+    // every client flag is one the policy sets, so check 5 judges each of them
+    const policyNames = new Set(POLICY.flags.map((e) => e.flag));
+    assert.deepEqual([...CLIENT].filter((f) => !policyNames.has(f)), []);
   });
 
   it("FAILS check 6 when eas.json's key is not the beta project's (GoTrue answers 401)", async () => {
@@ -184,7 +208,8 @@ describe("beta-smoke", () => {
   });
 
   it("says plainly what it cannot check", () => {
-    assert.equal(NOT_CHECKED.length, 2);
+    assert.equal(NOT_CHECKED.length, 3);
+    assert.match(NOT_CHECKED.join(" "), /booking stops ENGAGED.*step e/);
     assert.match(NOT_CHECKED.join(" "), /identity-verification readiness/);
     assert.match(NOT_CHECKED.join(" "), /NODE_ENV=production/);
   });

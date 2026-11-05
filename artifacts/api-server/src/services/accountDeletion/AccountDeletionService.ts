@@ -1482,7 +1482,7 @@ export async function executeAccountDeletion(
         .eq("id", userId),
       "anonymise profile",
     );
-  });
+  }); invalidateUserAuthCache(userId); // account_status is now (or may be) "deleted": this instance forgets the account (lib/hotPathCache.ts)
 
   if (!profileOk) {
     logger.error({ userId, steps }, "executeAccountDeletion: profile anonymisation failed — aborting");
@@ -1501,7 +1501,7 @@ export async function executeAccountDeletion(
     const res = await sc.auth.admin.deleteUser(userId);
     if (res?.error) throw new Error(res.error.message ?? String(res.error));
   });
-  if (!authOk) {
+  invalidateUserAuthCache(userId); if (!authOk) { // the auth user is gone (or may be): this instance forgets its verified tokens (lib/hotPathCache.ts)
     // Loud AND fatal: the email address is still on file, which is the exact
     // GDPR claim the policy makes. The request is NOT marked completed below,
     // so callers (scheduler / worker endpoint / admin) leave it pending and
@@ -1695,3 +1695,10 @@ function collectOwnedUpload(
   return true;
 }
 import { posterPathFor } from "../../lib/mediaPosterPath.js";
+
+// lib/hotPathCache.ts: deletion ends what THIS instance remembers about the
+// account — after the tombstone (an optional-auth route then answers the token
+// as anonymous) and after the auth user is deleted (the token then stops
+// verifying) — so neither waits out a cached admission here; another instance
+// sees both within the cache's 30s bound. Appended at the foot so no cited line moves.
+import { invalidateUserAuthCache } from "../../lib/hotPathCache.js";

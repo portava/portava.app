@@ -2669,7 +2669,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     permissions: {
       capabilities: resolvedCapabilities.capabilities,
       reasons: Object.fromEntries(Object.entries(resolvedCapabilities.reasons).map(([name, raw]) => [name, raw === null ? null : redactForWire(raw)])), // §11.1 / census W5.2: the block is not told — the map GET /capabilities applies (server/telegraph/capabilityRoute.ts), so a blocked member reads a stranger's reasons
-      inputsRead: resolvedCapabilities.inputsRead,
+      inputsRead: resolvedCapabilities.reasons.canSendMessage === "TELEGRAPH_AUTH_BLOCKED" ? [] : resolvedCapabilities.inputsRead, // census-telegraph §99: a stranger's GET /capabilities reads nothing, so a blocked member's page says the same
       degraded: resolvedCapabilities.degraded,
       degradedReasons: resolvedCapabilities.degradedReasons.map(redactForWire), // the same redaction, as GET /capabilities
     },

@@ -26,6 +26,9 @@
  *   `isKillSwitchEngaged` (an error ENGAGES it), as the resolver reads it for
  *   `pde` (ruling D3=B). Every path above is PDE serving, so the switch that
  *   says "disable PDE" disables it on each of them.
+ * - No service client (`no_client`). The stop's state cannot be established, so
+ *   it halts, for the same reason an unreadable read does and with the same
+ *   decision `discoveryEngineMode` takes for the mode.
  * A halt is "the flag reads OFF", never a new behaviour: the caller then serves
  * exactly its flag-off output. It is not a latch. When the stop clears, the
  * flags read as set again, as the engine mode returns to its configured state.
@@ -51,7 +54,7 @@ import { refreshDiscoveryStopMeasurements } from "./discoveryStopMeasurements.js
 const TTL_MS = 30_000;
 
 /** Per client object: the last measurement refresh, the cached manual-stop read and the last halt log. */
-interface ClientGateState { refreshedAt: number; kill: { value: boolean; at: number } | null; loggedAt: number }
+interface ClientGateState { refreshedAt: number; kill: { value: boolean; at: number; epoch?: number } | null; loggedAt: number } // epoch: featureFlagWriteEpoch() when read (foot)
 const _state = new WeakMap<object, ClientGateState>();
 const NO_CLIENT: ClientGateState = { refreshedAt: -Infinity, kill: null, loggedAt: -Infinity };
 
@@ -62,7 +65,7 @@ function stateFor(sc: unknown): ClientGateState {
   return s;
 }
 
-export type DiscoveryStopHalt = "stop_condition" | "kill_switch_engaged" | null;
+export type DiscoveryStopHalt = "stop_condition" | "kill_switch_engaged" | "no_client" | null;
 
 /**
  * Why a rollout flag that reads ON must be served as OFF right now, or null.
@@ -70,17 +73,36 @@ export type DiscoveryStopHalt = "stop_condition" | "kill_switch_engaged" | null;
  * is a halt, because a halt only returns the flag-off output users already had.
  */
 export async function discoveryStopHalt(sc: unknown, opts: { measure?: boolean } = {}, nowMs: number = Date.now()): Promise<DiscoveryStopHalt> {
+  // No client is not "no stop". It is the stop's state being unestablished,
+  // which is the same fact an unreadable `feature_flags` reports — and that one
+  // already halts, through isKillSwitchEngaged's inverted failure polarity. The
+  // read used to sit behind `sc ? … : false`, so the two halves of one fact
+  // were treated oppositely: an error engaged the stop, an absent client lifted
+  // it. `lib/discoveryEngineMode.ts:257` takes the other decision for the mode
+  // this gate was extracted to generalise: `if (!sc) return LEGACY("no_client")`.
+  //
+  // LATENT, NOT LIVE, AND SAID SO RATHER THAN IMPLIED. No present caller can
+  // reach the old branch: `routes/discoveryOutputKinds.ts:59` refuses a null
+  // client before it asks, and every other reader derives its `flagOn` from the
+  // SAME client, so with no client no flag reads ON and `stopped()` never
+  // consults the gate at all. What is corrected here is the shape, which is the
+  // standing `compass/flags.ts` gives its own fail-open. The LIVE defect was in
+  // the ratchet that let the shape in -- see src/test/verifyFailOpenStopReads.test.ts.
+  //
+  // Reported as `no_client` rather than `kill_switch_engaged` because nobody
+  // engaged anything; we could not look.
+  if (!sc) return "no_client";
   const s = stateFor(sc);
   try {
-    if (opts.measure === true && sc && nowMs - s.refreshedAt >= TTL_MS) {
+    if (opts.measure === true && nowMs - s.refreshedAt >= TTL_MS) {
       s.refreshedAt = nowMs;
       void refreshDiscoveryStopMeasurements(sc);
     }
     let halt: DiscoveryStopHalt = null;
     if (evaluateStopConditions().tripped.length > 0) halt = "stop_condition";
     else {
-      if (!s.kill || nowMs - s.kill.at >= TTL_MS) {
-        s.kill = { value: sc ? await isKillSwitchEngaged(sc, "disable_discovery_pde") : false, at: nowMs };
+      if (!s.kill || nowMs - s.kill.at >= TTL_MS || s.kill.epoch !== featureFlagWriteEpoch()) {
+        s.kill = { epoch: featureFlagWriteEpoch(), value: await isKillSwitchEngaged(sc, "disable_discovery_pde"), at: nowMs };
       }
       if (s.kill.value) halt = "kill_switch_engaged";
     }
@@ -99,3 +121,10 @@ export async function discoveryStopHalt(sc: unknown, opts: { measure?: boolean }
 export async function unlessDiscoveryStopped(sc: unknown, flagOn: boolean, opts: { measure?: boolean } = {}): Promise<boolean> {
   return flagOn && (await discoveryStopHalt(sc, opts)) === null;
 }
+
+// The one service client is built once per process (lib/supabase.ts), so the
+// per-client state above now lives its full TTL_MS instead of one request. A
+// flag write through the API on this instance advances featureFlagWriteEpoch()
+// (lib/hotPathCache.ts), which ends the cached manual-stop read at once, as a
+// fresh client per request used to. Appended at the foot: lines above are cited.
+import { featureFlagWriteEpoch } from "./hotPathCache.js";

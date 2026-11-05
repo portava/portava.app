@@ -15290,7 +15290,7 @@ Measured on branch `claude/wave4-build-20261017` on 2026-10-17, against the work
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T439 §30A.19 Context Kernel above transport: Relationship, Time, Proximity, Intent, Shared Objects → Policy + Capabilities | N | **W** | **Built: the kernel exists, is mounted, and every one of the five inputs feeds a decision about what the surface may reveal or offer.** The five inputs are named in the spec's order (`artifacts/api-server/src/services/telegraph/contextKernelPolicy.ts:80#export const CONTEXT_KERNEL_INPUTS = ["relationship", "time", "proximity", "intent", "sharedObjects"] as const;`) and decided by one pure function (`artifacts/api-server/src/services/telegraph/contextKernelPolicy.ts:340#export function decideContextKernel(f: ContextKernelFacts): ContextKernel {`). How each feeds the policy: a non-member is shown nothing, not even the clock (`artifacts/api-server/src/services/telegraph/contextKernelPolicy.ts:352#  if (!f.member) {`); a block seen by §14.1 OR by the relationship input withholds the other person and everything shared and offers nothing (`artifacts/api-server/src/services/telegraph/contextKernelPolicy.ts:377#  const blocked = caps.reasons.canSendMessage === "TELEGRAPH_AUTH_BLOCKED"`); in a direct conversation Relationship gates Proximity — only an ACTIVE or TEMPORARY relationship admits a bucket (`artifacts/api-server/src/services/telegraph/contextKernelPolicy.ts:401#f.conversationType === "direct" && !relationshipAdmitsProximity(f.relationship)`); Time (the soonest revealed shared object's §3.3 band, stated in UTC) puts §2.3's NOW actions on offer only while something shared is HAPPENING NOW (`artifacts/api-server/src/services/telegraph/contextKernelPolicy.ts:422#  if (time.value?.band === "HAPPENING_NOW") {`); Proximity in the nearest bucket offers Meet here (`artifacts/api-server/src/services/telegraph/contextKernelPolicy.ts:425#p.bucket === MEET_HERE_BUCKET`); Intent maps to a §8.1 action by the kernel's own stated table, modelled on the suggestion cards' mapping with two stated departures (`artifacts/api-server/src/services/telegraph/contextKernelPolicy.ts:189#export function intentAction(intent: IntentType, conversationType: string): TelegraphAction {`); Shared Objects offer their own `availableActions`. Every candidate then passes §14.1 — narrowing only, nothing is granted (`artifacts/api-server/src/services/telegraph/contextKernelPolicy.ts:436#    if (caps.capabilities[c.capability] === true) offeredActions.push(c);`; the governing capability per action at `artifacts/api-server/src/services/telegraph/contextKernelPolicy.ts:165#export const ACTION_GOVERNING_CAPABILITY`). The gatherer resolves nothing a second time (`artifacts/api-server/src/services/telegraph/contextKernel.ts:184#export async function assembleContextKernel(sc: SupabaseClient, req: ContextKernelRequest): Promise<ContextKernelResult> {`): the relationship through §30A.1's resolver behind its own flag (`artifacts/api-server/src/services/telegraph/contextKernel.ts:158#const flag = await readFlagState(sc, "telegraph_relationship_context_enabled");`), proximity through GET /nearby/reachable's own pipeline — loader, §4.1 signal contract and the §4.3 observation budget, for the whole candidate list — then narrowed to this conversation (`artifacts/api-server/src/services/telegraph/contextKernel.ts:96#const budget = await applyObservationBudget(sc, viewerId, loaded.people, nowMs, loaded.unpublished, loaded.heldBack);`), and read at all only where the policy would reveal it (`artifacts/api-server/src/services/telegraph/contextKernel.ts:231#proximityMayBeRead(conversationType, relationship)`); intent over the newest readable text messages, window-bound, blocked senders dropped, E2EE refused, and only the label leaves (`artifacts/api-server/src/services/telegraph/contextKernel.ts:142#  const unblocked = await dropBlockedSenders(sc, input.viewerId, visible);`). Served at `GET /api/threads/:threadId/context-kernel` on the already-mounted capability router (`artifacts/api-server/src/server/telegraph/capabilityRoute.ts:132#"/threads/:threadId/context-kernel",`), a block redacted to "not a member" on every field (`artifacts/api-server/src/server/telegraph/capabilityRoute.ts:165#res.status(200).json(contextKernelForWire(result.kernel, redactForWire));`). Tests: `artifacts/api-server/src/test/telegraphConversationCapabilities.test.ts:705#describe("T439 — the Context Kernel policy (§30A.19)"`, `artifacts/api-server/src/test/telegraphConversationCapabilities.test.ts:974#describe("T439 — the gatherer reads the five inputs from the resolvers that exist"`, `artifacts/api-server/src/test/telegraphConversationCapabilities.test.ts:1100#describe("T439 — GET /threads/:threadId/context-kernel is mounted on the capability router"`. **Still W, for three stated reasons:** (1) two of the five inputs are dark on every deployment — Relationship behind `telegraph_relationship_context_enabled` (3662, unapplied, seeded FALSE) and Proximity behind `nearby_reachable_enabled` (no row anywhere) — so in a direct conversation the kernel today reveals no relationship and no bucket; (2) no client reads the kernel yet: the conversation screen still draws the rail, the capabilities and the suggestion tray separately; (3) the per-action governing capability and the intent-to-action table are this kernel's reading (plan-shaped actions under `canCreatePlan`, everything posted into the conversation under `canSendMessage`) — §14.1 names no action table and §30A.19 names no intent table, and the kernel only narrows, so either reading can withhold but never grant. §14.1's ten capabilities are unchanged: the kernel consumes them and alters none. |
+| T439 §30A.19 Context Kernel above transport: Relationship, Time, Proximity, Intent, Shared Objects → Policy + Capabilities | N | **W** | **Built: the kernel exists, is mounted, and every one of the five inputs feeds a decision about what the surface may reveal or offer.** The five inputs are named in the spec's order (`artifacts/api-server/src/services/telegraph/contextKernelPolicy.ts:80#export const CONTEXT_KERNEL_INPUTS = ["relationship", "time", "proximity", "intent", "sharedObjects"] as const;`) and decided by one pure function (`artifacts/api-server/src/services/telegraph/contextKernelPolicy.ts:340#export function decideContextKernel(f: ContextKernelFacts): ContextKernel {`). How each feeds the policy: a non-member is shown nothing, not even the clock (`artifacts/api-server/src/services/telegraph/contextKernelPolicy.ts:352#  if (!f.member) {`); a block seen by §14.1 OR by the relationship input withholds the other person and everything shared and offers nothing (`artifacts/api-server/src/services/telegraph/contextKernelPolicy.ts:377#  const blocked = caps.reasons.canSendMessage === "TELEGRAPH_AUTH_BLOCKED"`); in a direct conversation Relationship gates Proximity — only an ACTIVE or TEMPORARY relationship admits a bucket (`artifacts/api-server/src/services/telegraph/contextKernelPolicy.ts:401#f.conversationType === "direct" && !relationshipAdmitsProximity(f.relationship)`); Time (the soonest revealed shared object's §3.3 band, stated in UTC) puts §2.3's NOW actions on offer only while something shared is HAPPENING NOW (`artifacts/api-server/src/services/telegraph/contextKernelPolicy.ts:422#  if (time.value?.band === "HAPPENING_NOW") {`); Proximity in the nearest bucket offers Meet here (`artifacts/api-server/src/services/telegraph/contextKernelPolicy.ts:425#p.bucket === MEET_HERE_BUCKET`); Intent maps to a §8.1 action by the kernel's own stated table, modelled on the suggestion cards' mapping with two stated departures (`artifacts/api-server/src/services/telegraph/contextKernelPolicy.ts:189#export function intentAction(intent: IntentType, conversationType: string): TelegraphAction {`); Shared Objects offer their own `availableActions`. Every candidate then passes §14.1 — narrowing only, nothing is granted (`artifacts/api-server/src/services/telegraph/contextKernelPolicy.ts:436#    if (caps.capabilities[c.capability] === true) offeredActions.push(c);`; the governing capability per action at `artifacts/api-server/src/services/telegraph/contextKernelPolicy.ts:165#export const ACTION_GOVERNING_CAPABILITY`). The gatherer resolves nothing a second time (`artifacts/api-server/src/services/telegraph/contextKernel.ts:184#export async function assembleContextKernel(sc: SupabaseClient, req: ContextKernelRequest): Promise<ContextKernelResult> {`): the relationship through §30A.1's resolver behind its own flag (`artifacts/api-server/src/services/telegraph/contextKernel.ts:158#const flag = await readFlagState(sc, "telegraph_relationship_context_enabled");`), proximity through GET /nearby/reachable's own pipeline — loader, §4.1 signal contract and the §4.3 observation budget, for the whole candidate list — then narrowed to this conversation (`artifacts/api-server/src/services/telegraph/contextKernel.ts:96#const budget = await applyObservationBudget(sc, viewerId, loaded.people, nowMs, loaded.unpublished, loaded.heldBack);`), and read at all only where the policy would reveal it (`artifacts/api-server/src/services/telegraph/contextKernel.ts:231#proximityMayBeRead(conversationType, relationship)`); intent over the newest readable text messages, window-bound, blocked senders dropped, E2EE refused, and only the label leaves (`artifacts/api-server/src/services/telegraph/contextKernel.ts:142#  const unblocked = await dropBlockedSenders(sc, input.viewerId, visible);`). Served at `GET /api/threads/:threadId/context-kernel` on the already-mounted capability router (`artifacts/api-server/src/server/telegraph/capabilityRoute.ts:169#"/threads/:threadId/context-kernel",`), a block redacted to "not a member" on every field (`artifacts/api-server/src/server/telegraph/capabilityRoute.ts:202#res.status(200).json(contextKernelForWire(result.kernel, redactForWire));`). Tests: `artifacts/api-server/src/test/telegraphConversationCapabilities.test.ts:705#describe("T439 — the Context Kernel policy (§30A.19)"`, `artifacts/api-server/src/test/telegraphConversationCapabilities.test.ts:974#describe("T439 — the gatherer reads the five inputs from the resolvers that exist"`, `artifacts/api-server/src/test/telegraphConversationCapabilities.test.ts:1100#describe("T439 — GET /threads/:threadId/context-kernel is mounted on the capability router"`. **Still W, for three stated reasons:** (1) two of the five inputs are dark on every deployment — Relationship behind `telegraph_relationship_context_enabled` (3662, unapplied, seeded FALSE) and Proximity behind `nearby_reachable_enabled` (no row anywhere) — so in a direct conversation the kernel today reveals no relationship and no bucket; (2) no client reads the kernel yet: the conversation screen still draws the rail, the capabilities and the suggestion tray separately; (3) the per-action governing capability and the intent-to-action table are this kernel's reading (plan-shaped actions under `canCreatePlan`, everything posted into the conversation under `canSendMessage`) — §14.1 names no action table and §30A.19 names no intent table, and the kernel only narrows, so either reading can withhold but never grant. §14.1's ten capabilities are unchanged: the kernel consumes them and alters none. |
 | T155 `conversation_snapshots` — rebuild/replay checkpoints where useful | N | **W** | **Built, and where §33.7 said it would become useful.** §33.7 declined the table because nothing needed it and because a copy the deletion path cannot see weakens a privacy check; it named `sessionScanTruncated` as what would change the answer. That is the use: the coordination view's session read is capped, and a thread with more session-kind rows than the cap folds a prefix of the evening. Migration 3998 adds the table, a writer (`telegraph_write_conversation_snapshot`, under a per-thread advisory lock and the flag `telegraph_conversation_snapshots_enabled`, seeded FALSE) and four invalidation triggers on `messages`. The checkpoint is the fold's INPUT through a (created_at, id) cursor, because the fold's starting state is the plan's derived state at read time and cannot be pre-folded. The read takes the checkpoint and REPLAYS only the rows after the cursor through the same projection (`artifacts/api-server/src/services/telegraph/conversationSnapshots.ts:187#export async function readSessionRowsThroughCheckpoint(`), each viewer's §14.3 window applied to checkpointed rows exactly as to live ones (`artifacts/api-server/src/services/telegraph/conversationSnapshots.ts:179#function windowed(rows: readonly any[], visibleFrom: string | null, viewerId: string): any[] {`), the cursor compared to the microsecond (`artifacts/api-server/src/services/telegraph/conversationSnapshots.ts:93#export function isAfterCursor(`), and a writer refusal leaving the live read's answer rather than a fold with a hole (`artifacts/api-server/src/services/telegraph/conversationSnapshots.ts:231#  if (writer !== "written") return live("not_written", writer);`). Wired into GET /threads/:id/coordination line-neutrally (`artifacts/api-server/src/routes/telegraphCoordination.ts:901#const sessionRead = await readSessionRowsSnapshotAware(client, threadId, gate.visibleFrom, gate.viewerId);`), and the response says whether the fold read a checkpoint (`artifacts/api-server/src/routes/telegraphCoordination.ts:969#sessionSnapshot: sessionRead.snapshot,`). **The copy cannot outlive its source:** the triggers delete a thread's checkpoint in the same transaction as an edit, unsend, tombstone, hard delete (an account deletion's cascade over the sender's messages included) or a row committed behind the cursor, whatever the flag says, and the thread's deletion cascades — each run on PGlite (`artifacts/api-server/src/test/telegraphCoordination.test.ts:2364#deletes the checkpoint in the same transaction`). Tests: `artifacts/api-server/src/test/telegraphCoordination.test.ts:2112#describe("T155 — the coordination fold reads a §12 checkpoint where the session read is truncated"`, `artifacts/api-server/src/test/telegraphCoordination.test.ts:2293#describe("T155 — migration 3998 executed: the checkpoint, its writer and the triggers that keep it honest"`. **Still W:** 3998 is applied to no database and its flag is seeded FALSE (§12.12's first ceiling, as T85 and T150), so no deployment writes or reads a checkpoint today; the table carries message-derived content and needs a stated deletion fate in the manifest (reported to the lead, not edited here); and the writer/trigger serialisation is argued and single-connection tested on PGlite, not exercised by two concurrent sessions. |
 
 ### W4.2 Rows restated (verdict unchanged)
@@ -15923,3 +15923,277 @@ An independent verifier re-checked the 28 moves first drafted here. It found 23 
 - **§83.4.** The draft edited that section's NOT-GRADED line in place, against APPEND-ONLY. That edit is reverted, and the withdrawal is recorded here instead:
 
 - WITHDRAWN NOT-GRADED: artifacts/api-server/src/test/db/tripMembershipThreadAtomic.db.test.ts — §83.4 declared it NOT-GRADED; P.2 above cites it on T319's verdict row, so a verdict now rests on it and CENSUS_SCOPE watches it.
+
+## §97 — TELEGRAPH lane PRIV-FIX-3 (2026-10-14): a person's avatar is their own Portava upload or nothing — the server refuses any other value (migration 3942, unapplied) and the app never hands an outside avatar host to an image loader. NO ROW MOVES
+
+Written 2026-10-14 on branch `claude/fix-priv-avatar-mine-blocks` from origin/main `3c214ca80`. APPEND-ONLY once
+merged. Numbered §97 because open PRs #729, #738 and #740 write §94, §95 and §96; renumber on conflict. Found by B58
+lane TM-2 ("Adjacent findings" (a), PR #740), which pinned the avatar sinks of the message tree as "a person's profile
+avatar served by our API — not a message field … a separate follow-up". This is that follow-up. Migration 3942 is
+applied to NO database; nothing is flag-gated.
+
+### 97.1 The defect, re-verified on `3c214ca80`
+
+- **The person chose the host.** `profiles.avatar_url` was writable by its owner with ANY https URL, at both doors:
+  - PATCH /api/me/profile parsed `avatarUrl` with `appMediaRef`, which admits "https anywhere"
+    (`artifacts/api-server/src/lib/postSchemas.ts:58#export const appMediaRef`);
+  - PostgREST: the baseline grants `UPDATE (avatar_url)` to anon and authenticated, 3740 re-issues that list, and
+    2078 took back `role` only (`artifacts/api-server/src/migrations/2078_profiles_role_not_self_writable.sql:200#REVOKE UPDATE (role) ON public.profiles FROM authenticated;`);
+    `profiles_update` admits the owner's row.
+- **Every viewer's device fetched it.** The hydration layer returns a non-storage URL "unchanged", and every avatar
+  primitive (`Avatar`, `AvatarImage`, `TelegraphAvatar`) and 13 raw `CachedImage`/`Image` sinks handed it to the native
+  loader. In a conversation that is the thread header (`travel-buddy-standalone/app/messages/[id].tsx:1818#<Avatar uri={dmProfile?.avatarUrl}`),
+  a group's sender avatars (`travel-buddy-standalone/src/components/GroupChatScreen.tsx:825#uri={m.senderAvatarUrl}`)
+  and reader chips (`travel-buddy-standalone/src/components/GroupChatScreen.tsx:423#readerAvatars.map((uri, i) => (`),
+  an inbox row, a mention suggestion; outside it, comments, follower lists, map pins, the wall byline. The host learns
+  each viewer's address and when they looked — the disclosure T446 forbids for previews, through a field T446's words
+  do not cover.
+- Rows already holding an outside host exist: the seed scripts write dicebear, picsum and unsplash avatars (the @Portava
+  account's included) with the service key.
+
+### 97.2 What changed
+
+- **The server's door.** `artifacts/api-server/src/lib/avatarStorageRef.ts:71#export function avatarRefAcceptedFor(`:
+  a person may set exactly `profile-media/avatars/<their own uid>/<file>` (what POST /me/avatar/upload answers) or null.
+  PATCH /me/profile refuses anything else with 400 before any write, on one appended line
+  (`artifacts/api-server/src/routes/profile.ts:547#if (!avatarRefAcceptedFor(p.avatarUrl, user.id))`).
+- **The database's door, 3942.** `REVOKE UPDATE (avatar_url)` from PUBLIC, anon and authenticated
+  (`artifacts/api-server/src/migrations/3942_profiles_avatar_url_storage_only.sql:96#REVOKE UPDATE (avatar_url) ON TABLE public.profiles FROM PUBLIC, anon, authenticated;`),
+  sorted after 3740; and `trg_profiles_avatar_url_storage_only`, BEFORE INSERT OR UPDATE, which refuses 42501 a value
+  being SET by a caller `caller_may_write_profile_role()` does not admit unless it is the row owner's own upload path
+  (`artifacts/api-server/src/migrations/3942_profiles_avatar_url_storage_only.sql:120#IF NOT (NEW.avatar_url ~ ('^profile-media/avatars/' || NEW.id::text`).
+  No row is rewritten. The root tree's uncalled `updateMyProfile` stopped naming the column.
+- **The app's rule.** `travel-buddy-standalone/src/lib/avatarImageUri.ts:66#export function avatarImageUri(` is
+  storage-or-nothing — the same rule as TM-1's `storageImageOrNull` and TM-2's `telegraphMediaUri` — applied to the
+  stored value BEFORE hydration, so signed URLs and offline copies are untouched. It is in the primitives
+  (`travel-buddy-standalone/src/components/ui/Avatar.tsx:78#const uri = avatarImageUri(rawUri);`,
+  `travel-buddy-standalone/src/components/ui/DisplayMediaImage.tsx:415#resolveDisplayMedia([avatarImageUri(uri), avatarImageUri(user?.avatarUrl)])`,
+  `travel-buddy-standalone/src/components/telegraph/TelegraphPrimitives.tsx:36#const uri = avatarImageUri(rawUri);`,
+  `travel-buddy-standalone/src/utils/identity.ts:62#return avatarImageUri(url);`), in the reader chips' faces
+  (`travel-buddy-standalone/src/features/telegraph/lifecycle/useReaderAvatars.ts:22#avatarImageUri(readerFace(userId))`)
+  and at every raw sink that binds an avatar. Every edit is line-neutral. In the message tree the sink expressions
+  #740 pins are kept byte-identical; its pins still match.
+
+### 97.3 Rows read, none restated in a verdict table
+
+- **T446 stays where it is**: W on main, and C if #740's §96 lands first. It is deliberately not restated here, so this
+  section cannot undo §96 whichever order they merge in. Its words are previews, and an avatar is not one (TM-2's
+  reading). What this section closes is the adjacent door TM-2 named as the residual risk of its proposed C: a
+  sender-chosen avatar host is now refused at both writers, and a recipient's device never fetches it.
+- **T295 stays C.** Reader faces still come from the server's receipt answer. The client now draws a face only when it
+  is Portava storage, which narrows the chip and never widens it.
+- **T9 stays C.** The thread header's avatar goes through `Avatar`, now storage-or-nothing. Nothing else in the row's
+  evidence changes.
+
+### 97.4 Evidence
+
+- `artifacts/api-server/src/test/profileAvatarUrlStorageOnly.test.ts`, 111 tests. It covers the rule over 34 hostile
+  references; the trigger's own regex, lifted from 3942, run over the same table (parity); the route; and the
+  replayed chain under both starting ACLs (`artifacts/api-server/src/test/profileAvatarUrlStorageOnly.test.ts:271#AV-C1`,
+  `artifacts/api-server/src/test/profileAvatarUrlStorageOnly.test.ts:278#AV-C3`). It also holds the premise that no
+  client tree writes the column through PostgREST. **Red on main: 27** (the route admits 23 of the refused references,
+  plus the re-send case, AV-C1, AV-C3 and the premise); the parity suite cannot load without 3942.
+- `artifacts/api-server/src/test/db/profileAvatarUrlStorageOnly.db.test.ts` AV0–AV8 runs in CI's local-db job. On a
+  lane-private PGlite replica of `profiles` it is 9/9, and 7/9 red without 3942.
+- `travel-buddy-standalone/src/lib/__tests__/avatarImageBoundary.test.ts`, a TS-AST guard over `app/` and `src/`. It
+  checks that every image sink binding an avatar-named source goes through the door (structurally: a door call beside
+  a raw operand does not count), with two pinned, reviewed sites. It also checks the name-hidden doors. **Red on main:**
+  12 sinks and the door check.
+- `travel-buddy-standalone/src/components/ui/__tests__/avatarStorageOnly.component.test.tsx`, 13 tests: six primitives
+  and the reader chips draw no outside host, and each has a storage CONTROL. **Red on main: 7 of 13** (every
+  outside-host case; the controls pass).
+- Mutants: see 97.6.
+
+### 97.5 Decisions and effects, stated so a reader does not discover them
+
+- **OWNER QUESTION Q-AV-1 (fail-closed default, NOT approved).** Avatars on an outside host now draw as initials for
+  every viewer, the person included. That covers the seeded test profiles (dicebear, picsum) and the @Portava official
+  account (`artifacts/api-server/src/scripts/seed-portava-account.ts:36#PORTAVA_AVATAR_URL`, unsplash). The fix is to
+  upload them to `profile-media` with the service key. No outside host is allow-listed.
+- **OWNER QUESTION Q-AV-2.** `profiles.cover_photo_url` has the same shape. It is owner-writable through PostgREST and
+  through `coverUrl: appMediaRef`, and every Passport viewer draws it. It is NOT changed here (lane scope). Recommended:
+  the same two barriers and the same rule.
+- The API refuses an absolute URL of the person's own object too: the upload never answers that form, and 2082
+  canonicalized stored values to the bare key.
+- A row that already holds an outside URL keeps it through other edits. The person can clear it or replace it with an
+  upload. The app draws it as nothing.
+
+### 97.6 Mutants: 31 of 31 killed on the avatar half
+
+The runner `b58/priv3/mutate.py` asserts the worktree and a clean committed tree, applies one textual mutant at a
+time, restores it with `git checkout`, and ends clean.
+
+- **API rule and route, 8 killed.** The check skipped; the bucket or prefix unchecked; the uid case-folded (killed after
+  an assertion was added; it survived round 1 because the route's owner comparison still refused it); `..` admitted;
+  the file bound off by one; any owner admitted; clearing refused.
+- **3942, 6 killed.** These are the REVOKE dropped, unchanged values judged, any uid admitted, `..` admitted, the
+  trigger on UPDATE only, and the predicate bypassed.
+  - All six are killed by the static suite.
+  - Run against the db suite alone:
+    - five cannot even be applied: 3942's own `$post$` refuses them;
+    - `..` admitted applies, and AV2 kills it.
+- **The premise, 1 killed.** The root writer is restored.
+- **App, 16 killed:**
+  - the rule: the origin as a bare prefix, a dotted first segment, unsafe characters, traversal;
+  - each primitive and door unruled: Avatar, AvatarImage by `uri` and by `user`, TelegraphAvatar, the reader faces,
+    `resolveAvatarUrl`, the comment avatar, the suggestion avatar, the mention row;
+  - a raw sink restored, and TravelerMapLayer raw again;
+  - the guard loosened so that "a door anywhere" counts.
+
+### 97.7 Scope
+
+- NOT-GRADED: artifacts/api-server/src/lib/avatarStorageRef.ts — the API's avatar rule; cited in 97.2 for the door it closes, graded by no telegraph row.
+- NOT-GRADED: artifacts/api-server/src/lib/postSchemas.ts — cited in 97.1 only as the shared media-reference schema that admitted any https host.
+- NOT-GRADED: artifacts/api-server/src/routes/profile.ts — cited in 97.2 for the one appended check; the profile route is census-passport's.
+- NOT-GRADED: artifacts/api-server/src/migrations/2078_profiles_role_not_self_writable.sql — cited in 97.1 for the one column it took back.
+- NOT-GRADED: artifacts/api-server/src/migrations/3942_profiles_avatar_url_storage_only.sql — the migration this section describes; profiles is not a telegraph table.
+- NOT-GRADED: artifacts/api-server/src/scripts/seed-portava-account.ts — cited in 97.5 for the seeded outside-host avatar.
+- NOT-GRADED: artifacts/api-server/src/test/profileAvatarUrlStorageOnly.test.ts — this section's evidence; no telegraph row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/db/profileAvatarUrlStorageOnly.db.test.ts — this section's executed SQL evidence.
+- NOT-GRADED: travel-buddy-standalone/src/lib/avatarImageUri.ts — the app's avatar rule; graded by no telegraph row.
+- NOT-GRADED: travel-buddy-standalone/src/components/ui/Avatar.tsx — a shared primitive; cited for the rule it now applies.
+- NOT-GRADED: travel-buddy-standalone/src/components/ui/DisplayMediaImage.tsx — a shared primitive; cited for the rule AvatarImage now applies.
+- NOT-GRADED: travel-buddy-standalone/src/utils/identity.ts — cited for resolveAvatarUrl.
+- NOT-GRADED: travel-buddy-standalone/src/lib/__tests__/avatarImageBoundary.test.ts — this section's TS-AST avatar sink guard; no telegraph row rests on it alone.
+- NOT-GRADED: travel-buddy-standalone/src/components/ui/__tests__/avatarStorageOnly.component.test.tsx — this section's component evidence.
+
+### 97.8 The headline, restated from the rows
+
+Unchanged by this section, which moves no bucket (its 2026-10-14 count was taken on `3c214ca80`; brought onto main 2026-11-04).
+
+## §98 — #754 (lane BLOCKS-2, 2026-10-14) brought onto main 2026-11-04. NO ROW MOVES
+
+#754 found that the whole-list block readers were cut at `db-max-rows` and that
+postgrest-js resolves `{ data: null, error: null }` for an empty-bodied 404 or
+2xx. Main fixed the first itself before #754 landed: T220c and T220d above read
+every whole list by key through `lib/feedReads.ts`'s `readWhole`, which refuses a
+page that is not a row list and a page that repeats a row. So #754's own reader
+(`pagedBlockRows`, `BLOCK_LIST_CEILING`) was NOT taken, nor its edits to
+`lib/blocks.ts`, `lib/blockGuard.ts` and the two Compass files; main's text stands.
+
+Taken: `lib/keysetRead.ts`, which main still walked with `data ?? []`, so an
+empty-bodied page ended the walk and passed the rows read so far off as the set.
+It now refuses a page that is not a row list and a cursor the server ignored
+(`artifacts/api-server/src/lib/keysetRead.ts:52#if (!Array.isArray(data)) return { ok: false, error: new Error("keyset read: a page was not a row list") };`).
+`GET /me/blocker-ids` (#758) and the other keyset callers read through it.
+
+`src/test/blockListKeysetPaging.test.ts` is kept as a behavioural suite over the
+REAL client against main's readers (whole at 0 to 2,500 rows and under a 400-row
+cap, unreadable on a failed, aborted or empty-bodied later page, mutual blocks,
+the group and direction reads, the Compass profile); its pins on #754's own
+round-trip counts and ceiling were dropped because they described a reader that
+never landed.
+
+Cited, not graded (check:census-scope-coverage):
+- NOT-GRADED: artifacts/api-server/src/lib/feedReads.ts — §98 cites main's `readWhole` as what superseded #754's reader; T220c and T220d grade it, and this note moves no row
+- NOT-GRADED: artifacts/api-server/src/test/blockListKeysetPaging.test.ts — §98 names the suite kept from #754; it proves `lib/keysetRead.ts`, and this note moves no row
+
+## §99 — TELEGRAPH B58 lane PRIV-FIX-2 (2026-10-14): `GET /threads/:threadId/capabilities` stops telling a non-member that a thread exists, and T403's GPS evidence becomes real. NO ROW CHANGES BUCKET
+
+### 99.1 The defect: a thread-existence oracle
+
+Lane TM-5 found this in passing. The route's header said that every capability false "is the same answer for 'this
+thread does not exist', 'you were removed' and 'you were blocked'", and §11.1 repeated it ("a 403 would make it a
+thread-existence oracle"). That held for the **status** and not for the **body**. The policy reads `message_threads`
+first, so:
+- a missing thread returned `conversationType: "unknown"` and `inputsRead: []`;
+- an existing thread returned, to a viewer with no membership row:
+  - its real type (`"direct"` / `"group"` / `"trip"`);
+  - `inputsRead: ["conversationType", "membership"]`.
+
+Any signed-in user could probe a thread id and learn whether it exists and what kind of conversation it is.
+
+A failed membership read leaked the same way: degraded with the real type for an existing thread, a clean "not a
+member" for a missing one. Measured on main `3c214ca80`: the new suite's five byte comparisons are red there.
+
+### 99.2 The fix: the route asks the viewer's own row first
+
+The route asks the viewer's own row FIRST, before anything about the thread
+(`artifacts/api-server/src/server/telegraph/capabilityRoute.ts:73#const undisclosed = await undisclosedAnswerFor(sc, threadId, user.id);`,
+`artifacts/api-server/src/server/telegraph/capabilityRoute.ts:133#async function undisclosedAnswerFor(`). With no row it sends exactly the body a non-existent thread has always got:
+- type `"unknown"`;
+- every capability false with `TELEGRAPH_AUTH_NOT_MEMBER`;
+- `inputsRead: []`;
+- the conversation facts all null.
+
+The thread is never read, so neither the content nor the sequence of reads can depend on whether it exists. A row
+that cannot be read answers ONE degraded body (`TELEGRAPH_DEGRADED_MEMBERSHIP_UNREADABLE`, type `"unknown"`), alike
+for both cases. A member is never told "not a member" because a read failed.
+
+**Who is unchanged:**
+- **Members, and former members (a row with `left_at`),** are answered by the policy exactly as before. A former
+  member already knows the thread.
+- **The policy itself (`conversationCapabilityPolicy.ts`) is not touched.** The policy's other callers are therefore
+  unaffected: GET /messages, read receipts and the Compass tool gate. The Compass gate reads the caller's own row
+  before it calls the policy (`TelegraphConversationTools.ts`); read receipts is covered in the next paragraph.
+
+The edit is line-neutral, and the lines §11.1 cites hold
+(`artifacts/api-server/src/server/telegraph/capabilityRoute.ts:83#reasons[name] = raw === null ? null : redactForWire(raw);`,
+`artifacts/api-server/src/server/telegraph/capabilityRoute.ts:98#res.status(200).json({`).
+
+**Adjacent, not changed:** `GET /threads/:threadId/read-receipts` (`server/telegraph/readReceiptsRoute.ts`) answers a
+non-member 403 `TELEGRAPH_AUTH_NOT_MEMBER` for both an existing and a missing thread. During a membership-read outage,
+though, it answers 503 for an existing thread and 403 for a missing one. That is an existence signal only while the
+store is failing, and it is reported here, not fixed.
+
+### 99.3 T403 (EXIF handling): the strip was real, its GPS evidence was not
+
+census-media §58 has the full measurement. In short:
+- five test fixtures planted GPS under `withExif({ GPS: … })`, a key sharp ignores, so no suite had passed a GPS IFD
+  through the pipeline;
+- with hand-built stills carrying a GPS IFD, a MakerNote, XMP and IPTC location, comments and APP11, every upload route
+  stores location-free bytes on main. There is no live leak;
+- `lib/exifFacts` (the media worker's GPS refusal) could not see a WebP's EXIF, and now can.
+
+T403 says "a full EXIF/GPS/XMP strip". Until now its XMP half had no test at all. `.keepXmp()` passes the old suite and
+fails the new guard (census-media §58.4, mutant A2).
+
+### 99.4 Rows: none moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T403 | C | C | Restated. GPS, capture time and device metadata are handled as the row says. The GPS and XMP claims are now proved against a still that carries them (`artifacts/api-server/src/test/imageLocationStripGuard.test.ts`, census-media §58). Before this they rested on a fixture with no GPS IFD. |
+| T207 | C | C | Restated. Derivation from the eight inputs is untouched (the policy is unchanged). The endpoint that serves it no longer tells a non-member the thread's type or what was read (99.2). §11.1's sentence about the oracle is now true of the body as well as the status. |
+
+### 99.5 Evidence
+
+- **New suite `artifacts/api-server/src/test/telegraphCapabilityExistenceOracle.test.ts` (10 cases).** The same thread
+  id is asked in two databases: one where the thread exists and the viewer is not in it, one where it does not exist.
+  The checks:
+  - status, content type and the body text must be identical, for `direct`, `group` and `trip`;
+  - the reads must be the same, in the same order, with `message_threads` never read;
+  - a failed membership read gives identical degraded bodies;
+  - controls: the non-existent answer is pinned to main's body; members and former members are unchanged; a failed
+    thread read tells a non-member nothing.
+- **Red on main:** 5 of 10.
+- **Green on the branch:** with `telegraphConversationCapabilities`, `telegraphProjectionRegistryHonesty` and
+  `telegraphTransportClasses`, 67 of 67.
+- **Mutants: 9 of 9 killed:**
+  - the gate not called;
+  - an unreadable row read as "not a member";
+  - an unreadable row passed to the policy;
+  - a former member treated as a stranger;
+  - the type in the non-member body;
+  - `inputsRead` in it;
+  - the gate also reading the thread;
+  - `memberCount: 0` disclosed;
+  - the degraded body dropping its reason.
+
+### 99.6 Headline, restated from the rows
+
+Unchanged; no row changes bucket. `check:census-integrity` on this branch: **262 / 183 / 4 / 2 of 451**.
+CONSTRUCTED 445 / 451 = 98.7 %; CORRECT 262 / 451 = 58.1 %.
+
+**Merge hazards:**
+- **§99 follows open PRs:** §94 (#729), §95 (#738), §96 (#740).
+- **#738 (TM-5) edits `conversationCapabilityPolicy.ts` (at its lines 54, 366 and 401 on that branch).** This section
+  changes no line of that file. #738's new `GET /threads/:threadId/context` gates non-members itself (it answers `"unknown"`).
+
+### 99.7 Brought onto main 2026-11-04 (renumbered §97 → §99; #748 keeps §97, #754 §98)
+
+Main had since made a blocked member's `GET /capabilities` a stranger's answer byte for byte (wave 5, `telegraphConversationCapabilities.test.ts`).
+This section changed the stranger's answer, so the two disagreed and six wave 5 cases went red on the merge. The route now sends a
+blocked member the same body a viewer with no row gets, built by one function (`undisclosedBody` in
+`server/telegraph/capabilityRoute.ts`), so the two cannot drift. The messages page's `permissions.inputsRead` for a blocked member is `[]`
+for the same reason (`routes/messaging.ts`, one line). Both edits are line-neutral. NO ROW MOVES.
+

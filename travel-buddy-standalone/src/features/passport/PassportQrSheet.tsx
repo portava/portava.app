@@ -33,7 +33,7 @@ import {
   MapPin,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar, icon } from '../../theme/tokens.ts';
-import { CachedImage } from '../../components/CachedImage.tsx';
+import { CachedImage } from '../../components/CachedImage.tsx'; import { avatarImageUri } from '../../lib/avatarImageUri.ts'; // PRIV-FIX-3 (census-telegraph §97): an avatar is Portava storage or nothing
 import { VerifiedStamp } from '../../components/ui/VerifiedStamp.tsx';
 import { PassportShareCard } from '../../components/PassportShareCard.tsx';
 import { usePassportShare } from '../../hooks/usePassportShare.ts';
@@ -143,8 +143,8 @@ export function PassportQrSheet({
             {/* Minimal projection preview (§25 — nothing beyond these fields) */}
             <View style={s.preview}>
               <View style={s.avatarWrap}>
-                {projection.avatarUrl ? (
-                  <CachedImage source={{ uri: projection.avatarUrl }} style={s.avatar} fallbackLabel="" />
+                {avatarImageUri(projection.avatarUrl) ? (
+                  <CachedImage source={{ uri: avatarImageUri(projection.avatarUrl) ?? undefined }} style={s.avatar} fallbackLabel="" />
                 ) : (
                   <View style={[s.avatar, s.avatarPlaceholder]}>
                     <Text style={s.avatarEmoji}>✈️</Text>

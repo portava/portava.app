@@ -88,6 +88,19 @@
  *     EXECUTE is a live fact; what is checked here is the shape that makes the
  *     grant matter.
  *
+ * ── AND ONE RATCHET THAT IS ABOUT GRANTS: 3985 ─────────────────────────────
+ * The measurement above is about a role the policy APPLIES to. A role no policy
+ * calling the function applies to loses nothing when its EXECUTE goes, and
+ * 3985_definer_client_execute_and_search_path_pins.sql withdraws exactly those:
+ * PUBLIC, anon and authenticated from five trigger functions and from
+ * event_is_in_state (referenced by nothing), and PUBLIC and anon from three
+ * helpers whose policies are all TO authenticated. It also pins search_path on
+ * ten functions. The house leaves Supabase's default privileges alone (2973), so
+ * lib/definerClientExecuteWithdrawn.ts reads the same corpus and fails a later
+ * migration that grants one of them back, re-creates one with the default
+ * grants, drops a pin, or writes a policy or invoker caller for a role that no
+ * longer holds EXECUTE. Its findings are reported here with the rest.
+ *
  * Run: node --import tsx/esm src/scripts/checkSecurityDefinerOracles.ts
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -101,6 +114,7 @@ import { stripComments } from "./lib/stripComments.js";
  * nothing) and for why the marker requires BOTH halves of a transform.
  */
 import { transformedFunctionName } from "./lib/transformedFunction.js";
+import { DEFINER_EXECUTE_CLOSED_BY, findDefinerExecuteRegressions } from "./lib/definerClientExecuteWithdrawn.js";
 
 const MIGRATIONS_DIR = new URL("../migrations/", import.meta.url).pathname;
 const BASELINE = new URL("../../baseline/20260819_baseline_structure.sql", import.meta.url).pathname;
@@ -312,6 +326,10 @@ for (const [name, reason] of ledgered) {
   }
 }
 
+// ── the 3985 ratchet: withdrawn client EXECUTE and pinned search_path stay so ──
+const withdrawn = findDefinerExecuteRegressions(corpus);
+problems.push(...withdrawn.problems);
+
 // ── non-vacuity ──────────────────────────────────────────────────────────────
 if (corpus.length < MIN_CORPUS_FILES) problems.push(`::error::read ${corpus.length} corpus file(s), expected at least ${MIN_CORPUS_FILES} — this check did not find the migrations.`);
 if (definers.size < MIN_DEFINER_FUNCTIONS) problems.push(`::error::found ${definers.size} SECURITY DEFINER function(s), expected at least ${MIN_DEFINER_FUNCTIONS} — the CREATE FUNCTION shape is no longer recognised, and every function is trivially "referenced".`);
@@ -331,6 +349,11 @@ console.log(
   `NOTE: ${literalOnly.length} definer function(s) are referenced ONLY by a string literal in src/ and by nothing in ` +
     `the database — the weakest reference kind, and the one a stale test fixture produces` +
     `${literalOnly.length > 0 ? `: ${literalOnly.join(", ")}` : ""}. Not a failure; a place to look.`,
+);
+console.log(
+  `NOTE: client EXECUTE withdrawn by ${DEFINER_EXECUTE_CLOSED_BY}: ${withdrawn.problems.length} regression(s) in ` +
+    `${withdrawn.stats.laterFiles} later migration(s); ${withdrawn.stats.policiesSurviving} surviving policy/policies ` +
+    `replayed, ${withdrawn.stats.guardedPolicyEdges} of them calling a withdrawn function only for a role that keeps EXECUTE.`,
 );
 console.log(
   `NOTE: DOES NOT COVER — (1) the LIVE database: a function created by hand in production is invisible here; ` +
