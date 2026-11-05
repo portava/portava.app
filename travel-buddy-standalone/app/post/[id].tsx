@@ -133,7 +133,7 @@ function withRelayWidth(url: string | null, targetWidth: number): string | null 
 }
 
 function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: number }) {
-  const { width } = useWindowDimensions();
+  const { width } = useWindowDimensions(); const screenFocused = useScreenFocused(); // the video plays only while this screen is in front: a sound-on video kept talking under a profile opened from it
   const { userId: currentUserId } = useSession();
   const mediaHeight = Math.min(Math.round(width * (5 / 4)), 560);
   const firstMediaItem = post.media?.[0] ?? null;
@@ -182,8 +182,8 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
             <SharedVideoPlayer
               uri={firstMedia}
               poster={withRelayWidth(firstMediaItem ? (firstMediaItem.thumbnail_url ?? null) : (post.mediaThumbnailUrl ?? derivedVideoPosterRef(firstMedia)), 1200) ?? undefined}
-              autoplay={false}
-              muted
+              autoplay={screenFocused} /* opening the post plays it (2026-11-04), with sound: SharedVideoPlayer starts it muted only on web, where browsers demand it; it pauses while another screen is on top and resumes on return */
+              muted={false}
               style={StyleSheet.absoluteFill}
             />
           ) : (
@@ -555,3 +555,4 @@ const ov = StyleSheet.create({
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: color.haze },
 });
 import { refPlaysAsVideo, derivedVideoPosterRef } from '../../src/lib/media/videoPosterRef.ts'; // 2026-10-24 video playback: the one ref rule
+import { useScreenFocused } from '../../src/hooks/useScreenFocused.ts'; // 2026-11-04: autoplay stops while the post is covered

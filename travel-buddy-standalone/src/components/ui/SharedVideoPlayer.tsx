@@ -22,7 +22,7 @@
  */
 import React, { useRef, useCallback, useState } from 'react';
 import {
-  View, ActivityIndicator,
+  View, ActivityIndicator, Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -47,7 +47,7 @@ export interface SharedVideoPlayerProps {
   poster?: string;
   /** Start playing immediately. Default: false */
   autoplay?: boolean;
-  /** Start muted. Default: true */
+  /** Start muted. Default: true. On web an AUTOPLAYING player always starts muted: browsers refuse to start a video with sound (the button unmutes). */
   muted?: boolean;
   loop?: boolean;
   onEnd?: () => void;
@@ -72,7 +72,7 @@ export function SharedVideoPlayer({
   const playIntent = intent.uri === uri && intent.autoplay === autoplay ? intent.requested : autoplay;
   const currentSource = useRef(uri);
   currentSource.current = uri;
-  const [isMuted, setIsMuted] = useState(mutedProp);
+  const [isMuted, setIsMuted] = useState(mutedProp || (autoplay && Platform.OS === 'web'));
   const [errorSource, setErrorSource] = useState<string | null>(null); // the SOURCE that failed: a new source (a late or refreshed signature) starts clean
   const [captionStatus, setCaptionStatus] = useState<{ source: string; status: AVPlaybackStatus } | null>(null);
   const captionsEnabled = useFeatureFlags().isEnabled('media_captions_enabled');

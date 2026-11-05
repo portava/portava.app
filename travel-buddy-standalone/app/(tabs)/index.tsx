@@ -35,6 +35,11 @@ import { useLayoverAwareBottomInset } from '../../src/hooks/useBottomInset';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useSnapshotCache } from '../../src/hooks/useSnapshotCache';
 import { LayoverSessionProvider } from '../../src/context/LayoverSessionContext';
+import type { ViewToken } from 'react-native';
+import { useScreenFocused } from '../../src/hooks/useScreenFocused';
+import { firstAutoplayCardId, FEED_AUTOPLAY_VISIBLE_PERCENT } from '../../src/lib/media/feedAutoplay';
+
+const FEED_VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: FEED_AUTOPLAY_VISIBLE_PERCENT };
 
 const QUICK_FILTERS: PulseFilter[] = ['All', 'Plans', 'Posts', 'Questions', 'Hidden Gems', 'Itineraries', 'Circle'];
 
@@ -376,6 +381,16 @@ function Pulse() {
     });
   }, [baseFeed, rentBuddyEnabled, feedMode, activeCity, commentCountOverrides]);
 
+  // Videos play on their own (2026-11-04): the first post card at least 60% on
+  // screen that shows a video plays it, muted, in place of its poster. Only one
+  // plays at a time, and none while another screen is on top of the feed.
+  const feedFocused = useScreenFocused();
+  const [autoplayCardId, setAutoplayCardId] = useState<string | null>(null);
+  // FlatList refuses a new onViewableItemsChanged after mount, so this one is created once.
+  const onFeedViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
+    setAutoplayCardId(firstAutoplayCardId(viewableItems));
+  }).current;
+
   const filterCount = active.filter((f) => f !== 'All').length;
   // QA round 2, bug 10: surface any active sheet-only filter (Food, Nightlife,
   // Beach, Culture, Fits My Time, Open Now) in the chip row, so the two filter
@@ -642,9 +657,11 @@ function Pulse() {
         ListFooterComponent={Footer}
         renderItem={({ item }) => (
           <View style={{ paddingHorizontal: space.lg }}>
-            <PulseFeedCard item={item} onDeleteSuccess={() => handlePostDeleted(item.id)} sessionId={pulseFeed.sessionId} />
+            <PulseFeedCard item={item} onDeleteSuccess={() => handlePostDeleted(item.id)} sessionId={pulseFeed.sessionId} autoplayVideo={feedFocused && item.id === autoplayCardId} />
           </View>
         )}
+        onViewableItemsChanged={onFeedViewableItemsChanged}
+        viewabilityConfig={FEED_VIEWABILITY_CONFIG}
         ItemSeparatorComponent={() => <View style={{ height: space.md }} />}
         contentContainerStyle={{ paddingBottom: bottomInset }}
         showsVerticalScrollIndicator={false}
