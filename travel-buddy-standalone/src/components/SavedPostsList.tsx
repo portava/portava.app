@@ -10,10 +10,10 @@
  * is "couldn't load" with a retry (never "no saved posts"), a row that failed
  * to load says so and retries on tap, and a post that is gone says that.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useFocusEffect, router } from 'expo-router';
-import { BookmarkX, ChevronLeft, ChevronRight, Image as ImageIcon } from 'lucide-react-native';
+import { BookmarkX, ChevronLeft, ChevronRight, FolderPlus, Image as ImageIcon } from 'lucide-react-native';
 import { EmptyState } from './ui/EmptyState.tsx';
 import { ErrorState } from './ui/ErrorState.tsx';
 import { getMySavedPostIds } from '../services/collections.ts';
@@ -27,7 +27,7 @@ type RowState =
   | { state: 'gone' }
   | { state: 'error' };
 
-function SavedPostRow({ postId }: { postId: string }) {
+function SavedPostRow({ postId, onOrganize }: { postId: string; onOrganize?: (postId: string) => void }) {
   const [row, setRow] = useState<RowState>({ state: 'loading' });
   const [attempt, setAttempt] = useState(0);
 
@@ -50,19 +50,26 @@ function SavedPostRow({ postId }: { postId: string }) {
     const firstLine = row.post.content.trim().split('\n')[0] ?? '';
     const handle = row.post.author?.handle;
     return (
-      <Pressable
-        onPress={() => router.push(`/post/${postId}` as any)}
-        style={({ pressed }) => [s.row, pressed && { opacity: 0.7 }]}
-        accessibilityRole="button"
-        testID={`saved-post-${postId}`}
-      >
-        <View style={s.icon}><ImageIcon size={15} color={color.mute} /></View>
-        <View style={s.body}>
-          <Text style={s.title} numberOfLines={1}>{firstLine || 'Post'}</Text>
-          <Text style={s.meta} numberOfLines={1}>{handle ? `@${handle}` : 'Post'}</Text>
-        </View>
-        <ChevronRight size={14} color={color.faint} />
-      </Pressable>
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <Pressable
+          onPress={() => router.push(`/post/${postId}` as any)}
+          style={({ pressed }) => [s.row, { flex: 1 }, pressed && { opacity: 0.7 }]}
+          accessibilityRole="button"
+          testID={`saved-post-${postId}`}
+        >
+          <View style={s.icon}><ImageIcon size={15} color={color.mute} /></View>
+          <View style={s.body}>
+            <Text style={s.title} numberOfLines={1}>{firstLine || 'Post'}</Text>
+            <Text style={s.meta} numberOfLines={1}>{handle ? `@${handle}` : 'Post'}</Text>
+          </View>
+          <ChevronRight size={14} color={color.faint} />
+        </Pressable>
+        {onOrganize ? (
+          <Pressable onPress={() => onOrganize(postId)} style={{ padding: space.sm }} hitSlop={8} accessibilityRole="button" accessibilityLabel={`Add ${firstLine || 'post'} to collection`}>
+            <FolderPlus size={20} color={color.deep} />
+          </Pressable>
+        ) : null}
+      </View>
     );
   }
 
@@ -100,19 +107,25 @@ type ListState =
   | { state: 'error' }
   | { state: 'ok'; postIds: string[] };
 
-export function SavedPostsList({ onBack }: { onBack: () => void }) {
+export function SavedPostsList({ onBack, onOrganize, revision = 0 }: { onBack: () => void; onOrganize?: (postId: string) => void; revision?: number }) {
   const navBarScrollHandler = useNavBarScrollHandler();
   const [list, setList] = useState<ListState>({ state: 'loading' });
+  const generation = useRef(0);
 
   const fetchIds = useCallback(async () => {
+    const attempt = ++generation.current;
     // Keep the list on screen while a refocus re-reads it.
     setList((prev) => (prev.state === 'ok' ? prev : { state: 'loading' }));
     const res = await getMySavedPostIds();
+    if (generation.current !== attempt) return;
     setList(res.ok ? { state: 'ok', postIds: res.postIds } : { state: 'error' });
-  }, []);
+  }, [revision]);
 
   // Re-read on focus, so a post unsaved on its detail screen drops off here.
-  useFocusEffect(useCallback(() => { void fetchIds(); }, [fetchIds]));
+  useFocusEffect(useCallback(() => {
+    void fetchIds();
+    return () => { generation.current += 1; };
+  }, [fetchIds]));
 
   const count = list.state === 'ok' ? list.postIds.length : null;
   const header = (
@@ -151,7 +164,7 @@ export function SavedPostsList({ onBack }: { onBack: () => void }) {
       data={list.postIds}
       keyExtractor={(id) => id}
       contentContainerStyle={{ padding: space.lg, gap: space.sm }}
-      renderItem={({ item }) => <SavedPostRow postId={item} />}
+      renderItem={({ item }) => <SavedPostRow postId={item} onOrganize={onOrganize} />}
       onScroll={navBarScrollHandler}
       scrollEventThrottle={16}
       ListHeaderComponent={header}

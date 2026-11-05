@@ -94,6 +94,7 @@ export async function getPulseData(opts: {
   limit?: number;
   tab?: string;
   before?: string | null;
+  signal?: AbortSignal;
 }): Promise<
   | { ok: true; data: PulseResponse }
   // errorKind lets the caller tell "you are signed out" apart from "the network
@@ -119,6 +120,7 @@ export async function getPulseData(opts: {
   try {
     const res = await fetch(`${base}/api/pulse?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
+      signal: opts.signal,
     });
     if (!res.ok) {
       return {

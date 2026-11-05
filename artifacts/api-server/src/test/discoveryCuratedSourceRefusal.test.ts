@@ -259,7 +259,7 @@ function assertServePath(body: any, expected: string): void {
 }
 
 /** The residual assertion: a named, partial refusal that says WHICH source failed. */
-function assertCuratedPartial(body: any, what: string): void {
+function assertCuratedPartial(body: any, what: string, governanceUnread = false): void {
   assert.ok(
     body && typeof body === "object" && body.refusal,
     `${what}: no \`refusal\` on the body — a half-failed read is still ` +
@@ -279,7 +279,7 @@ function assertCuratedPartial(body: any, what: string): void {
     `so their emptiness is trustworthy and their rows really were served`,
   );
   assert.deepEqual(
-    [...(r.failedSources ?? [])], ["discovery_places"],
+    [...(r.failedSources ?? [])], ['discovery_places', ...(governanceUnread ? ['canonical_place_governance'] : [])],
     `${what}: the refusal must NAME the source whose rows are missing — ` +
     `"some of this is missing" without saying which part is not a usable answer either`,
   );
@@ -380,8 +380,8 @@ describe("GET /discovery — the curated half of the merge (D11's last residual)
     const r = await get(`/api/discovery?${MIAMI}&category=food`);
     assert.equal(r.status, 200, "additive shape: the status stays 200");
     assertServePath(r.body, "cache_a");
-    assert.equal(r.body.places.length, 1, "the OSM half is a real result and is still served");
-    assertCuratedPartial(r.body, "cache-A serve with an unreadable discovery_places");
+    assert.equal(r.body.places.length, 0, 'An OSM key may alias a withheld community place; an unreadable mapping cannot authorize the cached result.');
+    assertCuratedPartial(r.body, "cache-A serve with an unreadable discovery_places", true);
   });
 
   // ── Serve path 2 of 4 — the Compass cache-B hit ───────────────────────────
@@ -546,19 +546,18 @@ describe("GET /discovery — the curated half of the merge (D11's last residual)
   // other direction. This is what pins the coverage at "partial" rather than
   // "nothing", which would mark the response refused in the WeakSet while its
   // items went out on the wire.
-  it("CONTROL: a partial refusal still counts the items it really served", async () => {
+  it("CONTROL: a partial refusal never counts cached items withheld by unreadable current visibility", async () => {
     setClient({ errorTables: ["discovery_places"] });
     _injectTestCacheEntry(CACHE_A_FOOD, [osmPlace("node/4242")]);
     const r = await get(`/api/discovery?${MIAMI}&category=food`, true);
     assertServePath(r.body, "cache_a");
-    assertCuratedPartial(r.body, "cache-A partial and its exposure");
+    assertCuratedPartial(r.body, "cache-A partial and its exposure", true);
+    assert.deepEqual(r.body.places, []);
     await new Promise((done) => setTimeout(done, 80));
     const rank = inserts.filter((i) => i.table === "rank_events");
     assert.equal(
-      rank.length, 1,
-      `a PARTIAL serve wrote ${rank.length} rank_events batches, not 1 — the items ` +
-      `on this page WERE served, and dropping them under-counts the exposure ` +
-      `denominator just as surely as counting a failure over-counts it`,
+      rank.length, 0,
+      'No cached OSM item passed the current visibility check, so none earns an exposure.',
     );
   });
 
@@ -661,15 +660,16 @@ describe("GET /discovery — the curated half of the merge (D11's last residual)
   // Emitting the cursor only on the healthy branch would have broken that: a
   // client could then tell the two apart by a second, undesigned signal, and a
   // walk that crossed a transient partial failure would lose its place.
-  it("CURSOR: a refusal response is unaffected — same refusal, same envelope plus one key", async () => {
+  it("CURSOR: current visibility refusal terminates paging without exposing cached items", async () => {
     setClient({ errorTables: ["discovery_places"] });
     _injectTestCacheEntry(CACHE_A_FOOD, osmWalk());
     const r = await get(`/api/discovery?${MIAMI}&category=food&cursor=${cursorFor(PAGE_SIZE)}`);
 
     assert.equal(r.status, 200, "additive shape: the status stays 200");
     assertServePath(r.body, "cache_a");
-    assertCuratedPartial(r.body, "cache-A partial while paging");
-    assertCursor(r.body, PAGE_SIZE, "cache-A partial refusal");
+    assertCuratedPartial(r.body, "cache-A partial while paging", true);
+    assert.equal(r.body.total, 0);
+    assert.equal(r.body.cursor, null);
     assert.deepEqual(
       Object.keys(r.body),
       ["places", "total", "destination", "context", "cached", "ageFilterMeta", "sourceSummary", "meta", "cursor", "refusal"],

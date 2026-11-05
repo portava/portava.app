@@ -40,6 +40,10 @@
  * redundancy is real; the count is what it is.
  */
 import React from 'react';
+let mockCurrent=true;
+let mockScope='a';
+jest.mock('../../../services/messagingOwnerRequest.ts',()=>({...jest.requireActual('../../../services/messagingOwnerRequest.ts'),captureMessagingOwnerRequest:()=>({isCurrent:()=>mockCurrent})}));
+jest.mock('../../../hooks/usePrivateSurfaceKey.ts',()=>({...jest.requireActual('../../../hooks/usePrivateSurfaceKey.ts'),usePrivateSurfaceKey:()=>mockScope}));
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 
 // NOTE: intentional stub — TESTING.md Rule 6.
@@ -65,6 +69,7 @@ jest.mock('../memory/memoryApi.ts', () => {
   return {
     ...actual,
     fetchRecap: jest.fn(),
+    fetchOutcomeContext: jest.fn(async()=>({ok:true,data:{enabled:false}})),
     saveMessageAsMemoryDraft: jest.fn(),
   };
 });
@@ -99,10 +104,20 @@ const recapNone = {
 };
 
 beforeEach(() => {
-  mockedFetchRecap.mockReset();
+  mockedFetchRecap.mockReset();mockCurrent=true;mockScope='a';
 });
 
 describe('§10.3 — the recap sheet', () => {
+  it('can close a pending read without waiting or taking a curation action', async () => {
+    mockedFetchRecap.mockImplementation(() => new Promise(() => {}));
+    const close = jest.fn(), curate = jest.fn();
+    const view = await render(<RecapSheet visible threadId="t1" onClose={close} onCurate={curate} />);
+    await fireEvent.press(screen.getByLabelText('Close recap'));
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(curate).not.toHaveBeenCalled();
+    await view.unmount();
+    expect(mockedFetchRecap.mock.calls[0][2]?.signal?.aborted).toBe(true);
+  });
   it("renders the spec's headline for the spec's counts", async () => {
     mockedFetchRecap.mockResolvedValue(recapOk as any);
     await render(<RecapSheet visible threadId="t1" onClose={() => {}} />);

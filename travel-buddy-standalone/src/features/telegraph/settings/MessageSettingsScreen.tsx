@@ -30,7 +30,9 @@
  * states the behaviour instead of offering a control that could not keep its
  * promise (decision TM-TEL-D7).
  */
+import { ClearOutcomeFeedback } from '../memory/ClearOutcomeFeedback.tsx';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { router } from 'expo-router';
 import { View, Text, ActivityIndicator, StyleSheet, Switch } from 'react-native';
 import {
   getMyMessageSettings,
@@ -120,6 +122,8 @@ export function MessageSettingsScreen() {
         <SettingsSection subtitle={loadError ?? 'We could not load your message settings.'}>
           <SettingsRow title="Try again" testID="message-settings-retry" onPress={() => { void load(); }} />
         </SettingsSection>
+        {/* Withdrawal stays reachable when ordinary settings reads are refused. */}
+        <SettingsSection title="Coordination feedback"><ClearOutcomeFeedback /></SettingsSection>
       </SettingsScreen>
     );
   }
@@ -176,6 +180,12 @@ export function MessageSettingsScreen() {
           </React.Fragment>
         ))}
       </SettingsSection>
+
+      <SettingsSection title="Nearby and availability">
+        <SettingsRow title="Manage Nearby sharing" subtitle="Availability audiences, proximity detail and timed ETA permissions." onPress={() => router.push('/messages/nearby' as never)} />
+      </SettingsSection>
+
+      <SettingsSection title="Coordination feedback"><ClearOutcomeFeedback /></SettingsSection>
 
       <SettingsSection title="Read receipts">
         <View style={st.info} testID="message-settings-receipts-note">

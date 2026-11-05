@@ -1,7 +1,9 @@
 import type { Session } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken } from './apiToken.ts';
-import { currentDiscoveryScope, isCurrentDiscoveryScope, viewerKeyForToken } from './discoveryViewerScope.ts';
+import { viewerKeyForToken } from './discoveryViewerScope.ts';
+import { captureObservedOwnerSnapshot, type MessagingOwnerRequest } from './observedOwnerSnapshot.ts';
+export type { MessagingOwnerRequest } from './observedOwnerSnapshot.ts';
 
 interface OwnerIdentity {
   readonly ownerId: string;
@@ -15,11 +17,6 @@ interface OwnerObserver {
   revision: number;
   identity: OwnerIdentity | null;
   unsubscribe: (() => void) | null;
-}
-
-export interface MessagingOwnerRequest extends OwnerIdentity {
-  readonly isCurrent: () => boolean;
-  readonly invalidate: () => void;
 }
 
 const observerKey = Symbol.for('portava.messagingOwnerRequest.observer');
@@ -59,7 +56,7 @@ export function disposeMessagingOwnerObserver(): void {
 }
 
 export function initializeMessagingOwnerObserver(): void {
-  if (!isSupabaseConfigured) return;
+  if (!isSupabaseConfigured || !supabase?.auth) return;
   if (registry[observerKey]?.auth === supabase.auth) return;
   disposeMessagingOwnerObserver();
   const observer: OwnerObserver = {
@@ -85,18 +82,7 @@ export function initializeMessagingOwnerObserver(): void {
 
 export function captureMessagingOwnerRequest(): MessagingOwnerRequest | null {
   initializeMessagingOwnerObserver();
-  const observer = registry[observerKey];
-  const identity = observer?.identity;
-  const scope = Object.freeze(currentDiscoveryScope());
-  if (!observer?.active || !observer.observed || !identity || scope.viewer !== `u:${identity.ownerId}`) return null;
-  const revision = observer.revision;
-  let valid = true;
-  return Object.freeze({
-    ...identity,
-    isCurrent: () => valid && observer.active && registry[observerKey] === observer
-      && observer.revision === revision && isCurrentDiscoveryScope(scope),
-    invalidate: () => { valid = false; },
-  });
+  return captureObservedOwnerSnapshot();
 }
 
 export function assertMessagingOwnerRequest(request: MessagingOwnerRequest): void {

@@ -425,7 +425,8 @@ export async function loadTrendContext(sc: any, placeIds: readonly string[]): Pr
       const ok = new Set((live.data as Array<{ id: string }>).map((t) => t.id));
       memberships = (ct.data as ContextMembershipRow[]).filter((m) => ok.has(m.trail_id));
     }
-    return buildPlaceTrendContext([...(places.data as ContextPlaceRow[]), ...canonical], memberships);
+    const governed = await governDiscoveryPlaces(sc, [...(places.data as ContextPlaceRow[]), ...canonical], row => String(row.id));
+    return governed.readable ? buildPlaceTrendContext(governed.rows, memberships) : null;
   } catch {
     // resolves-not-throws-ok: a throw is a failed read, reported as null.
     return null;
@@ -470,3 +471,4 @@ async function postConvergenceOption(
   };
 }
 import { loadCanonicalContextRows } from "./discoveryTrendCanonicalContext.js";  // census-discovery §133 (DV-28): the served places in the v2 context
+import { governDiscoveryPlaces } from './discoveryPlaceGovernance.js';

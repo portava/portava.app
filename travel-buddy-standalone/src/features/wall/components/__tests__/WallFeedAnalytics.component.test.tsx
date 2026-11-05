@@ -33,6 +33,12 @@ jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn() },
 }));
 
+// NOTE: the actual follow endpoint is represented at its confirmed-response seam.
+jest.mock('../../../../services/follows.ts', () => ({ followUser: jest.fn(async () => ({ ok: true, data: { following: true } })) }));
+
+// NOTE: collection persistence is exercised through the shared picker, without a configured network.
+jest.mock('../../../../services/collections.ts', () => ({ saveItem: jest.fn(async () => true), unsaveItem: jest.fn(async () => true), readCollections: jest.fn(async () => ({ ok: true, data: [] })), checkSaved: jest.fn(async () => ({ saved: false, collectionIds: [] })) }));
+
 import { router } from 'expo-router';
 import * as wallApi from '../../services/wallApi.ts';
 import { WallScreen } from '../WallScreen.tsx';
@@ -69,7 +75,7 @@ const items: WallProjection[] = [
     visibility: 'public',
     discoveryReason: 'Followed by 3 people you know',
     text: 'New creator',
-    actions: [{ type: 'follow', label: 'Follow' }],
+    actions: [{ type: 'follow', label: 'Follow', targetType: 'user', targetId: 'creator' }],
   },
 ];
 
@@ -103,6 +109,7 @@ describe('Wall engagement + outcome analytics (§32)', () => {
 
     fireEvent.press(screen.getByLabelText('Follow'));
 
+    await waitFor(() => expect(events.some((e) => e.type === 'wall_follow_from_feed')).toBe(true));
     const follow = events.find(
       (e): e is Extract<WallAnalyticsEvent, { type: 'wall_follow_from_feed' }> =>
         e.type === 'wall_follow_from_feed',
@@ -127,7 +134,11 @@ describe('Wall engagement + outcome analytics (§32)', () => {
     await waitFor(() => expect(screen.getByTestId('wall-item-social_post')).toBeTruthy());
 
     // p1 is first in the list, so its Save control is the first one.
-    fireEvent.press(screen.getAllByLabelText('Save')[0]);
+    await fireEvent.press(screen.getAllByLabelText('Save to collection')[0]);
+    expect(events.some((e) => e.type === 'wall_engagement' && e.kind === 'save')).toBe(false);
+    await waitFor(() => expect(screen.getByLabelText('Save for later')).toBeTruthy());
+    await fireEvent.press(screen.getByLabelText('Save for later'));
+    await waitFor(() => expect(events.some((e) => e.type === 'wall_engagement' && e.kind === 'save')).toBe(true));
 
     expect(
       events.some(

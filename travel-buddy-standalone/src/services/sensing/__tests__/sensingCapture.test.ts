@@ -388,6 +388,40 @@ describe('§3 — eligibility carries the identity; ingest carries the credentia
   ) as { payload: SensingContributionPayload; identity: { commitment: string; rotationEpoch: number }; body: Record<string, unknown> };
   const payload = CONTRACT.payload;
 
+  for (const stage of ['session', 'contributions'] as const) {
+    test(`reset aborts the active ${stage} request, not only its response handler`, async () => {
+      let signal!: AbortSignal; let entered!: () => void;
+      const waiting = new Promise<void>(resolve => { entered = resolve; });
+      const transport = createSensingTransport({ baseUrl: 'https://api.example.test', now: () => T_START,
+        getEligibilityToken: async () => 'synthetic', commitmentFor: async () => CONTRACT.identity.commitment,
+        fetchImpl: async (url, init) => {
+          if (String(url).endsWith('/' + stage)) {
+            signal = init!.signal as AbortSignal; entered();
+            return new Promise<Response>((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted'))));
+          }
+          return new Response(JSON.stringify({ credential: 'opaque', rotationEpoch: CONTRACT.identity.rotationEpoch, expiresAt: new Date(T_START + 60000).toISOString() }));
+        },
+      });
+      const pending = transport.submit(payload); await waiting; transport.reset();
+      assert.equal(signal.aborted, true); assert.deepEqual(await pending, { ok: false, reason: 'cancelled' });
+    });
+  }
+  test('malformed or already-expired credentials never reach ingest', async () => {
+    for (const credential of [{ credential: '', rotationEpoch: 0, expiresAt: new Date(T_START + 60000).toISOString() }, { credential: 'opaque', expiresAt: new Date(T_START + 60000).toISOString() }, { credential: 'opaque', rotationEpoch: 0, expiresAt: new Date(T_START).toISOString() }]) {
+      let calls = 0;
+      const transport = createSensingTransport({ baseUrl: 'https://api.example.test', now: () => T_START, getEligibilityToken: async () => 'synthetic', commitmentFor: async () => CONTRACT.identity.commitment, fetchImpl: async () => { calls++; return new Response(JSON.stringify(credential)); } });
+      assert.deepEqual(await transport.submit(payload), { ok: false, reason: 'no_credential' }); assert.equal(calls, 1);
+    }
+  });
+  test('concurrent windows share one eligibility exchange', async () => {
+    let sessions = 0;
+    const transport = createSensingTransport({ baseUrl: 'https://api.example.test', now: () => T_START, getEligibilityToken: async () => 'synthetic', commitmentFor: async () => CONTRACT.identity.commitment, fetchImpl: async url => {
+      if (String(url).endsWith('/session')) { sessions++; return new Response(JSON.stringify({ credential: 'opaque', rotationEpoch: CONTRACT.identity.rotationEpoch, expiresAt: new Date(T_START + 60000).toISOString() })); }
+      return new Response('{}', { status: 201 });
+    } });
+    assert.ok((await Promise.all([transport.submit(payload), transport.submit(payload)])).every(result => result.ok)); assert.equal(sessions, 1);
+  });
+
   for (const stage of ['token', 'session', 'body', 'commitment'] as const) {
     test(`reset fences pending ${stage} before contribution dispatch`, async () => {
       let release!: () => void;
@@ -544,5 +578,28 @@ describe('§3 — eligibility carries the identity; ingest carries the credentia
     const out = await transport.submit(payload);
     assert.equal(out.ok, false);
     assert.equal(out.ok === false && out.reason, 'no_credential');
+  });
+});
+
+
+describe('late hardware callbacks and partial hardware failure', () => {
+  test('a queued native callback after unsubscribe cannot repopulate any raw buffer', () => {
+    const callbacks: Array<() => void> = [];
+    let cancels = 0;
+    const handle = startSensingCapture({
+      motion: { subscribe: on => { callbacks.push(() => on({ t: T_START, x: 1, y: 0, z: 0 })); return () => {}; } },
+      location: { subscribe: on => { callbacks.push(() => on({ t: T_START, lat: LAT, lng: LNG, accuracyM: 5, speedMps: 0 })); return () => {}; } },
+      acoustic: { subscribe: on => { callbacks.push(() => on({ t: T_START, dbfs: -25 })); return () => {}; } },
+      now: () => T_START, schedule: () => () => { cancels += 1; }, submit: () => {},
+    });
+    callbacks.forEach(cb => cb());
+    handle.stop(); handle.stop(); callbacks.forEach(cb => cb());
+    assert.deepEqual(handle._rawBufferSizes(), { motion: 0, location: 0, acoustic: 0 });
+    assert.equal(cancels, 1);
+  });
+  test('a refused motion subscription does not strand location or prevent cleanup', () => {
+    let stopped = false;
+    const handle = startSensingCapture({ motion: { subscribe() { throw new Error('permission refused'); } }, location: { subscribe() { return () => { stopped = true; }; } }, now: () => T_START, schedule: () => () => { throw new Error('timer cleanup'); }, submit: () => {} });
+    handle.stop(); assert.equal(stopped, true);
   });
 });

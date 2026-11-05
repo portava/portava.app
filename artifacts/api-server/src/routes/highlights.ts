@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type { Response } from "express";
 import { auditServedResurfacing } from "../services/highlights/resurfacingSuppressionAudit.js";
-import { requireUser, sendError } from "../lib/http";
+import { requireUser, sendError, resolveAccountRestriction } from "../lib/http";
 import { getServiceClient } from "../lib/supabase"; import { isExcluded, readBlockExclusions, readPairExclusion, readBlockDirections } from "../lib/exclusionSet.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import {
@@ -542,7 +542,8 @@ async function resolveViewAccess(
  * `resolveViewAccess` is the gate in front of the routes a viewer reaches for
  * ONE Highlight they did not post: POST /highlights/:id/view, POST and DELETE
  * /highlights/:id/like, POST /highlights/:id/reply, POST /highlights/:id/report
- * and GET /highlights/:id/actions. (There is no GET /highlights/:id.)
+ * and GET /highlights/:id/actions. The detail read authorizes its full row through
+ * the same record gate before returning any payload.
  *
  * WHY IT IS SEPARATE. `routes/collections.ts` previews a SAVED Highlight — a
  * caption and a media URL — for whatever id sits in a collection, and it did so
@@ -566,10 +567,11 @@ export type HighlightViewRefusal =
   | "blocks_unreadable"   // the two-way blocks read failed — withheld
   | "blocked"             // a block in either direction
   | "invisible"           // canViewHighlight: inactive, or visibility not met
+  | "membership_unreadable" | "projection_unreadable"
   | "withheld";           // a §10/§11 owner decision refuses public_projection
 
 export type HighlightViewVerdict =
-  | { ok: true; h: HighlightRecord }
+  | { ok: true; h: HighlightRecord; policies?: ProjectionPolicyRead }
   | { ok: false; code: "db_error" | "not_found"; message: string; reason: HighlightViewRefusal };
 
 export async function decideHighlightViewAccess(
@@ -598,7 +600,17 @@ export async function decideHighlightViewAccess(
   }
   if (!h) return notFound("missing");
 
-  const record = h as HighlightRecord;
+  return decideHighlightRecordAccess(sc, viewerId, h as HighlightRecord, log);
+}
+
+/** Authorize the exact row being projected; never gate one snapshot then read another payload. */
+async function decideHighlightRecordAccess(
+  sc: SupabaseClient, viewerId: string, record: HighlightRecord,
+  log?: { error: (obj: unknown, msg: string) => void }, strictReads = false,
+): Promise<HighlightViewVerdict> {
+  const highlightId = record.id;
+  const notFound = (reason: Exclude<HighlightViewRefusal, "unreadable">): HighlightViewVerdict =>
+    ({ ok: false, code: "not_found", message: "Highlight not found", reason });
   const ownerId = record.owner_id;
 
   // Block check (both directions). FAIL CLOSED.
@@ -636,6 +648,7 @@ export async function decideHighlightViewAccess(
       .from("circle_memberships").select("other_id").eq("user_id", ownerId).eq("other_id", viewerId).maybeSingle();
     if (circleMember.error) {
       log?.error({ err: circleMember.error, highlightId }, "highlights: circle membership lookup failed — withholding circle_only highlight");
+      if (strictReads) return notFound("membership_unreadable");
       viewerFollowsOwner = false;
     } else {
       viewerFollowsOwner = Boolean(circleMember.data);
@@ -647,6 +660,7 @@ export async function decideHighlightViewAccess(
     if (shares.ok) {
       sharesTrip = shares.shared.has(ownerId);
     } else {
+      if (strictReads) return notFound("membership_unreadable");
       // Withhold: sharesTrip stays false and the highlight reads as not found.
       log?.error({ err: shares.error, highlightId }, "highlights: trip membership lookup failed — withholding trip_only highlight");
     }
@@ -665,8 +679,10 @@ export async function decideHighlightViewAccess(
   // record (see highlightPublicProjection.ts).
   if (viewerId !== ownerId) {
     const inputs = await readProjectionInputs(sc, [ownerId], [highlightId]);
+    if (strictReads && (inputs.controls.state === "unreadable" || inputs.policies.state === "unreadable")) return notFound("projection_unreadable");
     const projectable = filterProjectable([record], viewerId, "public_projection", inputs, log, "resolveViewAccess");
     if (projectable.length === 0) return notFound("withheld");
+    return { ok: true, h: record, policies: inputs.policies };
   }
 
   return { ok: true, h: record };
@@ -3228,5 +3244,54 @@ router.get("/highlights/:id/actions", asyncHandler(async (req: Request, res: Res
 import { asyncHandler } from "../lib/asyncHandler.js";
 import type { Request } from "express";
 import { buildHighlightActionMenu } from "../services/highlights/highlightActions.js";
+
+// Keep after all /highlights/<static> routes: a saved ID grants no read access.
+router.get("/highlights/:id", asyncHandler(async (req: Request, res: Response) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  res.setHeader("Cache-Control", "private, no-store");
+  const id = String(req.params.id);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    sendError(res, "invalid_payload", "Invalid highlight ID"); return;
+  }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "degraded_unavailable", "Could not check this highlight. Try again."); return; }
+  const unavailable = () => sendError(res, "degraded_unavailable", "Could not load this highlight. Try again.");
+  const projection = await highlightColumns(sc);
+  const read = await sc.from("highlights").select(projection.columns).eq("id", id).maybeSingle();
+  if (read.error) { unavailable(); return; }
+  if (!read.data) { sendError(res, "not_found", "Highlight unavailable"); return; }
+  const row = read.data as any;
+  const access = await decideHighlightRecordAccess(sc, auth.user.id, row, req.log, true);
+  if (!access.ok) {
+    if (["unreadable", "blocks_unreadable", "membership_unreadable", "projection_unreadable"].includes(access.reason)) unavailable();
+    else sendError(res, "not_found", "Highlight unavailable");
+    return;
+  }
+  const restriction = await resolveAccountRestriction(sc, row.owner_id);
+  if (restriction.state !== "ok") { unavailable(); return; }
+  if (restriction.accountStatus !== "active" || restriction.restriction.kind !== "none") {
+    sendError(res, "not_found", "Highlight unavailable"); return;
+  }
+  const [profile, views, likes, viewed, liked, policies] = await Promise.all([
+    sc.from("profiles").select("id,handle,name,avatar_url").eq("id", row.owner_id).maybeSingle(),
+    sc.from("highlight_views").select("highlight_id", { count: "exact", head: true }).eq("highlight_id", id),
+    sc.from("highlight_likes").select("highlight_id", { count: "exact", head: true }).eq("highlight_id", id),
+    sc.from("highlight_views").select("highlight_id").eq("highlight_id", id).eq("viewer_id", auth.user.id).limit(1),
+    sc.from("highlight_likes").select("highlight_id").eq("highlight_id", id).eq("user_id", auth.user.id).limit(1),
+    access.policies ?? readProjectionPolicies(sc, [id]),
+  ]);
+  if (profile.error || views.error || likes.error || viewed.error || liked.error || views.count == null || likes.count == null || !Array.isArray(viewed.data) || !Array.isArray(liked.data) || policies.state === "unreadable") {
+    unavailable(); return;
+  }
+  const allowedNames = await nameVisibilitySet(sc, [row.owner_id]);
+  const p = profile.data;
+  const author = p ? { id: p.id, handle: p.handle, name: presentedName(p, p.id === auth.user.id || allowedNames.has(p.id)), avatarUrl: p.avatar_url ?? null } : null;
+  const [disclosed] = applyLocationPrecision([row], policies, req.log, "GET /highlights/:id");
+  res.json({ ...disclosed, author, viewCount: views.count, likeCount: likes.count,
+    viewedByMe: viewed.data.length > 0,
+    likedByMe: liked.data.length > 0,
+    ...describeLifetimeFields(row, projection.classProjected) });
+}));
 
 export default router;

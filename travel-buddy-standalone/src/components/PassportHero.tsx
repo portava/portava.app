@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
 import { CachedImage } from './CachedImage.tsx';
 import Svg, { Path, Defs, Pattern, Rect, Circle } from 'react-native-svg';
 import { Plane, MapPin, MoreHorizontal, Camera, ShieldCheck, Calendar } from 'lucide-react-native';
@@ -95,6 +95,7 @@ export function PassportHero({
   trustLabel?: string | null;
   onTrustInfo?: () => void;
 }) {
+  const largeText = useWindowDimensions().fontScale > 1.3;
   const username = 'username' in profile ? profile.username : null;
   const identity = {
     displayName: 'displayName' in profile ? profile.displayName : null,
@@ -164,12 +165,14 @@ export function PassportHero({
             </View>
           )
         ) : !isOwner && onFollowPress !== undefined ? (
-          <View style={{ alignItems: 'flex-end', gap: 4 }}>
+          <View style={styles.followGroup}>
             <Pressable
               onPress={onFollowPress}
               hitSlop={8}
               disabled={followLoading}
               style={[styles.followBtn, isFollowing && styles.followBtnActive]}
+              accessibilityRole="button"
+              accessibilityLabel={isFollowing ? 'Following. Unfollow traveler' : 'Follow traveler'}
             >
               <Text style={[styles.followText, isFollowing && styles.followTextActive]}>
                 {followLoading ? '…' : isFollowing ? 'Following' : '+ Follow'}
@@ -184,7 +187,7 @@ export function PassportHero({
       <View style={styles.topDivider} />
 
       {/* Identity row */}
-      <View style={styles.identityRow}>
+      <View style={[styles.identityRow, largeText && styles.identityStacked]}>
         {/* Avatar wrapped with HighlightRing */}
         <View style={styles.photoBox}>
           <PassportMonogramWatermark size={130} />
@@ -230,7 +233,7 @@ export function PassportHero({
           {!hidePrivateFields && (homeCity || homeCountry) ? (
             <View style={styles.locRow}>
               <MapPin size={12} color={color.deep} />
-              <Text style={styles.loc} numberOfLines={1}>
+              <Text style={styles.loc} numberOfLines={largeText ? 2 : 1}>
                 {[homeCity, homeCountry].filter(Boolean).join(', ')}
               </Text>
             </View>
@@ -315,9 +318,9 @@ const styles = StyleSheet.create({
     ...shadow.card,
   },
   inkStamp: { position: 'absolute', top: 50, right: 12, zIndex: 1 },
-  topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  brand: { ...t.bodyStrong, color: color.ink, letterSpacing: 0.5, fontSize: 13 },
+  topRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, flexShrink: 1, minWidth: 0 },
+  brand: { ...t.bodyStrong, color: color.ink, letterSpacing: 0.5, fontSize: 13, flexShrink: 1 },
   topDivider: { height: 1, backgroundColor: color.haze, marginVertical: space.md },
 
   menuBtn: {
@@ -335,6 +338,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md, paddingVertical: 5,
   },
   followBtnActive: { backgroundColor: color.ink },
+  followGroup: { alignItems: 'flex-end', gap: 4, marginLeft: 'auto', maxWidth: '100%' },
   followText: { ...t.small, color: color.ink, fontWeight: '700' },
   followTextActive: { color: color.onInk },
   followContextLabel: { fontSize: 11, color: color.signal, fontWeight: '600' },
@@ -347,6 +351,7 @@ const styles = StyleSheet.create({
   followStatusText: { ...t.small, color: color.mute, fontWeight: '700' as const, fontSize: 11 },
 
   identityRow: { flexDirection: 'row', gap: space.md },
+  identityStacked: { flexDirection: 'column' },
 
   photoBox: { width: 110, alignItems: 'center', justifyContent: 'flex-start', paddingTop: 4 },
   photoFrame: {
@@ -363,7 +368,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5, borderColor: color.paper,
   },
 
-  details: { flex: 1, gap: 6 },
+  details: { flex: 1, minWidth: 0, gap: 6 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   name: { ...t.heading, color: color.ink, fontSize: 22, lineHeight: 28, flexShrink: 1 },
   handle: { ...t.small, color: color.mute, fontFamily: 'Courier', fontSize: 12 },
@@ -400,13 +405,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 4,
     backgroundColor: color.haze, borderRadius: radius.pill,
     paddingHorizontal: 8, paddingVertical: 4,
+    maxWidth: '100%', flexShrink: 1,
   },
-  memberText: { fontSize: 10, color: color.mute, fontWeight: '600' },
+  memberText: { fontSize: 10, color: color.mute, fontWeight: '600', flexShrink: 1 },
   trustBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
     backgroundColor: 'rgba(13,155,111,0.10)', borderRadius: radius.pill,
     paddingHorizontal: 8, paddingVertical: 4,
     borderWidth: 1, borderColor: 'rgba(13,155,111,0.30)',
+    maxWidth: '100%', flexShrink: 1,
   },
-  trustText: { fontSize: 10, color: '#0D9B6F', fontWeight: '700' },
+  trustText: { fontSize: 10, color: '#0D9B6F', fontWeight: '700', flexShrink: 1 },
 });

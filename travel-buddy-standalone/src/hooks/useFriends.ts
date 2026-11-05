@@ -2,7 +2,7 @@
  * Friend hooks — same {data, loading, error, reload} shape as other hooks.
  * All reads/writes go through src/services/friends.ts → API server.
  */
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   getFriendStatus,
   getIncomingFriendRequests,
@@ -20,78 +20,90 @@ import {
 } from '../services/friends.ts';
 import { onFriendsChanged, emitFriendsChanged } from '../lib/friendEvents.ts';
 import { bumpSocialVersion } from './useSocialVersion.ts';
+import { useInputAccountEpoch } from '../platform/input-assistance/hooks/useInputAccountEpoch.ts';
+import { currentDiscoveryScope, isCurrentDiscoveryScope } from '../services/discoveryViewerScope.ts';
 
 /** Friend status for a single user (e.g., on their profile page). */
 export function useFriendStatus(userId: string | null | undefined) {
-  const [status, setStatus] = useState<FriendStatus>('none');
-  const [requestId, setRequestId] = useState<string | undefined>(undefined);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const epoch = useInputAccountEpoch();
+  const context = useMemo(() => ({ active: false, scope: currentDiscoveryScope(), revision: 0, mutating: false }), [userId, epoch]);
+  const [state, setState] = useState({
+    context, status: 'none' as FriendStatus, requestId: undefined as string | undefined,
+    loading: !!userId, error: null as string | null,
+  });
+  const view = state.context === context ? state : {
+    context, status: 'none' as FriendStatus, requestId: undefined, loading: !!userId, error: null,
+  };
+  const current = useCallback(() => context.active && isCurrentDiscoveryScope(context.scope), [context]);
 
   const reload = useCallback(async () => {
-    if (!userId) return;
-    setLoading(true);
-    setError(null);
-    const res = await getFriendStatus(userId);
-    if (res.ok && res.data) {
-      setStatus((res.data as any).status ?? 'none');
-      setRequestId((res.data as any).requestId ?? undefined);
-    } else {
-      setError(res.message ?? 'Failed to load friend status');
+    if (!userId || !current() || context.mutating) return;
+    const revision = ++context.revision;
+    setState((prev) => ({ ...prev, context, loading: true, error: null }));
+    try {
+      const res = await getFriendStatus(userId);
+      if (!current() || revision !== context.revision) return;
+      if (res.ok && res.data) {
+        setState({ context, status: res.data.status, requestId: res.data.requestId, loading: false, error: null });
+      } else {
+        setState((prev) => ({ ...prev, loading: false, error: res.message ?? 'Failed to load friend status' }));
+      }
+    } catch {
+      if (current() && revision === context.revision) {
+        setState((prev) => ({ ...prev, loading: false, error: 'Failed to load friend status. Please try again.' }));
+      }
     }
-    setLoading(false);
-  }, [userId]);
+  }, [userId, context, current]);
 
-  useEffect(() => { reload(); }, [reload]);
+  useEffect(() => {
+    context.active = true;
+    setState({ context, status: 'none', requestId: undefined, loading: !!userId, error: null });
+    void reload();
+    const off = onFriendsChanged(reload);
+    return () => { context.active = false; context.revision++; off(); };
+  }, [context, userId, reload]);
 
-  const send = useCallback(async (): Promise<FriendResult<any>> => {
-    if (!userId) return { ok: false, data: null, errorKind: 'config_error' };
-    const res = await sendFriendRequest(userId);
-    if (res.ok) {
-      const outcome = resolveSendFriendRequestOutcome(res.data as any);
-      setStatus(outcome.status);
-      setRequestId(outcome.requestId);
-      // Auto-accepted: a new friendship exists — refresh already-mounted
-      // friends/requests surfaces so they don't show stale data.
-      if (outcome.autoAccepted) emitFriendsChanged();
+  const mutate = useCallback(async (
+    operation: () => Promise<FriendResult<any>>,
+    success: (data: any) => { status: FriendStatus; requestId?: string; notify?: boolean; social?: boolean },
+  ): Promise<FriendResult<any>> => {
+    if (!current() || context.mutating) return { ok: false, data: null, errorKind: 'config_error', message: 'Please wait and try again.' };
+    context.mutating = true;
+    const revision = ++context.revision; // A read started before this write cannot undo it.
+    setState((prev) => ({ ...prev, context, loading: false, error: null }));
+    try {
+      const res = await operation();
+      if (!current() || revision !== context.revision) return { ok: false, data: null, errorKind: 'config_error', message: 'The profile or account changed. Please try again.' };
+      if (res.ok) {
+        const next = success(res.data);
+        setState({ context, status: next.status, requestId: next.requestId, loading: false, error: null });
+        if (next.social) bumpSocialVersion();
+        if (next.notify) emitFriendsChanged();
+      } else {
+        setState((prev) => ({ ...prev, error: res.message ?? 'Could not update friendship. Please try again.' }));
+      }
+      return res;
+    } catch {
+      const message = 'Could not update friendship. Please try again.';
+      if (current() && revision === context.revision) setState((prev) => ({ ...prev, error: message }));
+      return { ok: false, data: null, errorKind: 'network_unreachable', message };
+    } finally {
+      context.mutating = false;
     }
-    return res;
-  }, [userId]);
+  }, [context, current]);
 
-  const accept = useCallback(async (): Promise<FriendResult<any>> => {
-    if (!requestId) return { ok: false, data: null, errorKind: 'config_error' };
-    const res = await acceptFriendRequest(requestId);
-    if (res.ok) { setStatus('friends'); setRequestId(undefined); emitFriendsChanged(); }
-    return res;
-  }, [requestId]);
+  const unavailable = (): Promise<FriendResult<any>> => Promise.resolve({ ok: false, data: null, errorKind: 'config_error' });
+  const send = useCallback(() => userId ? mutate(() => sendFriendRequest(userId), (data) => {
+    const outcome = resolveSendFriendRequestOutcome(data);
+    return { ...outcome, notify: outcome.autoAccepted };
+  }) : unavailable(), [userId, mutate]);
+  const requestId = view.requestId;
+  const accept = useCallback(() => requestId ? mutate(() => acceptFriendRequest(requestId), () => ({ status: 'friends', notify: true })) : unavailable(), [requestId, mutate]);
+  const decline = useCallback(() => requestId ? mutate(() => declineFriendRequest(requestId), () => ({ status: 'none' })) : unavailable(), [requestId, mutate]);
+  const cancel = useCallback(() => requestId ? mutate(() => cancelFriendRequest(requestId), () => ({ status: 'none' })) : unavailable(), [requestId, mutate]);
+  const remove = useCallback(() => userId ? mutate(() => removeFriend(userId), () => ({ status: 'none', notify: true, social: true })) : unavailable(), [userId, mutate]);
 
-  const decline = useCallback(async (): Promise<FriendResult<any>> => {
-    if (!requestId) return { ok: false, data: null, errorKind: 'config_error' };
-    const res = await declineFriendRequest(requestId);
-    if (res.ok) { setStatus('none'); setRequestId(undefined); }
-    return res;
-  }, [requestId]);
-
-  const cancel = useCallback(async (): Promise<FriendResult<any>> => {
-    if (!requestId) return { ok: false, data: null, errorKind: 'config_error' };
-    const res = await cancelFriendRequest(requestId);
-    if (res.ok) { setStatus('none'); setRequestId(undefined); }
-    return res;
-  }, [requestId]);
-
-  const remove = useCallback(async (): Promise<FriendResult<any>> => {
-    if (!userId) return { ok: false, data: null, errorKind: 'config_error' };
-    const res = await removeFriend(userId);
-    if (res.ok) {
-      setStatus('none');
-      setRequestId(undefined);
-      bumpSocialVersion();
-      emitFriendsChanged();
-    }
-    return res;
-  }, [userId]);
-
-  return { status, requestId, loading, error, reload, send, accept, decline, cancel, remove };
+  return { status: view.status, requestId, loading: view.loading, error: view.error, reload, send, accept, decline, cancel, remove };
 }
 
 /** Incoming friend requests for the notification/inbox surface. */

@@ -299,7 +299,7 @@ function GroupMessageBubble({
   autoTranslate,
   defaultShowOriginal,
   deliveryStatus, sendFailure, linkPreview = null,
-  onRetry,
+  onRetry, onCancelPending,
 }: {
   item: Message;
   mine: boolean;
@@ -312,6 +312,7 @@ function GroupMessageBubble({
   defaultShowOriginal: boolean;
   deliveryStatus?: 'sending' | 'sent' | 'failed' | null; sendFailure?: SendFailure | null; /** census T404: the stored preview, or null (flag off ⇒ always null). */ linkPreview?: LinkPreview | null;
   onRetry?: () => void;
+  onCancelPending?: () => void;
 }) {
   const { palette, styles } = useTelegraphTheme(makeStyles);
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
@@ -410,6 +411,11 @@ function GroupMessageBubble({
           <Text style={styles.deliveryFailed} testID="telegraph-send-failed-copy">{failedSendCopy(sendFailure)}</Text>
         </Pressable>
       )}
+      {mine && deliveryStatus === 'failed' && onCancelPending && (
+        <Pressable accessibilityRole="button" accessibilityLabel="Stop retrying this message" onPress={onCancelPending} style={styles.deliveryRow} hitSlop={8}>
+          <Text style={styles.deliveryFailed}>Stop retrying</Text>
+        </Pressable>
+      )}
 
       {/* §7.3 / §30A.15 — Sent, Delivered (observed live), Seen by N, or "read status
           unavailable" when the receipts could not be read. Never a guessed "Sent". */}
@@ -442,7 +448,7 @@ export function GroupChatScreen({ type, id, title, memberLabel, banner }: Props)
   const [threadMuted, setThreadMuted] = useState(false);
   const insets = useSafeAreaInsets();
   const { userId } = useSession();
-  const { state, thread, messages, sending, errorMessage, reload, send, retrySend, notifyTyping, typingUserIds, edit } = useGroupChat(type, id); const [editingMsg, setEditingMsg] = useState<Message | null>(null); const [historyMsg, setHistoryMsg] = useState<Message | null>(null); const [safetyQuiet, setSafetyQuiet] = useState(false); const dataSaver = useDataSaver(); const { isEnabled: flagEnabled } = useFeatureFlags(); const linkPreviews = useLinkPreviews(thread?.id ?? null, messages, flagEnabled(LINK_PREVIEWS_FLAG) && !safetyQuiet && dataSaver.mayLoad('mediaPreview')); // WP-08; census T404 (Q-LP6): previews only with the flag on, outside safety mode and data saver
+  const { state, thread, messages, sending, errorMessage, reload, send, retrySend, cancelSend, notifyTyping, typingUserIds, edit } = useGroupChat(type, id); const [editingMsg, setEditingMsg] = useState<Message | null>(null); const [historyMsg, setHistoryMsg] = useState<Message | null>(null); const [safetyQuiet, setSafetyQuiet] = useState(false); const dataSaver = useDataSaver(); const { isEnabled: flagEnabled } = useFeatureFlags(); const linkPreviews = useLinkPreviews(thread?.id ?? null, messages, flagEnabled(LINK_PREVIEWS_FLAG) && !safetyQuiet && dataSaver.mayLoad('mediaPreview')); // WP-08; census T404 (Q-LP6): previews only with the flag on, outside safety mode and data saver
   const [input, setInput] = useState('');
   const mediaPicker = useMessageMediaPicker();
   const [showMediaPickerSheet, setShowMediaPickerSheet] = useState(false);
@@ -842,7 +848,8 @@ export function GroupChatScreen({ type, id, title, memberLabel, banner }: Props)
                 autoTranslate={autoTranslate}
                 defaultShowOriginal={defaultShowOriginal}
                 deliveryStatus={mine ? (m.deliveryStatus ?? null) : null} sendFailure={mine ? (m.sendFailure ?? null) : null}
-                onRetry={mine && m.clientId ? () => retrySend(m.clientId!) : undefined} linkPreview={linkPreviews.previewFor(m.id)}
+                onRetry={mine && m.clientId ? () => retrySend(m.clientId!) : undefined}
+                onCancelPending={mine && m.clientId ? () => { void cancelSend(m.clientId!).catch(() => Alert.alert('Could not stop retrying', 'Try again when secure storage is available.')); } : undefined} linkPreview={linkPreviews.previewFor(m.id)}
               />
             </MessageEntrance>
           );

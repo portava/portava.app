@@ -68,28 +68,32 @@ export function useQuickMedia({
   limit = DEFAULT_LIMIT,
 }: { enabled?: boolean; limit?: number } = {}): UseQuickMediaResult {
   const [items, setItems] = useState<QuickMediaItem[]>([]);
-  const [entries, setEntries] = useState<QuickMediaEntry[]>([]);
+
   const [loading, setLoading] = useState(false);
   const [degraded, setDegraded] = useState(false);
   const genRef = useRef(0);
+  const requestRef = useRef<AbortController | null>(null);
+  const [now, setNow] = useState(Date.now);
 
   const load = useCallback(async () => {
+    const gen = ++genRef.current;
+    requestRef.current?.abort();
     if (!enabled) {
+      setLoading(false);
       setItems([]);
-      setEntries([]);
       return;
     }
-    const gen = ++genRef.current;
+    const request = new AbortController();
+    requestRef.current = request;
     setLoading(true);
     try {
-      const res = await fetchQuickMedia({ limit });
+      const res = await fetchQuickMedia({ limit, signal: request.signal });
       if (gen !== genRef.current) return;
       // A missing / malformed result is treated as "nothing to show" (§40 #7).
       if (!res || !res.ok) return;
       setDegraded(res.degraded);
       const folded = foldQuickMedia(res.items);
       setItems(folded.items);
-      setEntries(folded.entries);
     } catch {
       // Fail-soft: keep whatever is on screen (possibly nothing).
     } finally {
@@ -101,12 +105,20 @@ export function useQuickMedia({
     void load();
     return () => {
       genRef.current += 1;
+      requestRef.current?.abort();
     };
   }, [load]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const timer = setInterval(() => setNow(Date.now()), 20_000);
+    return () => clearInterval(timer);
+  }, [enabled]);
 
   const refresh = useCallback(() => {
     void load();
   }, [load]);
 
-  return { entries, items, loading, degraded, refresh };
+  const unexpired = foldQuickMedia(items, now);
+  return { entries: enabled ? unexpired.entries : [], items: enabled ? unexpired.items : [], loading, degraded, refresh };
 }

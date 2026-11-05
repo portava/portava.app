@@ -108,13 +108,40 @@ export interface Observed {
 
 type Predicate = (row: any) => boolean;
 
+/** PostgREST ordering is typed: UUID/string cursors are not dates. */
+function compareValues(a: unknown, b: unknown): number {
+  const value = (v: unknown): string | number => {
+    if (v == null) return 0;
+    if (typeof v === 'number') return v;
+    const s = String(v);
+    if (/^\d{4}-\d{2}-\d{2}(T|$)/.test(s) && Number.isFinite(Date.parse(s))) return Date.parse(s);
+    return s;
+  };
+  const x = value(a), y = value(b);
+  return x === y ? 0 : x < y ? -1 : 1;
+}
+
 /** Parse one `col.op.value` term from a PostgREST `.or()` expression. */
+function likePredicate(col: string, pattern: string, insensitive: boolean): Predicate {
+  const quote = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  let escaped = '';
+  for (let i = 0; i < pattern.length; i++) {
+    const char = pattern[i]!;
+    if (char === '\\' && i + 1 < pattern.length) escaped += quote(pattern[++i]!);
+    else escaped += char === '%' || char === '*' ? '.*' : char === '_' ? '.' : quote(char);
+  }
+  const regex = new RegExp(`^${escaped}$`, insensitive ? 'is' : 's');
+  return row => row[col] != null && regex.test(String(row[col]));
+}
+
 function termPredicate(term: string): Predicate | null {
   const m = term.trim().match(/^([A-Za-z0-9_]+)\.([a-z]+)\.(.*)$/);
   if (!m) return null;
   const [, col, op, raw] = m;
   const val = raw === "null" ? null : raw;
   switch (op) {
+    case "like": return likePredicate(col, raw, false);
+    case "ilike": return likePredicate(col, raw, true);
     case "eq":
       return (r) => String(r[col]) === String(val);
     case "neq":
@@ -130,13 +157,13 @@ function termPredicate(term: string): Predicate | null {
     // the two spellings of the boundary instant agree here as they do in
     // `withinWindow`.
     case "gte":
-      return (r) => Date.parse(r?.[col]) >= Date.parse(String(val));
+      return (r) => compareValues(r?.[col], val) >= 0;
     case "gt":
-      return (r) => Date.parse(r?.[col]) > Date.parse(String(val));
+      return (r) => compareValues(r?.[col], val) > 0;
     case "lte":
-      return (r) => Date.parse(r?.[col]) <= Date.parse(String(val));
+      return (r) => compareValues(r?.[col], val) <= 0;
     case "lt":
-      return (r) => Date.parse(r?.[col]) < Date.parse(String(val));
+      return (r) => compareValues(r?.[col], val) < 0;
     case "in": {
       // `col.in.("a","b")` — the shape lib/mediaAccess builds to ask whether a
       // message carries one of an object's URL spellings. Without this arm the
@@ -225,7 +252,8 @@ export function makeFakeClient(
   opts: FakeDbOptions = {},
 ): FakeClient {
   const store: Record<string, any[]> = {};
-  for (const [k, v] of Object.entries(seed)) store[k] = v.map((r) => ({ ...r }));
+  for (const [k, v] of Object.entries(seed)) store[k] = v.map((r) => k === 'places'
+    ? { moderation_status: 'visible', merged_into_place_id: null, ...r } : { ...r });
 
   const observed: Observed = {
     selects: [],
@@ -251,7 +279,7 @@ export function makeFakeClient(
     const filters: Predicate[] = [];
     let _limit: number | null = null;
     let _range: { from: number; to: number } | null = null;
-    let _order: { col: string; asc: boolean } | null = null;
+    const _orders: Array<{ col: string; asc: boolean }> = [];
     let _head = false;
     let _countRequested = false;
     let _matched = 0;
@@ -274,12 +302,13 @@ export function makeFakeClient(
     const rows = (): any[] => {
       opts.onRead?.(table, store);
       let out = (store[table] ?? []).filter((r) => filters.every((f) => f(r)));
-      if (_order) {
-        const { col, asc } = _order;
+      if (_orders.length) {
         out = [...out].sort((a, b) => {
-          const x = Date.parse(a?.[col]) || 0;
-          const y = Date.parse(b?.[col]) || 0;
-          return asc ? x - y : y - x;
+          for (const { col, asc } of _orders) {
+            const difference = compareValues(a?.[col], b?.[col]);
+            if (difference) return asc ? difference : -difference;
+          }
+          return 0;
         });
       }
       _matched = out.length;
@@ -385,6 +414,8 @@ export function makeFakeClient(
         return proxy;
       },
       or(expr: string) { observed.or.push({ table, expr }); filters.push(orPredicate(expr)); return proxy; },
+      like(col: string, pattern: string) { filters.push(likePredicate(col, pattern, false)); return proxy; },
+      ilike(col: string, pattern: string) { filters.push(likePredicate(col, pattern, true)); return proxy; },
       lt(col: string, val: any) { filters.push((r) => Date.parse(r?.[col]) < Date.parse(val)); return proxy; },
       lte(col: string, val: any) { filters.push((r) => Date.parse(r?.[col]) <= Date.parse(val)); return proxy; },
       gt(col: string, val: any) { filters.push((r) => Date.parse(r?.[col]) > Date.parse(val)); return proxy; },
@@ -393,7 +424,7 @@ export function makeFakeClient(
         filters.push((r) => Date.parse(r?.[col]) >= Date.parse(val));
         return proxy;
       },
-      order(col: string, o?: any) { _order = { col, asc: o?.ascending !== false }; return proxy; },
+      order(col: string, o?: any) { _orders.push({ col, asc: o?.ascending !== false }); return proxy; },
       limit(n: number) { _limit = n; return proxy; },
       range(from: number, to: number) { _range = { from, to }; return proxy; },
       maybeSingle() {

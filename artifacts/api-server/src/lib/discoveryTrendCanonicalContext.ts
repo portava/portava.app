@@ -21,6 +21,7 @@
  */
 import { isFlagEnabled } from "./featureFlags.js";
 import type { ContextPlaceRow } from "./discoveryTrendNormalised.js";
+import { governDiscoveryPlaces } from './discoveryPlaceGovernance.js';
 
 /** 3920's row. */
 export const TREND_CANONICAL_CONTEXT_FLAG = "discovery_trend_canonical_place_context_enabled";
@@ -68,7 +69,8 @@ export async function loadCanonicalContextRows(
       .eq("status", "active")
       .is("merged_into_place_id", null);
     if (res?.error || !Array.isArray(res?.data)) return null;
-    return (res.data as Array<Record<string, unknown>>).map(canonicalContextPlaceRow);
+    const governed = await governDiscoveryPlaces(sc, res.data as Array<Record<string, unknown>>, row => String(row.id));
+    return governed.readable ? governed.rows.map(canonicalContextPlaceRow) : null;
   } catch {
     // resolves-not-throws-ok: a throw is a failed read, reported as null.
     return null;

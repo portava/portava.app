@@ -17,11 +17,11 @@ import {
   Pressable,
   StyleSheet,
   ActivityIndicator,
-  Linking,
   Alert,
   Keyboard,
 } from 'react-native';
 import { X, AlertCircle, RefreshCw } from 'lucide-react-native';
+import { FullscreenPhoto } from './ui/FullscreenPhoto.tsx';
 import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
 import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 import { openMessageVideo } from '../features/telegraph/media/compactPlaybackStore.ts';
@@ -120,12 +120,6 @@ export function MessageMediaBubble({
   }
 
   // ── Sent / received media bubble ──────────────────────────────────────────
-  function handleImagePress() {
-    if (mediaUrl) {
-      Linking.openURL(mediaUrl).catch(() => {});
-    }
-  }
-
   function handleVideoPress() {
     if (!mediaUrl) return;
     Keyboard.dismiss();
@@ -143,7 +137,7 @@ export function MessageMediaBubble({
       )}
 
       {mediaType === 'image' ? (
-        <Pressable onPress={handleImagePress} style={s.imageWrap}>
+        <FullscreenPhoto uri={mediaUrl ?? ''} style={[s.imageWrap, { width: BUBBLE_MEDIA_WIDTH, height: 180 }]}><View pointerEvents="none">
           <DisplayMediaImage
             uri={mediaUrl}
             width={BUBBLE_MEDIA_WIDTH}
@@ -151,7 +145,7 @@ export function MessageMediaBubble({
             resizeMode="cover"
             alt="Image message"
           />
-        </Pressable>
+        </View></FullscreenPhoto>
       ) : (
         <VideoThumbnail
           posterUri={thumbnailUrl ?? null}

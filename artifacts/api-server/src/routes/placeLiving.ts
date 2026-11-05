@@ -1,3 +1,4 @@
+import { readCanonicalPlaceGroup, readCanonicalPlaceVisibility, readCanonicalPlaceRow } from "../lib/places/placeGovernance.js";
 /**
  * placeLiving — Living Destination Page API.
  *
@@ -30,6 +31,9 @@ import { getBestOf, enqueueLivingCacheInvalidation } from "../lib/places/placeCo
 import { generateAiSummary } from "../lib/places/placeAiSummary.js";
 import { isLivePlacesCapabilityEnabled } from "../lib/featureFlags.js";
 import { isEligiblePlaceDayPost } from "../lib/places/placeDays.js";
+
+import { projectLivingDedup } from '../lib/places/placeLivingDedup.js';
+import { projectLivingCommunity, readLivingCommunityPosts } from '../lib/places/placeLivingCommunity.js';
 
 const router = Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -103,32 +107,9 @@ async function loadPlaceGroup(
   sc: any,
   placeId: string,
 ): Promise<{ place: any; survivorId: string; refs: any[] } | null> {
-  const { data: place } = await sc
-    .from("places")
-    .select("*")
-    .eq("id", placeId)
-    .maybeSingle();
-  if (!place) return null;
-
-  const survivorId: string = (place as any).merged_into_place_id ?? placeId;
-  let survivorPlace = place;
-  if (survivorId !== placeId) {
-    const { data: sp } = await sc.from("places").select("*").eq("id", survivorId).maybeSingle();
-    if (!sp) return null;
-    survivorPlace = sp;
-  }
-
-  const { data: merged } = await sc
-    .from("places")
-    .select("id")
-    .eq("merged_into_place_id", survivorId);
-  const ids = [survivorId, ...((merged as any[]) ?? []).map((m: any) => m.id)];
-  const { data: refs } = await sc
-    .from("external_place_references")
-    .select("*")
-    .in("place_id", ids);
-
-  return { place: survivorPlace, survivorId, refs: (refs as any[]) ?? [] };
+  const result=await readCanonicalPlaceGroup(sc,placeId);
+  if(!result.ok) { if(result.reason==='not_found') return null; throw Object.assign(new Error('Canonical place group unavailable'),{status:503}); }
+  return {place:result.place,survivorId:result.place.id,refs:result.refs};
 }
 
 // ── Assembler ──────────────────────────────────────────────────────────────────
@@ -310,7 +291,7 @@ async function assembleLivingPayload(sc: any, placeId: string): Promise<any> {
   }));
   const aiSummary = await safe(() =>
     generateAiSummary(
-      placeId,
+      survivorId,
       canonical.name,
       aiSummaryPosts,
       { address: canonical.formattedAddress, description: canonical.description, category: canonical.category },
@@ -389,7 +370,7 @@ async function assembleLivingPayload(sc: any, placeId: string): Promise<any> {
   const dedupGroupsOut = (dedupGroups ?? []).map((g: any) => ({
     groupId:    g.id,
     memberCount: g.member_count ?? 0,
-    sampleUrls:  ((g.sample_media_ids ?? []) as string[]).slice(0, 3),
+    sampleUrls: [], // resolved from current post_media at response time, never IDs as URLs
   }));
 
   // ── topContributor ────────────────────────────────────────────────────────────
@@ -421,7 +402,9 @@ async function assembleLivingPayload(sc: any, placeId: string): Promise<any> {
   }
 
   return {
-    placeId,
+    placeId: survivorId,
+    _officialHeroImageUrl: canonical.headerImageUrl ?? null,
+    governanceVersion:group.place.governance_version,
     sparseMode,
     hero,
     rating,
@@ -458,6 +441,9 @@ router.get("/places/:id/living", asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid place id"); return; }
 
+  const currentPlace=await readCanonicalPlaceRow(sc,id);
+  if(!currentPlace.ok){sendError(res,currentPlace.reason==='not_found'?'not_found':'degraded_unavailable','Place unavailable');return;}
+  res.setHeader('Cache-Control','no-store');
   // 1. Check cache.
   // Genuinely best-effort — a cache miss is always a legal answer, and the
   // recompute + upsert below is idempotent on place_id, so proceeding is safe.
@@ -478,7 +464,7 @@ router.get("/places/:id/living", asyncHandler(async (req, res) => {
 
   const nowMs = Date.now();
 
-  if (cached && livingPayloadModeAware((cached as any).payload)) { // census-media §43: a payload cached before the marks existed cannot say which entries to withhold, so it is treated as a miss and rebuilt
+  if (cached && Number.isSafeInteger(currentPlace.place.governance_version) && (cached as any).payload?.governanceVersion === currentPlace.place.governance_version && livingPayloadModeAware((cached as any).payload)) { // census-media §43: a payload cached before the marks existed cannot say which entries to withhold, so it is treated as a miss and rebuilt
     const ageMs = nowMs - new Date((cached as any).cached_at).getTime();
     const isSparse = (cached as any).sparse as boolean;
     const ttl = isSparse ? SPARSE_CACHE_TTL_MS : HOT_CACHE_TTL_MS;
@@ -496,12 +482,12 @@ router.get("/places/:id/living", asyncHandler(async (req, res) => {
 
     if (ageMs < ttl) {
       res.setHeader("X-Cache", "HIT");
-      res.json(livingPayloadForViewer(payload, livingViewer?.user.id));
+      res.json(await projectLivingDedup(sc, await projectLivingCommunity(sc, livingPayloadForViewer(payload, livingViewer?.user.id), livingViewer?.user.id), livingViewer?.user.id));
       return;
     }
     // Stale — serve stale immediately, enqueue background revalidation
     res.setHeader("X-Cache", "STALE");
-    res.json(livingPayloadForViewer(payload, livingViewer?.user.id));
+    res.json(await projectLivingDedup(sc, await projectLivingCommunity(sc, livingPayloadForViewer(payload, livingViewer?.user.id), livingViewer?.user.id), livingViewer?.user.id));
     // Best-effort background revalidation (don't await)
     void (async () => {
       try {
@@ -549,7 +535,7 @@ router.get("/places/:id/living", asyncHandler(async (req, res) => {
   void enqueueLivingCacheInvalidation(id, sc);
 
   res.setHeader("X-Cache", "MISS");
-  res.json(livingPayloadForViewer(payload, livingViewer?.user.id));
+  res.json(await projectLivingDedup(sc, await projectLivingCommunity(sc, livingPayloadForViewer(payload, livingViewer?.user.id), livingViewer?.user.id), livingViewer?.user.id));
 }));
 
 // ── GET /api/places/:id/living/timeline ───────────────────────────────────────
@@ -655,11 +641,15 @@ router.get("/places/:id/living/timeline", asyncHandler(async (req, res) => {
     return wx?.briefSummary ?? null;
   });
 
+  let currentPosts: Map<string, any>;
+  try { currentPosts = await readLivingCommunityPosts(sc, formattedPosts.map(p => p.id), survivorId, timelineViewer?.user.id); }
+  catch { sendError(res, 'degraded_unavailable', 'Community posts are temporarily unavailable. Please try again.'); return; }
+  const freshPosts = formattedPosts.flatMap(p => { const row = currentPosts.get(p.id); if (!row) return []; const { _updatedAt, ...clean } = row; return [clean]; });
   res.json({
     placeId:     survivorId,
     slice,
-    posts:       formattedPosts,
-    total:       formattedPosts.length,
+    posts:       freshPosts,
+    total:       freshPosts.length,
     crowdLevel,
     weatherBrief,
   });

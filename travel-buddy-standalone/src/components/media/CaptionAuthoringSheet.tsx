@@ -18,19 +18,23 @@ export function CaptionAuthoringSheet({ source, initialVtt, initialLanguage = 'u
   const [confirmDelete, setConfirmDelete] = useState(false);
   const mounted = useRef(true);
   const pending = useRef(false);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const action = useRef<AbortController | null>(null);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; action.current?.abort(); }; }, []);
 
   async function submit(deleting: boolean) {
     if (pending.current || (!deleting && !consent)) return;
     pending.current = true;
     setBusy(true);
     setMessage('');
+    const controller = new AbortController();
+    action.current = controller;
     try {
-      const result = deleting ? await deleteCaptionTrack(source) : draftId ? await publishCaptionDraft(source, draftId, vtt, consent) : await saveCaptionTrack(source, vtt, consent, language);
+      const result = deleting ? await deleteCaptionTrack(source, controller.signal) : draftId ? await publishCaptionDraft(source, draftId, vtt, consent, controller.signal) : await saveCaptionTrack(source, vtt, consent, language, controller.signal);
       if (mounted.current) onSaved(result);
     } catch (error) {
       if (mounted.current) setMessage(error instanceof Error ? error.message : 'Captions could not be saved.');
     } finally {
+      if (action.current === controller) action.current = null;
       pending.current = false;
       if (mounted.current) setBusy(false);
     }

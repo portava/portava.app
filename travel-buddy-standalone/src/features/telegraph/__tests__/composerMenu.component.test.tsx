@@ -83,9 +83,9 @@ describe('§6.1 — the menu is §6.1s eight, with honest availability', () => {
     // VOICE works now, so it must NOT still be carrying an explanation.
     expect(screen.queryByTestId('telegraph-composer-reason-VOICE')).toBeNull();
 
-    await fireEvent.press(screen.getByTestId('telegraph-composer-entry-GIF'));
+    await fireEvent.press(screen.getByTestId('telegraph-composer-entry-PORTAVA'));
     expect(onSelect).not.toHaveBeenCalled();
-    expect(onUnavailable).toHaveBeenCalledWith(expect.objectContaining({ id: 'GIF' }));
+    expect(onUnavailable).toHaveBeenCalledWith(expect.objectContaining({ id: 'PORTAVA' }));
     await fireEvent.press(screen.getByTestId('telegraph-composer-entry-PORTAVA'));
     expect(onSelect).not.toHaveBeenCalled();
     expect(onUnavailable).toHaveBeenCalledWith(expect.objectContaining({ id: 'PORTAVA' }));
@@ -135,3 +135,5 @@ describe('§6.1 — the menu is §6.1s eight, with honest availability', () => {
     expect(screen.queryByTestId('telegraph-composer-plus-menu')).toBeNull();
   });
 });
+
+it('a configured GIF picker is offered as a working selection',async()=>{const select=jest.fn();await render(<ComposerPlusMenu visible gifsAvailable onClose={()=>{}} onSelect={select}/>);expect(screen.queryByTestId('telegraph-composer-reason-GIF')).toBeNull();await fireEvent.press(screen.getByTestId('telegraph-composer-entry-GIF'));expect(select).toHaveBeenCalledWith('GIF');});

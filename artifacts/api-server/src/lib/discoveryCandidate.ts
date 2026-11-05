@@ -125,6 +125,7 @@
  * §6 D9's mapping defaults are still unratified.
  */
 import type { RankCandidate, ScoredCandidate } from "./portavaRank.js";
+import { governDiscoveryPlaces } from './discoveryPlaceGovernance.js';
 import type { DiscoveryRankProvenance } from "./discoveryRankProvenance.js";
 import { explainReasons, type DiscoveryReason, type DiscoveryReasonCode } from "./discoveryReasonCodes.js";
 import { isFlagEnabled } from "./featureFlags.js";
@@ -534,7 +535,7 @@ export interface CandidateReadOutcome<T> {
   candidates: Array<{ place: T; candidate: DiscoveryCandidate }>;
   rankedBy: DiscoveryRankedBy;
   /** Writes the ranker attempted and the no-write client intercepted. Must be 0 on the served path; here it is expected to be > 0 when PDE ran. */
-  suppressedWrites: number; /** The viewer-side reads that FAILED on this run (lib/discoveryPde `PdeReadFailure`, in the order they failed). Absent when no per-user read was made (anonymous viewer, empty input). Non-empty ⇒ `whyForUser` was computed WITHOUT those inputs, so a consumer must not serve the answer as complete (`11` §9): the loader keeps the reads non-fatal, and this is how the failure leaves the reader instead of being dropped here. */ degraded?: readonly PdeReadFailure[];
+  suppressedWrites: number; /** Failed ranking inputs or a current canonical moderation read. */ degraded?: readonly (PdeReadFailure | 'canonical_place_governance')[];
 }
 
 /**
@@ -549,6 +550,9 @@ export async function readDiscoveryCandidatesForViewer<T extends CandidateSource
   city: string | null,
   opts: { cacheLevel?: string; cachedAt?: number | null; nowMs?: number } = {},
 ): Promise<CandidateReadOutcome<T>> {
+  const governed = await governDiscoveryPlaces(sc, places, row => row.id);
+  places = governed.rows;
+  const governanceFailures = governed.readable ? [] : ['canonical_place_governance' as const];
   const cacheLevel = opts.cacheLevel ?? "map_read";
   // The §24 pass, on this path too. The Map's own objects are coarsened by
   // routes/mapProjection before they are served; a Discovery bucket attached to
@@ -568,6 +572,7 @@ export async function readDiscoveryCandidatesForViewer<T extends CandidateSource
       candidates: places.map((place) => ({ place, candidate: projectDiscoveryCandidate(place, ctx) })),
       rankedBy: "none",
       suppressedWrites: 0,
+      ...(governanceFailures.length ? { degraded: governanceFailures } : {}),
     };
   }
   const viewer = await loadPdeViewer(sc, viewerId, city);
@@ -576,7 +581,7 @@ export async function readDiscoveryCandidatesForViewer<T extends CandidateSource
   return {
     candidates: outcome.ranked.map((place) => ({ place, candidate: projectDiscoveryCandidate(place, ctx) })),
     rankedBy: "pde",
-    suppressedWrites: outcome.stages.suppressedWrites, degraded: [...(viewer.degraded ?? [])],
+    suppressedWrites: outcome.stages.suppressedWrites, degraded: [...governanceFailures, ...(viewer.degraded ?? [])],
   };
 }
 

@@ -7,6 +7,7 @@ const mockGet = jest.fn();
 const mockSet = jest.fn();
 const mockOsRead = jest.fn();
 const mockOsRequest = jest.fn();
+const OWNER_STORAGE_KEY = `${ACOUSTIC_PERMISSION_STORAGE_KEY}:${encodeURIComponent('u:sensing-test-user')}`;
 const mockStorage = new Map<string, string>();
 let mockPermission: typeof import('../../../src/services/sensing/acousticSensingPermission');
 jest.mock('expo-router', () => ({
@@ -69,7 +70,7 @@ function soundSwitch(screen: Screen) {
   throw Error('missing actual sound control');
 }
 async function mount(saved = true) {
-  if (saved) mockStorage.set(ACOUSTIC_PERMISSION_STORAGE_KEY, JSON.stringify(grant));
+  if (saved) mockStorage.set(OWNER_STORAGE_KEY, JSON.stringify(grant));
   const screen = await render(<IntelPromptsSettingsScreen />); await settle(); return screen;
 }
 beforeEach(() => {
@@ -79,7 +80,7 @@ beforeEach(() => {
   mockOsRead.mockReset().mockResolvedValue({ granted: true });
   mockOsRequest.mockReset().mockResolvedValue({ granted: true });
   mockReadConsent.mockReset().mockResolvedValue({ status: 'ok', state: general });
-  jest.isolateModules(() => { mockPermission = jest.requireActual('../../../src/services/sensing/acousticSensingPermission'); });
+  jest.isolateModules(() => { require('../../../src/services/discoveryViewerScope').setDiscoveryViewerFromSession('sensing-test-user'); mockPermission = jest.requireActual('../../../src/services/sensing/acousticSensingPermission'); });
 });
 
 describe('Mounted sound-level permission truth and lifetime', () => {
@@ -91,7 +92,7 @@ describe('Mounted sound-level permission truth and lifetime', () => {
     expect(soundSwitch(screen).props.value).toBe(true);
     await act(async () => { fireEvent(soundSwitch(screen), 'valueChange', false); });
     expect(soundSwitch(screen).props.value).toBe(false);
-    expect(JSON.parse(mockStorage.get(ACOUSTIC_PERMISSION_STORAGE_KEY)!).granted).toBe(false);
+    expect(JSON.parse(mockStorage.get(OWNER_STORAGE_KEY)!).granted).toBe(false);
     expect(mockOsRequest).toHaveBeenCalledTimes(1);
   });
   test('failed withdrawal shows local off, restart limit, and explicit persistence retry without a prompt', async () => {
@@ -100,10 +101,10 @@ describe('Mounted sound-level permission truth and lifetime', () => {
     await act(async () => { fireEvent(soundSwitch(screen), 'valueChange', false); });
     expect(soundSwitch(screen).props.value).toBe(false);
     expect(screen.getByText(/prior saved setting may return after.*restart/i)).toBeTruthy();
-    expect(JSON.parse(mockStorage.get(ACOUSTIC_PERMISSION_STORAGE_KEY)!).granted).toBe(true);
+    expect(JSON.parse(mockStorage.get(OWNER_STORAGE_KEY)!).granted).toBe(true);
     expect(acousticCaptureAllowed(await mockPermission.readAcousticSensingPermission())).toBe(false);
     await act(async () => { fireEvent.press(screen.getByText('Retry saving withdrawal')); });
-    expect(JSON.parse(mockStorage.get(ACOUSTIC_PERMISSION_STORAGE_KEY)!).granted).toBe(false);
+    expect(JSON.parse(mockStorage.get(OWNER_STORAGE_KEY)!).granted).toBe(false);
     expect(screen.queryByText('Retry saving withdrawal')).toBeNull();
     expect(mockOsRequest).not.toHaveBeenCalled();
   });
@@ -128,7 +129,7 @@ describe('Mounted sound-level permission truth and lifetime', () => {
     await act(async () => { fireEvent(soundSwitch(screen), 'valueChange', true); });
     expect(soundSwitch(screen).props.value).toBe(false);
     expect(screen.getByText(/prior saved setting may return after.*restart/i)).toBeTruthy();
-    expect(JSON.parse(mockStorage.get(ACOUSTIC_PERMISSION_STORAGE_KEY)!).granted).toBe(true);
+    expect(JSON.parse(mockStorage.get(OWNER_STORAGE_KEY)!).granted).toBe(true);
     expect(mockOsRequest).toHaveBeenCalledTimes(1);
   });
   test('late initial read cannot repaint a withdrawal from another mounted caller', async () => {
@@ -146,7 +147,7 @@ describe('Mounted sound-level permission truth and lifetime', () => {
     await act(async () => { fireEvent(soundSwitch(screen), 'valueChange', false); });
     await act(async () => { held.resolve({ granted: true }); });
     expect(soundSwitch(screen).props.value).toBe(false);
-    expect(JSON.parse(mockStorage.get(ACOUSTIC_PERMISSION_STORAGE_KEY)!).granted).toBe(false);
+    expect(JSON.parse(mockStorage.get(OWNER_STORAGE_KEY)!).granted).toBe(false);
   });
   test('captured unmounted callback cannot prompt or write', async () => {
     const screen = await mount(false); const callback = soundSwitch(screen).props.onChange;

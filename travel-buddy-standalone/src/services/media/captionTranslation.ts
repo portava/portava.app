@@ -1,4 +1,4 @@
-import { freshToken } from '../apiToken.ts';
+import { captureMessagingOwnerRequest, messagingOwnerToken } from '../messagingOwnerRequest.ts';
 import type { CaptionSource } from './captions.ts';
 import type { CaptionTranslationStatus, CaptionTranslationEnqueueResponse, CaptionTranslationDraftDto, CaptionTranslationPublishResponse, CaptionTranslationRevokeResponse } from '../../../../artifacts/api-server/src/lib/media/captions/subtitleTranslationContract.ts';
 
@@ -36,12 +36,16 @@ async function call(source: CaptionSource, suffix = '', method = 'GET', body?: u
     if (origin.protocol !== 'https:' || origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) throw new Error();
     endpoint = `${origin.origin}/api/media/caption-translations/${encodeURIComponent(source.assetId)}${suffix}`;
   } catch { throw new Error('A secure subtitle translation API origin is required.'); }
+  const owner = captureMessagingOwnerRequest();
   const controller = new AbortController();
   const abort = () => controller.abort(new Error('Subtitle translation request cancelled.'));
   if (signal?.aborted) abort();
   else signal?.addEventListener('abort', abort, { once: true });
   const timer = setTimeout(() => controller.abort(new Error('Subtitle translation request timed out.')), 10000);
-  const requireActive = () => { if (controller.signal.aborted) throw controller.signal.reason; };
+  const requireActive = () => {
+    if (controller.signal.aborted) throw controller.signal.reason;
+    if (!owner?.isCurrent()) throw new Error('Your signed-in session changed. Reopen subtitle translation.');
+  };
   let refuse = () => {};
   const cancelled = new Promise<never>((_resolve, reject) => {
     refuse = () => reject(controller.signal.reason);
@@ -51,7 +55,7 @@ async function call(source: CaptionSource, suffix = '', method = 'GET', body?: u
   try {
     return await Promise.race([cancelled, (async () => {
       requireActive();
-      const token = await freshToken();
+      const token = owner ? await messagingOwnerToken(owner) : null;
       requireActive();
       if (!token) throw new Error('Sign in to manage subtitle translation.');
       const response = await fetch(endpoint, { method, signal: controller.signal, redirect: 'error', credentials: 'omit', cache: 'no-store',

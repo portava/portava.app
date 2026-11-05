@@ -1,3 +1,5 @@
+import { usePrivateSurfaceKey } from '../../src/hooks/usePrivateSurfaceKey.ts';
+import { SaveButton } from '../../src/components/SaveButton.tsx';
 /**
  * Gem detail screen
  * Route: /gems/[id]
@@ -234,12 +236,17 @@ function ReportModal({ visible, gemId, onClose }: { visible: boolean; gemId: str
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export default function GemDetailScreen() {
+  const scope = usePrivateSurfaceKey();
+  const { id } = useLocalSearchParams<{ id: string }>();
+  return <GemDetailForViewer key={`${scope}:${id}`} />;
+}
+function GemDetailForViewer() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router  = useRouter();
   const { isAuthed } = useSession();
   const navBarScrollHandler = useNavBarScrollHandler();
 
-  const { gem, savedByMe, guideProfile, loading, error, refresh, toggleSave } = useGemDetail(id!);
+  const { gem, savedByMe, guideProfile, loading, error, refresh } = useGemDetail(id!);
 
   const [showCheckin,     setShowCheckin]     = useState(false);
   const [showReport,      setShowReport]      = useState(false);
@@ -373,13 +380,7 @@ export default function GemDetailScreen() {
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
             <Ionicons name="arrow-back" size={22} color="#E8F0FE" />
           </TouchableOpacity>
-          <TouchableOpacity onPress={toggleSave} style={styles.saveBtn}>
-            <Ionicons
-              name={savedByMe ? 'bookmark' : 'bookmark-outline'}
-              size={22}
-              color={savedByMe ? '#4C8BF5' : '#8A9BB5'}
-            />
-          </TouchableOpacity>
+          <SaveButton entityType="gem" entityId={id!} initialSaved={savedByMe} recordRankOutcome={false} size={22} />
         </View>
 
         {/* Cover photo — always shown; falls through to category fallback asset */}

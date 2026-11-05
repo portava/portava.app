@@ -10,17 +10,21 @@ import { AppHeader } from '../../src/components/ui/AppHeader';
 import { firstParam } from '../../src/lib/routeParams.ts';
 import { TrailsBrowser } from '../../src/features/discovery/trails/TrailsBrowser.tsx';
 import { color } from '../../src/theme/tokens';
+import { useSession } from '../../src/context/SessionContext.tsx';
 
 export default function TrailsScreen() {
   const params = useLocalSearchParams<{ destination?: string | string[] }>();
   const destination = firstParam(params.destination) ?? null;
+  const { userId } = useSession();
   return (
     <View style={s.root}>
       <AppHeader variant="detail" title="Trails" onBack={router.back} />
       <TrailsBrowser
+        key={userId ?? 'guest'}
         initialDestination={destination}
         onOpen={(id) => router.push(`/trails/${encodeURIComponent(id)}` as never)}
         onCreate={(d) => router.push((d ? `/trails/new?destination=${encodeURIComponent(d)}` : '/trails/new') as never)}
+        onReviewSuggestions={userId ? () => router.push('/trails/suggestions' as never) : undefined}
       />
     </View>
   );

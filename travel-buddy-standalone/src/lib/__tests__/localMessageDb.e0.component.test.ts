@@ -5,8 +5,12 @@
  * Validates DB key generation, table creation, upsert, and query helpers.
  */
 
-import { _reset as resetSecureStore } from 'expo-secure-store';
-import { _reset as resetOpSqlite } from '@op-engineering/op-sqlite';
+const { _reset: resetSecureStore } = require('expo-secure-store') as { _reset(): void };
+import { resetFixture as resetOpSqlite, fixture } from '../e2ee/__tests__/nativeSqliteFixture.ts';
+import { seedObservedOwnerSession, disposeObservedOwnerSession } from '../../services/__tests__/observedOwnerSessionFixture.ts';
+import { setDiscoveryViewerFromSession } from '../../services/discoveryViewerScope.ts';
+import { captureObservedOwnerSnapshot } from '../../services/observedOwnerSnapshot.ts';
+import { cryptoStorageKey } from '../e2ee/nativeSessionStore.ts';
 import {
   openLocalDb,
   upsertLocalMessage,
@@ -19,9 +23,17 @@ import type { LocalMessage } from '../localMessageDb.ts';
 import { SECURE_KEYS, getSecure, setSecure } from '../secureStore.ts';
 
 jest.mock('expo-secure-store');
-jest.mock('@op-engineering/op-sqlite');
+jest.mock('@op-engineering/op-sqlite', () => require('../e2ee/__tests__/nativeSqliteFixture.ts'));
+jest.mock('expo-openmls');
+jest.mock('../supabase.ts', () => {
+ const listeners = new Set();
+ return { isSupabaseConfigured: true, supabase: { auth: { listeners, onAuthStateChange: (listener: unknown) => { listeners.add(listener); return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } }; } } } };
+});
+const keyName = () => cryptoStorageKey(captureObservedOwnerSnapshot()!, 'database_key');
+afterEach(() => { _resetLocalDb(); resetOpSqlite(); disposeObservedOwnerSession(); setDiscoveryViewerFromSession(null); });
 
 beforeEach(() => {
+  setDiscoveryViewerFromSession('owner-a'); seedObservedOwnerSession('owner-a', 'session-a');
   resetSecureStore();
   resetOpSqlite();
   _resetLocalDb();
@@ -48,7 +60,7 @@ describe('openLocalDb', () => {
 
   it('generates and persists a DB key in SecureStore on first open', async () => {
     await openLocalDb();
-    const key = await getSecure(SECURE_KEYS.LOCAL_DB_KEY);
+    const key = await getSecure(keyName());
     expect(key).toBeTruthy();
   });
 
@@ -59,9 +71,9 @@ describe('openLocalDb', () => {
   });
 
   it('uses existing DB key from SecureStore — does not generate a new one', async () => {
-    await setSecure(SECURE_KEYS.LOCAL_DB_KEY, 'existing_key==');
+    await setSecure(keyName(), 'existing_key==');
     await openLocalDb();
-    const key = await getSecure(SECURE_KEYS.LOCAL_DB_KEY);
+    const key = await getSecure(keyName());
     expect(key).toBe('existing_key==');
   });
 });
@@ -102,4 +114,17 @@ describe('searchLocalMessages', () => {
     const results = await searchLocalMessages('Tokyo');
     expect(Array.isArray(results)).toBe(true);
   });
+});
+
+it('legacy cache API also refuses an installed binary without SQLCipher', async () => {
+ fixture.cipher = false;
+ await expect(upsertLocalMessage(makeMsg())).rejects.toThrow(/encrypted message storage/);
+});
+it('replaced bodies disappear from full-text results and cannot leak across accounts', async () => {
+ await upsertLocalMessage(makeMsg({ body: 'uniqueoldword' }));
+ await upsertLocalMessage(makeMsg({ body: 'uniquenewword' }));
+ expect(await searchLocalMessages('uniqueoldword')).toEqual([]);
+ expect(await searchLocalMessages('uniquenewword')).toHaveLength(1);
+ setDiscoveryViewerFromSession('owner-b'); seedObservedOwnerSession('owner-b','session-b');
+ expect(await getLocalMessages('thread-a')).toEqual([]);
 });

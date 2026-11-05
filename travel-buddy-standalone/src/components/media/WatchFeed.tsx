@@ -22,6 +22,8 @@ import {
 } from 'lucide-react-native';
 import { useWatchFeed } from '../../hooks/useWatchFeed.ts';
 import { useMediaSave } from '../../hooks/useMediaSave.ts';
+import { usePrivateSurfaceKey } from '../../hooks/usePrivateSurfaceKey.ts';
+import { SaveToCollectionSheet } from '../SaveToCollectionSheet.tsx';
 import { WatchFeedList } from './WatchFeedList.tsx';
 import { MediaCommentSheet } from './MediaCommentSheet.tsx';
 import { MediaMoreMenu } from './MediaMoreMenu.tsx';
@@ -142,6 +144,11 @@ const ft = StyleSheet.create({
 // ── Main WatchFeed component ──────────────────────────────────────────────────
 
 export function WatchFeed() {
+  const scope = usePrivateSurfaceKey();
+  return <WatchFeedForViewer key={scope} />;
+}
+
+function WatchFeedForViewer() {
   const feed = useWatchFeed();
   const session = useSession();
   const currentUserId = session?.userId ?? undefined;
@@ -164,6 +171,7 @@ export function WatchFeed() {
   const [commentItemId, setCommentItemId] = useState<string | null>(null);
   const [moreMenuItemId, setMoreMenuItemId] = useState<string | null>(null);
   const [whyThisItemId, setWhyThisItemId] = useState<string | null>(null);
+  const [saveItemId, setSaveItemId] = useState<string | null>(null);
 
   // Seed save state when new items arrive (seeder skips already-known ids).
   useEffect(() => {
@@ -184,8 +192,8 @@ export function WatchFeed() {
   }, []);
 
   const handleSave = useCallback((id: string) => {
-    saveHook.toggleSave(id);
-  }, [saveHook]);
+    setSaveItemId(id);
+  }, []);
 
   const handleMore = useCallback((id: string) => {
     setMoreMenuItemId(id);
@@ -302,6 +310,14 @@ export function WatchFeed() {
 
       {/* Feed type toggle — floated top-center, below the overlay header */}
       {toggleBar}
+      {saveItemId ? <SaveToCollectionSheet
+        key={saveItemId}
+        visible entityType="post" entityId={saveItemId}
+        onStatusRead={saved => saveHook.setSaved(saveItemId, saved)}
+        onSaved={() => saveHook.setSaved(saveItemId, true)}
+        onUnsaved={() => saveHook.setSaved(saveItemId, false)}
+        onClose={() => setSaveItemId(null)}
+      /> : null}
 
       {/* ── Comment sheet ──────────────────────────────────────────────── */}
       <MediaCommentSheet

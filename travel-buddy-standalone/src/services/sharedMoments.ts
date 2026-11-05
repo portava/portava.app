@@ -1,5 +1,6 @@
 import { isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken } from './apiToken.ts';
+import { fetchOwnedApi, type OwnedApiContext } from './ownedApiRequest.ts';
 
 function apiBase(): string { return process.env.EXPO_PUBLIC_API_BASE_URL ?? ''; }
 
@@ -44,9 +45,12 @@ export function getSharedMoment(id: string): Promise<SharedMomentDetail | null> 
 export function createSharedMoment(input: { title: string; description?: string; placeDayId?: string; placeId?: string; tripId?: string; joinPolicy?: 'invite_only' | 'approval_required' }): Promise<{ moment: SharedMoment } | null> {
   return request('/api/shared-moments', { method: 'POST', body: JSON.stringify(input) });
 }
-export function inviteToSharedMoment(id: string, userId: string, originMediaId?: string | null): Promise<boolean> {
+export async function inviteToSharedMoment(id: string, userId: string, originMediaId?: string | null, context?: OwnedApiContext): Promise<boolean> {
   // originMediaId: the media item the invite was sent from (§44 Invite sent); the server attributes it only when the invite lands.
-  return request<{ ok: boolean }>(`/api/shared-moments/${encodeURIComponent(id)}/invites`, { method: 'POST', body: JSON.stringify(originMediaId ? { userId, originMediaId } : { userId }) }).then((v) => v?.ok === true);
+  try {
+    const result = await fetchOwnedApi(`/api/shared-moments/${encodeURIComponent(id)}/invites`, { ...context, method: 'POST', body: originMediaId ? { userId, originMediaId } : { userId } });
+    return result.ok && (await result.json())?.ok === true;
+  } catch { return false; }
 }
 export function respondToSharedMomentInvite(id: string, response: 'accept' | 'decline'): Promise<boolean> {
   return request<{ ok: boolean }>(`/api/shared-moments/${encodeURIComponent(id)}/respond`, { method: 'POST', body: JSON.stringify({ response }) }).then((v) => v?.ok === true);

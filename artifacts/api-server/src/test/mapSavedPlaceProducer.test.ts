@@ -205,7 +205,7 @@ function world(over: FakeState = {}): FakeState {
     saved_places: [],
     discovery_place_saves: [saved(), saved({ user_id: OTHER })],
     wishlist_places: [],
-    places: [],
+    places: [{ id: CANONICAL, moderation_status: "visible", merged_into_place_id: null }],
     discovery_places: [venue()],
     ...over,
   };

@@ -68,6 +68,7 @@ interface FailFakeSpec {
   tripMembers?: any[];
   trips?: any[];
   mediaAssets?: any[];
+  moderationLedger?: any[];
   /** table -> the resolved error that read answers with. */
   failTables?: Record<string, DbError>;
 }
@@ -96,7 +97,8 @@ function makeFailFake(spec: FailFakeSpec = {}) {
       table === "blocks"       ? spec.blocks      ?? [] :
       table === "trip_members" ? spec.tripMembers ?? [] :
       table === "trips"        ? spec.trips       ?? [] :
-      table === "media_assets" ? spec.mediaAssets ?? [] : [];
+      table === "media_assets" ? spec.mediaAssets ?? [] :
+      table === "post_media_moderation_ledger" ? spec.moderationLedger ?? [] : [];
     const rows = () => src().filter((r: any) => filters.every((f) => f(r))).slice(0, limitN);
     const b: any = {
       select: () => b,
@@ -586,5 +588,54 @@ describe("no un-guarded signing site has appeared", () => {
       assert.equal(calls.length, 2, `${rel} has 2 handlers that serve media; both must authorize (found ${calls.length})`);
     }
     assert.ok(checked > 0, "vacuous: no relay file was inspected");
+  });
+});
+
+describe('terminal moderation follows bytes into owner Memories and derivatives', () => {
+  for(const status of ['removed','rejected','owner_deleted']) it(`${status} denies the owner and viewers even if a Memory keeps its URL`,async()=>{
+    const sc=makeFailFake({mediaAssets:[{id:'asset-removed',owner_user_id:OWNER,storage_bucket:'post-media',storage_path:OBJ,moderation_status:status,deleted_at:null}]});
+    assert.equal(await authorizeMediaAccess(sc as any,OWNER,'post-media',OBJ),false);
+    assert.equal(await authorizeMediaAccess(sc as any,VIEWER,'post-media',OBJ),false);
+  });
+  it('unreadable canonical moderation does not take the owner shortcut',async()=>{
+    const sc=makeFailFake({failTables:{media_assets:{code:'57P01',message:'connection lost'}}});
+    assert.equal(await authorizeMediaAccess(sc as any,OWNER,'post-media',OBJ),false);
+  });
+  it('ordinary owner upload previews remain readable before processing finishes',async()=>{
+    const sc=makeFailFake({mediaAssets:[{id:'asset-uploading',owner_user_id:OWNER,storage_bucket:'post-media',storage_path:OBJ,moderation_status:'processing',deleted_at:null}]});
+    assert.equal(await authorizeMediaAccess(sc as any,OWNER,'post-media',OBJ),true);
+  });
+  it('a canonical tombstone overrides an otherwise active asset',async()=>{
+    const sc=makeFailFake({mediaAssets:[{id:'asset-deleted',owner_user_id:OWNER,storage_bucket:'post-media',storage_path:OBJ,moderation_status:'active',deleted_at:new Date().toISOString()}]});
+    assert.equal(await authorizeMediaAccess(sc as any,OWNER,'post-media',OBJ),false);
+  });
+});
+
+
+describe('retained legacy media cannot bypass a current moderation decision', () => {
+  it('rejects the owner’s retained copy even without a canonical asset', async () => {
+    const sc = makeFailFake({postMedia:[{storage_path:OBJ,moderation_status:'rejected',processing_status:'ready'}]});
+    assert.equal(await authorizeMediaAccess(sc as any,OWNER,'post-media',OBJ),false);
+  });
+  it('a rejected ledger key stays denied after the legacy attachment was removed', async () => {
+    const sc=makeFailFake({moderationLedger:[{storage_path:OBJ,verdict:'rejected'}],posts:[publicPost]});
+    assert.equal(await authorizeMediaAccess(sc as any,OWNER,'post-media',OBJ),false);
+    assert.equal(await authorizeMediaAccess(sc as any,VIEWER,'post-media',OBJ),false);
+  });
+  it('current approved media can restore access after a successful appeal', async () => {
+    const sc=makeFailFake({moderationLedger:[{storage_path:OBJ,verdict:'rejected'}],postMedia:[{storage_path:OBJ,post_id:'post9',moderation_status:'approved',processing_status:'ready'}],posts:[publicPost]});
+    assert.equal(await authorizeMediaAccess(sc as any,OWNER,'post-media',OBJ),true);
+    assert.equal(await authorizeMediaAccess(sc as any,VIEWER,'post-media',OBJ),true);
+  });
+  it('a retained ledger flag denies audience distribution but permits owner review', async () => {
+    const sc=makeFailFake({moderationLedger:[{storage_path:OBJ,verdict:'flagged'}],posts:[publicPost]});
+    assert.equal(await authorizeMediaAccess(sc as any,OWNER,'post-media',OBJ),true);
+    assert.equal(await authorizeMediaAccess(sc as any,VIEWER,'post-media',OBJ),false);
+  });
+  it('an unreadable legacy moderation source never uses the owner bypass', async () => {
+    for(const table of ['post_media_moderation_ledger','post_media']){
+      const sc=makeFailFake({failTables:{[table]:{code:'57P01',message:'unreadable'}}});
+      assert.equal(await authorizeMediaAccess(sc as any,OWNER,'post-media',OBJ),false);
+    }
   });
 });

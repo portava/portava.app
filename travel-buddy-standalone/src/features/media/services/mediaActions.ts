@@ -19,6 +19,7 @@
  * eligibility-gated server-side, §47) — it never invents or re-enables one.
  */
 import type { ProjectionResult, ProjectionErrorKind } from '../types/media.ts';
+import { captureObservedOwnerSnapshot, type MessagingOwnerRequest } from '../../../services/observedOwnerSnapshot.ts';
 import type {
   MediaAction,
   MediaActionId,
@@ -37,6 +38,9 @@ import type {
 
 // ── Token seam (mirrors services/mediaProjection.ts) ──────────────────────────
 let _testToken: string | null = null;
+let _testOwnerToken: ((owner: MessagingOwnerRequest) => Promise<string | null>) | null = null;
+/** Jest cannot load the SDK through native dynamic import; inject its REAL token function. */
+export function _setTestOwnerTokenProvider(provider: typeof _testOwnerToken): void { _testOwnerToken = provider; }
 /** Inject a static token for node:test runs. Bypasses Supabase entirely. */
 export function _setTestFreshToken(token: string): void {
   _testToken = token;
@@ -45,16 +49,6 @@ export function _setTestFreshToken(token: string): void {
 export function _clearTestFreshToken(): void {
   _testToken = null;
 }
-async function freshToken(): Promise<string | null> {
-  if (_testToken !== null) return _testToken;
-  const { freshToken: real } = await import('../../../services/apiToken.ts');
-  return real();
-}
-
-function apiBase(): string {
-  return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-}
-
 // ── Coercion helpers (defensive; never throw) ─────────────────────────────────
 
 function isObj(v: unknown): v is Record<string, unknown> {
@@ -164,6 +158,7 @@ export function mapMediaActionSet(raw: unknown): MediaActionSet {
   const o = isObj(raw) ? raw : {};
   return {
     mediaId: asString(o.mediaId) ?? '',
+    ...(typeof o.wanted === 'boolean' ? { wanted: o.wanted } : {}),
     entityRefs: asArray(o.entityRefs)
       .map(mapEntityRef)
       .filter((r): r is MediaEntityRef => r !== null),
@@ -446,10 +441,68 @@ export function resolveWantedAfterRequest(
 // ── Transport ─────────────────────────────────────────────────────────────────
 
 function classifyFetchError(err: unknown): ProjectionErrorKind {
+  if (err instanceof MediaRequestFailure) return err.kind;
   if (err instanceof Error && err.name === 'AbortError') return 'network';
   const msg = (err instanceof Error ? err.message : 'Unknown error').toLowerCase();
   if (msg.includes('network') || msg.includes('fetch') || msg.includes('timeout')) return 'network';
   return 'unknown';
+}
+
+class MediaRequestFailure extends Error {
+  constructor(readonly kind: ProjectionErrorKind, message: string) { super(message); }
+}
+
+/** One deadline covers SDK loading, token refresh, headers AND body decoding. */
+async function mediaRequest<T>(path: string, method: string, read: (response: Response) => Promise<T>,
+  signal?: AbortSignal, body?: unknown): Promise<T> {
+  const owner = captureObservedOwnerSnapshot();
+  const testToken = _testToken;
+  const controller = new AbortController();
+  const cancel = () => controller.abort(new MediaRequestFailure('network', 'Media action cancelled'));
+  if (signal?.aborted) cancel();
+  else signal?.addEventListener('abort', cancel, { once: true });
+  const timer = setTimeout(() => controller.abort(new MediaRequestFailure('network', 'Media action timed out')), 10_000);
+  const active = () => {
+    if (controller.signal.aborted) throw controller.signal.reason;
+    if (testToken === null && !owner?.isCurrent()) throw new MediaRequestFailure('auth', 'Your signed-in session changed. Reopen the media.');
+  };
+  let refuse = () => {};
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    refuse = () => reject(controller.signal.reason);
+    if (controller.signal.aborted) refuse();
+    else controller.signal.addEventListener('abort', refuse, { once: true });
+  });
+  try {
+    return await Promise.race([cancelled, (async () => {
+      active();
+      const base = process.env.EXPO_PUBLIC_API_BASE_URL ?? (testToken !== null ? 'https://api.test' : '');
+      if (!base || /[\s\\?#@]/.test(base)) throw new MediaRequestFailure('server', 'A secure media API origin is required');
+      const origin = new URL(base);
+      if (origin.protocol !== 'https:' || origin.username || origin.password || origin.pathname !== '/') throw new MediaRequestFailure('server', 'A secure media API origin is required');
+      const endpoint = new URL(`${origin.origin}${path}`);
+      if (endpoint.origin !== origin.origin || !endpoint.pathname.startsWith('/api/media/') || endpoint.hash) throw new MediaRequestFailure('server', 'Invalid media endpoint');
+      // The owner was captured synchronously above, before this lazy SDK load.
+      const token = testToken !== null ? testToken : _testOwnerToken ? await _testOwnerToken(owner!)
+        : await (await import('../../../services/messagingOwnerRequest.ts')).messagingOwnerToken(owner!);
+      active();
+      if (!token) throw new MediaRequestFailure('auth', 'Not authenticated');
+      const response = await fetch(endpoint.href, {
+        method, signal: controller.signal, redirect: 'error', credentials: 'omit', cache: 'no-store',
+        headers: { Authorization: `Bearer ${token}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      active();
+      if (response.redirected || response.url && new URL(response.url).href !== endpoint.href) throw new MediaRequestFailure('server', 'Media request redirected');
+      const result = await read(response);
+      active();
+      return result;
+    })()]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', cancel);
+    controller.signal.removeEventListener('abort', refuse);
+    owner?.invalidate();
+  }
 }
 
 async function getJson<T>(
@@ -457,13 +510,8 @@ async function getJson<T>(
   map: (raw: unknown) => T,
   opts?: { signal?: AbortSignal },
 ): Promise<ProjectionResult<T>> {
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'auth', message: 'Not authenticated' };
   try {
-    const res = await fetch(`${apiBase()}${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: opts?.signal,
-    });
+    return await mediaRequest<ProjectionResult<T>>(path, 'GET', async (res) => {
     if (res.status === 401 || res.status === 403) {
       return { ok: false, data: null, errorKind: 'auth', message: 'Unauthorized' };
     }
@@ -481,6 +529,7 @@ async function getJson<T>(
       return { ok: false, data: null, errorKind: 'empty', message: 'Empty response' };
     }
     return { ok: true, data: map(body) };
+    }, opts?.signal);
   } catch (err) {
     return {
       ok: false,
@@ -488,6 +537,25 @@ async function getJson<T>(
       errorKind: classifyFetchError(err),
       message: err instanceof Error ? err.message : 'Unknown error',
     };
+  }
+}
+
+/** Shared authenticated transport for save, share, report and owner controls. */
+export async function requestMediaInteraction(method: string, path: string, body?: object, signal?: AbortSignal): Promise<{
+  ok: boolean; data?: Record<string, unknown>; message?: string; errorKind?: string;
+}> {
+  try {
+    return await mediaRequest(path, method, async response => {
+      const json: unknown = response.status === 204 ? {} : await response.json();
+      if (!isObj(json)) throw new MediaRequestFailure('server', 'Invalid media response');
+      return response.ok ? { ok: true, data: json } : {
+        ok: false, message: asString(json.message) ?? `HTTP ${response.status}`,
+        errorKind: asString(json.error) ?? 'server',
+      };
+    }, signal, body);
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : 'Couldn’t complete the media action.',
+      errorKind: error instanceof MediaRequestFailure ? (error.kind === 'auth' ? 'unauthenticated' : error.kind) : 'network' };
   }
 }
 
@@ -548,35 +616,27 @@ export interface IntentMutationResult {
 export async function postMediaIntent(
   mediaId: string,
   intent: MediaIntentKind = 'want_to_go',
+  opts?: { signal?: AbortSignal },
 ): Promise<IntentMutationResult> {
-  const token = await freshToken();
-  if (!token) return { ok: false, errorKind: 'auth' };
   try {
-    const res = await fetch(`${apiBase()}/api/media/${encodeURIComponent(mediaId)}/intent`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ intent }),
-    });
+    return await mediaRequest<IntentMutationResult>(`/api/media/${encodeURIComponent(mediaId)}/intent`, 'POST', async (res) => {
     if (res.status === 401 || res.status === 403) return { ok: false, errorKind: 'auth' };
     if (!res.ok) return { ok: false, errorKind: 'server' };
     return { ok: true };
+    }, opts?.signal, { intent });
   } catch (err) {
     return { ok: false, errorKind: classifyFetchError(err) };
   }
 }
 
 /** DELETE /media/:id/intent — undo the "I Want This" signal. Never throws. */
-export async function deleteMediaIntent(mediaId: string): Promise<IntentMutationResult> {
-  const token = await freshToken();
-  if (!token) return { ok: false, errorKind: 'auth' };
+export async function deleteMediaIntent(mediaId: string, opts?: { signal?: AbortSignal }): Promise<IntentMutationResult> {
   try {
-    const res = await fetch(`${apiBase()}/api/media/${encodeURIComponent(mediaId)}/intent`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    return await mediaRequest<IntentMutationResult>(`/api/media/${encodeURIComponent(mediaId)}/intent`, 'DELETE', async (res) => {
     if (res.status === 401 || res.status === 403) return { ok: false, errorKind: 'auth' };
     if (!res.ok) return { ok: false, errorKind: 'server' };
     return { ok: true };
+    }, opts?.signal);
   } catch (err) {
     return { ok: false, errorKind: classifyFetchError(err) };
   }
@@ -738,11 +798,13 @@ export async function applyCompiledPlan(
   plan: CompiledExperiencePlan,
   tripId: string,
   createItem: (tripId: string, item: PlanItemDraft) => Promise<unknown>,
+  isCurrent: () => boolean = () => true,
 ): Promise<{ created: number; failed: number }> {
   if (!plan.eligibleTripIds.includes(tripId)) return { created: 0, failed: plan.stops.length };
   let created = 0;
   let failed = 0;
   for (const item of planItemsFromCompiledPlan(plan)) {
+    if (!isCurrent()) break;
     try {
       await createItem(tripId, item);
       created += 1;
@@ -776,6 +838,7 @@ export interface MediaRouteStopPayload {
 export async function saveMediaRoute(
   input: { title: string; stops: RouteStopRef[]; mediaId: string | null },
   deps: {
+    isCurrent?: () => boolean;
     resolveCoords: (placeId: string) => Promise<{ lat: number; lng: number } | null>;
     createRoute: (payload: {
       title: string;
@@ -788,11 +851,13 @@ export async function saveMediaRoute(
   if (input.stops.length < 2) return { ok: false, reason: 'too_few_stops' };
   const resolved: MediaRouteStopPayload[] = [];
   for (const st of input.stops.slice(0, 20)) {
+    if (deps.isCurrent?.() === false) return { ok: false, reason: 'create_failed' };
     const c = await deps.resolveCoords(st.sourceId).catch(() => null);
     if (c && Number.isFinite(c.lat) && Number.isFinite(c.lng)) {
       resolved.push({ title: st.title, lat: c.lat, lng: c.lng, sourceType: 'place', sourceId: st.sourceId });
     }
   }
+  if (deps.isCurrent?.() === false) return { ok: false, reason: 'create_failed' };
   if (resolved.length < 2) return { ok: false, reason: 'unresolved_stops' };
   try {
     const full = await deps.createRoute({
@@ -802,6 +867,7 @@ export async function saveMediaRoute(
       ...(input.mediaId ? { originMediaId: input.mediaId } : {}),
     });
     // POST /route-plans answers { plan, stops, legs } (routePlan.FullRoutePlan).
+    if (deps.isCurrent?.() === false) return { ok: false, reason: 'create_failed' };
     const id = full?.plan?.id;
     return typeof id === 'string' && id.length > 0 ? { ok: true, routeId: id } : { ok: false, reason: 'create_failed' };
   } catch {
@@ -817,19 +883,15 @@ export async function saveMediaRoute(
 export async function linkMediaToEvent(
   mediaId: string,
   eventId: string,
+  opts?: { signal?: AbortSignal },
 ): Promise<{ ok: true } | { ok: false; errorKind: 'auth' | 'refused' | 'server' | ProjectionErrorKind }> {
-  const token = await freshToken();
-  if (!token) return { ok: false, errorKind: 'auth' };
   try {
-    const res = await fetch(`${apiBase()}/api/media/${encodeURIComponent(mediaId)}/event-link`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ eventId }),
-    });
+    return await mediaRequest<Awaited<ReturnType<typeof linkMediaToEvent>>>(`/api/media/${encodeURIComponent(mediaId)}/event-link`, 'POST', async (res) => {
     if (res.status === 401) return { ok: false, errorKind: 'auth' };
     if (res.status === 403 || res.status === 404) return { ok: false, errorKind: 'refused' };
     if (!res.ok) return { ok: false, errorKind: 'server' };
     return { ok: true };
+    }, opts?.signal, { eventId });
   } catch (err) {
     return { ok: false, errorKind: classifyFetchError(err) };
   }

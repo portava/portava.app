@@ -69,6 +69,7 @@ export interface PassportState {
   memoriesUnreadable: boolean; postcardsUnreadable: boolean; // the same for Postcards: a failed read, shown as "didn't load"
   suggestions: PassportMemory[];
   loading: boolean;
+  sectionLoading: { postcards: boolean; stamps: boolean; memories: boolean };
   error: string | null;
   /** Server-reported total stamp count — the pagination sentinel. */
   stampsTotal: number;
@@ -95,6 +96,7 @@ type PassportSnapshot = {
 };
 
 export function usePassport(): PassportState {
+  const [sectionLoading, setSectionLoading] = useState({ postcards: true, stamps: true, memories: true });
   const [profile, setProfile] = useState<OwnProfile | null>(null);
   const [postcards, setPostcards] = useState<PassportPostcard[]>([]);
   const [stamps, setStamps] = useState<PassportStamp[]>([]);
@@ -191,6 +193,7 @@ export function usePassport(): PassportState {
     stampsTotalRef.current = passportSnapshot.stamps.length;
     setStampsTotal(passportSnapshot.stamps.length);
     setMemories(passportSnapshot.memories);
+    setSectionLoading({ postcards: false, stamps: false, memories: false });
     setLoading(false);
   }, [passportSnapshot]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -267,6 +270,7 @@ export function usePassport(): PassportState {
           setStampsTotal((mock.stamps ?? []).length);
           setMemories([]);
           setSuggestions([]);
+          setSectionLoading({ postcards: false, stamps: false, memories: false });
           lastLoadedAt.current = Date.now();
           setLoading(false);
         }
@@ -274,14 +278,10 @@ export function usePassport(): PassportState {
       return () => { alive = false; };
     }
 
-    Promise.all([
-      getMyProfile(),
-      getMyPassportPostcards(),
-      getMyPassportStamps(),
-      getMyPassportMemories(),
-      getMyPassportSuggestions(),
-    ]).then(([pRes, pcRes, stRes, memRes, sugRes]) => {
-      if (!alive) return;
+    // The profile controls the first paint. Slow sections and recommendations
+    // must not hold the whole page behind a spinner.
+    const profileRead = getMyProfile().catch(() => ({ ok: false, data: null, message: 'Failed to load passport' })).then((pRes) => {
+      if (!alive) return pRes;
       if (pRes.ok && pRes.data) {
         hadErrorRef.current = false;
         lastLoadedAt.current = Date.now();
@@ -290,16 +290,38 @@ export function usePassport(): PassportState {
         hadErrorRef.current = true;
         setError(pRes.message ?? 'Could not load profile');
       }
+      setLoading(false);
+      return pRes;
+    });
+    const postcardsRead = getMyPassportPostcards().catch(() => ({ ok: false, data: null })).then((pcRes) => {
+      if (!alive) return pcRes;
       setPostcards(pcRes.ok ? (pcRes.data ?? []) : []); setPostcardsUnreadable(!pcRes.ok);
+      setSectionLoading((s) => ({ ...s, postcards: false }));
+      return pcRes;
+    });
+    const stampsRead = getMyPassportStamps().catch(() => ({ ok: false, data: null })).then((stRes) => {
+      if (!alive) return stRes;
       const firstPage = stRes.ok ? (stRes.data ?? []) : [];
       applyStamps(firstPage);
-      const total = stRes.ok && typeof stRes.total === 'number' ? stRes.total : firstPage.length;
+      const total = stRes.ok && 'total' in stRes && typeof stRes.total === 'number' ? stRes.total : firstPage.length;
       stampsTotalRef.current = total;
       setStampsTotal(total);
-      setMemories(memRes.ok ? memRes.data : []);
+      setSectionLoading((s) => ({ ...s, stamps: false }));
+      return stRes;
+    });
+    const memoriesRead = getMyPassportMemories().catch(() => ({ ok: false, data: null })).then((memRes) => {
+      if (!alive) return memRes;
+      setMemories(memRes.ok ? (memRes.data ?? []) : []);
       setMemoriesUnreadable(!memRes.ok);
-      setSuggestions(sugRes.ok ? sugRes.data : []);
-      setLoading(false);
+      setSectionLoading((s) => ({ ...s, memories: false }));
+      return memRes;
+    });
+    void getMyPassportSuggestions().then((sugRes) => {
+      if (alive) setSuggestions(sugRes.ok ? sugRes.data : []);
+    }).catch(() => { if (alive) setSuggestions([]); });
+
+    Promise.all([profileRead, postcardsRead, stampsRead, memoriesRead]).then(([pRes, pcRes, stRes, memRes]) => {
+      if (!alive) return;
       // Persist snapshot for stale-while-revalidate on next open.
       //
       // §28.11: ONLY when every section it stores was actually read. A failed
@@ -314,19 +336,17 @@ export function usePassport(): PassportState {
         savePassportSnapshot({
           profile: pRes.data as OwnProfile,
           postcards: pcRes.data ?? [],
-          stamps: firstPage,
-          memories: memRes.data,
+          stamps: stRes.data ?? [],
+          memories: memRes.data ?? [],
         });
       }
     }).catch(() => {
       if (!alive) return;
-      hadErrorRef.current = true;
-      setError('Failed to load passport');
-      setLoading(false);
+      // Snapshot persistence is best-effort; the live sections already rendered.
     });
 
     return () => { alive = false; };
   }, [tick]);
 
-  return { profile, postcards, postcardsUnreadable, stamps, stampsNew, memories, memoriesUnreadable, suggestions, loading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, updateStamp, reload, lastLoadedAt };
+  return { profile, postcards, postcardsUnreadable, stamps, stampsNew, memories, memoriesUnreadable, suggestions, loading, sectionLoading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, updateStamp, reload, lastLoadedAt };
 }

@@ -1,0 +1,15 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+group = 'com.portava.maps'
+version = '1.0.0'
+android {
+  namespace 'com.portava.maps.nearby'
+  defaultConfig { versionCode 1; versionName '1.0.0'; minSdkVersion 24; testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner' }
+}
+dependencies {
+  testImplementation 'junit:junit:4.13.2'
+  androidTestImplementation 'androidx.test:runner:1.6.2'
+  androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+}

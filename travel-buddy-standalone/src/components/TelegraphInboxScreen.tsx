@@ -480,6 +480,9 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
 
       {isAuthed && (
         <><InboxContextBands onOpenThread={(threadId) => router.push(`/messages/${threadId}`)} />
+          <Pressable accessibilityRole="button" accessibilityLabel="Nearby and availability" onPress={() => router.push('/messages/nearby' as any)} style={{ marginHorizontal: 20, marginBottom: 12, minHeight: 44, justifyContent: 'center' }}>
+            <Text style={{ color: palette.operational, fontSize: 16, fontWeight: '600' }}>Nearby & availability</Text>
+          </Pressable>
           <View style={s.searchWrap}>
             <Search size={16} color={palette.faint} style={s.searchIcon} />
             <TextInput

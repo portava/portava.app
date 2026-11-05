@@ -1,26 +1,18 @@
-/**
- * Telegraph §7 API client — receipts and unsend-before-seen.
- *
- *   GET  /api/threads/:id/receipts?messageIds=…   §7.3
- *   POST /api/threads/:id/messages/:id/unsend     §7.4
- *
- * §7.1's DELIVERED has no representation here on purpose. The server returns
- * `delivered: null` with a reason because nothing on this deployment produces a
- * delivery signal, and this module passes both through untouched rather than
- * collapsing them into a boolean the UI would then have to guess about.
- */
+/** Telegraph receipt/unsend transport, bound to the initiating account.
+ * DELIVERED is backed by a device ACK after the sequence cutover. Older servers
+ * retain delivered:null rather than inventing a delivery event. */
 import { isSupabaseConfigured } from '../../../lib/supabase.ts';
-import { freshToken } from '../../../services/apiToken.ts';
+import { captureMessagingOwnerRequest, messagingOwnerToken } from '../../../services/messagingOwnerRequest.ts';
 
 /** §7.1's lifecycle, as much of it as this deployment can actually report. */
-export type ReceiptStatus = 'SENT' | 'SEEN';
+export type ReceiptStatus = 'SENT' | 'DELIVERED' | 'SEEN';
 
 export interface MessageReceipt {
   messageId: string;
   status: ReceiptStatus;
-  /** Always null. See `deliveredUnavailableReason`. */
-  delivered: null;
-  deliveredUnavailableReason: string;
+  /** null when this server has no durable device-ACK capability. */
+  delivered: boolean | null;
+  deliveredUnavailableReason: string | null;
   seenBy: number;
   seenByUserIds: string[];
   recipientCount: number;
@@ -86,8 +78,10 @@ function apiBase(): string {
 
 async function call<T>(path: string, init?: RequestInit): Promise<LifecycleResult<T>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'unconfigured' };
-  const token = await freshToken();
-  if (!token) return { ok: false, error: 'unauthenticated' };
+  const owner = captureMessagingOwnerRequest();
+  if (!owner) return { ok: false, error: 'unauthenticated' };
+  const token = await messagingOwnerToken(owner);
+  if (!token || !owner.isCurrent()) return { ok: false, error: 'unauthenticated' };
   try {
     const res = await fetch(`${apiBase()}${path}`, {
       ...init,
@@ -97,7 +91,9 @@ async function call<T>(path: string, init?: RequestInit): Promise<LifecycleResul
         ...(init?.headers ?? {}),
       },
     });
+    if (!owner.isCurrent()) return { ok: false, error: 'unauthenticated' };
     const body = await res.json().catch(() => ({}) as any);
+    if (!owner.isCurrent()) return { ok: false, error: 'unauthenticated' };
     if (!res.ok) {
       return {
         ok: false,
@@ -130,7 +126,7 @@ export async function unsendMessage(
  * knows whether it was.
  */
 export function receiptLabel(receipt: MessageReceipt): string {
-  if (receipt.seenBy === 0) return 'Sent';
+  if (receipt.seenBy === 0) return receipt.delivered ? 'Delivered' : 'Sent';
   if (receipt.recipientCount <= 1) return 'Seen';
   return `Seen by ${receipt.seenBy}`;
 }
@@ -243,4 +239,9 @@ export async function markSeen(
     method: 'POST',
     body: JSON.stringify({ upToMessageId }),
   });
+}
+
+/** ACK only after the authenticated device has received a concrete message. */
+export async function markDelivered(threadId: string, upToMessageId: string): Promise<LifecycleResult<{ advanced: boolean }>> {
+  return call(`/api/threads/${threadId}/delivered`, { method: 'POST', body: JSON.stringify({ upToMessageId }) });
 }

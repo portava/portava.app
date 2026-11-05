@@ -19,7 +19,7 @@
  */
 
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
+import { AppState, View, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { color } from '../../../theme/tokens.ts';
 import { WallHeader } from './WallHeader.tsx';
@@ -34,6 +34,8 @@ import { useQuickMedia } from '../hooks/useQuickMedia.ts';
 import { trackFeedOpen, trackModeSelect } from '../services/wallAnalytics.ts';
 import type { ResolvedWallIntent } from '../services/wallSessionIntent.ts';
 import type { StructuredIntent, WallMode } from '../types/wallProjection.ts';
+import { useInputAccountEpoch } from '../../../platform/input-assistance/hooks/useInputAccountEpoch.ts';
+import { WallActionContext, type WallActionOptions } from './WallActionContext.tsx';
 
 function intentLabelOf(intent: StructuredIntent | null, fallback: string | null): string | null {
   if (!intent) return fallback;
@@ -42,6 +44,8 @@ function intentLabelOf(intent: StructuredIntent | null, fallback: string | null)
 }
 
 export interface WallScreenProps {
+  active?: boolean;
+  openPlanPicker?: WallActionOptions['openPlanPicker'];
   city?: string | null;
   topInset?: number;
   /** Live For You feature gate — the strip idles when false (spec §4/§34). */
@@ -53,18 +57,29 @@ export interface WallScreenProps {
   quickMedia?: QuickMediaEntry[];
 }
 
-export function WallScreen({
+export function WallScreen(props: WallScreenProps) {
+  const epoch = useInputAccountEpoch();
+  return <WallScreenForAccount key={epoch} {...props} />;
+}
+
+function WallScreenForAccount({
+  active = true,
   city,
   topInset = 0,
   liveEnabled = true,
   quickMedia,
+  openPlanPicker,
 }: WallScreenProps) {
+  const actions = React.useMemo(() => ({ openPlanPicker }), [openPlanPicker]);
+  const [foreground, setForeground] = React.useState(AppState.currentState !== 'background' && AppState.currentState !== 'inactive');
+  React.useEffect(() => { const sub = AppState.addEventListener('change', state => setForeground(state === 'active')); return () => sub.remove(); }, []);
+  const visible = active && foreground;
   const [mode, setMode] = React.useState<WallMode>('for_you');
 
   const intent = useWallSessionIntent();
   const feed = useWallFeed(mode, intent.intentText);
-  const live = useLiveForYou({ enabled: liveEnabled });
-  const quick = useQuickMedia({ enabled: quickMedia === undefined });
+  const live = useLiveForYou({ enabled: liveEnabled && visible });
+  const quick = useQuickMedia({ enabled: visible && quickMedia === undefined });
   const quickEntries = quickMedia ?? quick.entries;
 
   // Feed open (once).
@@ -113,7 +128,7 @@ export function WallScreen({
   );
 
   return (
-    <View style={[s.root, { paddingTop: topInset }]} testID="wall-screen">
+    <WallActionContext.Provider value={actions}><View style={[s.root, { paddingTop: topInset }]} testID="wall-screen">
       <WallHeader
         city={city}
         intentActive={intent.active}
@@ -141,7 +156,7 @@ export function WallScreen({
         onHide={feed.hide}
         ListHeaderComponent={header}
       />
-    </View>
+    </View></WallActionContext.Provider>
   );
 }
 

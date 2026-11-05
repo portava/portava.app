@@ -1,3 +1,4 @@
+import { readCanonicalPlaceVisibility } from "../../lib/places/placeGovernance.js";
 /**
  * Intelligence Gathering — capture service (IG-03).
  *
@@ -495,6 +496,9 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
     if (isUnownedSubjectKind(subjectKind)) {
       return { ok: false, reason: "unknown_subject", detail: `subject_kind '${subjectKind}' must not carry a place id` };
     }
+    const visibility=await readCanonicalPlaceVisibility(sc,[input.subjectId!]);
+    if(!visibility.ok) return {ok:false,reason:'db_error',detail:'subject visibility'};
+    if(!visibility.visibleIds.has(input.subjectId!)) return {ok:false,reason:'unknown_subject',detail:'Place unavailable'};
     const { data: subj, error: subjErr } = await sc.from("places").select("id").eq("id", input.subjectId).maybeSingle();
     if (subjErr) return { ok: false, reason: "db_error", detail: "subject lookup" };
     if (!subj) return { ok: false, reason: "unknown_subject", detail: input.subjectId ?? "" };

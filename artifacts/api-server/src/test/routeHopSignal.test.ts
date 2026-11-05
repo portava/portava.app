@@ -431,6 +431,8 @@ function fakeClient(opts: {
   stops?: any[];
   legs?: any[];
   consented?: string[];
+  protections?: any[];
+  protectionError?: boolean;
   consentError?: boolean;
   planError?: boolean;
   legError?: boolean;
@@ -439,13 +441,14 @@ function fakeClient(opts: {
     const self: any = {
       select: () => self, eq: () => self, in: () => self, is: () => self,
       gte: () => self, not: () => self, limit: () => self,
-      then: (res: any) => res({ data: error ? null : rows, error }),
+      then: (res: any) => res({ data: error ? null : rows, error, count: error ? null : rows.length }),
     };
     return self;
   };
   return {
     from(table: string) {
       if (table === "route_plans") return chain(opts.plans ?? [], opts.planError ? { message: "boom" } : null);
+      if (table === "map_personal_protected_places") return chain(opts.protections ?? [], opts.protectionError ? { message: "unreadable" } : null);
       if (table === "route_stops") return chain(opts.stops ?? []);
       if (table === "route_legs") return chain(opts.legs ?? [], opts.legError ? { message: "boom" } : null);
       if (table === ROUTE_FLOW_CONSENT_TABLE) {
@@ -811,4 +814,12 @@ test("POST /accept — a missing plan is 404 and a malformed id is 400", async (
     const bad = await req(srv.port, "POST", "/api/route-plans/not-a-uuid/accept");
     assert.equal(bad.status, 400);
   } finally { await srv.close(); }
+});
+
+it("accepted-plan hops exclude only the protected owner's stop and fail closed on unreadable protection", async () => {
+  const fixture = { ...dbFixture(), consented: [ACTOR(0), ACTOR(1)] };
+  const protectedRead = await readAcceptedPlanHops(fakeClient({ ...fixture, protections: [{ id: 'protected-home', owner_user_id: ACTOR(0), center_lat: LAT(0), center_lng: LNG(0), radius_meters: 1500 }] }), READ_OPTS);
+  assert.equal(protectedRead.signals.length, 1); assert.equal(protectedRead.signals[0].actorId, ACTOR(1));
+  const unreadable = await readAcceptedPlanHops(fakeClient({ ...fixture, protectionError: true }), READ_OPTS);
+  assert.equal(unreadable.refusal, 'read_failed'); assert.deepEqual(unreadable.signals, []);
 });

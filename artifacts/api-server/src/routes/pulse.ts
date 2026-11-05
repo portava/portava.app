@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { governDiscoveryPlaces } from '../lib/discoveryPlaceGovernance.js';
 import { enrichSpans } from '../lib/enrichSpans';
 import { rankCandidates } from '../lib/portavaRank';
 import { logImpression, logLivePulseServe, selectServedImpressions } from '../lib/rankLog';
@@ -869,7 +870,9 @@ router.get("/pulse", async (req, res) => {
         return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
       };
 
-      const mapped = ((nearbyPlaces ?? []) as any[]).map((p: any) => {
+      const governedPlaces = await governDiscoveryPlaces(sc, nearbyPlaces ?? [], (place: any) => place.id);
+      if (!governedPlaces.readable) throw new Error('Place visibility could not be checked');
+      const mapped = governedPlaces.rows.map((p: any) => {
         const pLat = p.lat != null ? parseFloat(String(p.lat)) : null;
         const pLng = p.lng != null ? parseFloat(String(p.lng)) : null;
         const distanceKm =

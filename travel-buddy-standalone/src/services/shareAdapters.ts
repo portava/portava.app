@@ -1,3 +1,4 @@
+import { POST_REFERENCE_MEDIA_TYPE } from './postDestinations.ts';
 /**
  * shareAdapters — normalize each shareable domain object into ShareableEntity.
  *
@@ -299,7 +300,7 @@ export function toShareableMemory(memory: Memory): ShareableEntity {
     title: firstText(memory.title, memory.caption, where) ?? 'Memory',
     subtitle: where,
     description: firstText(memory.caption),
-    imageUrl: memory.cover?.mediaUrl ?? null,
+    imageUrl: memory.cover?.mediaType === POST_REFERENCE_MEDIA_TYPE ? null : memory.cover?.mediaUrl ?? null,
     creator: owner
       ? {
           id: memory.ownerId,

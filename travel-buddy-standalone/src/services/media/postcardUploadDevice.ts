@@ -13,6 +13,9 @@ import { apiCall, deviceResumableTransport, putPart, readFileBlob, uploadPoster 
 import { backgroundFile, backgroundPartTransport, loadExpoFs, sweepStagedParts, type FsLike, type PartDescriptor, type StagedSweepResult } from './backgroundTransfer.ts';
 import { extractVideoPoster } from './mediaProcessing.ts';
 import { isResumableMediaUploadEnabled } from './uploadTransportFlag.ts';
+import { captureObservedOwnerSnapshot } from '../observedOwnerSnapshot.ts';
+import { onDiscoveryScopeChange } from '../discoveryViewerScope.ts';
+import { createUploadLifetime, type UploadLifetime } from './uploadLifetime.ts';
 
 function messageOf(body: unknown, status: number): string {
   const b = body as { message?: unknown; error?: unknown } | null;
@@ -27,10 +30,11 @@ async function call<T>(
   path: string,
   body: unknown,
   map: (b: Record<string, unknown>) => T | null,
+  lifetime?: UploadLifetime,
 ): Promise<ApiResult<T>> {
   let r: Awaited<ReturnType<typeof apiCall>>;
   try {
-    r = await apiCall(method, path, body);
+    r = await apiCall(method, path, body, lifetime);
   } catch (e) {
     return { ok: false, retryable: true, message: e instanceof Error ? e.message : 'Network error' };
   }
@@ -58,6 +62,7 @@ async function putWholeFile(
   file: FileLike,
   mimeType: string,
   onProgress: (f: number) => void,
+  lifetime?: UploadLifetime,
 ): Promise<{ ok: boolean; status?: number | null; message?: string }> {
   try {
     if (fs) {
@@ -72,38 +77,51 @@ async function putWholeFile(
       if (!res) return { ok: false, status: null, message: 'Upload interrupted' };
       return { ok: res.status >= 200 && res.status < 300, status: res.status, message: `Upload failed (HTTP ${res.status})` };
     }
-    const r = await putPart(uploadUrl, file.slice(0, file.size), mimeType, (bytes) => onProgress(bytes / file.size));
+    const r = await putPart(uploadUrl, file.slice(0, file.size), mimeType, (bytes) => onProgress(bytes / file.size), lifetime);
     return { ok: r.status >= 200 && r.status < 300, status: r.status, message: `Upload failed (HTTP ${r.status})` };
   } catch (e) {
     return { ok: false, status: null, message: e instanceof Error ? e.message : 'Network error during upload' };
   }
 }
 
-async function deviceDeps(): Promise<Omit<PipelineDeps, 'persist'>> {
-  const fs = await loadExpoFs();
-  const transport = fs ? backgroundPartTransport((m, p, b) => apiCall(m, p, b), fs) : deviceResumableTransport();
+async function deviceDeps(accountId?: string, jobId?: string): Promise<Omit<PipelineDeps, 'persist'>> {
+  // Capture before any lazy import. Never let a refresh attach a new account.
+  const owner = captureObservedOwnerSnapshot();
+  if (!owner || owner.ownerId !== accountId) throw new Error('Upload session unavailable');
+  const lifetime = createUploadLifetime(owner, onDiscoveryScopeChange, jobId);
+  const { supabase } = await import('../../lib/supabase.ts');
+  const { data } = supabase.auth.onAuthStateChange(() => { if (!owner.isCurrent()) lifetime.cancel(); });
+  let fs: FsLike | null;
+  try { fs = await loadExpoFs(lifetime); }
+  catch (error) { data.subscription.unsubscribe(); lifetime.dispose(); throw error; }
+  // A cancelled user's pending shell may be removed under its ORIGINAL session.
+  const cleanupLifetime = { ...lifetime, signal: new AbortController().signal };
+  const transport = fs ? backgroundPartTransport((m, p, b) => apiCall(m, p, b, m === 'DELETE' ? cleanupLifetime : lifetime), fs) : deviceResumableTransport(lifetime);
   const slotPath = (postId: string, mediaId: string) =>
     `/api/postcards/${encodeURIComponent(postId)}/media/${encodeURIComponent(mediaId)}`;
   return {
+    isCurrent: lifetime.isCurrent,
+    isCancelled: () => lifetime.signal.aborted && lifetime.isCurrent(),
+    cancel: lifetime.cancel,
+    dispose: () => { data.subscription.unsubscribe(); lifetime.dispose(); },
     createShell: (input) =>
-      call('POST', '/api/postcards', createShellBody(input), (b) => (typeof b.id === 'string' ? { id: b.id } : null)),
+      call('POST', '/api/postcards', createShellBody(input), (b) => (typeof b.id === 'string' ? { id: b.id } : null), lifetime),
     reserveSlot: (postId, params) =>
       call('POST', `/api/postcards/${encodeURIComponent(postId)}/media/upload-url`, params, (b) =>
-        typeof b.mediaId === 'string' && typeof b.uploadUrl === 'string' ? { mediaId: b.mediaId, uploadUrl: b.uploadUrl } : null,
+        typeof b.mediaId === 'string' && typeof b.uploadUrl === 'string' ? { mediaId: b.mediaId, uploadUrl: b.uploadUrl } : null, lifetime,
       ),
     readFile: async (uri) => (fs ? backgroundFile(uri, fs) : ((await readFileBlob(uri)) as unknown as FileLike)),
     resumable: { enabled: isResumableMediaUploadEnabled(), transport },
-    putWhole: (url, file, mime, onProgress) => putWholeFile(fs, url, file, mime, onProgress),
+    putWhole: (url, file, mime, onProgress) => putWholeFile(fs, url, file, mime, onProgress, lifetime),
     extractPoster: extractVideoPoster,
-    uploadPoster,
+    uploadPoster: (postId, mediaId, uri) => uploadPoster(postId, mediaId, uri, lifetime),
     complete: (postId, mediaId, params) =>
       call('POST', `${slotPath(postId, mediaId)}/complete`, params, (b) => ({
         stampOverlayApplied: typeof b.stampOverlayApplied === 'boolean' ? b.stampOverlayApplied : undefined,
         stampOverlayError: typeof b.stampOverlayError === 'string' ? b.stampOverlayError : undefined,
-      })),
+      }), lifetime),
     discardShell: async (postId) => {
-      const { discardPostcardShell } = await import('../postcards.ts');
-      await discardPostcardShell(postId);
+      await apiCall('DELETE', `/api/posts/${encodeURIComponent(postId)}`, undefined, cleanupLifetime);
     },
     now: () => Date.now(),
     env: { sleep: (ms) => new Promise((r) => setTimeout(r, ms)), random: Math.random },

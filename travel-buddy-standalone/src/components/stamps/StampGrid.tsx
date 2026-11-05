@@ -1,11 +1,11 @@
 /**
- * stamps/StampGrid — 3-column FlatList grid of PassportStampNew items.
+ * stamps/StampGrid — responsive FlatList grid of PassportStampNew items.
  * Shows skeleton placeholders while loading, a retry button on error,
  * and friendly empty states when the stamp list is empty.
  */
 import React from 'react';
 import {
-  View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator,
+  View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator, useWindowDimensions,
 } from 'react-native';
 import { AlertCircle } from 'lucide-react-native';
 import { StampCard } from './StampCard.tsx';
@@ -36,6 +36,10 @@ function SkeletonCard() {
 export function StampGrid({
   stamps, loading, error, isOwner, onRetry, onStampPress, emptyTitle, emptySub,
 }: Props) {
+  const { fontScale } = useWindowDimensions();
+  // Full stamp names stay readable as system text grows. Changing FlatList's
+  // column count requires a new key; the parent owns scrolling and selection.
+  const columns = fontScale > 2 ? 1 : fontScale > 1.3 ? 2 : 3;
   if (loading && stamps.length === 0) {
     return (
       <View style={styles.skeletonGrid}>
@@ -67,11 +71,12 @@ export function StampGrid({
 
   return (
     <FlatList
+      key={columns}
       data={stamps}
-      numColumns={3}
+      numColumns={columns}
       keyExtractor={(s) => s.id}
       scrollEnabled={false}
-      columnWrapperStyle={styles.row}
+      columnWrapperStyle={columns > 1 ? styles.row : undefined}
       contentContainerStyle={styles.list}
       renderItem={({ item }) => (
         <StampCard

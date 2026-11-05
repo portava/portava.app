@@ -1,3 +1,4 @@
+import { readCanonicalPlaceVisibility } from "../../lib/places/placeGovernance.js";
 /**
  * PresenceVerifier — Intelligence Gathering unit I3 (presence P2/P3/P4).
  *
@@ -224,6 +225,9 @@ function references(att: Record<string, unknown> | null | undefined): {
 // ── Evidence checks (each fail-closed; each throws only on a DB error) ────────
 
 async function loadSubjectCoordinates(sc: any, subjectId: string): Promise<{ lat: number; lng: number } | null> {
+  const visibility=await readCanonicalPlaceVisibility(sc,[subjectId]);
+  if(!visibility.ok) throw new Error('Place visibility unavailable');
+  if(!visibility.visibleIds.has(subjectId)) return null;
   const { data, error } = await sc.from("places").select("latitude, longitude").eq("id", subjectId).maybeSingle();
   if (error) throw new Error(`places read failed: ${String((error as any).message ?? "")}`);
   if (!data) return null;

@@ -42,6 +42,10 @@ export interface ProfileResult<T> {
 }
 
 /* ---------- Own profile ---------- */
+// Share only requests that are currently in flight. The full token isolates
+// accounts/rotations; edits start a new generation. Completed data is not cached.
+const profileReads = new Map<string, Promise<ProfileResult<OwnProfile>>>();
+let profileReadGeneration = 0;
 
 export async function getMyProfile(): Promise<ProfileResult<OwnProfile>> {
   if (!isSupabaseConfigured || !apiBase()) {
@@ -50,19 +54,27 @@ export async function getMyProfile(): Promise<ProfileResult<OwnProfile>> {
   const token = await freshToken();
   if (!token) return { ok: false, data: null, errorKind: 'unauthenticated', message: 'Please sign in' };
 
-  try {
-    const res = await fetch(`${apiBase()}/api/me/profile`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message ?? `API ${res.status}` };
+  const key = `${apiBase()}:${token}:${profileReadGeneration}`;
+  const pending = profileReads.get(key);
+  if (pending) return pending;
+  const request = (async (): Promise<ProfileResult<OwnProfile>> => {
+    try {
+      const res = await fetch(`${apiBase()}/api/me/profile`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message ?? `API ${res.status}` };
+      }
+      return { ok: true, data: await res.json() };
+    } catch (e) {
+      if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable', message: 'Network unavailable' };
+      return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
     }
-    return { ok: true, data: await res.json() };
-  } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable', message: 'Network unavailable' };
-    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
-  }
+  })();
+  profileReads.set(key, request);
+  try { return await request; }
+  finally { if (profileReads.get(key) === request) profileReads.delete(key); }
 }
 
 export interface UpdateProfileInput {
@@ -114,6 +126,7 @@ export interface UpdateProfileInput {
 }
 
 export async function updateMyProfile(patch: UpdateProfileInput): Promise<ProfileResult<OwnProfile>> {
+  profileReadGeneration += 1;
   if (!_testAuthToken && (!isSupabaseConfigured || !apiBase())) {
     return { ok: false, data: null, errorKind: 'config_error' };
   }
@@ -147,6 +160,8 @@ export async function updateMyProfile(patch: UpdateProfileInput): Promise<Profil
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  } finally {
+    profileReadGeneration += 1;
   }
 }
 

@@ -81,6 +81,8 @@ function client(opts: {
   insertError?: { code?: string; message?: string };
   consume?: string;
   consumeError?: string;
+  flag?: boolean | null;
+  flagError?: boolean;
 } = {}) {
   const state = {
     sessionLookups: [] as Array<{ col: string; val: unknown }>,
@@ -93,6 +95,10 @@ function client(opts: {
     state,
     from(table: string) {
       state.tables.push(table);
+      if (table === "feature_flags") {
+        const q: any = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: opts.flag === null ? null : {enabled: opts.flag ?? true}, error: opts.flagError ? {message:"flag unreadable"} : null }) };
+        return q;
+      }
       if (table === SESSIONS) {
         const q: any = {};
         q.select = () => q;
@@ -131,11 +137,17 @@ function client(opts: {
         `the anonymous sensing ingest path touched ${table}; only ${SESSIONS} and ${CONTRIBUTIONS} are permitted`,
       );
     },
-    rpc: async (name: string, args: any) => {
+    rpc: (name: string, args: any) => ({ abortSignal: async () => {
       state.rpc.push({ name, args });
-      if (opts.consumeError) return { data: null, error: { message: opts.consumeError } };
-      return { data: opts.consume ?? "ok", error: null };
-    },
+      assert.equal(name, "sensing_admit_contribution");
+      if (opts.consumeError || opts.storePresent === false) return { data: null, error: { message: "atomic write unavailable" } };
+      if (opts.insertError?.code === "23505") return { data: "duplicate", error: null };
+      if (opts.insertError) return { data: null, error: opts.insertError };
+      if (opts.session?.budget_cohorts_remaining === 0) return {data: "budget_exhausted", error:null};
+      if (opts.consume && opts.consume !== "ok") return {data:opts.consume,error:null};
+      state.inserts.push(args.p_contribution);
+      return { data: "stored", error: null };
+    } }),
   };
 }
 
@@ -306,7 +318,7 @@ describe("stale credentials are rejected, each by its own name", () => {
       assert.equal(r.status, status);
       assert.match(JSON.stringify(r.body), new RegExp(reason));
       assert.deepEqual(c.state.inserts, []);
-      assert.deepEqual(c.state.rpc, [], "budget must not move on a refused contribution");
+      assert.equal(c.state.rpc.length, label === "out of budget" ? 1 : 0, "zero budget is rechecked atomically to allow a duplicate");
     });
   }
 
@@ -506,7 +518,7 @@ describe("the write — sensing_anon_contributions finally has a writer", () => 
     assert.deepEqual(r.body, { stored: true, duplicate: false, budgetConsumed: true });
     assert.equal(c.state.inserts.length, 1);
     assert.equal(c.state.rpc.length, 1);
-    assert.equal(c.state.rpc[0]!.name, "sensing_session_consume");
+    assert.equal(c.state.rpc[0]!.name, "sensing_admit_contribution");
     assert.match(String(c.state.rpc[0]!.args.p_credential_hash), /^[0-9a-f]{64}$/);
     assert.equal(
       String(c.state.rpc[0]!.args.p_credential_hash).includes(credential),
@@ -544,7 +556,7 @@ describe("the write — sensing_anon_contributions finally has a writer", () => 
     const now = Date.now();
     const c = client({ session: session(credential, now) });
     _setTestServiceClient(c as any);
-    const r = await post(app(), contribution(now, { features: WIRE_CONTRACT.body.features }), { authorization: `Bearer ${credential}` });
+    const r = await post(app(), contribution(now, { zoneId: "dr5ru7", features: WIRE_CONTRACT.body.features }), { authorization: `Bearer ${credential}` });
     assert.equal(r.status, 202, JSON.stringify(r.body));
     const row = c.state.inserts[0]!;
     for (const col of SENSING_FEATURE_COLUMNS) assert.ok(col in row, `${col} did not reach the insert`);
@@ -605,7 +617,7 @@ describe("the write — sensing_anon_contributions finally has a writer", () => 
     _setTestServiceClient(c as any);
     const r = await post(app(), contribution(now), { authorization: `Bearer ${credential}` });
     assert.equal(r.status, 202);
-    assert.deepEqual([...new Set(c.state.tables)].sort(), [CONTRIBUTIONS, SESSIONS].sort());
+    assert.deepEqual([...new Set(c.state.tables)].sort(), ["feature_flags", SESSIONS].sort());
   });
 
   it("a replay (2340's unique violation) is a success that wrote nothing AND spent no budget", async () => {
@@ -620,7 +632,7 @@ describe("the write — sensing_anon_contributions finally has a writer", () => 
 
     assert.equal(r.status, 202);
     assert.deepEqual(r.body, { stored: false, duplicate: true, budgetConsumed: false });
-    assert.deepEqual(c.state.rpc, [], "a replay must not drain the replaying device's own budget");
+    assert.equal(c.state.rpc.length, 1, "one atomic RPC determines whether the replay spends budget");
   });
 
   it("an insert that genuinely failed is reported as a failure, not as a stored contribution", async () => {
@@ -630,7 +642,7 @@ describe("the write — sensing_anon_contributions finally has a writer", () => 
     _setTestServiceClient(c as any);
     const r = await post(app(), contribution(now), { authorization: `Bearer ${credential}` });
     assert.equal(r.status, 500);
-    assert.deepEqual(c.state.rpc, []);
+    assert.equal(c.state.rpc.length, 1);
   });
 
   it("the store being absent is a refusal, not a silent success", async () => {
@@ -653,5 +665,56 @@ describe("the write — sensing_anon_contributions finally has a writer", () => 
     for (const leak of ["distinctActors", "distinctGroups", "cohortKey", "contributors", "count", "publishable"]) {
       assert.equal(leak in r.body, false, `${leak} is a fact about other people`);
     }
+  });
+});
+
+
+describe("runtime sensing admission controls", () => {
+  for (const [label, options, status] of [
+    ["off after issuance", {flag:false}, 404],
+    ["missing flag", {flag:null}, 404],
+    ["unreadable flag", {flagError:true}, 503],
+  ] as const) it(`${label} refuses existing credentials without a write`, async () => {
+    const credential=generateSensingCredential(); const now=Date.now();
+    const c=client({session:session(credential,now),...options}); _setTestServiceClient(c as any);
+    const response=await post(app(), contribution(now), {authorization:`Bearer ${credential}`});
+    assert.equal(response.status,status); assert.equal(c.state.inserts.length,0); assert.equal(c.state.rpc.length,0);
+  });
+  it("a last-budget replay succeeds without a new write", async () => {
+    const credential=generateSensingCredential(); const now=Date.now();
+    const c=client({session:session(credential,now,{budget_cohorts_remaining:0}),insertError:{code:"23505"}});
+    _setTestServiceClient(c as any);
+    const response=await post(app(),contribution(now),{authorization:`Bearer ${credential}`});
+    assert.equal(response.status,202);
+    assert.deepEqual(response.body,{stored:false,duplicate:true,budgetConsumed:false});
+    assert.equal(c.state.inserts.length,0);
+  });
+  it("a budget RPC failure never reports an uncharged stored contribution", async () => {
+    const credential=generateSensingCredential(); const now=Date.now();
+    const c=client({session:session(credential,now),consumeError:"budget failed"}); _setTestServiceClient(c as any);
+    const response=await post(app(),contribution(now),{authorization:`Bearer ${credential}`});
+    assert.equal(response.status,500); assert.equal(c.state.inserts.length,0);
+  });
+});
+
+describe('independence is evidence, not a device claim', () => {
+  it('arbitrary group tags cannot manufacture independent crowd confirmations', async () => {
+    const credential=generateSensingCredential(); const now=Date.now();
+    const c=client({session:session(credential,now)}); _setTestServiceClient(c as any);
+    const response=await post(app(),contribution(now,{groupTag:'pretend-independent-party'}),{authorization:`Bearer ${credential}`});
+    assert.equal(response.status,400); assert.match(JSON.stringify(response.body),/independence_proof_unavailable/);
+    assert.equal(c.state.rpc.length,0); assert.equal(c.state.inserts.length,0);
+  });
+});
+
+describe('server spatial precision boundary', () => {
+  for (const fields of [
+    {zoneId:'dr5ru7ww1234'},
+    {zoneId:'dr5ru7',features:{...WIRE_CONTRACT.body.features,zonePrecision:12}},
+    {zoneId:'dr5ru7',features:{...WIRE_CONTRACT.body.features,zonePrecision:5}},
+  ]) it('rejects fine or mismatched encoded location before any store call',async()=>{
+    const credential=generateSensingCredential(); const now=Date.now(); const c=client({session:session(credential,now)});
+    _setTestServiceClient(c as any); assert.equal((await post(app(),contribution(now,fields),{authorization:`Bearer ${credential}`})).status,400);
+    assert.equal(c.state.rpc.length,0);
   });
 });

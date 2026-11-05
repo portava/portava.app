@@ -15,6 +15,7 @@ import { space, radius, type as t } from '../../../theme/tokens.ts';
 import { useTelegraphPalette, type TelegraphPalette } from '../theme/telegraphTheme.ts';
 import { parsePortavaObjectBody } from './shareApi.ts';
 import { useShareRevocation, revokedLabel } from './useShareRevocation.ts';
+import { PlaceLiveInformation } from './PlaceLiveInformation.tsx';
 
 const CARD_MAX_WIDTH = 280;
 
@@ -95,6 +96,7 @@ export function PortavaObjectMessage({ body, mine, threadId, messageId }: Portav
           {parsed.caption}
         </Text>
       ) : null}
+      {parsed.objectType === 'PLACE' && <PlaceLiveInformation value={projection?.liveIntelligence} />}
     </Pressable>
   );
 }

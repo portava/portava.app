@@ -7,6 +7,7 @@
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import { currentDiscoveryScope, isCurrentDiscoveryScope, viewerKeyForToken } from './discoveryViewerScope.ts';
 
 export type FriendStatus = 'none' | 'outgoing_pending' | 'incoming_pending' | 'friends' | 'self';
 
@@ -71,54 +72,39 @@ function isNetworkError(e: unknown): boolean {
   return e.message.includes('Network request failed') || e.message.includes('fetch');
 }
 
-async function apiDelete<T>(path: string): Promise<FriendResult<T>> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+// Capture ownership before token refresh. An account switch during that await
+// must not send the old profile's action using the newly signed-in account.
+async function request<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<FriendResult<T>> {
+  if (!isSupabaseConfigured || !apiBase()) return method === 'GET'
+    ? { ok: true, data: null } : { ok: false, data: null, errorKind: 'config_error' };
+  const scope = currentDiscoveryScope();
+  const refused = (): FriendResult<T> => ({ ok: false, data: null, errorKind: 'unauthenticated' });
   try {
+    const token = await freshToken();
+    if (!token || !isCurrentDiscoveryScope(scope)
+      || (scope.viewer !== undefined && viewerKeyForToken(token) !== scope.viewer)) return refused();
     const res = await fetch(`${apiBase()}${path}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
+      method,
+      headers: { Authorization: `Bearer ${token}`, ...(method === 'POST' ? { 'Content-Type': 'application/json' } : {}) },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
-    if (!res.ok) return mapApiError<T>(res.status, await res.json().catch(() => ({})));
-    return { ok: true, data: await res.json() };
+    if (!isCurrentDiscoveryScope(scope)) return refused();
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      return isCurrentDiscoveryScope(scope) ? mapApiError<T>(res.status, error) : refused();
+    }
+    const data = await res.json();
+    return isCurrentDiscoveryScope(scope) ? { ok: true, data } : refused();
   } catch (e) {
+    if (!isCurrentDiscoveryScope(scope)) return refused();
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
   }
 }
 
-async function apiPost<T>(path: string, body?: unknown): Promise<FriendResult<T>> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
-  try {
-    const res = await fetch(`${apiBase()}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
-    if (!res.ok) return mapApiError<T>(res.status, await res.json().catch(() => ({})));
-    return { ok: true, data: await res.json() };
-  } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
-    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
-  }
-}
-
-async function apiGet<T>(path: string): Promise<FriendResult<T>> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: null };
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
-  try {
-    const res = await fetch(`${apiBase()}${path}`, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) return mapApiError<T>(res.status, await res.json().catch(() => ({})));
-    return { ok: true, data: await res.json() };
-  } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
-    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
-  }
-}
+function apiDelete<T>(path: string): Promise<FriendResult<T>> { return request('DELETE', path); }
+function apiPost<T>(path: string, body?: unknown): Promise<FriendResult<T>> { return request('POST', path, body); }
+function apiGet<T>(path: string): Promise<FriendResult<T>> { return request('GET', path); }
 
 // ── Friend requests ──────────────────────────────────────────────────────────
 

@@ -131,7 +131,13 @@ export function sentryDsnFor(deploymentEnv: string | undefined, dsn: string | un
   const label = (deploymentEnv ?? '').trim();
   const value = (dsn ?? '').trim();
   if (!value) return undefined;
-  if (!label || label === 'production') return dsn;
+  // Native Sentry can crash while starting with a malformed DSN (including the
+  // EAS "none" sentinel). Never pass configuration placeholders into native code.
+  try {
+    const url = new URL(value);
+    if (!['https:', 'http:'].includes(url.protocol) || !url.username || !/\/\d+$/.test(url.pathname)) return undefined;
+  } catch { return undefined; }
+  if (!label || label === 'production') return value;
   if (label === 'beta' && BETA_SENTRY_DSNS.includes(value)) return value;
   return undefined;
 }

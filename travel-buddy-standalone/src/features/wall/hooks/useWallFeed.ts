@@ -24,6 +24,7 @@ import {
   revalidateFirstPageCache,
   writeFirstPageCache,
 } from '../services/wallPrefetch.ts';
+import { currentDiscoveryScope, isCurrentDiscoveryScope } from '../../../services/discoveryViewerScope.ts';
 import type { WallLane, WallMode, WallProjection } from '../types/wallProjection.ts';
 
 const PAGE_LIMIT = 12;
@@ -120,6 +121,9 @@ export function useWallFeed(
   const hiddenRef = useRef<Set<string>>(new Set());
   const genRef = useRef(0);
   const inFlightRef = useRef(false);
+  const requestRef = useRef<AbortController | null>(null);
+  const refreshQueued = useRef(false);
+  const latestFetch = useRef<(reason: FetchReason) => Promise<void>>(async () => {});
 
   const normalizedIntent = sessionIntent ?? null;
   // spec §5/§17 / TABLE 1: a session-intent steer is a RELEVANCE filter and must
@@ -133,7 +137,7 @@ export function useWallFeed(
   const doFetch = useCallback(
     async (reason: FetchReason) => {
       const reset = reason !== 'more';
-      if (inFlightRef.current) return;
+      if (inFlightRef.current) { if (reason === 'refresh') refreshQueued.current = true; return; }
       if (reason === 'more' && !cursorRef.current) return;
 
       if (reset) {
@@ -141,6 +145,10 @@ export function useWallFeed(
         cursorRef.current = null;
       }
       const gen = genRef.current;
+      const owner = currentDiscoveryScope();
+      const request = new AbortController();
+      requestRef.current = request;
+      const current = () => gen === genRef.current && isCurrentDiscoveryScope(owner);
       const cursor = reset ? null : cursorRef.current;
 
       inFlightRef.current = true;
@@ -154,9 +162,10 @@ export function useWallFeed(
           cursor,
           sessionIntent: effectiveIntent,
           limit: PAGE_LIMIT,
+          signal: request.signal,
         });
         // A newer session started while this was in flight — drop the result.
-        if (gen !== genRef.current) return;
+        if (!current()) return;
 
         if (res.ok) {
           setError(null);
@@ -198,7 +207,7 @@ export function useWallFeed(
           // where there is nothing live on screen to overwrite.
           if (reason === 'initial' && normalizedIntent === null) {
             const cached = await readFirstPageCache(mode);
-            if (gen !== genRef.current) return;
+            if (!current()) return;
             if (cached) {
               seenRef.current = new Set();
               setItems(dedupe(cached.items, seenRef.current, hiddenRef.current));
@@ -216,13 +225,15 @@ export function useWallFeed(
               // feed is already on screen and never waits for this.
               void revalidateFirstPageCache(mode).then((survivors) => {
                 if (survivors === null) return; // unreachable ≠ a takedown
-                if (gen !== genRef.current) return; // a newer session took over
+                if (!current()) return; // a newer session took over
                 const allowed = new Set(survivors.map((i) => i.canonicalObjectId));
                 setItems((prev) => prev.filter((i) => allowed.has(i.canonicalObjectId)));
               });
             }
           }
         }
+      } catch {
+        if (current()) { setError('The feed could not load. Please try again.'); setDegraded(true); }
       } finally {
         // Guard BOTH the loading resets AND the in-flight release by generation:
         // a superseded (stale-gen) request that resolves must not clear
@@ -236,18 +247,26 @@ export function useWallFeed(
           else if (reason === 'refresh') setRefreshing(false);
           else setLoadingMore(false);
           inFlightRef.current = false;
+          requestRef.current = null;
+          if (refreshQueued.current) { refreshQueued.current = false; void latestFetch.current('refresh'); }
         }
       }
     },
     [mode, effectiveIntent],
   );
 
+  latestFetch.current = doFetch;
+
   // Start a fresh session whenever mode / sessionIntent changes.
   useEffect(() => {
+    setItems([]); setCaughtUp(false); setHasMore(false); setStale(false); setCachedAt(null);
+    setError(null); setFailedLanes([]); setRefreshing(false); setLoadingMore(false);
     void doFetch('initial');
     return () => {
       // Invalidate any in-flight request from the previous session.
       genRef.current += 1;
+      requestRef.current?.abort();
+      refreshQueued.current = false;
       inFlightRef.current = false;
     };
   }, [doFetch]);

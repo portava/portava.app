@@ -53,7 +53,7 @@ import { applyObservationBudget } from "./proximityObservationBudget.js";
 import { loadReachablePeople } from "./reachablePeopleQuery.js";
 import type { ReachablePersonProjection } from "./reachablePeople.js";
 import { buildSharedContextProjection } from "./sharedContext.js";
-import { readTelegraphRelationship, RELATIONSHIP_CONTEXT_FLAG } from "./telegraphRelationship.js";
+import { readConversationRelationship, type ConversationRelationshipReading } from './conversationRelationship.js';
 
 /** The §30A.2 surface's own gate — the kernel reads proximity only where that surface would serve it. */
 export const KERNEL_PROXIMITY_FLAG = "nearby_reachable_enabled";
@@ -153,16 +153,6 @@ export async function readKernelIntent(
   return { status: "read", value: null };
 }
 
-async function readKernelRelationship(sc: SupabaseClient, viewerId: string, counterpartId: string | null, nowMs: number): Promise<KernelReading<TelegraphRelationship>> {
-  if (!counterpartId) return { status: "not_applicable", detail: "a relationship is between two people; this conversation is not a direct one" };
-  const flag = await readFlagState(sc, "telegraph_relationship_context_enabled"); // RELATIONSHIP_CONTEXT_FLAG, as a literal for check:flag-polarity
-  if (flag === "unknown") return { status: "unreadable", detail: `${RELATIONSHIP_CONTEXT_FLAG} could not be read` };
-  if (flag === "off") return { status: "off", detail: `${RELATIONSHIP_CONTEXT_FLAG} is off` };
-  const read = await readTelegraphRelationship(sc, viewerId, counterpartId, nowMs);
-  if (read.degraded) return { status: "unreadable", detail: "the relationship could not be read" };
-  return { status: "read", value: read.relationship };
-}
-
 async function readKernelSharedObjects(
   sc: SupabaseClient,
   input: { conversationId: string; viewerId: string; participantIds: string[] },
@@ -200,7 +190,9 @@ export async function assembleContextKernel(sc: SupabaseClient, req: ContextKern
     .maybeSingle();
   if (memberErr) return { ok: false, stage: "membership", message: String(memberErr.message ?? "membership unreadable") };
 
-  const capabilities = await resolveConversationCapabilities(sc, { viewerId, conversationId });
+  const relationshipReads = new Map<string | null, ConversationRelationshipReading>();
+  const capabilities = await resolveConversationCapabilities(sc, { viewerId, conversationId, nowMs,
+    onRelationshipRead: (id, reading) => { relationshipReads.set(id, reading); } });
   const member = !!thread && !!membership && (membership as any).left_at == null;
   const conversationType = thread ? String((thread as any).thread_type ?? "direct") : "unknown";
   if (!member || capabilities.reasons.canSendMessage === "TELEGRAPH_AUTH_BLOCKED") { // T439: a member §14.1 saw blocked gets the non-member answer (the policy's rule), so nothing is gathered for them either — no roster, input or observation read whose failure could change its status
@@ -226,7 +218,7 @@ export async function assembleContextKernel(sc: SupabaseClient, req: ContextKern
   const counterpartId = conversationType === "direct" && others.length === 1 ? others[0] : null; const pairBlock = await readKernelPairBlock(sc, viewerId, counterpartId); if (pairBlock === "unreadable") return { ok: false, stage: "blocks", message: "block state unreadable" }; if (pairBlock === "blocked") return { ok: true, kernel: decideContextKernel({ conversationId, viewerId, conversationType: "unknown", member: true, capabilities: { ...capabilities, ...allDenied("TELEGRAPH_AUTH_BLOCKED") }, relationship: NOT_GATHERED, proximity: NOT_GATHERED, intent: NOT_GATHERED, sharedObjects: NOT_GATHERED, nowMs }) }; // wave 5: a block §14.1 did not report (its own roster read failed, or the block landed between the two reads) is the same stranger's answer, gathered no further; an unreadable blocks table refuses like the reads above
   const visibleFrom = visibleFromOf(membership as any, boundOn);
 
-  const relationship = await readKernelRelationship(sc, viewerId, counterpartId, nowMs); const blockedPair = relationship.status === "read" && relationship.value.state === "BLOCKED"; // T439: a block only the relationship saw (in an archived DM §14.1 reports the archive first) is the same non-member answer, and nothing is gathered across it
+  const relationship = relationshipReads.get(counterpartId) ?? await readConversationRelationship(sc, viewerId, counterpartId, nowMs); const blockedPair = relationship.status === "read" && relationship.value.state === "BLOCKED";
   const sharedObjects = blockedPair ? NOT_GATHERED : await readKernelSharedObjects(sc, { conversationId, viewerId, participantIds }, nowMs);
   const proximity: KernelReading<KernelProximity> = proximityMayBeRead(conversationType, relationship)
     ? await readKernelProximity(sc, viewerId, others, nowMs)

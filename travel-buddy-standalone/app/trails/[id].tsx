@@ -5,6 +5,8 @@
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
+import { useSession } from '../../src/context/SessionContext.tsx';
 
 import { AppHeader } from '../../src/components/ui/AppHeader';
 import { firstParam } from '../../src/lib/routeParams.ts';
@@ -14,10 +16,12 @@ import { color } from '../../src/theme/tokens';
 export default function TrailScreen() {
   const params = useLocalSearchParams<{ id?: string | string[] }>();
   const id = firstParam(params.id) ?? '';
+  const focused = useIsFocused();
+  const { userId } = useSession();
   return (
     <View style={s.root}>
       <AppHeader variant="detail" title="Trail" onBack={router.back} />
-      {id ? <TrailDetailView trailId={id} onNavigate={(href) => router.push(href as never)} /> : null}
+      {id ? <TrailDetailView key={`${userId ?? 'guest'}:${id}`} trailId={id} visible={focused} onNavigate={(href) => router.push(href as never)} /> : null}
     </View>
   );
 }

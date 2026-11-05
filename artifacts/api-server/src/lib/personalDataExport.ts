@@ -25,7 +25,7 @@
  *     a section that hit the row cap is marked `truncated`, which makes
  *     `complete` false.
  *
- * Every table here is in the 2026-08-19 production baseline;
+ * Tables are from the 2026-08-19 baseline or the explicitly checked migration4017;
  * src/test/personalDataExport.test.ts checks each table, owner, order and named
  * column against it, and that no later migration drops or renames one.
  */
@@ -101,6 +101,9 @@ const SECTIONS: ExportSection[] = [
   { key: "tripPlanItems", label: "Plan items you added to trips", table: "trip_plan_items", owners: ["creator_id"], orderBy: ["id"] },
   { key: "eventsHosted", label: "Events you host", table: "events", owners: ["host_id"], orderBy: ["id"] },
   { key: "eventRsvps", label: "Your event RSVPs", table: "event_rsvps", owners: ["user_id"], orderBy: ["event_id"] },
+
+  // The optional private feedback table is introduced by migration4017.
+  { key: "coordinationFeedback", label: "Your private coordination feedback", table: "telegraph_outcome_feedback", owners: ["user_id"], orderBy: ["plan_id"], columns: ["plan_id", "response", "created_at", "updated_at", "expires_at"] },
 
   // ── Safety ──────────────────────────────────────────────────────────────
   { key: "reportsFiled", label: "Reports you filed", table: "reports", owners: ["reporter_id"], orderBy: ["id"], columns: ["id", "target_type", "target_id", "reason_code", "reason_detail", "context_type", "context_id", "status", "created_at", "updated_at"], omitWhy: "the moderator's notes and triage severity are left out, and " + STAFF },

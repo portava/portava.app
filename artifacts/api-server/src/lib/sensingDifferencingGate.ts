@@ -124,6 +124,7 @@ export function evaluateDifferencing(
  */
 export interface PublicationStore {
   from(table: string): any;
+  rpc?(name: string, args: Record<string, unknown>): any;
 }
 
 /** The store 3110 creates. */
@@ -136,6 +137,7 @@ export const SENSING_PUBLICATION_DEFAULT_TTL_SECONDS = 24 * 60 * 60;
 
 /** One row of 3110, minus `id`. Note the absence of any contributor or identity column. */
 export interface SensingPublishedAggregateRow {
+  id?: string;
   cohort_key: string;
   zone_id: string;
   time_bucket: string;
@@ -261,32 +263,36 @@ export async function readLastPublishedAggregate(
     const { data, error } = await db
       .from(SENSING_PUBLISHED_TABLE)
       .select(
-        "cohort_key, zone_id, time_bucket, reduction_version, distinct_contributors, distinct_groups, max_group_share, contribution_count, median_signal_bucket, observed_at, published_at, expires_at",
+        "id, cohort_key, zone_id, time_bucket, reduction_version, distinct_contributors, distinct_groups, max_group_share, contribution_count, median_signal_bucket, observed_at, published_at, expires_at",
       )
       .eq("cohort_key", cohortKey)
       .gt("expires_at", nowIso)
       .order("published_at", { ascending: false })
       .limit(1);
     if (error) return { ok: false, error: error.message ?? "read_failed" };
-    const rows = (data ?? []) as SensingPublishedAggregateRow[];
+    if (!Array.isArray(data)) return { ok: false, error: "malformed_publication_read" };
+    const rows = data as SensingPublishedAggregateRow[];
     return { ok: true, row: rows.length > 0 ? rows[0]! : null };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "read_threw" };
   }
 }
 
-export type PublicationWriteResult = { ok: true } | { ok: false; error: string };
+export type PublicationWriteResult = { ok: true } | { ok: false; conflict: true; error: string } | { ok: false; error: string };
 
 /** Record one publication. INSERT only — 3110 grants no UPDATE to anybody. */
 export async function recordPublishedAggregate(
   db: PublicationStore,
   row: SensingPublishedAggregateRow,
+  expectedId: string | null,
 ): Promise<PublicationWriteResult> {
   if (!db) return { ok: false, error: "no_client" };
   try {
-    const { error } = await db.from(SENSING_PUBLISHED_TABLE).insert(row);
+    if (!db.rpc) return { ok: false, error: "atomic_publication_unavailable" };
+    const { data, error } = await db.rpc("sensing_publish_if_current", { p_expected_id: expectedId, p_publication: row });
     if (error) return { ok: false, error: error.message ?? "insert_failed" };
-    return { ok: true };
+    if (data === "conflict") return { ok: false, conflict: true, error: "publication_changed" };
+    return data === "stored" ? { ok: true } : { ok: false, error: "publication_not_recorded" };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "insert_threw" };
   }
@@ -325,24 +331,23 @@ export async function publishThroughDifferencingGate(
 ): Promise<DurableDifferencingDecision> {
   const nowIso = new Date(nowMs).toISOString();
 
-  const read = await readLastPublishedAggregate(db, identity?.cohortKey ?? "", nowIso);
-  if (!read.ok) {
-    return { publish: false, reason: "previous_unreadable", serve: null, recorded: false, error: read.error };
+  // Each failed compare-and-set rereads the latest durable publication and
+  // reevaluates the one shared policy. A replica may not publish against a
+  // history another replica has already advanced.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const read = await readLastPublishedAggregate(db, identity?.cohortKey ?? "", nowIso);
+    if (!read.ok) return { publish: false, reason: "previous_unreadable", serve: null, recorded: false, error: read.error };
+    if (read.row && !read.row.id) return { publish: false, reason: "previous_unreadable", serve: null, recorded: false, error: "publication_identity_missing" };
+    const previous = read.row ? aggregateFromPublicationRow(read.row) : null;
+    const decision = evaluateDifferencing(previous, current, options);
+    if (!decision.publish) return { ...decision, recorded: false };
+    const built = buildPublicationRow(identity, current, nowMs, options.ttlSeconds ?? SENSING_PUBLICATION_DEFAULT_TTL_SECONDS);
+    if (!built.ok) return { publish: false, reason: "publication_not_recorded", serve: null, recorded: false, error: built.error };
+    const written = await recordPublishedAggregate(db, built.row, read.row?.id ?? null);
+    if (written.ok) return { ...decision, recorded: true };
+    if (!("conflict" in written)) return { publish: false, reason: "publication_not_recorded", serve: null, recorded: false, error: written.error };
   }
-
-  const previous = read.row ? aggregateFromPublicationRow(read.row) : null;
-  const decision = evaluateDifferencing(previous, current, options);
-  if (!decision.publish) return { ...decision, recorded: false };
-
-  const built = buildPublicationRow(identity, current, nowMs, options.ttlSeconds ?? SENSING_PUBLICATION_DEFAULT_TTL_SECONDS);
-  if (!built.ok) {
-    return { publish: false, reason: "publication_not_recorded", serve: null, recorded: false, error: built.error };
-  }
-  const written = await recordPublishedAggregate(db, built.row);
-  if (!written.ok) {
-    return { publish: false, reason: "publication_not_recorded", serve: null, recorded: false, error: written.error };
-  }
-  return { ...decision, recorded: true };
+  return { publish: false, reason: "publication_not_recorded", serve: null, recorded: false, error: "publication_changed_repeatedly" };
 }
 
 /** The purge's outcome. Same shape as the contribution sweep's, for the same reason. */

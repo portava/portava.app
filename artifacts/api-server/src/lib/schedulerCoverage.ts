@@ -1,4 +1,5 @@
 /**
+ * Current registry: 73 schedulers; 25 reported, 13 durable, 46 with no trace.
  * Which background schedulers this process starts, and how anyone could tell
  * whether each one is still running.
  *
@@ -95,6 +96,10 @@ export const STARTED_SCHEDULERS: readonly SchedulerRow[] = [
   { start: "startIntelPatternScheduler" },
   { start: "startIntelProjectionScheduler" },
   { start: "startIntelPromotionScheduler" },
+  { start: "startMapNavigationRetentionScheduler" },
+  { start: "startTripNearbyRetentionScheduler", reportedAs: ["tripNearbyRetention"] },
+  { start: "startForwardMediaSweep", reportedAs: ["telegraphForwardMediaSweep"] },
+  { start: "startOutcomeRetention", reportedAs: ["telegraphOutcomeRetention"] },
   { start: "startIntelRetentionScheduler" },
   { start: "startIntelRewardScheduler" },
   { start: "startIntelligenceGraphScheduler" },

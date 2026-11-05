@@ -62,6 +62,7 @@ export interface DecryptResult {
 
 /** All errors thrown by expo-openmls native functions. */
 export type OpenMlsErrorCode =
+  | 'NativeUpdateRequired'
   | 'KeyGenFailed'
   | 'SerializationFailed'
   | 'DeserializationFailed'

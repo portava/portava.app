@@ -72,6 +72,8 @@ export function makePassportDb(tables: Record<string, Row[]>, opts: FakePassport
         "Use failClosedSupabase (role/rlsHiddenTables) for a role-sensitive read.",
     );
   }
+  // Baseline fixture metadata; explicit malformed/moderated values always win.
+  if (tables.places) tables.places = tables.places.map(row => ({ moderation_status: 'visible', merged_into_place_id: null, ...row }));
   const failReads = opts.failReads ?? {};
   const failWrites = opts.failWrites ?? {};
 
@@ -79,6 +81,7 @@ export function makePassportDb(tables: Record<string, Row[]>, opts: FakePassport
     const store: Row[] = tables[table] ?? [];
     const filters: Array<(r: Row) => boolean> = [];
     let limitN: number | null = null;
+    let offset = 0;
     let pendingInsert: Row | null = null;
     let pendingUpdate: Row | null = null;
     let pendingWrite: "insert" | "upsert" | "update" | "delete" | null = null;
@@ -124,16 +127,16 @@ export function makePassportDb(tables: Record<string, Row[]>, opts: FakePassport
       or(expr: string) { filters.push(orPredicate(expr)); return builder; },
       not(col: string, _op: string, val: any) { filters.push((r) => (val === null ? r[col] != null : r[col] !== val)); return builder; },
       order() { return builder; },
-      range() { return builder; },
+      range(from: number, to: number) { offset = from; limitN = to-from+1; return builder; },
       limit(n: number) { limitN = n; return builder; },
       maybeSingle() { return resolveSingle(false); },
       single() { return resolveSingle(true); },
       then(onF: any, onR: any) { return resolveList().then(onF, onR); },
     };
 
-    function matched(): Row[] {
+    function matched(windowed = true): Row[] {
       let rows = store.filter((r) => filters.every((f) => f(r)));
-      if (limitN !== null) rows = rows.slice(0, limitN);
+      if (windowed) rows = rows.slice(offset, limitN === null ? undefined : offset+limitN);
       return rows;
     }
 
@@ -199,7 +202,7 @@ export function makePassportDb(tables: Record<string, Row[]>, opts: FakePassport
       // `count` is a row count and is unaffected by projection, so it is taken
       // from the matched rows before they are narrowed — and it is null unless
       // the caller asked for it, as PostgREST's Content-Range is.
-      return { data: headOnly ? null : project(rows), error: null, count: countMode ? rows.length : null };
+      return { data: headOnly ? null : project(rows), error: null, count: countMode ? matched(false).length : null };
     }
     return builder;
   }

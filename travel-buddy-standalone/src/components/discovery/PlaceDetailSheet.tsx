@@ -151,7 +151,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, rankSur
     if (!place) return;
     let cancelled = false;
     checkSaved('place', place.id)
-      .then(({ saved }) => { if (!cancelled) setSaved(saved); })
+      .then(({ saved, ok }) => { if (!cancelled && ok !== false) setSaved(saved); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [place?.id]);

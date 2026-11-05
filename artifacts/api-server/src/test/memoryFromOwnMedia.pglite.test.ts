@@ -125,6 +125,10 @@ const BASE_SCHEMA = `
     updated_at timestamptz NOT NULL DEFAULT now(), place_id text, canonical_location_id text);
   CREATE TABLE public.posts (id uuid PRIMARY KEY, author_id uuid NOT NULL, status text NOT NULL DEFAULT 'active',
     deleted_at timestamptz, media_urls text[] NOT NULL DEFAULT '{}', media_type text);
+  CREATE TABLE public.media_assets (id uuid PRIMARY KEY, owner_user_id uuid, storage_bucket text, storage_path text, moderation_status text, deleted_at timestamptz);
+  CREATE TABLE public.post_media (post_id uuid, storage_path text, moderation_status text, processing_status text);
+  CREATE TABLE public.post_media_moderation_ledger (storage_path text, verdict text);
+  CREATE TABLE public.stories (owner_id uuid, media_url text, state text, expires_at timestamptz, deleted_at timestamptz, saved_to_highlight_id uuid);
   CREATE TABLE public.memory_items (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), memory_id uuid NOT NULL REFERENCES public.memories(id) ON DELETE CASCADE,
     media_url text NOT NULL, media_type text NOT NULL DEFAULT 'image/jpeg', caption text, position integer NOT NULL DEFAULT 0,
     created_at timestamptz NOT NULL DEFAULT now());
@@ -206,7 +210,7 @@ describe("MD385 — migration 3999 in PGlite, and POST /memories/:id/items/from-
 
   beforeEach(async () => {
     _setTestClient(pgClient(db) as any, true);
-    await db.exec(`TRUNCATE public.memory_items, public.media_events; DELETE FROM public.posts; DELETE FROM public.memories;
+    await db.exec(`TRUNCATE public.memory_items, public.media_events, public.media_assets, public.post_media, public.post_media_moderation_ledger, public.stories; DELETE FROM public.posts; DELETE FROM public.memories;
       UPDATE public.feature_flags SET enabled = false;`);
     await setFlag("memory_from_own_media_enabled", true);
     await setFlag("MEDIA_ANALYTICS_ENABLED", true);
@@ -270,6 +274,23 @@ describe("MD385 — migration 3999 in PGlite, and POST /memories/:id/items/from-
   });
 
   // ── The route ──────────────────────────────────────────────────────────────
+
+  it("terminally removed canonical or legacy media cannot be newly copied into a Memory", async () => {
+    const path = `${ME}/a.jpg`;
+    for (const status of ['removed', 'owner_deleted', 'rejected']) {
+      await db.query(`INSERT INTO public.media_assets VALUES (gen_random_uuid(), $1, 'post-media', $2, $3, NULL)`, [ME, path, status]);
+      const r = await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: MY_POST });
+      assert.equal(r.status, 404, JSON.stringify(r.body));
+      await db.exec('TRUNCATE public.media_assets');
+    }
+    await db.query(`INSERT INTO public.post_media VALUES ($1, $2, 'rejected', 'ready')`, [MY_POST, path]);
+    assert.equal((await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: MY_POST })).status, 404);
+    await db.exec('TRUNCATE public.post_media');
+    await db.query(`INSERT INTO public.post_media_moderation_ledger VALUES ($1, 'rejected')`, [path]);
+    assert.equal((await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: MY_POST })).status, 404);
+    assert.equal((await rows('SELECT count(*)::int AS n FROM public.memory_items'))[0].n, 0);
+    assert.equal((await rows('SELECT count(*)::int AS n FROM public.media_events'))[0].n, 0);
+  });
 
   it("flag off: feature_disabled, and nothing is read or written", async () => {
     await setFlag("memory_from_own_media_enabled", false);

@@ -438,10 +438,13 @@ describe("bounded remaining Trail lifecycle, authorization and health reads", ()
     });
 
     it("never grants an at-ceiling member a new reservation after a truncated read", async () => {
+      const ceiling = '77777777-7777-4777-8777-000000000001';
+      const fresh = '77777777-7777-4777-8777-000000000002';
       const db = makeRulesDb({
         trails: [trail()], feature_flags: [{ flag: TRAIL_EXPLORATION_FLAG, enabled: true }],
-        content_trails: [member("z-ceiling", { created_at: at(2) }), member("fresh")],
-        trail_member_exposures: [...Array.from({ length: 1000 }, (_, index) => exposure(`a-${index}`)), exposure("z-ceiling", 500)],
+        content_trails: [member("z-ceiling", { source_id: ceiling, created_at: at(2) }), member("fresh", { source_id: fresh })],
+        discovery_places: [ceiling, fresh].map(id => ({ id, status: 'active' })),
+        trail_member_exposures: [...Array.from({ length: 1000 }, (_, index) => exposure(`a-${index}`)), exposure(ceiling, 500)],
       });
       cappedReads(db);
       const result = await getTrailModules(db, TRAIL, { nowMs: NOW });

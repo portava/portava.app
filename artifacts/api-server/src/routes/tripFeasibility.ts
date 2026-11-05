@@ -1,3 +1,4 @@
+import { readCanonicalPlaceVisibility } from "../lib/places/placeGovernance.js";
 /**
  * Trips §7 — the feasibility read surface.
  *
@@ -174,6 +175,8 @@ export async function resolvePlaces(
   const wanted = [...new Set(placeIds.filter((id): id is string => typeof id === "string" && id !== ""))];
   if (wanted.length === 0) return { coords: new Map(), unresolved: [] };
 
+  const visibility=await readCanonicalPlaceVisibility(sc,wanted);
+  if(!visibility.ok || wanted.some(id=>visibility.existingIds.has(id)&&!visibility.visibleIds.has(id))) return null;
   const { data, error } = await sc
     .from("places")
     .select("id, latitude, longitude")

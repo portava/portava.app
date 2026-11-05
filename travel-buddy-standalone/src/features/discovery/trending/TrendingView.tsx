@@ -11,7 +11,7 @@
  * current run says why; a failed read says so with Retry. None of the three is
  * ever drawn as "nothing is trending".
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator, ScrollView } from 'react-native';
 import { TrendingUp, MapPin, Route as RouteIcon } from 'lucide-react-native';
 
@@ -36,14 +36,21 @@ export function TrendingView({ initialDestination = null, onNavigate, load = fet
   const [shown, setShown] = useState(initialDestination ?? '');
   const [action, setAction] = useState<TrendingAction>('places');
   const [read, setRead] = useState<ApiRead<TrendingList> | undefined | null>(null);
+  const generation = useRef(0);
 
   const run = useCallback(async (a: TrendingAction, d: string) => {
+    const request = ++generation.current;
     if (!d.trim()) { setRead(null); return; }
     setRead(undefined);
-    setRead(await load(a, d));
+    try {
+      const answer = await load(a, d.trim());
+      if (request === generation.current) setRead(answer);
+    } catch {
+      if (request === generation.current) setRead({ state: 'unavailable', detail: 'Connection interrupted. Please try again.' });
+    }
   }, [load]);
 
-  useEffect(() => { void run(action, shown); }, [run, action, shown]);
+  useEffect(() => { void run(action, shown); return () => { generation.current++; }; }, [run, action, shown]);
 
   return (
     <ScrollView keyboardShouldPersistTaps="handled" testID="trending-view">

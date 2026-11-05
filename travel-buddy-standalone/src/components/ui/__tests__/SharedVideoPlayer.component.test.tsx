@@ -8,6 +8,7 @@
  *   - Error fallback renders when the video reports an error
  */
 import React from 'react';
+import { Platform } from 'react-native';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import { SharedVideoPlayer } from '../SharedVideoPlayer.tsx';
 
@@ -44,6 +45,7 @@ jest.mock('expo-av', () => {
         playAsync: mockPlayAsync,
         pauseAsync: mockPauseAsync,
         setStatusAsync: mockSetStatusAsync,
+        setPositionAsync: mockSetStatusAsync,
       }), []);
 
       return <View testID={testID ?? 'mock-video'} {...rest} />;
@@ -185,3 +187,109 @@ describe('SharedVideoPlayer', () => {
     expect(onEnd).toHaveBeenCalledTimes(1);
   });
 });
+
+
+describe('Full-screen video', () => {
+  it('moves one player into full screen and back at the playback position, preserving sound', async () => {
+    await render(<SharedVideoPlayer uri="https://example.com/full.mp4" autoplay muted={false} />);
+    const inlineStatus = capturedStatusCallback;
+    await act(async () => { inlineStatus?.({ isLoaded: true, isPlaying: true, positionMillis: 12000, durationMillis: 60000 }); });
+    await fireEvent.press(screen.getByLabelText('View video full screen'));
+    expect(screen.getAllByTestId('mock-video')).toHaveLength(1);
+    expect(screen.getByTestId('mock-video').props.status.positionMillis).toBe(12000);
+    expect(screen.getByTestId('mock-video').props.isMuted).toBe(false);
+    expect(screen.getByTestId('mock-video').props.resizeMode).toBe('contain');
+    expect(screen.getByTestId('mock-video').props.videoStyle).toEqual({ width: '100%', height: '100%' });
+    await fireEvent(screen.getByTestId('mock-video'), 'load');
+    expect(screen.getByTestId('mock-video').props.status).toEqual({});
+    await fireEvent.press(screen.getByLabelText('Mute'));
+    expect(screen.getByTestId('mock-video').props.status).toEqual({});
+    await act(async () => { capturedStatusCallback?.({ isLoaded: true, isPlaying: true, positionMillis: 19000, durationMillis: 60000 }); });
+    await act(async () => { inlineStatus?.({ isLoaded: false, error: 'retired inline decoder' }); });
+    expect(screen.queryByText('Video unavailable')).toBeNull();
+    await fireEvent.press(screen.getByLabelText('Close full-screen video'));
+    expect(screen.getAllByTestId('mock-video')).toHaveLength(1);
+    expect(screen.getByTestId('mock-video').props.status.positionMillis).toBe(19000);
+    expect(screen.queryByLabelText('Close full-screen video')).toBeNull();
+  });
+
+  it('supports full-screen seeking and preserves paused intent', async () => {
+    await render(<SharedVideoPlayer uri="https://example.com/full.mp4" />);
+    await fireEvent.press(screen.getByLabelText('View video full screen'));
+    await act(async () => { capturedStatusCallback?.({ isLoaded: true, isPlaying: false, positionMillis: 1000, durationMillis: 10000 }); });
+    await fireEvent(screen.getByTestId('fullscreen-video-seek'), 'slidingComplete', 4000);
+    expect(mockSetStatusAsync).toHaveBeenCalledWith(4000);
+    expect(screen.getByTestId('mock-video').props.shouldPlay).toBe(false);
+    await fireEvent.press(screen.getByLabelText('Close full-screen video'));
+    expect(screen.getByTestId('mock-video').props.shouldPlay).toBe(false);
+  });
+
+  it('closes the full-screen view when the source is replaced', async () => {
+    const ui = await render(<SharedVideoPlayer uri="https://example.com/old.mp4" />);
+    await fireEvent.press(screen.getByLabelText('View video full screen'));
+    const oldStatus = capturedStatusCallback;
+    await ui.rerender(<SharedVideoPlayer uri="https://example.com/new.mp4" />);
+    expect(screen.queryByLabelText('Close full-screen video')).toBeNull();
+    await act(async () => { oldStatus?.({ isLoaded: false, error: 'old source' }); });
+    expect(screen.queryByText('Video unavailable')).toBeNull();
+  });
+
+  it('keeps the inline player and reports failure when native pause rejects', async () => {
+    mockPauseAsync.mockRejectedValueOnce(new Error('cannot pause'));
+    await render(<SharedVideoPlayer uri="https://example.com/full.mp4" />);
+    await act(async () => { capturedStatusCallback?.({ isLoaded: true, isPlaying: true, positionMillis: 1000, durationMillis: 10000 }); });
+    await fireEvent.press(screen.getByLabelText('View video full screen'));
+    expect(screen.queryByLabelText('Close full-screen video')).toBeNull();
+    expect(screen.getByText('Couldn’t change the video view. Try again.')).toBeTruthy();
+  });
+
+  it('opens an already paused video without issuing a redundant native pause', async () => {
+    mockPauseAsync.mockImplementationOnce(() => new Promise(() => {}));
+    await render(<SharedVideoPlayer uri="https://example.com/paused.mp4" />);
+    await fireEvent.press(screen.getByLabelText('View video full screen'));
+    expect(screen.getByLabelText('Close full-screen video')).toBeTruthy();
+    expect(mockPauseAsync).not.toHaveBeenCalled();
+  });
+
+  it('restores Web position after load without letting initial zero overwrite the pending seek', async () => {
+    const prior = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+    try {
+      await render(<SharedVideoPlayer uri="https://example.com/web.mp4" />);
+      await act(async () => { capturedStatusCallback?.({ isLoaded: true, isPlaying: false, positionMillis: 4500, durationMillis: 10000 }); });
+      await fireEvent.press(screen.getByLabelText('View video full screen'));
+      await act(async () => { capturedStatusCallback?.({ isLoaded: true, isPlaying: false, positionMillis: 0, durationMillis: 10000 }); });
+      await fireEvent(screen.getByTestId('mock-video'), 'load');
+      expect(mockSetStatusAsync).toHaveBeenCalledWith(4500);
+      expect(screen.getByTestId('mock-video').props.status).toEqual({});
+      await fireEvent.press(screen.getByLabelText('Close full-screen video'));
+      await fireEvent(screen.getByTestId('mock-video'), 'load');
+      expect(mockSetStatusAsync).toHaveBeenLastCalledWith(4500);
+    } finally { Object.defineProperty(Platform, 'OS', { configurable: true, value: prior }); }
+  });
+
+  it('offers a bounded Web resume retry without resetting the saved position', async () => {
+    const prior = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+    try {
+      await render(<SharedVideoPlayer uri="https://example.com/retry.mp4" />);
+      await act(async () => { capturedStatusCallback?.({ isLoaded: true, isPlaying: false, positionMillis: 7000, durationMillis: 10000 }); });
+      await fireEvent.press(screen.getByLabelText('View video full screen'));
+      mockSetStatusAsync.mockRejectedValueOnce(new Error('seek failed'));
+      await fireEvent(screen.getByTestId('mock-video'), 'load');
+      expect(screen.getByLabelText('Retry playback position')).toBeTruthy();
+      await fireEvent.press(screen.getByLabelText('Retry playback position'));
+      expect(mockSetStatusAsync).toHaveBeenLastCalledWith(7000);
+      expect(screen.queryByLabelText('Retry playback position')).toBeNull();
+    } finally { Object.defineProperty(Platform, 'OS', { configurable: true, value: prior }); }
+  });
+});
+
+ it('closes a fullscreen modal immediately even if native pause never finishes', async () => {
+    await render(<SharedVideoPlayer uri="https://example.com/close.mp4" />);
+    await fireEvent.press(screen.getByLabelText('View video full screen'));
+    mockPauseAsync.mockImplementationOnce(() => new Promise(() => {}));
+    await fireEvent.press(screen.getByLabelText('Close full-screen video'));
+    expect(screen.queryByLabelText('Close full-screen video')).toBeNull();
+    expect(screen.getAllByTestId('mock-video')).toHaveLength(1);
+ });

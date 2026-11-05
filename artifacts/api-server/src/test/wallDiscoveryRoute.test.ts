@@ -105,7 +105,7 @@ function fakeClient(flags: Record<string, boolean>) {
         } else {
           data = [];
         }
-        return Promise.resolve({ data, error: null }).then(onF, onR);
+        return Promise.resolve({ data: table === "places" ? data.map(row => ({ moderation_status: "visible", merged_into_place_id: null, ...row })) : data, error: null, count: data.length }).then(onF, onR);
       },
     };
     return b;

@@ -1,3 +1,4 @@
+import { Maximize2 } from 'lucide-react-native';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet, Alert, Share, useWindowDimensions } from 'react-native';
 import { CachedImage, withStorageParams } from './CachedImage.tsx';
@@ -429,6 +430,7 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId, autoplayVideo 
             onError={() => setMediaFailed(true)}
           />
         )}
+        <Pressable style={{ position: 'absolute', top: 12, right: 12, width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.65)', alignItems: 'center', justifyContent: 'center', zIndex: 2 }} accessibilityRole="button" accessibilityLabel={showsVideo ? 'View video full screen' : 'View photo full screen'} onPress={event => { event.stopPropagation?.(); router.push(`/media-viewer/${item.id}` as any); }}><Maximize2 size={22} color="#fff" /></Pressable>
         {/* Passport-stamp overlay — sits on the photo, under the scrim/labels */}
         {!mediaFailed && <MediaStampOverlay raw={item.media?.[0]?.stamp_overlay} />}
         {/* Bottom scrim for AuthorRow readability.

@@ -1,3 +1,5 @@
+import { readCanonicalPlaceVisibility } from '../lib/places/placeGovernance.js';
+import { isCanonicalPlaceAdmissionError } from '../lib/discoveryPlaceGovernance.js';
 /**
  * Hidden Gems routes
  *
@@ -330,7 +332,9 @@ router.post("/hidden-gems", async (req, res) => {
         .eq("id", cpid)
         .maybeSingle();
 
-      if (!placeRow) {
+      const governance = await readCanonicalPlaceVisibility(sc, [cpid]);
+      if (!governance.ok) { sendError(res, "degraded_unavailable", "Linked place could not be checked"); return; }
+      if (!placeRow || !governance.visibleIds.has(cpid)) {
         res.status(422).json({
           error: "invalid_payload",
           message: "The selected place could not be verified. Please search and select the location again.",
@@ -398,8 +402,10 @@ router.post("/hidden-gems", async (req, res) => {
   try {
     const gem = await submitGem(sc, { ...parsed.data, submittedBy: user.id });
     const safe = await applyGemPrivacy(gem, sc, user.id);
+    if (!safe) { sendError(res, "not_found", "Gem not found"); return; }
     res.status(201).json({ ok: true, gem: safe }); recordGemContributionSignal(sc, { userId: user.id, gemId: String((gem as any).id), kind: "gem_submission" });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -570,6 +576,7 @@ router.get("/hidden-gems", async (req, res) => {
       },
     });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -598,6 +605,7 @@ router.get("/hidden-gems/saved", async (req, res) => {
     });
     res.json({ gems: enriched, total: enriched.length });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -632,6 +640,7 @@ router.get("/hidden-gems/layover-safe", async (req, res) => {
     const gated = await gemsUnderLayoverMode(sc, callerId, window, safe, "GET /hidden-gems/layover-safe"); if (!gated.ok) { sendError(res, "degraded_unavailable", gated.message); return; }
     res.json({ gems: gated.gems, total: gated.gems.length, availableMinutes, ...certifiedWindowKeys(window, gated.summary) });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -680,6 +689,7 @@ router.get("/hidden-gems/trip-city/:tripId", async (req, res) => {
     });
     res.json({ gems: enriched, total: enriched.length, city });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -722,6 +732,7 @@ router.get("/hidden-gems/nearby", async (req, res) => {
     const gems = await Promise.all(
       ranked.map(async ({ gem, distanceKm }) => {
         const safe = await applyGemPrivacy(gem, sc, user.id);
+        if (!safe) return null;
         const p = projections.get((gem as any).id);
         return {
           ...safe,
@@ -731,7 +742,7 @@ router.get("/hidden-gems/nearby", async (req, res) => {
       }),
     );
 
-    res.json({ ok: true, gems: stampServedRecommendations(gems, exposureForResponse(res, user.id)) });  // §48 DV-40 — every served gem carries its exposure id
+    res.json({ ok: true, gems: stampServedRecommendations(gems.filter(gem => gem !== null), exposureForResponse(res, user.id)) });  // §48 DV-40 — every served gem carries its exposure id
 
     // Serve point 11 — same reasoning as GET /hidden-gems above; the `route`
     // field is what separates the two in the corpus. findNearbyGems ranks by
@@ -745,6 +756,7 @@ router.get("/hidden-gems/nearby", async (req, res) => {
       context:    { radiusKm: parsed.data.radiusKm, category: parsed.data.category ?? null },
     });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -777,6 +789,7 @@ router.get("/hidden-gems/:id", async (req, res) => {
     }
 
     const safe = await applyGemPrivacy(gem, sc, callerId, callerTripId);
+    if (!safe) { sendError(res, "not_found", "Gem not found"); return; }
 
     // Derive the §16 semantic state + numeric confidence at read time from the
     // gem's existing signals + structured contributions (never stored). Reads no
@@ -805,6 +818,7 @@ router.get("/hidden-gems/:id", async (req, res) => {
 
     res.json({ gem: safe, guideProfile, savedByMe });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -860,6 +874,7 @@ router.patch("/hidden-gems/:id", async (req, res) => {
     }
 
     const safe = await applyGemPrivacy(updated, sc, user.id);
+    if (!safe) { sendError(res, "not_found", "Gem not found"); return; }
 
     // Record guide contribution for any active guide (including owner-guides)
     if (isActiveGuide) {
@@ -904,6 +919,7 @@ router.post("/hidden-gems/:id/save", async (req, res) => {
       saveCountIncremented: result.saveCountIncremented,
     });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -925,6 +941,7 @@ router.delete("/hidden-gems/:id/save", async (req, res) => {
     const result = await unsaveGem(sc, req.params.id, user.id);
     res.json({ ok: true, removed: result.removed });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -1079,6 +1096,7 @@ router.post("/hidden-gems/:id/verify-visit", async (req, res) => {
       ...(result.error ? { error: result.error } : {}),
     });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -1106,6 +1124,7 @@ router.post("/hidden-gems/:id/report", async (req, res) => {
     const result = await reportGem(sc, req.params.id, user.id, parsed.data.reason, parsed.data.notes);
     res.json({ ok: true, alreadyReported: result.alreadyReported });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -1155,6 +1174,7 @@ router.post("/hidden-gems/:id/contribute", async (req, res) => {
       gemConfidence: projection?.gemConfidence ?? null,
     });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -1203,6 +1223,7 @@ router.post("/hidden-gems/:id/share-telegraph", async (req, res) => {
 
     // Run through the privacy guard — single choke-point for all coord/neighborhood disclosure
     const safe = await applyGemPrivacy(gem, sc, user.id);
+    if (!safe) { sendError(res, "not_found", "Gem not found"); return; }
 
     const sensitivityLevel = (safe as any).sensitivity_level ?? (safe as any).sensitivityLabel;
     const isProtected = sensitivityLevel === "protected";
@@ -1239,6 +1260,7 @@ router.post("/hidden-gems/:id/share-telegraph", async (req, res) => {
 
     if (insertErr) { req.log?.warn?.({ err: insertErr, threadId }, "hidden gem share: message insert refused"); sendError(res, "db_error", "The gem could not be shared. Please try again."); return; } res.json({ ok: true, card });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -1365,6 +1387,7 @@ router.post("/hidden-gems/:id/plan", async (req, res) => {
 
     res.status(201).json({ ok: true, planItemId: (data as any).id });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -1386,6 +1409,7 @@ router.get("/hidden-gems/guides/:userId", async (req, res) => {
     }
     res.json({ guide });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -1408,6 +1432,7 @@ router.post("/hidden-gems/guides/apply", async (req, res) => {
     const profile = await applyForGuide(sc, user.id, bio, cityExpertise);
     res.status(201).json({ ok: true, guide: profile });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -1430,6 +1455,7 @@ router.get("/admin/hidden-gems/pending", async (req, res) => {
     const queue = await getPendingQueue(sc);
     res.json({ queue });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -1450,6 +1476,7 @@ router.get("/admin/hidden-gems/reported", async (req, res) => {
     const gems = await getReportedGems(sc);
     res.json({ gems });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -1470,6 +1497,7 @@ router.get("/admin/hidden-gems/guide-applications", async (req, res) => {
     const applications = await getGuideApplications(sc);
     res.json({ applications });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -1534,6 +1562,7 @@ router.post("/admin/hidden-gems/:id/verify", async (req, res) => {
     const gemFound = await recordAdminVerification(sc, req.params.id, user.id, parsed.data.result, parsed.data.notes);  if (!gemFound) { sendError(res, "not_found", "Gem not found"); return; }  // WP-21: a missing gem is not an approval
     res.json({ ok: true });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
     return;
   }
@@ -1599,6 +1628,7 @@ router.post("/admin/hidden-gems/:id/sensitive", async (req, res) => {
     const gemFound = await markSensitive(sc, req.params.id, sensitivityLevel);  if (!gemFound) { sendError(res, "not_found", "Gem not found"); return; }  // tm-followups A2: a missing gem is not a success
     res.json({ ok: true });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -1622,6 +1652,7 @@ router.post("/admin/hidden-gems/:id/merge", async (req, res) => {
     const merge = await mergeDuplicate(sc, req.params.id, canonicalGemId);  if (merge !== "merged") { sendError(res, "not_found", merge === "canonical_not_found" ? "Canonical gem not found" : "Gem not found"); return; }  // tm-followups A2
     res.json({ ok: true });
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -1657,6 +1688,7 @@ router.post("/admin/hidden-gems/:id/resolve-report", async (req, res) => {
     if (!result.ok) { sendError(res, "not_found", "Gem not found"); return; }
     res.json(result);
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });
@@ -1683,6 +1715,7 @@ router.post("/admin/local-guides/:userId/status", async (req, res) => {
     const guide = await setGuideStatus(sc, req.params.userId, status);  if (!guide) { sendError(res, "not_found", "This user has no local guide profile"); return; }
     req.log?.info?.({ adminId: user.id, guideUserId: req.params.userId, status, verifiedAt: guide.verified_at }, "local guide status set via admin surface");  res.json({ ok: true, guide });  // the audit record of an admin guide decision (WP-21)
   } catch (err: any) {
+    if (isCanonicalPlaceAdmissionError(err)) { sendError(res, "not_found", "Place not found"); return; }
     sendError(res, "db_error", err.message);
   }
 });

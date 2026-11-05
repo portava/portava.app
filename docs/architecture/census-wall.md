@@ -2550,3 +2550,23 @@ Do not follow Input Intelligence §34.5's historical direct-module bootstrap rec
 reviewed privacy-safe native integration, explicit owner approval, a native build and real
 locale/API-level/device proof remain prerequisites. No native imports, package/lock/plugin changes,
 provider fallback, cloud consent, deployment or device success are claimed by this evidence.
+
+## §26 — 2026-11-05: owned on-device producer and current-author projection guard
+
+The user's completion instruction authorized an owned native speech implementation. The earlier
+unpatched vendor module remains excluded; `modules/portava-on-device-speech` instead implements
+selected-locale on-device recognition, bounded foreground capture, deferred-permission cancellation
+and terminal cleanup. `app/_layout.tsx` registers it through the existing shared speech resolver;
+absent/unsupported modules remain unavailable. Wall still inserts final text for review without
+submitting it. No cloud provider, model download or feature-flag activation was added.
+
+The post-like Wall projection path now also reads current canonical account restrictions and
+private-author audience as a batch before emitting metadata. This applies to normal feed reads and
+cached-object revalidation. Tests cover newly private accounts, stale follow metadata, current bans,
+suspensions and policy-read failure without claiming that a failed read means a healthy empty feed.
+
+See `docs/wall/completion-work-20261105.md` for exact files and evidence: 190/190 broader API checks,
+26/26 voice/mounted-Wall checks, and native validation recorded with the module. This is a local
+implementation update, not a percentage re-declaration or a physical-device acceptance claim.
+W71's actual device/locale/microphone evidence and W146/W149/W159/W167/W168's measurement and human
+review requirements remain as specified. No production release or external transcription provider activation occurred.

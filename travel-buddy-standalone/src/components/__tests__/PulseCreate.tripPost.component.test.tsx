@@ -88,4 +88,16 @@ describe('posting to a trip', () => {
     expect(view.getByText('Highlight')).toBeTruthy();
     expect((await postUpdate(view)).tripId).toBeUndefined();
   });
+
+  it('opens a shared link as an editable profile draft and only publishes on submit', async () => {
+    const link = 'https://rumazi.com/posts/11111111-1111-4111-8111-111111111111';
+    const view = await render(<UnifiedPostComposer onClose={() => {}} initialText={link} />);
+    expect(view.getByTestId('composer-text').props.value).toBe(link);
+    expect(mockCreate).not.toHaveBeenCalled();
+    await fireEvent.changeText(view.getByTestId('composer-text'), `Worth a visit\n${link}`);
+    await fireEvent.press(view.getAllByText('Post Update').slice(-1)[0]!);
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1));
+    expect(mockCreate.mock.calls[0]![0]).toMatchObject({ content: `Worth a visit\n${link}` });
+    expect((mockCreate.mock.calls[0]![0] as Record<string, unknown>).tripId).toBeUndefined();
+  });
 });

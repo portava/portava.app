@@ -141,7 +141,7 @@ function makeClient(store: Record<string, any[]>, ops: Op[], opts: FakeOpts = {}
         }
         return { data: wantRows ? written : null, error: null };
       }
-      let matched = all.filter((r) => filters.every((p) => p(r))); const count = countExact ? matched.length : null;
+      let matched = all.map(r=>table === "places" ? {moderation_status:"visible",merged_into_place_id:null,...r}:r).filter((r) => filters.every((p) => p(r))); const count = countExact ? matched.length : null;
       if (mode === "update") { for (const r of matched) Object.assign(r, payload); return { data: wantRows ? matched.map((x) => ({ ...x })) : null, error: null }; }
       if (mode === "delete") { store[table] = all.filter((r) => !matched.includes(r)); return { data: wantRows ? matched : null, error: null }; }
       if (orders.length > 0) matched = [...matched].sort((x, y) => { for (const [c, asc] of orders) { const d = String(x[c] ?? "").localeCompare(String(y[c] ?? "")); if (d !== 0) return asc ? d : -d; } return 0; }); if (rangeFrom != null) matched = matched.slice(rangeFrom, rangeTo + 1); if (limitN != null) matched = matched.slice(0, limitN); matched = matched.slice(0, 1000); // H-15: order, range and PostgREST's max-rows cap, as the database answers
@@ -1002,17 +1002,24 @@ describe("H-17 — the owner rejects the auto-matched place: no non-owner door c
     assert.deepEqual(pair((await call(app, "GET", `/memories/${MEM_MERGED}`, FRIEND)).body.memory), [null, null]);
   });
 
-  it("a catalog that cannot be read refuses the non-owner read (503) for a Memory with a rejection; one without a rejection makes no catalog read", async () => {
+  it("an unreadable catalog refuses non-owner canonical references with or without owner corrections", async () => {
     app = await start({ mutate: setUp(true), failReads: new Set(["places"]) });
     assert.equal((await call(app, "GET", `/memories/${MEM}`, FRIEND)).status, 503);
     assert.equal((await call(app, "GET", `/memories/${MEM}`, OWNER)).status, 200, "the owner's own detail reads no correction");
     await app.close(); app = null;
     app = await start({ mutate: setUp(false), failReads: new Set(["places"]) });
-    assert.equal((await call(app, "GET", `/memories/${MEM}`, FRIEND)).status, 200, "control: no rejection, no catalog read");
+    assert.equal((await call(app, "GET", `/memories/${MEM}`, FRIEND)).status, 503, "current canonical moderation is required even without a correction");
     await app.close(); app = null;
     app = await start({ mutate: (s) => { setUp(false)(s); s[TABLE].push(correction("assert", { place_id: PLACE_OPEN })); }, failReads: new Set(["places"]) });
     const asserted = await call(app, "GET", `/memories/${MEM}`, FRIEND);
-    assert.deepEqual([asserted.status, asserted.body?.memory?.placeId], [200, PLACE_OPEN], "corrections with no rejected place make no catalog read either");
+    assert.deepEqual([asserted.status, asserted.body?.memory?.placeId], [503, undefined], "an owner assertion cannot bypass current public place moderation");
+  });
+
+  it("canonical withholding removes public place references while the owner retains their history",async()=>{
+    app=await start({mutate:s=>{setUp(false)(s);s.places.find(p=>p.id===PLACE_CANON).moderation_status='withheld';}});
+    for(const [door,read] of doors){const m=await read(app);assert.deepEqual([m.placeId,m.canonicalLocationId],[null,null],door);}
+    const own=await call(app,'GET',`/memories/${MEM}`,OWNER);
+    assert.deepEqual([own.body.memory.placeId,own.body.memory.canonicalLocationId],['osm:node/123',CANON_LOC]);
   });
 
   it("registry: the crew's TripMemoryProjection and the Timeline carry no place for it, and a later catalog merge INTO a rejected place makes a built derivative stale", async () => {
@@ -1098,6 +1105,7 @@ describe("H-17a — C matches several catalog rows and ANY of them is rejected: 
     assert.equal((await call(app!, "GET", `/memories/${MEM}`, FRIEND)).status, 503);
     assert.equal((await call(app!, "GET", `/memories/${MEM}`, OWNER)).status, 200);
   });
+
 
   it("registry: the crew's TripMemoryProjection carries no place for it (control: an unrelated rejection keeps the pick)", async () => {
     const crew = { owner_id: OWNER, viewer_id: null, trip_id: TRIP_X, place_id: null, person_id: null };
@@ -1224,6 +1232,7 @@ describe("H-17c — H-17a follows merges of the candidate rows: a row C matches 
     assert.equal((await call(app, "GET", `/memories/${MEM}`, FRIEND)).status, 503);
     assert.equal((await call(app, "GET", `/memories/${MEM}`, OWNER)).status, 200);
   });
+
 
   it("registry: the crew's TripMemoryProjection carries no place for it (control: the twin merged into an unrejected place keeps the pick)", async () => {
     const crew = { owner_id: OWNER, viewer_id: null, trip_id: TRIP_X, place_id: null, person_id: null };

@@ -210,6 +210,7 @@ describe("R — H-P21-3: Trail health keeps its window, feature version and cloc
 const iso = (at: number, msAgo: number) => new Date(at - msAgo).toISOString();
 function trendingSeed(at: number, over: { members?: Row[] } = {}): Record<string, Row[]> {
   return {
+    discovery_places: PLACES.map(id => ({ id, status: 'active' })),
     trails: [{ id: T_A, slug: "slug-a", title: "Trail A", description: null, destination: "bangkok", place_scope: null,
       parent_trail_id: null, review_state: "approved", lifecycle_status: "active", created_by: USER, created_at: iso(at, 86_400_000), updated_at: iso(at, 86_400_000) }],
     content_trails: over.members ?? PLACES.map((p, i) => ({ id: `m${i}`, trail_id: T_A, source_type: "place", source_id: p, relationship: "primary",

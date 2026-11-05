@@ -1,3 +1,4 @@
+import { filterCurrentPostAuthors } from '../lib/postAuthorAudience.js';
 import { Router } from "express";
 import { z } from "zod";
 import { logger as rootLogger } from "../lib/logger";
@@ -1885,7 +1886,7 @@ router.get("/posts/:postId", async (req, res) => {
 
   const { data, error } = await sc
     .from("posts")
-    .select(POST_COLUMNS)
+    .select(POST_COLUMNS + ", deleted_at")
     .eq("id", postId)
     .eq("status", "active")
     .maybeSingle();
@@ -1894,6 +1895,9 @@ router.get("/posts/:postId", async (req, res) => {
   if (!data) { sendError(res, "not_found", "Post not found"); return; }
 
   const post = data as any;
+  if (post.deleted_at != null || !(await filterCurrentPostAuthors(sc, user.id, [post])).length) {
+    sendError(res, "not_found", "Post not found"); return;
+  }
   const isAuthor = post.author_id === user.id;
   const isPublished = !post.post_status || post.post_status === "published";
 
@@ -2701,7 +2705,7 @@ router.get("/posts/:postId/comments", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Verify post exists and caller has read access
-  const { data: post, error: postReadErr } = await sc.from("posts").select("id, author_id, visibility, trip_id, post_status").eq("id", postId).eq("status", "active").maybeSingle();
+  const { data: post, error: postReadErr } = await sc.from("posts").select("id, author_id, visibility, trip_id, post_status, deleted_at").eq("id", postId).eq("status", "active").maybeSingle();
   if (postReadErr) { sendError(res, "db_error", postReadErr.message); return; } if (!post) { sendError(res, "not_found", "Post not found"); return; }
   if (post.author_id !== user.id && isExcluded(await readPairExclusion(sc, user.id, post.author_id), post.author_id)) { sendError(res, "not_found", "Post not found"); return; } if (!(await checkPostCommentsReadPermission(res, post as any, user.id, client))) return;
   const isPostAuthor = (post as any).author_id === user.id;
@@ -3719,10 +3723,15 @@ import { decidePerspectiveVantageWrite } from "../lib/media/perspectiveVantage.j
 
 async function checkPostCommentsReadPermission(
   res: import("express").Response,
-  post: { author_id: string; visibility: string; trip_id: string | null; post_status?: string | null },
+  post: { author_id: string; visibility: string; trip_id: string | null; post_status?: string | null; deleted_at?: string | null },
   userId: string,
   userClient: SupabaseClient,
 ): Promise<boolean> {
+  const sc = getServiceClient();
+  if (!sc || post.deleted_at != null || !(await filterCurrentPostAuthors(sc, userId, [post])).length) {
+    sendError(res, "not_found", "Post not found");
+    return false;
+  }
   if (post.author_id === userId) {
     return checkEngagePermission(res, post, userId, userClient);
   }

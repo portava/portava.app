@@ -81,6 +81,8 @@ export interface MediaAction {
 
 export interface MediaActionSet {
   mediaId: string;
+  /** Absent only on older servers; the current endpoint returns persisted intent. */
+  wanted?: boolean;
   entityRefs: MediaEntityRef[];
   actions: MediaAction[];
   /** ISO timestamp the set was computed, or null. */

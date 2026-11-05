@@ -1,3 +1,7 @@
+import { OutcomeFeedback } from './OutcomeFeedback.tsx';
+import { usePrivateSurfaceKey } from '../../../hooks/usePrivateSurfaceKey.ts';
+import { useMediaSurfaceActivity } from '../../../hooks/useMediaSurfaceActivity.ts';
+import { captureMessagingOwnerRequest } from '../../../services/messagingOwnerRequest.ts';
 /**
  * Telegraph §10.3 — the end-of-night recap.
  *
@@ -20,7 +24,7 @@
  *  3. `Done` is a first-class button of equal weight, not a dismissal X in a
  *     corner. Declining to curate is one of the four offered outcomes.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { space, radius, type as t } from '../../../theme/tokens.ts';
 import { useTelegraphPalette, type TelegraphPalette } from '../theme/telegraphTheme.ts';
@@ -43,7 +47,11 @@ export interface RecapSheetProps {
   initialRecap?: RecapResponse | null;
 }
 
-export function RecapSheet({
+export function RecapSheet(props: RecapSheetProps) {
+  const scope=usePrivateSurfaceKey();
+  return props.visible ? <OwnedRecapSheet key={`${scope}:${props.threadId}:${props.planId}`} {...props} /> : null;
+}
+function OwnedRecapSheet({
   visible,
   threadId,
   planId = null,
@@ -58,42 +66,47 @@ export function RecapSheet({
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    const r = await fetchRecap(threadId, planId);
-    if (r.ok) {
-      setData(r.data);
-      setFailed(false);
-    } else {
-      // "We could not read it" is not "the night was empty".
-      setFailed(true);
-    }
-    setLoading(false);
-  }, [threadId, planId]);
+  const controller=useRef<AbortController|null>(null);
+  const owner=useMemo(()=>captureMessagingOwnerRequest(),[]);
+  const activity=useMediaSurfaceActivity(()=>controller.current?.abort());
+  const [revision,retry]=useState(0);
+  useEffect(()=>{
+    const abort=new AbortController();controller.current=abort;
+    setData(null);setFailed(false);setLoading(true);
+    if(!owner||!activity.active){setLoading(false);return()=>abort.abort();}
+    if(initialRecap!==null&&activity.epoch===0){setData(initialRecap);setLoading(false);return()=>abort.abort();}
+    void fetchRecap(threadId,planId,{owner,signal:abort.signal,isCurrent:activity.isCurrent}).then(result=>{
+      if(abort.signal.aborted||!owner.isCurrent()||!activity.isCurrent())return;
+      if(result.ok)setData(result.data);else setFailed(true);
+      setLoading(false);
+    });
+    return()=>abort.abort();
+  },[threadId,planId,initialRecap,owner,activity.active,activity.epoch,activity.isCurrent,revision]);
 
-  useEffect(() => {
-    if (!visible || initialRecap !== null) return;
-    void load();
-  }, [visible, load, initialRecap]);
-
-  const recap = data?.recap ?? null;
+  const recap = activity.active && owner?.isCurrent() ? data?.recap ?? null : null;
   // The server sends a headline; recomputing it here would be a second source
   // of truth, so it is only the fallback when the field is missing.
   const headline = data?.headline || (recap ? recapHeadline(recap.counts) : '');
 
   const press = useCallback(
     (action: RecapCurateAction) => {
+      if (!owner?.isCurrent() || !activity.isCurrent()) return;
       onCurate?.(action);
       if (action === 'DONE') onClose();
     },
-    [onCurate, onClose],
+    [onCurate, onClose, owner, activity.isCurrent],
   );
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal visible={visible && activity.active} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.backdrop}>
         <View style={styles.sheet} testID="telegraph-recap-sheet">
-          <Text style={styles.title}>That was the night</Text>
+          <View style={styles.header}>
+            <Text accessibilityRole="header" style={styles.title}>That was the night</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="Close recap" onPress={onClose} style={styles.close}>
+              <Text style={styles.actionTextQuiet}>Close</Text>
+            </Pressable>
+          </View>
 
           {loading ? (
             <View style={styles.center} accessibilityLabel="Loading recap">
@@ -107,6 +120,7 @@ export function RecapSheet({
             </Text>
           ) : null}
 
+          {failed && <Pressable accessibilityRole="button" onPress={()=>retry(n=>n+1)} style={styles.action}><Text style={styles.actionText}>Retry recap</Text></Pressable>}
           {!failed && !loading && recap === null ? (
             <Text style={styles.note} testID="telegraph-recap-none">
               There is no finished plan in this conversation to look back on yet.
@@ -130,6 +144,7 @@ export function RecapSheet({
                 </Text>
               ) : null}
 
+              {recap.planId && <OutcomeFeedback key={recap.planId} threadId={threadId} planId={recap.planId} />}
               <View style={styles.actions}>
                 {(recap.curateActions ?? []).map((action) => (
                   <Pressable
@@ -187,6 +202,8 @@ function makeStyles(p: TelegraphPalette) {
       gap: space.sm,
     },
     body: { gap: space.md, paddingBottom: space.md },
+    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm },
+    close: { minHeight: 44, minWidth: 44, justifyContent: 'center', alignItems: 'center' },
     title: { ...t.body, color: p.recvText, fontWeight: '800' },
     headline: { ...t.body, color: p.recvText, fontWeight: '700' },
     note: { ...t.small, color: p.mute },
@@ -194,6 +211,8 @@ function makeStyles(p: TelegraphPalette) {
     center: { paddingVertical: space.lg, alignItems: 'center' },
     actions: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
     action: {
+      minHeight: 44,
+      justifyContent: 'center',
       paddingHorizontal: space.lg,
       paddingVertical: 9,
       borderRadius: radius.pill,

@@ -9,25 +9,28 @@
 // Re-export geometry constants so callers can import from either file.
 export { LAYOVER_PILL_BOTTOM_OFFSET, LAYOVER_PILL_HEIGHT } from './layoverPillGeometry.ts';
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronRight, Plane } from 'lucide-react-native';
 import { color, space, type as t, dot} from '../../theme/tokens.ts';
 import { useLayoverSessionContext } from '../../context/LayoverSessionContext.tsx';
 import { fmtClock } from './layoverFormat.ts';
+import { floatingTabBarMetrics } from '../navigation/floatingTabBarGeometry.ts';
+import { LAYOVER_PILL_BOTTOM_OFFSET } from './layoverPillGeometry.ts';
 
 export function ActiveLayoverPill() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { session, airport } = useLayoverSessionContext();
+  const { fontScale } = useWindowDimensions();
 
   if (!session) return null;
   const label = airport?.iataCode ?? session.manualIata ?? 'Layover';
   const depLocal = fmtClock(session.departureTime, airport?.timezone);
 
   return (
-    <View style={[styles.wrap, { bottom: insets.bottom + 74 }]} pointerEvents="box-none">
+    <View style={[styles.wrap, { bottom: insets.bottom + LAYOVER_PILL_BOTTOM_OFFSET + floatingTabBarMetrics(fontScale).extraHeight }]} pointerEvents="box-none">
       <Pressable style={styles.pill} onPress={() => router.push(`/layover/${session.id}` as any)}>
         <View style={styles.pulseDot} />
         <Plane size={14} color={color.onInk} />

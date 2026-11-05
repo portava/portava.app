@@ -1,3 +1,4 @@
+import { refPlaysAsVideo } from '../../lib/media/videoPosterRef.ts';
 /**
  * EventCommunitySection — posts, photos and comments on the event page
  * (PLAT-F30).
@@ -25,7 +26,7 @@ import {
 import { uploadMedia } from '../../services/media.ts';
 import { useMediaPicker } from '../../hooks/useMediaPicker.ts';
 import { canOfferEventContribution } from '../../lib/eventCommunity.ts';
-import { CachedImage } from '../CachedImage.tsx';
+import { ContentMedia } from '../ui/ContentMedia.tsx';
 import { Avatar } from '../ui.tsx';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 
@@ -151,7 +152,8 @@ export function EventCommunitySection({ event }: Props) {
         ) : (
           <View style={s.grid}>
             {(photos.status === 'ready' ? photos.items : []).map((m) => (
-              <CachedImage key={m.id} source={{ uri: m.media_url }} style={s.photo} accessibilityLabel={m.caption ?? 'Event photo'} />
+              <ContentMedia key={m.id} uri={m.media_url} mediaType={m.media_type} style={s.photo} alt={m.caption ?? 'Event photo'}
+                photos={photos.status === 'ready' ? photos.items.filter(photo => !refPlaysAsVideo(photo.media_url, { mediaType: photo.media_type })).map(photo => photo.media_url) : undefined} />
             ))}
           </View>
         )

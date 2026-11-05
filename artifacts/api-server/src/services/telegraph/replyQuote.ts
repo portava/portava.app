@@ -33,6 +33,7 @@ import {
 } from "../groupChatHistoryBound.js";
 import { withholdLocationAcrossBlocks } from "./locationAcrossBlocks.js";
 import { applySharedCardTruth } from "./sharedCardTruth.js";
+import { negotiateStoredMessageRows } from "./platformReadDecorations.js";
 import { identityWithheldAcrossBlocks } from "./identityAcrossBlocks.js";
 import { nameVisibilitySet, resolveHandle } from "../../lib/publicIdentity.js";
 
@@ -44,7 +45,7 @@ interface QuoteLog { warn?: (obj: unknown, msg?: string) => void }
 
 export async function replyQuoteForSender(
   sc: any,
-  args: { threadId: string; viewerId: string; replyToId: string; log?: QuoteLog },
+  args: { threadId: string; viewerId: string; replyToId: string; log?: QuoteLog; clientHeaders?: Record<string, unknown> },
 ): Promise<ReplyQuoteFields> {
   const { threadId, viewerId, replyToId, log } = args;
   const unavailable = (err: unknown, what: string): ReplyQuoteFields => {
@@ -67,7 +68,7 @@ export async function replyQuoteForSender(
 
     let quotedQuery = sc
       .from("messages")
-      .select("id, body, sender_id, created_at, deleted_at, msg_type, subtype, profile:profiles!messages_sender_id_fkey(name, handle, username, full_name)")
+      .select("id, body, content_ref, sender_id, created_at, deleted_at, msg_type, subtype, profile:profiles!messages_sender_id_fkey(name, handle, username, full_name)")
       .eq("thread_id", threadId)
       .in("id", [replyToId]);
     quotedQuery = applyHistoryWindow(quotedQuery, visibleFrom, viewerId);
@@ -78,7 +79,7 @@ export async function replyQuoteForSender(
       withinWindow(qr.created_at, visibleFrom, { senderId: qr.sender_id, viewerId }));
     const located = (await withholdLocationAcrossBlocks(sc, viewerId, windowed)).rows;
     const quoted = (await applySharedCardTruth(sc, viewerId, located, { threadId, log: log as any })).rows;
-    const qr: any = quoted.find((r: any) => r.id === replyToId);
+    const qr: any = (await negotiateStoredMessageRows(sc, quoted, args.clientHeaders)).find((r: any) => r.id === replyToId);
     if (!qr) return { replyToBody: null, replyToSenderName: null };
     // A deleted (or unsent) message is a tombstone: its row is redacted in place,
     // and the quote of a tombstone is the reader's real `null`, never its text.

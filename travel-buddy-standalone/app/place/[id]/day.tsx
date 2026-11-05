@@ -5,7 +5,7 @@ import { ChevronLeft, ChevronRight, CalendarDays, UsersRound } from 'lucide-reac
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getPlaceDay, getPlaceDayFeed } from '../../../src/services/places.ts';
 import type { PlaceDay, PlaceDayFeedItem } from '../../../src/types/placeLiving.ts';
-import { CachedImage } from '../../../src/components/CachedImage.tsx';
+import { ContentMedia } from '../../../src/components/ui/ContentMedia.tsx';
 import { color, radius, space, type as t, typography } from '../../../src/theme/tokens.ts';
 import { useFeatureFlags } from '../../../src/context/FeatureFlagsContext.tsx';
 import { createPlaceDayRecap } from '../../../src/services/placeRecaps.ts';
@@ -73,9 +73,8 @@ export default function PlaceDayScreen() {
 }
 
 function DayPost({ item, timezone }: { item: PlaceDayFeedItem; timezone: string }) {
-  const image = item.thumbnailUrl ?? item.mediaUrl;
   return <View style={styles.card}>
-    {image ? <CachedImage source={{ uri: image }} style={styles.image} resizeMode="cover" /> : null}
+    <ContentMedia uri={item.mediaUrl} thumbnailUri={item.thumbnailUrl} mediaType={item.mediaType} style={styles.image} alt={item.caption ?? 'Place Day photo'} />
     {item.caption ? <Text style={styles.caption}>{item.caption}</Text> : <Text style={styles.muted}>Shared a moment</Text>}
     <Text style={styles.muted}>{new Intl.DateTimeFormat(undefined, { timeZone: timezone, hour: 'numeric', minute: '2-digit' }).format(new Date(item.createdAt))}</Text>
   </View>;

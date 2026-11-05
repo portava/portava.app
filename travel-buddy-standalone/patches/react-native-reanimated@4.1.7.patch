@@ -1,0 +1,36 @@
+diff --git a/android/CMakeLists.txt b/android/CMakeLists.txt
+index c4e4df92cc30961d75d06fcd7e0209140e7391ca..4d051ae8c74ce7c3ba60cf5312e23a9863c196ac 100644
+--- a/android/CMakeLists.txt
++++ b/android/CMakeLists.txt
+@@ -73,27 +73,16 @@ target_include_directories(
+ 
+ set_target_properties(reanimated PROPERTIES LINKER_LANGUAGE CXX)
+ 
+-if(${CMAKE_BUILD_TYPE} MATCHES "Debug")
+-  set(BUILD_TYPE "debug")
+-else()
+-  set(BUILD_TYPE "release")
+-endif()
+-
+-add_library(worklets SHARED IMPORTED)
+-
+-set_target_properties(
+-  worklets
+-  PROPERTIES
+-    IMPORTED_LOCATION
+-    "${REACT_NATIVE_WORKLETS_DIR}/android/build/intermediates/cmake/${BUILD_TYPE}/obj/${ANDROID_ABI}/libworklets.so"
+-)
++# Consume Worklets through its published Prefab target. AGP may put the
++# compiled library under a versioned cxx directory rather than cmake/debug.
++find_package(react-native-worklets REQUIRED CONFIG)
+ 
+ set_target_properties(reanimated PROPERTIES LINKER_LANGUAGE CXX)
+ # remove dead code sections
+ set_target_properties(reanimated PROPERTIES LINK_FLAGS "-Wl,--gc-sections")
+ 
+ target_link_libraries(reanimated log ReactAndroid::jsi fbjni::fbjni android
+-                      worklets)
++                      react-native-worklets::worklets)
+ 
+ if(ReactAndroid_VERSION_MINOR GREATER_EQUAL 76)
+   target_link_libraries(reanimated ReactAndroid::reactnative)

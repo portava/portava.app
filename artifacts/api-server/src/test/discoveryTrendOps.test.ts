@@ -331,13 +331,16 @@ describe("K — §133: the trend context keys the places Discovery serves (3920,
       log,
       from(table: string) {
         const f: string[] = [];
+        const filters: Array<(row: Record<string, unknown>) => boolean> = [];
+        let limitN = Infinity;
         let flagName = "";
         const b: any = {
           select(s: string) { f.push(`select ${s}`); return b; },
-          eq(c: string, v: unknown) { if (c === "flag") flagName = String(v); f.push(`eq ${c}=${String(v)}`); return b; },
-          neq(c: string, v: unknown) { f.push(`neq ${c}=${String(v)}`); return b; },
-          in(c: string, v: unknown[]) { f.push(`in ${c}=${v.join("|")}`); return b; },
-          is(c: string, v: unknown) { f.push(`is ${c}=${String(v)}`); return b; },
+          eq(c: string, v: unknown) { if (c === "flag") flagName = String(v); filters.push(row => row[c] === v); f.push(`eq ${c}=${String(v)}`); return b; },
+          neq(c: string, v: unknown) { filters.push(row => row[c] !== v); f.push(`neq ${c}=${String(v)}`); return b; },
+          in(c: string, v: unknown[]) { filters.push(row => v.includes(row[c])); f.push(`in ${c}=${v.join("|")}`); return b; },
+          is(c: string, v: unknown) { filters.push(row => (row[c] ?? null) === v); f.push(`is ${c}=${String(v)}`); return b; },
+          limit(n: number) { limitN = n; return b; },
           maybeSingle() {
             log.push(`${table}:${flagName}`);
             if (flagName !== "discovery_trend_canonical_place_context_enabled") return Promise.resolve({ data: { enabled: false }, error: null });
@@ -346,13 +349,14 @@ describe("K — §133: the trend context keys the places Discovery serves (3920,
           },
           then(res: (v: unknown) => unknown, rej: (e: unknown) => unknown) {
             log.push(`${table}:${f.join(";")}`);
-            if (table === "discovery_places") return Promise.resolve({ data: data.dp ?? [], error: null }).then(res, rej);
             if (table === "places") {
               if (data.places === "throw") return Promise.reject(new Error("socket")).then(res, rej);
               if (data.places === "error") return Promise.resolve({ data: null, error: { code: "57014", message: "timeout" } }).then(res, rej);
-              return Promise.resolve({ data: data.places ?? [], error: null }).then(res, rej);
             }
-            return Promise.resolve({ data: [], error: null }).then(res, rej);
+            const raw = table === 'discovery_places' ? data.dp ?? [] : table === 'places' && Array.isArray(data.places)
+              ? data.places.map(row => ({ status: 'active', moderation_status: 'visible', merged_into_place_id: null, ...row })) : [];
+            const matched = raw.filter(row => filters.every(filter => filter(row)));
+            return Promise.resolve({ data: matched.slice(0, limitN), error: null, count: matched.length }).then(res, rej);
           },
         };
         return b;
@@ -382,20 +386,20 @@ describe("K — §133: the trend context keys the places Discovery serves (3920,
     }
   });
 
-  it("K2. flag OFF, absent or unreadable: no `places` read, and the discovery_places context alone", async () => {
+  it("K2. flag OFF, absent or unreadable: no canonical ranking context, with current visibility still enforced", async () => {
     const expected = buildPlaceTrendContext(DP as never, []);
     for (const flag of [false, "absent", "error"] as const) {
       const db = ctxDb(flag, { dp: DP, places: CANON });
       const c = await loadTrendContext(db, items);
       assert.deepEqual(c, expected, String(flag));
-      assert.ok(!db.log.some((l) => l.startsWith("places:select")), `${String(flag)}: ${db.log.join(" | ")}`);
+      assert.ok(!db.log.some((l) => l.startsWith(`places:select ${CANONICAL_CONTEXT_PLACES_SELECT}`)), `${String(flag)}: ${db.log.join(" | ")}`);
     }
   });
 
   it("K3. flag ON: the unshadowed candidates are read from `places` (active, unmerged) and mapped as 3920 maps them", async () => {
     const db = ctxDb(true, { dp: DP, places: CANON });
     const c = await loadTrendContext(db, items);
-    const read = db.log.filter((l) => l.startsWith("places:select"));
+    const read = db.log.filter((l) => l.startsWith(`places:select ${CANONICAL_CONTEXT_PLACES_SELECT}`));
     assert.equal(read.length, 1);
     assert.equal(read[0], `places:select ${CANONICAL_CONTEXT_PLACES_SELECT};in id=${ID_CANON};eq status=active;is merged_into_place_id=null`,
       "only the id no discovery_places row shadows; the materialiser's status and merge filters");
@@ -418,7 +422,8 @@ describe("K — §133: the trend context keys the places Discovery serves (3920,
   it("K5. wired: the loader and the scheduler both reach it", () => {
     const loader = readFileSync(join(SRC, "lib/discoveryLocalMomentum.ts"), "utf8");
     assert.match(loader, /const canonical = await loadCanonicalContextRows\(sc, ids, places\.data as ContextPlaceRow\[\]\); if \(canonical === null\) return null;/);
-    assert.match(loader, /return buildPlaceTrendContext\(\[\.\.\.\(places\.data as ContextPlaceRow\[\]\), \.\.\.canonical\], memberships\);/);
+    assert.match(loader, /const governed = await governDiscoveryPlaces\(sc,/);
+    assert.match(loader, /governed\.readable \? buildPlaceTrendContext\(governed\.rows, memberships\) : null/);
     const sched = readFileSync(join(SRC, "lib/discoveryTrendRebuildScheduler.ts"), "utf8");
     // #790 verifier finding 3: the scheduler dispatches through trendRebuildRpc, the one place the rule lives (K1 drives it end to end).
     assert.match(sched, /import \{ trendRebuildRpc \} from "\.\/discoveryTrendCanonicalContext\.js";/);

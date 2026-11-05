@@ -1036,6 +1036,11 @@ describe("mapAggregation — deriveCrowdFlow (§10)", () => {
     assert.deepEqual(flows[0]?.payload?.observed.signalFamilies, ["arrival", "navigation_start"]);
   });
 
+  it("GATE 3 counts navigation and accepted plans as one shared-consent family", () => {
+    const result = deriveCrowdFlow([transition({ signalFamilies: ["navigation_start", "accepted_plan"] })], { now: NOW });
+    assert.equal(result.flows.length, 0); assert.equal(result.rejected[0]?.reason, "insufficient_signal_families");
+  });
+
   // ── Gate 4: cohort density ──────────────────────────────────────────────────
 
   it("GATE 4 cohort density — a cohort spread too thin over time blocks it on its own", () => {

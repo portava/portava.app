@@ -24,7 +24,12 @@
 import { Router } from "express"; import { withholdLocationAcrossBlocks } from "../services/telegraph/locationAcrossBlocks.js"; import { isSharedCardRow, sharedCardTitleFor } from "../services/telegraph/sharedCardTruth.js"; // PR-TREL-5; census-telegraph T448 (lane w-tg-cardtruth)
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
+import { getServiceClient } from '../lib/supabase.js';
+import { readLiveMessageSource, readMemoryMessageSource } from '../services/telegraph/memorySource.js';
 import { asyncHandler } from "../lib/asyncHandler.js";
+import { recapPeopleChoices, recapSourceChoices } from '../services/telegraph/recapCuration.js';
+import { negotiateStoredMessageRows } from '../services/telegraph/platformReadDecorations.js';
+import { isFlagEnabled } from '../lib/featureFlags.js';
 import { logger as rootLogger } from "../lib/logger.js";
 import {
   buildRecap,
@@ -57,6 +62,16 @@ const DraftSchema = z.object({
   caption: z.string().max(1000).nullish(),
 });
 
+router.get('/me/memory-drafts/:memoryId/source', asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res); if (!auth) return;
+  if (!UUID.test(String(req.params.memoryId))) { sendError(res, 'invalid_payload', 'Invalid Memory'); return; }
+  try {
+    const source = await readMemoryMessageSource(getServiceClient() ?? auth.client, auth.user.id, String(req.params.memoryId), req.headers);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ source });
+  } catch { sendError(res, 'degraded_unavailable', 'Could not load the saved source. Please try again.'); }
+}));
+
 // ── POST /api/me/memory-drafts ───────────────────────────────────────────────
 
 router.post(
@@ -88,7 +103,7 @@ router.post(
 
     const { data: msg, error: msgErr } = await client
       .from("messages")
-      .select("id, thread_id, sender_id, body, created_at, deleted_at, msg_type, subtype, media_type, media_url")
+      .select("id, thread_id, sender_id, body, content_ref, created_at, deleted_at, msg_type, subtype, media_type, media_url")
       .eq("id", parsed.data.messageId)
       .maybeSingle();
     if (msgErr) {
@@ -136,7 +151,7 @@ router.post(
     const row = memoryDraftRow({
       messageId: m.id,
       ownerId: user.id,
-      title: parsed.data.title ?? draftTitleFor(source, isSharedCardRow(m) ? await sharedCardTitleFor(client, user.id, m, req.log) : typeof m.body === "string" ? m.body : null), // T448: a card's draft title is its source NOW (or the neutral default), never its snapshot JSON
+      title: parsed.data.title ?? draftTitleFor(source, null), // The current source is resolved separately; no private snapshot in a durable title.
       caption: parsed.data.caption ?? null,
       occurredAt: m.created_at ?? null,
       source,
@@ -146,7 +161,7 @@ router.post(
       .from("memories")
       .insert(row)
       .select("id, owner_id, state, visibility, title, starts_at")
-      .single()); const { data: created, error: createErr } = drafted;
+      .single(), m.id); const { data: created, error: createErr } = drafted;
     if (createErr || !created) { if (drafted.refused) { sendDraftRefusal(req, res, drafted.refused); return; } // a kernel refusal keeps its §24 reason code; the legacy arm's failure answers exactly as before
       log.error({ err: createErr, messageId: m.id }, "memory draft insert failed");
       sendError(res, "db_error", createErr?.message ?? "Could not create the draft");
@@ -177,6 +192,55 @@ router.post(
   }),
 );
 
+// Withdrawal stays reachable from Message settings after a plan expires or a member leaves.
+router.delete("/me/coordination-feedback", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "degraded_unavailable", "Your feedback could not be removed.");
+    return;
+  }
+  const result = await sc.from("telegraph_outcome_feedback").delete().eq("user_id", auth.user.id);
+  if (result.error) {
+    sendError(res, "degraded_unavailable", "Your feedback could not be removed. Please try again.");
+    return;
+  }
+  res.setHeader("Cache-Control", "private, no-store");
+  res.json({ removed: true });
+}));
+
+// A deliberately submitted private response; never inferred from an RSVP.
+router.route('/threads/:threadId/plans/:planId/outcome')
+  .get(asyncHandler(async (req, res) => {
+    const auth=await requireUser(req,res);if(!auth)return;
+    const {threadId,planId}=req.params;
+    if(!UUID.test(threadId)||!UUID.test(planId)){sendError(res,'invalid_payload','Invalid plan');return;}
+    const sc=getServiceClient();if(!sc){sendError(res,'degraded_unavailable','Feedback is unavailable.');return;}
+    const result=await sc.rpc('telegraph_outcome_context',{p_thread:threadId,p_plan:planId,p_actor:auth.user.id});
+    if(result.error){sendError(res,result.error.code==='P0001'?'not_found':'degraded_unavailable','Feedback is unavailable for this plan.');return;}
+    res.setHeader('Cache-Control','private, no-store');res.json(result.data);
+  }))
+  .put(asyncHandler(async (req, res) => {
+    const auth=await requireUser(req,res);if(!auth)return;
+    const {threadId,planId}=req.params;
+    const parsed=z.object({response:z.enum(['met','did_not_meet'])}).strict().safeParse(req.body);
+    if(!UUID.test(threadId)||!UUID.test(planId)||!parsed.success){sendError(res,'invalid_payload','Choose a plan outcome.');return;}
+    const sc=getServiceClient();if(!sc){sendError(res,'degraded_unavailable','Feedback is unavailable.');return;}
+    const result=await sc.rpc('telegraph_record_outcome',{p_thread:threadId,p_plan:planId,p_actor:auth.user.id,p_response:parsed.data.response});
+    if(result.error){sendError(res,result.error.code==='P0001'?'not_found':'degraded_unavailable','Your response could not be saved. Please try again.');return;}
+    res.setHeader('Cache-Control','private, no-store');res.json(result.data);
+  }))
+  .delete(asyncHandler(async (req,res)=>{
+    const auth=await requireUser(req,res);if(!auth)return;
+    if(!UUID.test(req.params.planId)||!UUID.test(req.params.threadId)){sendError(res,'invalid_payload','Invalid plan');return;}
+    const sc=getServiceClient();if(!sc){sendError(res,'degraded_unavailable','Feedback is unavailable.');return;}
+    // A person can withdraw their own response after leaving or disabling the feature.
+    const removed=await sc.from('telegraph_outcome_feedback').delete().eq('plan_id',req.params.planId).eq('user_id',auth.user.id);
+    if(removed.error){sendError(res,'degraded_unavailable','Your response could not be removed. Please try again.');return;}
+    res.setHeader('Cache-Control','private, no-store');res.json({response:null});
+  }));
+
 // ── GET /api/threads/:threadId/recap ─────────────────────────────────────────
 
 router.get(
@@ -192,6 +256,12 @@ router.get(
       return;
     }
     const planIdRaw = typeof req.query.planId === "string" ? req.query.planId : null;
+    const curation = req.query.curation;
+    if (curation !== undefined && !['memory', 'photos', 'people'].includes(String(curation))) {
+      sendError(res, 'invalid_payload', 'Unknown recap selection'); return;
+    }
+    const sourceMessageId = typeof req.query.sourceMessageId === 'string' ? req.query.sourceMessageId : null;
+    if (sourceMessageId && !UUID.test(sourceMessageId)) { sendError(res, 'invalid_payload', 'Invalid source message'); return; }
     if (planIdRaw !== null && !UUID.test(planIdRaw)) {
       sendError(res, "invalid_payload", "Invalid planId");
       return;
@@ -221,6 +291,10 @@ router.get(
       .from("meetups")
       .select("id, title, starts_at, ends_at, status, chat_thread_id, creator_id")
       .eq("chat_thread_id", threadId)
+      .eq("status", "confirmed")
+      .lte("starts_at", new Date().toISOString())
+      .or(`ends_at.is.null,ends_at.lte.${new Date().toISOString()}`)
+      .order("starts_at", { ascending: false })
       .limit(20);
     if (planIdRaw) planQuery = planQuery.eq("id", planIdRaw);
     const { data: plans, error: planErr } = await planQuery;
@@ -231,11 +305,15 @@ router.get(
 
     const nowMs = Date.now();
     const candidates = ((plans as any[]) ?? [])
-      .filter((p) => p.starts_at && p.status !== "cancelled")
+      .filter((p) => p.starts_at && p.status === "confirmed")
       .filter((p) => Date.parse(p.ends_at ?? p.starts_at) <= nowMs)
       .sort((a, b) => Date.parse(b.starts_at) - Date.parse(a.starts_at));
     const plan = candidates[0] ?? null;
 
+    if (req.query.availability === '1') {
+      res.setHeader('Cache-Control','private, no-store');
+      res.json({available:Boolean(plan),planId:plan?.id??null});return;
+    }
     if (!plan) {
       res.status(200).json({
         recap: null,
@@ -263,7 +341,7 @@ router.get(
 
     let q = client
       .from("messages")
-      .select("id, sender_id, created_at, deleted_at, msg_type, subtype, media_type, media_url, body")
+      .select("id, sender_id, created_at, deleted_at, msg_type, subtype, media_type, media_url, body, content_ref")
       .eq("thread_id", threadId)
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
@@ -291,8 +369,36 @@ router.get(
       participantIds,
     });
 
+    // Curation is fetched only after a deliberate action, not on thread startup.
+    // Its source list is negotiated separately so a future envelope cannot be
+    // offered as a familiar photo/place by an older client.
+    let choices;
+    if (curation !== undefined) {
+      try {
+        if (curation === 'people') {
+          choices = { mode: curation, items: [], ...(await recapPeopleChoices(client, user.id, threadId, participantIds)) };
+        } else {
+          const compatible = await negotiateStoredMessageRows(client, windowed, req.headers);
+          const supported = compatible.filter(row => !('structured_fallback' in row));
+          const liveRecap = buildRecap({ threadId, planId: plan.id, windowStartsAt: plan.starts_at,
+            windowEndsAt: plan.ends_at, rows: supported as RecapRow[], participantIds });
+          const items = recapSourceChoices(liveRecap, supported as RecapRow[]);
+          choices = { mode: curation, items: curation === 'photos' ? items.filter(item => item.kind !== 'place') : items,
+            people: [], truncated: rows?.length === RECAP_SCAN_LIMIT,
+            memoryEnabled: await isFlagEnabled(client, 'memory_kernel_enabled'),
+            preview: sourceMessageId && items.some(item => item.messageId === sourceMessageId)
+              ? await readLiveMessageSource(getServiceClient() ?? client, user.id, sourceMessageId, req.headers) : null,
+            sharingEnabled: await isFlagEnabled(client, 'telegraph_forwarding_enabled') };
+        }
+      } catch (error) {
+        log.warn({ err: error }, 'recap selection unavailable');
+        sendError(res, 'degraded_unavailable', 'Could not load the choices. Please try again.'); return;
+      }
+    }
+
     res.status(200).json({
       recap,
+      ...(choices ? { choices } : {}),
       headline: recapHeadline(recap.counts),
       /**
        * §10.3, said out loud: this endpoint created nothing. Every action in
@@ -326,6 +432,7 @@ export async function createDraftThroughKernel(
   actorUserId: string,
   row: Record<string, unknown>,
   legacyInsert: () => Promise<{ data: any; error: any }>,
+  sourceMessageId?: string,
 ): Promise<{ data: any; error: any; refused?: DraftRefusal }> {
   const envelope = readMemoryCommandEnvelope(req); // judged only on the kernel path, as routes/stories.ts does (verifier F2)
   const legacy: { ran: { data: any; error: any } | null } = { ran: null }; // set only if the legacy arm ran
@@ -338,12 +445,14 @@ export async function createDraftThroughKernel(
     kernelEnvelopeError: envelope.ok ? null : envelope.message,
     legacyUnaudited: true,
     payload: {
+      ...(sourceMessageId ? { telegraph_source_message_id: sourceMessageId } : {}),
       to_state: lifecycleStateOf("draft"),
       visibility: "only_me",
       write: row,
       select: "id, owner_id, state, visibility, title, starts_at",
     },
     legacy: async () => {
+      if (sourceMessageId) return { ok: false, http: { code: 'degraded_unavailable', message: 'Saving a message to Memory is temporarily unavailable.' } };
       const ran = await legacyInsert();
       legacy.ran = ran;
       if (ran.error || !ran.data) return { ok: false, http: { code: "db_error", message: ran.error?.message ?? "Could not create the draft" } };

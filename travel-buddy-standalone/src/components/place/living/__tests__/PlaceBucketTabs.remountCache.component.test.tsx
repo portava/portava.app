@@ -1,16 +1,8 @@
-/**
- * PlaceBucketTabs — weekTimelineCache remount cache hit
- *
- * Confirms that the module-level weekTimelineCache serves a warm entry on
- * remount: when the same placeId is visited twice within the TTL, exactly one
- * network call is made. The second mount reads from cache and shows the same
- * posts without triggering getPlaceTimeline again.
- *
- * Run with: pnpm test:component
- */
+/** Living destination navigation and current-source reads. Reopening a week
+ * view must revalidate policy; no client image/caption cache grants access. */
 
 import React from 'react';
-import { render, fireEvent, waitFor } from '@testing-library/react-native';
+import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
 import { LivingDestinationPage } from '../LivingDestinationPage.tsx';
 import type { PlaceLivingResponse } from '../../../../types/placeLiving.ts';
 import type { CanonicalPlace } from '../../../../types/canonicalPlace.ts';
@@ -41,6 +33,8 @@ jest.mock('../../../CachedImage.tsx', () => {
 jest.mock('../../../../services/places.ts', () => ({
   getPlaceTimeline: jest.fn(),
 }));
+
+jest.mock('expo-router', () => ({ ...jest.requireActual('expo-router'), router: { ...jest.requireActual('expo-router').router, push: jest.fn() } }));
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -126,61 +120,118 @@ function makePlace(id: string, name: string): CanonicalPlace {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('PlaceBucketTabs — weekTimelineCache remount hit', () => {
+describe('PlaceBucketTabs — current policy on remount', () => {
   beforeEach(() => {
     mockGetTimeline.mockReset();
   });
 
-  it('serves the cached week-timeline on remount — getPlaceTimeline is called exactly once total', async () => {
-    // Use a placeId that is unique to this test file so it never collides
-    // with entries written by other test files in the same jest worker.
-    const PLACE_ID   = 'place-remount-cache-test';
-    const PLACE_NAME = 'Remount Cache Place';
-
-    const posts = [makeTimelinePost('rc1', 'Canyon at dawn')];
-
-    mockGetTimeline.mockImplementation((placeId: string) =>
-      Promise.resolve(makeTimelineResponse(placeId, posts)),
-    );
-
-    // ── Phase 1: first mount — populates the cache ────────────────────────────
-    const { getByText: get1, unmount: unmount1 } = await render(
-      <LivingDestinationPage
-        place={makePlace(PLACE_ID, PLACE_NAME)}
-        living={makeLiving(PLACE_ID)}
-      />,
-    );
-
-    // Activate the "Top This Week" tab
-    fireEvent.press(get1('Top This Week'));
-
-    // Wait until the post caption appears — confirms the cache entry was written
-    await waitFor(() => expect(get1('Canyon at dawn')).toBeTruthy());
-    expect(mockGetTimeline).toHaveBeenCalledTimes(1);
-    expect(mockGetTimeline).toHaveBeenCalledWith(PLACE_ID, 'week');
-
-    unmount1();
-
-    // ── Phase 2: second mount within TTL — must hit the cache ─────────────────
-    // Reset the call counter only; keep the implementation intact in case
-    // a cache miss somehow occurs (the test would then see the right posts
-    // but would fail on the call-count assertion below).
-    mockGetTimeline.mockClear();
-
-    const { getByText: get2 } = await render(
-      <LivingDestinationPage
-        place={makePlace(PLACE_ID, PLACE_NAME)}
-        living={makeLiving(PLACE_ID)}
-      />,
-    );
-
-    // Activate the same tab on the second mount
-    fireEvent.press(get2('Top This Week'));
-
-    // The post must be visible immediately from the cache (no loading spinner)
-    await waitFor(() => expect(get2('Canyon at dawn')).toBeTruthy());
-
-    // The network should NOT have been called again
-    expect(mockGetTimeline).toHaveBeenCalledTimes(0);
+  it('revalidates week posts on remount and never replays stale private content', async () => {
+    const id = 'place-remount-current';
+    mockGetTimeline.mockResolvedValueOnce(makeTimelineResponse(id, [makeTimelinePost('old', 'Previously visible')]));
+    const first = await render(<LivingDestinationPage place={makePlace(id, 'Place')} living={makeLiving(id)} />);
+    await fireEvent.press(first.getByText('Top This Week'));
+    await waitFor(() => expect(first.getByText('Previously visible')).toBeTruthy());
+    expect(mockGetTimeline).toHaveBeenCalledWith(id, 'week', expect.objectContaining({ signal: expect.any(AbortSignal), isCurrent: expect.any(Function) }));
+    await first.unmount();
+    let resolve!: (value: ReturnType<typeof makeTimelineResponse>) => void;
+    mockGetTimeline.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const second = await render(<LivingDestinationPage place={makePlace(id, 'Place')} living={makeLiving(id)} />);
+    await fireEvent.press(second.getByText('Top This Week'));
+    expect(second.queryByText('Previously visible')).toBeNull();
+    expect(mockGetTimeline).toHaveBeenCalledTimes(2);
+    await act(async () => resolve(makeTimelineResponse(id, [])));
+    expect(second.queryByText('Previously visible')).toBeNull();
   });
+});
+
+it('place bucket post thumbnails navigate to the post detail with fullscreen media', async () => {
+  const { router } = jest.requireMock('expo-router') as { router: { push: jest.Mock } };
+  router.push.mockClear();
+  const id = 'place-post-navigation';
+  const living = makeLiving(id);
+  living.buckets = [{ bucket: 'food', posts: [{ id: 'post-123', mediaUrl: 'https://example.com/original.jpg', thumbnailUrl: null, caption: 'Dinner' }], postCount: 8, isThin: false }];
+  const view = await render(<LivingDestinationPage place={makePlace(id, 'Place')} living={living} />);
+  await fireEvent.press(view.getByText('Food'));
+  await fireEvent.press(view.getByLabelText('Open place post'));
+  expect(router.push).toHaveBeenCalledWith('/post/post-123');
+});
+
+
+it('featured posts use canonical postId and never invent navigation IDs from list positions', async () => {
+  const { router } = jest.requireMock('expo-router') as { router: { push: jest.Mock } };
+  router.push.mockClear();
+  const id = 'place-featured-navigation';
+  const living = makeLiving(id);
+  living.bestOf = { videos: [], photos: [
+    { postId: 'featured-post', mediaUrl: 'https://example.com/original.jpg', caption: 'Real post' },
+    { mediaUrl: 'https://example.com/legacy.jpg', caption: 'Missing source' },
+  ], viewpoints: [], foodNearby: [], experiences: [] };
+  const view = await render(<LivingDestinationPage place={makePlace(id, 'Place')} living={living} />);
+  expect(view.queryByText('Missing source')).toBeNull();
+  await fireEvent.press(view.getByLabelText('Open place post'));
+  expect(router.push).toHaveBeenCalledWith('/post/featured-post');
+});
+
+
+it('similar-photo groups open the original gallery, not thumbnail URLs or database IDs', async () => {
+  const id = 'dedup-gallery'; const living = makeLiving(id);
+  living.dedupGroups = [{ groupId: 'group', memberCount: 2, sampleUrls: ['https://example.com/thumb.jpg'], samples: [
+    { mediaId: 'one', postId: 'post-one', mediaUrl: 'https://example.com/original.jpg', thumbnailUrl: 'https://example.com/thumb.jpg', mediaType: 'image' },
+    { mediaId: 'two', postId: 'post-two', mediaUrl: 'https://example.com/second.jpg', thumbnailUrl: null, mediaType: 'image' },
+  ] }];
+  const view = await render(<LivingDestinationPage place={makePlace(id, 'Place')} living={living} />);
+  await fireEvent.press(view.getByText('Similar community photos'));
+  await fireEvent.press(view.getAllByLabelText('View photo full screen')[0]);
+  expect(view.getByLabelText('Close full-screen photo')).toBeTruthy();
+  await fireEvent.press(view.getByLabelText('Next photo'));
+  await fireEvent.press(view.getByLabelText('Close full-screen photo'));
+  expect(view.queryByLabelText('Close full-screen photo')).toBeNull();
+});
+
+it('similar-photo read failures remain visible instead of claiming no photos', async () => {
+  const living = makeLiving('dedup-failure'); living.dedupStatus = 'unavailable';
+  const view = await render(<LivingDestinationPage place={makePlace(living.placeId, 'Place')} living={living} />);
+  expect(view.getByText('Similar photos are temporarily unavailable. Reopen this place to retry.')).toBeTruthy();
+});
+
+
+it('week request failure remains retryable rather than caching empty success', async () => {
+  mockGetTimeline.mockReset(); mockGetTimeline.mockResolvedValueOnce(null);
+  const id = 'week-error'; const view = await render(<LivingDestinationPage place={makePlace(id, 'Place')} living={makeLiving(id)} />);
+  await fireEvent.press(view.getByText('Top This Week'));
+  await waitFor(() => expect(view.getByLabelText('Retry week posts')).toBeTruthy());
+  mockGetTimeline.mockResolvedValueOnce(makeTimelineResponse(id, [makeTimelinePost('new', 'After retry')]));
+  await fireEvent.press(view.getByLabelText('Retry week posts'));
+  await waitFor(() => expect(view.getByText('After retry')).toBeTruthy());
+});
+
+it('superseded timeline responses cannot replace the selected period, and failure clears the prior period', async () => {
+  mockGetTimeline.mockReset();
+  let resolveOld!: (value: ReturnType<typeof makeTimelineResponse>) => void;
+  mockGetTimeline.mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }));
+  const id = 'timeline-race'; const view = await render(<LivingDestinationPage place={makePlace(id, 'Place')} living={makeLiving(id)} />);
+  await fireEvent.press(view.getByText('This Week'));
+  mockGetTimeline.mockResolvedValueOnce({ ...makeTimelineResponse(id, [makeTimelinePost('month', 'Current month')]), slice: 'month' });
+  await fireEvent.press(view.getByText('This Month'));
+  await waitFor(() => expect(view.getByText('Current month')).toBeTruthy());
+  await act(async () => resolveOld(makeTimelineResponse(id, [makeTimelinePost('week', 'Stale week')])));
+  expect(view.queryByText('Stale week')).toBeNull();
+  mockGetTimeline.mockResolvedValueOnce(null);
+  await fireEvent.press(view.getByText('Last Year'));
+  await waitFor(() => expect(view.getByLabelText('Retry timeline posts')).toBeTruthy());
+  expect(view.queryByText('Current month')).toBeNull();
+  mockGetTimeline.mockResolvedValueOnce({ ...makeTimelineResponse(id, []), slice: 'year' });
+  await fireEvent.press(view.getByLabelText('Retry timeline posts'));
+  await waitFor(() => expect(view.queryByLabelText('Retry timeline posts')).toBeNull());
+});
+
+it('aborts and ignores a week result after unmount', async () => {
+  mockGetTimeline.mockReset();
+  let resolve!: (value: ReturnType<typeof makeTimelineResponse>) => void;
+  mockGetTimeline.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+  const id = 'week-unmount'; const view = await render(<LivingDestinationPage place={makePlace(id, 'Place')} living={makeLiving(id)} />);
+  await fireEvent.press(view.getByText('Top This Week'));
+  const context = mockGetTimeline.mock.calls[0][2]!;
+  await view.unmount(); expect(context.signal?.aborted).toBe(true);
+  await act(async () => resolve(makeTimelineResponse(id, [makeTimelinePost('late', 'Retired response')])));
 });

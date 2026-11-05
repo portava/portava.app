@@ -1,3 +1,4 @@
+import { stampPlaceLiveInformation } from './placeLiveInformation.ts';
 /**
  * Telegraph §5 API client — the share contract, client side.
  *
@@ -12,8 +13,8 @@
  * network blip.
  */
 import { isSupabaseConfigured } from '../../../lib/supabase.ts';
-import { freshToken } from '../../../services/apiToken.ts';
-import { captureMessagingOwnerRequest, messagingOwnerToken, type MessagingOwnerRequest } from '../../../services/messagingOwnerRequest.ts';
+import { captureMessagingOwnerRequest, type MessagingOwnerRequest } from '../../../services/messagingOwnerRequest.ts';
+import { fetchOwnedApi } from '../../../services/ownedApiRequest.ts';
 import type { TelegraphAction, TelegraphObjectType } from '../sharedContext/types.ts'; import { shareProjectionHeaders } from '../negotiation/clientCapabilities.ts'; // census-telegraph T431
 
 export type UnavailableReason = 'deleted' | 'private' | 'unauthorized' | 'not_found' | 'unknown';
@@ -26,6 +27,7 @@ export interface TelegraphShareProjection {
   imageUrl: string | null;
   projectionVersion: string | null;
   deepLink: string;
+  liveIntelligence?: import('./placeLiveInformation.ts').PlaceLiveInformation;
 }
 
 export type ResolvedShare =
@@ -69,16 +71,11 @@ function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 }
 
-async function post<T>(path: string, body: unknown, owner?: MessagingOwnerRequest, extraHeaders?: Record<string, string>): Promise<ShareResult<T>> {
+async function post<T>(path: string, body: object, owner: MessagingOwnerRequest, extraHeaders?: Record<string, string>): Promise<ShareResult<T>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'unconfigured' };
-  const token = owner ? await messagingOwnerToken(owner) : await freshToken();
-  if (!token || (owner && !owner.isCurrent())) return { ok: false, error: 'unauthenticated' };
+  if (!owner.isCurrent()) return { ok: false, error: 'unauthenticated' };
   try {
-    const res = await fetch(`${apiBase()}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(extraHeaders ?? {}) },
-      body: JSON.stringify(body),
-    });
+    const res = await fetchOwnedApi(path, { owner, method: 'POST', body, headers: extraHeaders });
     if (owner && !owner.isCurrent()) return { ok: false, error: 'unauthenticated' };
     if (!res.ok) {
       const parsed = await res.json().catch(() => ({}) as any);
@@ -101,7 +98,17 @@ export async function resolveShareProjections(
   if (refs.length === 0) {
     return { ok: true, data: { threadId, projections: [], unsupported: [] } };
   }
-  return post<ResolveResponse>(`/api/threads/${threadId}/share-projections`, { refs }, undefined, shareProjectionHeaders()); // §30A.16 (T431): the card's schemas and the actions it can offer
+  const startedAt = Date.now();
+  const owner = captureMessagingOwnerRequest();
+  if (!owner) return { ok: false, error: 'unauthenticated' };
+  const result = await post<ResolveResponse>(`/api/threads/${encodeURIComponent(threadId)}/share-projections`, { refs }, owner, shareProjectionHeaders()); // §30A.16 (T431): the card's schemas and the actions it can offer
+  if (result.ok && (result.data?.threadId !== threadId || !Array.isArray(result.data?.projections))) return { ok: false, error: 'invalid_response' };
+  if (result.ok) {
+    for (const item of result.data.projections) {
+      if (item.available && item.projection.liveIntelligence) item.projection.liveIntelligence = stampPlaceLiveInformation(item.projection.liveIntelligence, startedAt);
+    }
+  }
+  return result;
 }
 
 export async function shareObjectIntoThread(
@@ -113,7 +120,7 @@ export async function shareObjectIntoThread(
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'unconfigured' };
   const owner = captureMessagingOwnerRequest();
   if (!owner) return { ok: false, error: 'unauthenticated' };
-  return post(`/api/threads/${threadId}/share`, { objectType, objectId, caption: caption ?? null }, owner);
+  return post(`/api/threads/${encodeURIComponent(threadId)}/share`, { objectType, objectId, caption: caption ?? null }, owner);
 }
 
 /**

@@ -138,7 +138,7 @@ describe("§26 P126 — level 5: Places", () => {
     assert.equal(t.stampCount, 1);
   });
 
-  it("L5d: an unresolvable place_id still becomes a Place, labelled by its neighbourhood", async () => {
+  it("L5d: an unavailable canonical place loses its link while coarse trip history remains", async () => {
     const noPlaces = makePassportDb({
       passport_stamps: [
         { id: "s1", user_id: OWNER, stamp_type: "city", country: "Vietnam", city: "Da Nang", neighborhood: "An Hai", place_id: "pl-gone", plan_id: null, trip_id: T_VN, source_type: "trips", verification_level: "gps", visibility: "public", awarded_at: "2025-03-05T00:00:00Z", created_at: "2025-03-05T00:00:00Z" },
@@ -149,8 +149,9 @@ describe("§26 P126 — level 5: Places", () => {
     });
     const p = await buildMapPayload(noPlaces as any, OWNER, "owner");
     const t = daNang(p).trips.find((x) => x.tripId === T_VN)!;
-    assert.equal(t.places.length, 1);
-    assert.equal(t.places[0].name, "An Hai");
+    assert.deepEqual(t.places, []);
+    assert.equal(t.stampCount, 1);
+    assert.equal(daNang(p).city, "Da Nang");
   });
 
   it("L5f: a stamp with NO place_id is still a Place when it names a neighbourhood", async () => {

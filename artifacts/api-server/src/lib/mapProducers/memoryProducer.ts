@@ -1,3 +1,4 @@
+import { readCanonicalPlaceVisibility } from "../places/placeGovernance.js";
 /**
  * memoryProducer — the `memory` kind (Map spec §6 "Gold marker = Saved /
  * Passport / Memory", §16 "Memories" layer, off by default; §20 "Memory owns
@@ -91,6 +92,7 @@ export const MAX_MEMORY_SUBJECTS = 300;
 
 /** The discovery_places columns this producer reads. */
 export interface MemoryPlaceLike {
+  canonical_location_id?: string | null;
   id: string;
   name?: string | null;
   city?: string | null;
@@ -139,6 +141,7 @@ export function projectMemoryPin(
       memoryType: item.memoryType,
       subjectType: "place",
       subjectId: item.subjectId,
+      canonicalPlaceId: place.canonical_location_id ?? null,
       content: item.title,
       isInferred: item.isInferred,
       occurredAt: item.occurredAt ?? null,
@@ -209,12 +212,19 @@ export async function readMemoryPins(
 
   const { data: placeRows, error: placeErr } = await sc
     .from("discovery_places")
-    .select("id, name, city, lat, lng")
+    .select("id, name, city, lat, lng, canonical_location_id")
     .in("id", subjectIds);
   if (placeErr || !Array.isArray(placeRows)) return { ok: false, reason: "places_read_failed" };
 
+  const visibility = await readCanonicalPlaceVisibility(sc, placeRows.map((p: any) => p.canonical_location_id ?? p.id));
+  if (!visibility.ok) return { ok: false, reason: "places_read_failed" };
   const byId = new Map<string, MemoryPlaceLike>();
-  for (const p of placeRows as MemoryPlaceLike[]) if (p && typeof p.id === "string") byId.set(p.id, p);
+  for (const p of placeRows as MemoryPlaceLike[]) {
+    if (!p || typeof p.id !== 'string') continue;
+    const canonical = p.canonical_location_id ?? (visibility.existingIds.has(p.id) ? p.id : null);
+    if (canonical && !visibility.visibleIds.has(canonical)) { report.denied += 1; continue; }
+    byId.set(p.id, { ...p, canonical_location_id: canonical });
+  }
 
   const { bbox } = opts;
   const pins: MapObject[] = [];

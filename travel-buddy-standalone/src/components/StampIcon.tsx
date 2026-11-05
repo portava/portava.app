@@ -5,23 +5,10 @@
  */
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
-import {
-  MapPin, Users, Gem, ShieldCheck, Crown, Ticket,
-  Lock, Sparkles,
-} from 'lucide-react-native';
-import type { ComponentType } from 'react';
+import { Lock } from 'lucide-react-native';
+import { resolveStampArtworkIcon as resolveIcon } from './stamps/artworkIcons.ts';
 import type { PassportStamp } from '../types/models.ts';
 import { resolveArtwork } from '../lib/stampArtworkResolver.ts';
-
-type IconCmp = ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
-
-const ICON_MAP: Record<string, IconCmp> = {
-  MapPin, Users, Gem, ShieldCheck, Crown, Ticket, Sparkles,
-};
-
-function resolveIcon(key: string): IconCmp {
-  return ICON_MAP[key] ?? MapPin;
-}
 
 interface StampIconProps {
   stamp: PassportStamp;

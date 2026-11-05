@@ -23,7 +23,7 @@
  * Run:
  *   node --import tsx/esm --test src/test/mediaActionsCompass.test.ts
  */
-import { describe, it, beforeEach } from "node:test";
+import { describe, it, beforeEach, before, after } from "node:test";
 import assert from "node:assert/strict";
 
 import { isLocationSafe } from "../lib/media/mediaLocationSafety.js";
@@ -42,10 +42,56 @@ import {
 import mediaActionsRouter, {
   ownsAttachmentEntity,
   validateMediaAttachmentBody,
+  readViewerMediaIntent,
 } from "../routes/mediaActions.js";
 import { recordMediaAttachment } from "../lib/mediaAssets.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import { _clearPromotedScopeCache } from "../lib/liveClaimRead.js";
+import { makeFakeClient, startRouter, call, type RouterHarness } from './telegraphCertificationHarness.js';
+import { _setTestClient, _clearTestClient } from '../lib/http.js';
+
+describe("persisted media interest", () => {
+  it("reads only this viewer's signal for this media", async () => {
+    const sc = makeSc({ media_intent_signals: [
+      { user_id: "owner-a", media_id: "media-a" },
+      { user_id: "owner-b", media_id: "media-b" },
+    ] });
+    assert.equal(await readViewerMediaIntent(sc, "owner-a", "media-a"), true);
+    assert.equal(await readViewerMediaIntent(sc, "owner-a", "media-b"), false);
+    assert.equal(await readViewerMediaIntent(sc, "owner-b", "media-a"), false);
+  });
+  it("does not present failed reads as an absent signal", async () => {
+    assert.equal(await readViewerMediaIntent(makeSc({}, [], () => ({ message: "unreadable" })), "owner-a", "media-a"), null);
+    assert.equal(await readViewerMediaIntent({ from() { throw new Error("offline"); } }, "owner-a", "media-a"), null);
+  });
+});
+
+describe("media actions HTTP interest state", () => {
+  let harness: RouterHarness;
+  before(async () => { harness = await startRouter(mediaActionsRouter); });
+  after(async () => { _clearTestClient(); await harness.close(); });
+  it("returns the viewer's stored interest and does not borrow another viewer's signal", async () => {
+    const db = makeFakeClient(baseData({ posts: [makePost()], media_intent_signals: [{ user_id: VIEWER, media_id: MEDIA_1 }] }));
+    _setTestClient(db as never, true);
+    const saved = await call(harness.base, 'GET', `/media/${MEDIA_1}/actions`, VIEWER);
+    assert.equal(saved.status, 200); assert.equal(saved.body.wanted, true);
+    db._store.media_intent_signals![0]!.user_id = AUTHOR_A;
+    const other = await call(harness.base, 'GET', `/media/${MEDIA_1}/actions`, VIEWER);
+    assert.equal(other.status, 200); assert.equal(other.body.wanted, false);
+  });
+  it("reports an unreadable interest query instead of claiming the item is not wanted", async () => {
+    const db = makeFakeClient(baseData({ posts: [makePost()] }), { errors: { media_intent_signals: { code: '57014', message: 'timeout' } } });
+    _setTestClient(db as never, true);
+    const failed = await call(harness.base, 'GET', `/media/${MEDIA_1}/actions`, VIEWER);
+    assert.equal(failed.status, 500); assert.equal(failed.body.wanted, undefined);
+  });
+  it("withholds both the action set and interest when the source is private", async () => {
+    const db = makeFakeClient(baseData({ posts: [makePost({ visibility: 'private' })], media_intent_signals: [{ user_id: VIEWER, media_id: MEDIA_1 }] }));
+    _setTestClient(db as never, true);
+    const failed = await call(harness.base, 'GET', `/media/${MEDIA_1}/actions`, VIEWER);
+    assert.equal(failed.status, 404); assert.equal(failed.body.wanted, undefined);
+  });
+});
 
 // ── A capable, filtering, write-tracking fake Supabase client ────────────────
 
@@ -85,8 +131,10 @@ function makeSc(data: Dataset, writes: Written[] = [], failReads?: (table: strin
 
   const builder = (table: string): any => {
     const filters: any[] = [];
+    let exactCount = false;
+    let rowLimit = Infinity;
     const b: any = {
-      select() { return b; },
+      select(_columns?: string, options?: { count?: string }) { exactCount = options?.count === "exact"; return b; },
       eq(col: string, val: any) { filters.push({ op: "eq", col, val }); return b; },
       neq(col: string, val: any) { filters.push({ op: "neq", col, val }); return b; },
       in(col: string, val: any) { filters.push({ op: "in", col, val }); return b; },
@@ -96,7 +144,7 @@ function makeSc(data: Dataset, writes: Written[] = [], failReads?: (table: strin
       not() { return b; },
       or() { return b; },
       order() { return b; },
-      limit() { return b; },
+      limit(value: number) { rowLimit = value; return b; },
       range() { return b; },
       // ── writes (tracked) ─────────────────────────────────────────────────
       upsert(payload: any) { writes.push({ table, op: "upsert", payload }); return Promise.resolve({ data: payload, error: null }); },
@@ -117,7 +165,8 @@ function makeSc(data: Dataset, writes: Written[] = [], failReads?: (table: strin
       then(onF: any, onR: any) {
         const err = failReads?.(table);
         if (err) return Promise.resolve({ data: null, error: err }).then(onF, onR);
-        return Promise.resolve({ data: resolveRows(table, filters), error: null }).then(onF, onR);
+        const rows = resolveRows(table, filters);
+        return Promise.resolve({ data: rows.slice(0, rowLimit), error: null, ...(exactCount ? { count: rows.length } : {}) }).then(onF, onR);
       },
     };
     return b;
@@ -195,6 +244,7 @@ function makePost(o: Record<string, any> = {}): any {
 /** Base dataset: viewer profile present, everything else empty/off. */
 function baseData(extra: Dataset = {}): Dataset {
   return {
+    places: [PLACE_1, PLACE_HIDDEN, PLACE_2].map(id => ({ id, moderation_status: "visible", merged_into_place_id: null })),
     profiles: [{ id: VIEWER, location_country: "VN", date_of_birth: "1990-01-01", account_status: "active" }],
     blocks: [],
     user_mutes: [],
@@ -225,6 +275,11 @@ beforeEach(() => {
 // ── 1./2. Action rail: eligible actions, real endpoints, §47 auth gate ───────
 
 describe("GET /media/:id/actions — resolveMediaActions", () => {
+  it("does not offer actions for media whose canonical place was withheld", async () => {
+    const sc = makeSc(baseData({ posts: [makePost()], places: [{ id: PLACE_1, moderation_status: "withheld", merged_into_place_id: null }] }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
+    assert.equal(await resolveMediaActions(sc, viewer, MEDIA_1, Date.now()), null);
+  });
   it("returns eligible actions, each resolving to a real endpoint", async () => {
     const sc = makeSc(baseData({ posts: [makePost()] }));
     const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });

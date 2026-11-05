@@ -60,6 +60,7 @@ router.get(
 
     const result = await searchConversations(sc, auth.user.id, q, {
       buckets: parseBuckets(req.query["types"]),
+      clientHeaders: req.headers,
       limit: Number(req.query["limit"] ?? 40),
     });
     res.status(200).json(result);
@@ -86,6 +87,7 @@ router.get(
 
     const result = await searchConversations(sc, auth.user.id, q, {
       conversationId: threadId,
+      clientHeaders: req.headers,
       buckets: parseBuckets(req.query["types"]),
       limit: Number(req.query["limit"] ?? 40),
     });
@@ -111,7 +113,7 @@ router.get(
     const sc = getServiceClient();
     if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-    const { structured, prose, result } = await askConversation(sc, auth.user.id, threadId, q);
+    const { structured, prose, result } = await askConversation(sc, auth.user.id, threadId, q, req.headers);
     res.status(200).json({
       query: result.query,
       // §21: structured plans/decisions/actions are PREFERRED over inferred

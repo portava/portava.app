@@ -1,3 +1,5 @@
+import { MessageSourcePreview } from '../../src/features/telegraph/memory/MessageSourcePreview.tsx';
+import { MemoryItemMedia } from '../../src/features/memories/MemoryItemMedia.tsx';
 /**
  * Memory detail screen — /memory/:id
  *
@@ -263,22 +265,14 @@ export default function MemoryDetailScreen() {
         scrollEventThrottle={16}
       >
 
+        {isOwner && memory.telegraphSource !== false && memory.telegraphSource !== undefined ? <MessageSourcePreview memoryId={memory.id} /> : null}
+
         {/* Media items */}
         {items.length > 0 ? (
           <View>
             {items.map((item) => (
               <View key={item.id} style={s.mediaItem}>
-                {isOwner && (item.mediaType === 'video' || item.mediaType?.startsWith('video/')) && item.mediaUrl ? <MemoryVideoSegments ownerId={memory.ownerId} memoryId={memory.id} itemId={item.id} uri={item.mediaUrl} style={s.mediaImage} /> : item.mediaUrl ? (
-                  <CachedImage
-                    source={{ uri: item.mediaUrl }}
-                    style={s.mediaImage}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <View style={[s.mediaImage, s.mediaFallback]}>
-                    <Text style={s.mediaFallbackText}>Photo unavailable</Text>
-                  </View>
-                )}
+                <MemoryItemMedia item={item} ownerId={memory.ownerId} memoryId={memory.id} isOwner={isOwner} style={s.mediaImage} />
                 {item.caption ? (
                   <Text style={s.mediaCaption}>{item.caption}</Text>
                 ) : null}
@@ -494,6 +488,5 @@ import { MemoryParticipantsSection, MemoryTagConsentFallback } from '../../src/f
 import { MemoryBrowseLinks } from '../../src/features/memories/social/MemoryBrowseLinks.tsx';
 import type { MemoryWithParticipants } from '../../src/services/memorySocial.ts';
 import { MemoryActionBar, isAutoAction } from '../../src/features/memories/actions/MemoryActionBar.tsx';
-import { MemoryVideoSegments } from '../../src/features/memories/MemoryVideoSegments.tsx';
 import { MemoryResurfacingControl } from '../../src/features/memories/MemoryResurfacingControl.tsx';
 import { RememberTogetherPanel } from '../../src/features/memories/RememberTogetherPanel.tsx'; // §5 (census H53): appended so no cited line moves

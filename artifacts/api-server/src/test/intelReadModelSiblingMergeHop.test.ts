@@ -1,3 +1,4 @@
+import { makeFakeClient } from "./telegraphCertificationHarness.js";
 /**
  * §19 read models — the merge hop is a property of the FILE, not of one route.
  *
@@ -113,18 +114,7 @@ function makeClient(opts: FixtureOpts) {
         const q: any = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: { account_status: "active" }, error: null }) };
         return q;
       }
-      if (table === "places") {
-        let wanted: unknown = undefined;
-        const q: any = {
-          select: () => q,
-          eq: (k: string, v: unknown) => { if (k === "id") wanted = v; return q; },
-          // eslint-disable-next-line @typescript-eslint/require-await
-          maybeSingle: async () => (opts.placesError
-            ? { data: null, error: { message: "places read failed" } }
-            : { data: PLACES.find((p) => p.id === wanted) ?? null, error: null }),
-        };
-        return q;
-      }
+      if (table === "places") return makeFakeClient({places:PLACES},opts.placesError?{errors:{places:{message:'places read failed'}}}:{}).from('places');
       if (table === "intel_live_promoted_scopes") {
         const q: any = { select: () => q };
         return Object.assign(q, { then: (res: any) => res({ data: promoted.map((k) => ({ scope_key: k })), error: null }) });
@@ -256,12 +246,11 @@ describe("§19 GET /v1/experiences/:id/typical-patterns — merged ids resolve t
     assert.equal(body.subject_id, PLAIN_ID);
   });
 
-  it("falls back to the requested id when the places read fails — fail-safe, never a wrong subject", async () => {
+  it("refuses unreadable current place visibility before serving stored patterns", async () => {
     _setTestClient(makeClient({ placesError: true, patterns: [survivorPattern({ subject_id: PLAIN_ID })] }), true);
     const { status, body } = await req(app, patternsPath(PLAIN_ID));
-    assert.equal(status, 200);
-    assert.equal(body.subject_id, PLAIN_ID, "a failed resolution may only under-serve, never invent a subject");
-    assert.equal(body.patterns.length, 1);
+    assert.equal(status, 503);
+    assert.equal(body.patterns, undefined);
   });
 
   it("puts the resolved subject in state_version, so a cached 304 cannot outlive a merge", async () => {

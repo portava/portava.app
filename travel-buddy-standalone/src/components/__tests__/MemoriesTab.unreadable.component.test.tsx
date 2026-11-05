@@ -95,7 +95,7 @@ describe('MemoriesTab — an unread history is not an empty one', () => {
   it('still shows the onboarding empty state when the read succeeded and found nothing', async () => {
     await render(<MemoriesTab memories={[]} onReload={jest.fn()} unreadable={false} />);
 
-    expect(screen.getByText(/No memories yet/i)).toBeTruthy();
+    expect(screen.getByText(/No travel memories yet/i)).toBeTruthy();
     expect(screen.queryByTestId('memories-unreadable')).toBeNull();
   });
 });

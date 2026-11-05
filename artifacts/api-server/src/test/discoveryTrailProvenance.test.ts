@@ -93,6 +93,7 @@ function makeDb(seed: Record<string, Row[]>, erroring: string[] = []) {
   const tables: Record<string, Row[]> = {
     trails: [], content_trails: [], trail_follows: [],
     trail_reports: [], trail_health_snapshots: [], rank_events: [],
+    discovery_places: [PLACE_A, PLACE_B].map(id => ({ id, status: 'active' })),
     ...seed,
   };
   const broken = new Set(erroring);
@@ -112,7 +113,7 @@ function makeDb(seed: Record<string, Row[]>, erroring: string[] = []) {
       if (limitN !== null) out = out.slice(0, limitN);
       return out;
     };
-    const run = () => (broken.has(table) ? fail() : { data: rows(), error: null });
+    const run = () => (broken.has(table) ? fail() : { data: rows(), error: null, count: store().filter(row => filters.every(filter => filter(row))).length });
 
     const b: any = {
       select() { return b; },

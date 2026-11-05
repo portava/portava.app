@@ -128,6 +128,7 @@ export function makePassportMock(overrides: PassportMockOverrides = {}): Passpor
     postcardsUnreadable: overrides.postcardsUnreadable ?? false,
     suggestions:  overrides.suggestions  ?? [],
     loading:      overrides.loading      ?? false,
+    sectionLoading: { postcards: false, stamps: false, memories: false },
     error:        overrides.error        ?? null,
     stampsNew:    [],
     stampsTotal:  0,

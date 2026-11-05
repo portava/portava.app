@@ -11,7 +11,7 @@ import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import {
   ShieldCheck, ShieldOff, Clock, BadgeCheck, ScanFace, Globe,
-  UserX, VolumeX, EyeOff, LifeBuoy, MapPin, Award,
+  UserX, VolumeX, EyeOff, LifeBuoy, MapPin, Award, BookOpen, RotateCcw,
 } from 'lucide-react-native';
 import {
   SettingsScreen, SettingsSection, SettingsRow, SettingsDivider,
@@ -53,20 +53,29 @@ export default function SafetyVerificationScreen() {
   const [profile, setProfile] = useState<OwnProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [trustSheetVisible, setTrustSheetVisible] = useState(false);
   const [emergencyHelpVisible, setEmergencyHelpVisible] = useState(false);
 
   useEffect(() => {
     let alive = true;
     (async () => {
-      const res = await getMyProfile();
-      if (!alive) return;
-      setLoading(false);
-      if (res.ok && res.data) setProfile(res.data);
-      else setLoadError(res.message ?? 'Could not load verification status');
+      setLoading(true);
+      setLoadError(null);
+      setProfile(null);
+      try {
+        const res = await getMyProfile();
+        if (!alive) return;
+        if (res.ok && res.data) setProfile(res.data);
+        else setLoadError(res.message ?? 'Could not load verification status');
+      } catch {
+        if (alive) setLoadError('Could not load verification status. Please try again.');
+      } finally {
+        if (alive) setLoading(false);
+      }
     })();
     return () => { alive = false; };
-  }, []);
+  }, [loadAttempt]);
 
   return (
     <SettingsScreen title="Safety & Verification" subtitle="Verification, blocked users, emergency contacts">
@@ -75,7 +84,11 @@ export default function SafetyVerificationScreen() {
         {loading ? (
           <View style={sx.loading}><ActivityIndicator color={PP.ink} /></View>
         ) : loadError ? (
-          <View style={sx.loading}><Text style={sx.errorText}>{loadError}</Text></View>
+          <>
+            <View style={sx.loading}><Text accessibilityRole="alert" style={sx.errorText}>{loadError}</Text></View>
+            <SettingsRow icon={<RotateCcw size={18} color={PP.ink} />} title="Retry verification status"
+              onPress={() => setLoadAttempt(value => value + 1)} />
+          </>
         ) : profile ? (
           <VerificationCards profile={profile} onTrustRowPress={() => setTrustSheetVisible(true)} />
         ) : null}
@@ -90,7 +103,7 @@ export default function SafetyVerificationScreen() {
 
       {profile && !loading && (
         <Text style={sx.note}>
-          Verification is reviewed by our safety team. Statuses shown here reflect your latest review.
+          Verification records an identity check. It does not guarantee someone’s conduct or safety.
         </Text>
       )}
 
@@ -136,10 +149,27 @@ export default function SafetyVerificationScreen() {
           subtitle="Reports you've submitted for review"
           onPress={() => router.push('/profile/edit/reports' as any)}
         />
+        <SettingsDivider />
+        <SettingsRow
+          icon={<ShieldCheck size={18} color={PP.ink} />}
+          title="Restrictions & Appeals"
+          subtitle="Review restrictions and appeal an eligible decision"
+          onPress={() => router.push('/appeals')}
+        />
+        <SettingsDivider />
+        <SettingsRow title="Account access help" subtitle="Help when a suspension or ban prevents sign-in"
+          onPress={() => router.push('/(auth)/account-access')} />
       </SettingsSection>
 
       {/* Safety features */}
       <SettingsSection title="Safety">
+        <SettingsRow
+          icon={<BookOpen size={18} color={PP.ink} />}
+          title="Community Guidelines"
+          subtitle="Respect, reporting, and safer connections"
+          onPress={() => router.push('/settings/community-guidelines')}
+        />
+        <SettingsDivider />
         <SettingsRow
           icon={<LifeBuoy size={18} color={PP.ink} />}
           title="SOS"

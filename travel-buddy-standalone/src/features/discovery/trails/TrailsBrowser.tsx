@@ -5,8 +5,9 @@
  * A failed read is said, with Retry; it is never "no Trails". An empty answer
  * for a search is "No Trails match", and the person is offered to start one.
  */
-import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, TextInput, Pressable, ActivityIndicator, ScrollView } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-native';
+import { KeyboardSafeView } from '../../../components/ui/KeyboardSafeView.tsx';
 import { Route as RouteIcon } from 'lucide-react-native';
 
 import { color, space } from '../../../theme/tokens.ts';
@@ -19,28 +20,36 @@ interface Props {
   initialDestination?: string | null;
   onOpen: (trailId: string) => void;
   onCreate: (destination: string | null) => void;
+  onReviewSuggestions?: () => void;
   load?: typeof listTrails;
   loadMine?: typeof listMyTrails;
 }
 
-export function TrailsBrowser({ initialDestination = null, onOpen, onCreate, load = listTrails, loadMine = listMyTrails }: Props) {
+export function TrailsBrowser({ initialDestination = null, onOpen, onCreate, onReviewSuggestions, load = listTrails, loadMine = listMyTrails }: Props) {
   const [q, setQ] = useState(''); const creationOn = useFeatureFlags().isEnabled('trail_creation_enabled'); // lead ruling D-66: with trail_creation_enabled off (production, 2026-10-22) "Start a Trail" opened a form the server refuses (feature_disabled), so it is not offered
   const [destination, setDestination] = useState(initialDestination ?? '');
   const [read, setRead] = useState<ApiRead<Trail[]> | undefined>(undefined);
   // Lead ruling D-66: the person's own Trails under review are in no public list; they are shown here, to them.
   const [mine, setMine] = useState<ApiRead<Trail[]> | undefined>(undefined);
-  useEffect(() => { let live = true; void loadMine().then((r) => { if (live) setMine(r); }); return () => { live = false; }; }, [loadMine]);
+  useEffect(() => { let live = true; void loadMine().then((r) => { if (live) setMine(r); }).catch(() => { if (live) setMine({ state: 'unavailable', detail: 'Connection interrupted. Please try again.' }); }); return () => { live = false; }; }, [loadMine]);
   const reviewing = mine?.state === 'ok' ? mine.data.filter((t) => isUnderReview(t.review)) : [];
 
+  const generation = useRef(0);
   const run = useCallback(async (query: string, dest: string) => {
+    const request = ++generation.current;
     setRead(undefined);
-    setRead(await load({ q: query, destination: dest, limit: 50 }));
+    try {
+      const answer = await load({ q: query.trim(), destination: dest.trim(), limit: 50 });
+      if (request === generation.current) setRead(answer);
+    } catch {
+      if (request === generation.current) setRead({ state: 'unavailable', detail: 'Connection interrupted. Please try again.' });
+    }
   }, [load]);
 
-  useEffect(() => { void run('', initialDestination ?? ''); }, [run, initialDestination]);
+  useEffect(() => { void run('', initialDestination ?? ''); return () => { generation.current++; }; }, [run, initialDestination]);
 
   return (
-    <ScrollView keyboardShouldPersistTaps="handled" testID="trails-browser">
+    <KeyboardSafeView scrollViewProps={{ testID: 'trails-browser' }}>
       <TextInput
         style={ds.input} value={q} onChangeText={setQ} placeholder="Search Trails"
         returnKeyType="search" onSubmitEditing={() => { void run(q, destination); }}
@@ -59,6 +68,10 @@ export function TrailsBrowser({ initialDestination = null, onOpen, onCreate, loa
           <Text style={ds.ghostText}>Start a Trail</Text>
         </Pressable> : null}
       </View>
+
+      {onReviewSuggestions ? <Pressable style={ds.button} accessibilityRole="button" testID="trails-review-suggestions" onPress={onReviewSuggestions}>
+        <Text style={ds.buttonText}>Review suggestions for your content</Text>
+      </Pressable> : null}
 
       {mine?.state === 'unavailable' ? (
         <Text style={ds.notice} testID="trails-mine-unavailable">Your Trails waiting for review couldn't be loaded — {mine.detail}.</Text>
@@ -113,6 +126,6 @@ export function TrailsBrowser({ initialDestination = null, onOpen, onCreate, loa
           ))}
         </View>
       )}
-    </ScrollView>
+    </KeyboardSafeView>
   );
 }

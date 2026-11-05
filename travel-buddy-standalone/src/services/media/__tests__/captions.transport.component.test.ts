@@ -1,3 +1,20 @@
+import { setDiscoveryViewerFromSession } from '../../discoveryViewerScope.ts';
+import { seedObservedOwnerSession, disposeObservedOwnerSession, observedOwnerAccessToken, observedOwnerSession, emitObservedAuthEvent } from '../../__tests__/observedOwnerSessionFixture.ts';
+
+jest.mock('../../../lib/supabase.ts', () => {
+  const listeners = new Set();
+  return { isSupabaseConfigured: true, supabase: { auth: {
+    listeners,
+    onAuthStateChange: (listener: unknown) => {
+      listeners.add(listener);
+      return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } };
+    },
+  } } };
+});
+const ownerId = '10000000-0000-4000-a000-000000000001';
+const sessionId = 'caption-session';
+const token = observedOwnerAccessToken(ownerId, sessionId);
+
 import { freshToken } from '../../apiToken.ts';
 import { getCaptionAsrStatus, requestCaptionAsr, resolveCaptionSource } from '../captions.ts';
 
@@ -10,10 +27,14 @@ const reply = (overrides: Partial<Response> = {}): Response => ({ ok: true, stat
 
 beforeEach(() => {
   process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
-  jest.mocked(freshToken).mockResolvedValue('synthetic-caption-token');
+  setDiscoveryViewerFromSession(ownerId);
+  seedObservedOwnerSession(ownerId, sessionId);
+  jest.mocked(freshToken).mockResolvedValue(token);
   jest.spyOn(globalThis, 'fetch').mockResolvedValue(reply());
 });
 afterEach(() => {
+  disposeObservedOwnerSession();
+  setDiscoveryViewerFromSession(null);
   jest.restoreAllMocks();
   jest.resetAllMocks();
   jest.useRealTimers();
@@ -35,7 +56,7 @@ it('pins bearer requests to the exact HTTPS origin and refuses redirects', async
   await getCaptionAsrStatus(source);
   const [url, options] = jest.mocked(fetch).mock.calls[0];
   expect(url).toBe(`https://api.test/api/media/captions/${source.assetId}/asr`);
-  expect(options).toMatchObject({ redirect: 'error', credentials: 'omit', cache: 'no-store', headers: { Authorization: 'Bearer synthetic-caption-token' } });
+  expect(options).toMatchObject({ redirect: 'error', credentials: 'omit', cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
   for (const altered of [{ redirected: true }, { url: 'https://foreign.test/stolen' }, { url: 'https://api.test/other' }]) {
     jest.mocked(fetch).mockResolvedValueOnce(reply(altered));
     await expect(getCaptionAsrStatus(source)).rejects.toThrow();
@@ -107,4 +128,25 @@ it('bounds JSON decoding and respects cancellation before token lookup and while
   await Promise.resolve();
   controller.abort();
   await cancelled;
+});
+
+for (const replacement of ['another account', 'same account new session', 'logout then original session']) {
+  it(`refuses a pending write token after ${replacement}`, async () => {
+    let finish!: (value: string) => void;
+    jest.mocked(freshToken).mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    const pending = requestCaptionAsr(source, 'en', true, status.consentEpoch);
+    const rejected = expect(pending).rejects.toThrow(/session changed/);
+    const nextOwner = replacement === 'another account' ? '10000000-0000-4000-a000-000000000002' : ownerId;
+    if (replacement === 'logout then original session') emitObservedAuthEvent('SIGNED_OUT', null);
+    emitObservedAuthEvent('SIGNED_IN', observedOwnerSession(nextOwner, replacement === 'logout then original session' ? sessionId : 'replacement-session'));
+    setDiscoveryViewerFromSession(nextOwner);
+    finish(observedOwnerAccessToken(nextOwner, replacement === 'logout then original session' ? sessionId : 'replacement-session'));
+    await rejected;
+    expect(fetch).not.toHaveBeenCalled();
+  });
+}
+
+it('does not accept a response decoded after the signed-in session ended', async () => {
+  jest.mocked(fetch).mockResolvedValueOnce(reply({ json: async () => { emitObservedAuthEvent('SIGNED_OUT', null); return status; } }));
+  await expect(getCaptionAsrStatus(source)).rejects.toThrow(/session changed/);
 });

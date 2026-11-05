@@ -23,6 +23,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { filterMediaByCurrentPlace, visibleMediaPlaceIds } from "../../lib/media/mediaPlaceGovernance.js";
 import {
   filterEligibleMediaCandidates,
   loadViewerTripIds,
@@ -676,6 +677,7 @@ export async function projectCandidatesProtected(
   rows: MediaCandidateRow[],
   nowMs: number,
 ): Promise<MediaProjection[]> {
+  rows = await filterMediaByCurrentPlace(sc, rows);
   if (rows.length === 0) return []; rows = await prepareCanonicalRows(sc, viewer, rows); if (rows.length === 0) return []; const vantages = await loadPerspectiveVantages(sc, rows); // §12 vantage — no read while media_perspective_vantage_enabled is off (census-media §36)
   // Two independent batch reads, one round trip's worth of latency. The gem
   // context is fail-CLOSED (losing it widens disclosure); the neighborhood map
@@ -722,6 +724,7 @@ export async function readCurrentState(
   nowMs: number,
 ): Promise<CurrentState> {
   if (!placeId) return EMPTY_CURRENT_STATE;
+  if (!(await visibleMediaPlaceIds(sc, [placeId])).has(placeId)) return EMPTY_CURRENT_STATE;
   let claims: LiveClaimEnvelope[] = [];
   try {
     claims = await readLiveClaimEnvelopes(sc, placeId, { now: new Date(nowMs) });
@@ -884,6 +887,9 @@ export async function buildPlaceProjection(
   nowMs: number,
 ): Promise<PlaceProjection> {
   const generatedAt = new Date(nowMs).toISOString();
+  if (!(await visibleMediaPlaceIds(sc, [placeId])).has(placeId)) {
+    throw Object.assign(new Error("Place not found"), { status: 404, code: "not_found" });
+  }
 
   // Coarse place identity (labels only). Best-effort; a failed read leaves nulls.
   let placeName: string | null = null;

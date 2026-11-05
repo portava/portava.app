@@ -55,6 +55,17 @@ import { checkBookingKycGate, MARKET_DECIDED_LATER } from "../../lib/rentBuddyKy
 import { enforceBookingCreationGates, deriveServiceCountry } from "../../routes/rentABuddy.js";
 import { logger as rootLogger } from "../../lib/logger.js";
 
+import { readWholeFollowGraph } from "./wallFollowGraph.js";
+
+function chunks<T>(items: T[], size = 500): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+function newest(rows: any[], limit: number): any[] {
+  return rows.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || String(b.id).localeCompare(String(a.id))).slice(0, limit);
+}
+
 const logger = rootLogger.child({ svc: "wallCandidateLoaders" });
 
 /** How many candidates each supplementary loader fetches before gating. Bounded
@@ -79,9 +90,9 @@ export interface LoadedWallCandidates {
    * the feed survives), but the caller can now tell an outage from a quiet
    * lane and say so on the wire (WallResponse.degraded).
    *
-   * Only the reads that DECIDE whether candidates exist set this. An enrichment
-   * read failing (a byline, a place label, a capture time) degrades the object,
-   * not the lane, and is logged rather than reported.
+   * Reads that DECIDE whether candidates exist or are eligible set this,
+   * including author account status. Cosmetic enrichment failures (a place
+   * label or capture time) degrade the object, not the lane.
    */
   failed?: boolean;
 }
@@ -161,31 +172,30 @@ interface AuthorProfile {
   accountStatus: string | null;
 }
 
-/** Batch-load author identity + account status (eligibility). Fail-soft: a
- *  failed read leaves an empty map, so authors project without an actor byline
- *  rather than breaking the loader. */
-async function batchProfiles(sc: any, ids: string[]): Promise<Map<string, AuthorProfile>> {
-  const out = new Map<string, AuthorProfile>();
+/** Profile status is authorization evidence. Missing/unreadable evidence is
+ * not an active author; callers omit affected candidates and report degradation. */
+async function batchProfiles(sc: any, ids: string[]): Promise<Map<string, AuthorProfile> & { failed: boolean }> {
+  const out = Object.assign(new Map<string, AuthorProfile>(), { failed: false });
   const unique = [...new Set(ids)].filter(Boolean);
   if (unique.length === 0) return out;
   try {
-    const rows = rowsOrThrow(
-      await sc
-        .from("profiles")
-        .select("id, display_name, username, avatar_url, account_status")
-        .in("id", unique.slice(0, 500)),
-    );
+    const pages = await Promise.all(chunks(unique).map(async (ids) => rowsOrThrow(
+      await sc.from("profiles").select("id, display_name, username, avatar_url, account_status").in("id", ids),
+    )));
+    const rows = pages.flat();
     for (const p of rows) {
       out.set(String(p.id), {
         displayName: String(p.display_name ?? p.username ?? "Traveler"),
         handle: p.username ?? null,
         avatarUrl: p.avatar_url ?? null,
-        accountStatus: p.account_status ?? "active",
+        accountStatus: typeof p.account_status === 'string' ? p.account_status : null,
       });
     }
   } catch (err) {
+    out.failed = true;
     logger.warn({ err }, "profile batch read failed");
   }
+  if (unique.some(id => !out.get(id)?.accountStatus)) out.failed = true;
   return out;
 }
 
@@ -382,19 +392,16 @@ export async function loadPostcardCandidates(
   // keyed by the postcard entity id, not the post id (spec §16).
   const postcardIdByPostId = new Map<string, string>();
   try {
-    let dq = sc
-      .from("passport_postcards")
-      .select("id, post_id, user_id, status, deleted_at, created_at")
-      .in("user_id", followed.slice(0, 500))
-      .eq("status", "active")
-      .order("created_at", { ascending: false })
-      .limit(LOADER_FETCH);
-    // Slide the discriminator window down to the horizon too (spec §28): on a
-    // Following page past the newest LOADER_FETCH, the newest postcards are all
-    // newer than the cursor and contribute nothing, so we must walk back to the
-    // older ones instead of re-reading the same newest set every page.
-    if (horizon) dq = dq.lte("created_at", horizon);
-    const rows = rowsOrThrow(await dq);
+    const pages = await Promise.all(chunks(followed).map(async (authors) => {
+      let dq = sc.from("passport_postcards")
+        .select("id, post_id, user_id, status, deleted_at, created_at")
+        .in("user_id", authors).eq("status", "active")
+        .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(LOADER_FETCH);
+      if (horizon) dq = dq.lte("created_at", horizon);
+      return rowsOrThrow(await dq);
+    }));
+    // Every followed author is queried; the visible page remains bounded.
+    const rows = newest(pages.flat(), LOADER_FETCH);
     // Re-checked in memory (status + tombstone) so a row fed past the query
     // filter cannot resurrect a hidden/reported/deleted postcard on the Wall.
     for (const r of rows) {
@@ -421,7 +428,6 @@ export async function loadPostcardCandidates(
       // Delayed-publish gate — same DB predicate as the Post spine and the
       // Following / global feeds (routes/posts.ts). Re-checked in memory below.
       .eq("post_status", "published")
-      .in("author_id", followed.slice(0, 500))
       .order("created_at", { ascending: false })
       .limit(LOADER_FETCH);
     // Apply the loader horizon: the For You freeze (a newly-published postcard
@@ -431,7 +437,7 @@ export async function loadPostcardCandidates(
     // In-memory guards, independent of the query filters: the row must be one
     // a live postcard points at (the discriminator) and must be published.
     rows = rowsOrThrow(await q).filter(
-      (r) => r && postcardPostIds.has(String(r.id)) && isPostPublished(r),
+      (r) => r && postcardPostIds.has(String(r.id)) && viewer.followedCreatorIds.has(String(r.author_id)) && isPostPublished(r),
     );
   } catch (err) {
     logger.warn({ err }, "postcard candidate read failed — degrading to no postcards");
@@ -484,6 +490,7 @@ export async function loadPostcardCandidates(
     const id = String(r.id);
     const authorId = String(r.author_id);
     const prof = profiles.get(authorId);
+    if (!prof?.accountStatus) { out.failed = true; continue; }
     const placeRef = r.canonical_place_id ? places.get(String(r.canonical_place_id)) ?? null : null;
     const media = mediaByPost.get(id) ?? [];
     const publishedAt = wallPublishedAtForViewer(r, viewer.viewerId); // verifier F6: a "Publish after I leave" post's release instant is its author's alone
@@ -504,7 +511,7 @@ export async function loadPostcardCandidates(
       place: withPostPlaceMark(placeRef, r), // census-media §43: the same ref, marked (never serialised) when the owner's mode withholds the place
       actor: actorFrom(prof, authorId),
       media: media.length > 0 ? media : undefined,
-      authorAccountStatus: prof?.accountStatus ?? "active",
+      authorAccountStatus: prof.accountStatus,
       isDeleted: false,
     });
     out.signals.set(id, {
@@ -516,6 +523,7 @@ export async function loadPostcardCandidates(
     });
     if (placeRef) out.placeByObject.set(id, withPostPlaceMark(placeRef, r)!); // census-media §43: marked as above
   }
+  if (profiles.failed) out.failed = true;
   return out;
 }
 
@@ -568,6 +576,9 @@ export async function loadVideoMediaCandidates(
     );
     const out = emptyLoaded();
     for (const row of rows) {
+      const rawProfile = Array.isArray((row as any).profiles) ? (row as any).profiles[0] : (row as any).profiles;
+      const accountStatus = rawProfile?.account_status;
+      if (typeof accountStatus !== 'string' || !accountStatus) { out.failed = true; continue; }
       const proj = projections.get(String(row.id));
       if (!proj) continue; // only media-bearing posts belong to this loader
 
@@ -611,9 +622,6 @@ export async function loadVideoMediaCandidates(
       // Real account status straight off the embedded profile so the Wall gate
       // re-checks author eligibility itself (the media gate already dropped
       // suspended/banned authors; this keeps the two gates independent).
-      const rawProfile = Array.isArray((row as any).profiles) ? (row as any).profiles[0] : (row as any).profiles;
-      const accountStatus = rawProfile?.account_status ?? "active";
-
       const objectType: WallObjectType = proj.mediaType === "video" ? "video" : "social_post";
 
       out.candidates.push({
@@ -742,8 +750,11 @@ export async function loadSharedMomentCandidates(
   for (const m of moments) {
     const id = String(m.id);
     const ownerId = String(m.owner_id);
+    const ownerProfile = profiles.get(ownerId);
+    if (!ownerProfile?.accountStatus) { out.failed = true; continue; }
     const placeRef = m.place_id ? places.get(String(m.place_id)) ?? null : null;
     const participants = (membersByMoment.get(id) ?? [])
+      .filter(uid => profiles.get(uid)?.accountStatus === 'active')
       .map((uid) => actorFrom(profiles.get(uid), uid))
       .filter((a): a is PublicActorRef => !!a);
     const publishedAt = String(m.created_at ?? new Date().toISOString());
@@ -762,7 +773,7 @@ export async function loadSharedMomentCandidates(
       // Real owner status (already loaded for the byline above) so the Wall gate's
       // passesEligibility can drop a banned/suspended owner's moment — matching the
       // Post spine and media loader. Hardcoding "active" here defeated that gate.
-      authorAccountStatus: profiles.get(ownerId)?.accountStatus ?? "active",
+      authorAccountStatus: ownerProfile.accountStatus,
       isDeleted: false,
       // Consent already resolved by accepted membership above.
       callerVisibilityResolved: true,
@@ -776,6 +787,7 @@ export async function loadSharedMomentCandidates(
     });
     if (placeRef) out.placeByObject.set(id, placeRef);
   }
+  if (profiles.failed) out.failed = true;
   return out;
 }
 
@@ -1080,6 +1092,7 @@ export async function loadContextualOpportunityCandidates(
     const id = String(row.id);
     const userId = String(row.user_id);
     const prof = profiles.get(userId);
+    if (!prof?.accountStatus) { out.failed = true; continue; }
     const city = typeof row.city === "string" ? row.city : null;
     const zones = (Array.isArray(row.preferred_meetup_zones) ? row.preferred_meetup_zones : [])
       .filter((z: unknown): z is string => typeof z === "string" && z.trim().length > 0)
@@ -1107,7 +1120,7 @@ export async function loadContextualOpportunityCandidates(
       text,
       actor,
       media: media.length > 0 ? media : undefined,
-      authorAccountStatus: prof?.accountStatus ?? "active",
+      authorAccountStatus: prof.accountStatus,
       isDeleted: false,
       opportunityKind: m.kind,
       opportunityArea: city,
@@ -1122,6 +1135,7 @@ export async function loadContextualOpportunityCandidates(
       isFirstImpression: true,
     });
   }
+  if (profiles.failed) out.failed = true;
   return out;
 }
 
@@ -1239,19 +1253,16 @@ export async function loadQuickMediaRow(
 
   // 1. Follow graph — the row is "from followed people" only (§18).
   let followed: string[] = [];
+  let graphFailed = false;
   try {
-    const { data, error } = await sc
-      .from("user_follows")
-      .select("following_id")
-      .eq("follower_id", viewerId)
-      .limit(500);
-    if (error) throw error;
-    followed = [...new Set(((data as any[]) ?? []).map((r) => String(r.following_id)).filter(Boolean))];
+    const graph = await readWholeFollowGraph(sc, viewerId);
+    graphFailed = !!graph.error;
+    followed = [...new Set((graph.data ?? []).map((r) => r.following_id))];
   } catch (err) {
     logger.warn({ err }, "quick media: follow read failed — degrading to empty row");
     return { items: [], failed: true };
   }
-  if (followed.length === 0) return { items: [], failed: false };
+  if (followed.length === 0) return { items: [], failed: graphFailed };
 
   // 2. Blocks, both directions, fail-closed.
   const blocked = await fetchBlockedSet(sc, viewerId);
@@ -1260,32 +1271,23 @@ export async function loadQuickMediaRow(
     return { items: [], failed: true };
   }
   const owners = followed.filter((id) => !blocked.has(id) && id !== viewerId);
-  if (owners.length === 0) return { items: [], failed: false };
+  if (owners.length === 0) return { items: [], failed: graphFailed };
 
   // 3. Recent media_assets from those owners.
   const sinceIso = new Date(nowMs - QUICK_MEDIA_WINDOW_MS).toISOString();
   let assets: any[] = [];
   try {
-    const { data, error } = await sc
+    const pages = await Promise.all(chunks(owners).map(async (ownerIds) => rowsOrThrow(await sc
       .from("media_assets")
-      .select(
-        "id, owner_user_id, storage_bucket, storage_path, public_url, media_type, thumbnail_path, thumbnail_url, " +
-          "width, height, duration_ms, moderation_status, processing_status, visibility, created_at",
-      )
-      .in("owner_user_id", owners.slice(0, 500))
-      .gte("created_at", sinceIso)
-      .eq("processing_status", "ready")
-      .order("created_at", { ascending: false })
-      .limit(200);
-    if (error) throw error;
-    // Re-checked in memory so a row fed past the query filters (a stale
-    // replica, a test double) cannot resurrect a private/expired asset.
-    assets = ((data as any[]) ?? []).filter((r) => quickMediaAssetServable(r, nowMs) && owners.includes(String(r.owner_user_id)));
+      .select("id, owner_user_id, storage_bucket, storage_path, public_url, media_type, thumbnail_path, thumbnail_url, width, height, duration_ms, moderation_status, processing_status, visibility, created_at")
+      .in("owner_user_id", ownerIds).gte("created_at", sinceIso).eq("processing_status", "ready")
+      .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(200))));
+    assets = newest(pages.flat(), 200).filter((r) => quickMediaAssetServable(r, nowMs) && owners.includes(String(r.owner_user_id)));
   } catch (err) {
     logger.warn({ err }, "quick media: media_assets read failed — degrading to empty row");
     return { items: [], failed: true };
   }
-  if (assets.length === 0) return { items: [], failed: false };
+  if (assets.length === 0) return { items: [], failed: graphFailed };
 
   // 4. Resolve the publishing post for each asset: canonical attachment first,
   //    then the legacy post_media row at the same storage path.
@@ -1332,7 +1334,7 @@ export async function loadQuickMediaRow(
     }
   }
   const publishedAssets = assets.filter((a) => postIdByAsset.has(String(a.id)));
-  if (publishedAssets.length === 0) return { items: [], failed: false };
+  if (publishedAssets.length === 0) return { items: [], failed: graphFailed };
 
   // 5. The publishing posts, gated by the canonical post policy (§23).
   const postIds = [...new Set([...postIdByAsset.values()])];
@@ -1409,7 +1411,7 @@ export async function loadQuickMediaRow(
     });
     if (out.length >= limit) break;
   }
-  return { items: out, failed: false };
+  return { items: out, failed: graphFailed || profiles.failed };
 }
 
 /**

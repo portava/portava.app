@@ -2347,7 +2347,7 @@ router.post("/admin/reports/:id/dismiss", async (req, res) => {
  * Also moves an UNRESOLVED report to "in_review"; a resolved or dismissed one stays closed.
  *
  * Supported target_types:
- *   post  — sets posts.post_status = 'removed'
+ *   post  — sets posts.status = 'hidden' (the moderation status, not delayed-release lifecycle)
  *   trip  — sets trips.visibility = 'private'
  *   event — sets events.visibility = 'invite_only'
  *   (other types: report is moved to in_review but no content mutation is applied)
@@ -2399,7 +2399,7 @@ router.post("/admin/reports/:id/hide-content", async (req, res) => {
     // happened. The kernel's trip path already answers TRIP_NOT_FOUND here; the
     // other target types now agree with it instead of contradicting it.
     const { data: hiddenRows, error } = await sc.from("posts")
-      .update({ post_status: "removed", updated_at: now })
+      .update({ status: "hidden", updated_at: now })
       .eq("id", target_id)
       .select("id");
     if (error) { sendError(res, "db_error", error.message); return; }

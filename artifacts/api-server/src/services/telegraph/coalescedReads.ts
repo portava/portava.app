@@ -37,7 +37,7 @@
 
 type Call = readonly [method: string, args: readonly unknown[]];
 
-type Answer = { data: unknown; error: unknown; count: null };
+type Answer = { data: unknown; error: unknown; count: number | null };
 
 interface Waiter {
   resolve: (a: Answer) => void;
@@ -83,10 +83,23 @@ export function coalescableShape(
   calls: readonly Call[],
 ):
   | { kind: "id"; cols: string; id: unknown }
+  | { kind: "checked_ids"; cols: string; ids: string[] }
   | { kind: "pair"; cols: string; a: string; x: unknown; b: string; y: unknown; terminal: "maybeSingle" | "limit1" }
   | null {
   if (calls.length < 3) return null;
   const [first, ...rest] = calls;
+  // Canonical moderation readers require an exact count to detect truncation.
+  // Coalesce this precise bounded shape without caching an authorization answer.
+  if (calls.length === 3 && first[0] === 'select' && typeof first[1][0] === 'string'
+      && SIMPLE_COLUMNS.test(first[1][0]) && first[1].length === 2
+      && JSON.stringify(first[1][1]) === '{"count":"exact"}'
+      && rest[0][0] === 'in' && rest[0][1].length === 2 && rest[0][1][0] === 'id' && Array.isArray(rest[0][1][1])) {
+    const ids = rest[0][1][1];
+    if (ids.length > 0 && ids.length <= ID_CHUNK && ids.every(id => typeof id === 'string')
+        && new Set(ids).size === ids.length && rest[1][0] === 'limit' && rest[1][1].length === 1 && rest[1][1][0] === ids.length + 1) {
+      return { kind: 'checked_ids', cols: first[1][0], ids };
+    }
+  }
   if (first[0] !== "select" || first[1].length !== 1 || typeof first[1][0] !== "string") return null;
   const cols = first[1][0] as string;
   if (!SIMPLE_COLUMNS.test(cols)) return null;
@@ -128,6 +141,8 @@ export function coalescingClient<C extends object>(real: C, stats: CoalescingSta
   type PairGroup = { table: string; cols: string; a: string; b: string; reqs: PairReq[] };
   const idGroups = new Map<string, IdGroup>();
   const pairGroups = new Map<string, PairGroup>();
+  type CheckedGroup = { table: string; cols: string; reqs: Array<{ ids: string[]; waiter: Waiter }> };
+  const checkedGroups = new Map<string, CheckedGroup>();
   let scheduled = false;
 
   const schedule = () => {
@@ -223,9 +238,37 @@ export function coalescingClient<C extends object>(real: C, stats: CoalescingSta
   async function flush(): Promise<void> {
     const ids = [...idGroups.values()];
     const pairs = [...pairGroups.values()];
+    const checked = [...checkedGroups.values()];
     idGroups.clear();
     pairGroups.clear();
-    await Promise.all([...ids.map(flushIdGroup), ...pairs.map(flushPairGroup)]);
+    checkedGroups.clear();
+    await Promise.all([...ids.map(flushIdGroup), ...pairs.map(flushPairGroup), ...checked.map(flushCheckedGroup)]);
+  }
+
+  async function flushCheckedGroup(g: CheckedGroup): Promise<void> {
+    const ids = [...new Set(g.reqs.flatMap(r => r.ids))];
+    const rows: Array<Record<string, unknown>> = [];
+    let error: unknown = null;
+    try {
+      for (let i = 0; i < ids.length; i += ID_CHUNK) {
+        const part = ids.slice(i, i + ID_CHUNK);
+        stats.issued += 1;
+        const result = await realFrom(g.table).select(withColumns(g.cols, ['id']), { count: 'exact' }).in('id', part).limit(part.length + 1);
+        if (result.error || !Array.isArray(result.data) || !Number.isInteger(result.count)
+            || result.count !== result.data.length || result.data.length > part.length
+            || result.data.some((r: any) => !r || !part.includes(r.id))
+            || new Set(result.data.map((r: any) => r.id)).size !== result.data.length) {
+          throw result.error ?? new Error('Incomplete canonical batch');
+        }
+        rows.push(...result.data);
+      }
+    } catch (err) { error = err ?? new Error('Canonical batch unreadable'); }
+    for (const r of g.reqs) {
+      stats.coalesced += 1;
+      const hits = rows.filter(row => r.ids.includes(String(row.id)));
+      r.waiter.resolve(error ? { data: null, error, count: null }
+        : { data: hits.map(row => projectRow(row, columnsOf(g.cols))), error: null, count: hits.length });
+    }
   }
 
   function recordingBuilder(table: string): any {
@@ -235,6 +278,16 @@ export function coalescingClient<C extends object>(real: C, stats: CoalescingSta
     const run = (): Promise<Answer> => {
       if (settled) return settled;
       const shape = coalescableShape(calls);
+      if (shape?.kind === 'checked_ids') {
+        settled = new Promise<Answer>((resolve) => {
+          const gk = `${table}\u0000${shape.cols}`;
+          let g = checkedGroups.get(gk);
+          if (!g) { g = { table, cols: shape.cols, reqs: [] }; checkedGroups.set(gk, g); }
+          g.reqs.push({ ids: shape.ids, waiter: { resolve } });
+          schedule();
+        });
+        return settled;
+      }
       if (shape?.kind === "id") {
         settled = new Promise<Answer>((resolve) => {
           const gk = `${table}\u0000${shape.cols}`;

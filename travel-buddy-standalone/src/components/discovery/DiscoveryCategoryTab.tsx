@@ -412,6 +412,7 @@ export function DiscoveryCategoryTab({
   const [total, setTotal]           = useState(0);  const [moreRefused, setMoreRefused] = useState(false); const [partial, setPartial] = useState(false);  // DV-83: page ≥ 2 was REFUSED — see load(); §80: a page came back PARTIAL
   const [locationNudge, setLocationNudge] = useState(false); const [liveUnchecked, setLiveUnchecked] = useState(false);  // census-discovery §91 (A07): the served page's "now" claims were withheld (meta.liveSafety)
   const loadingMore                 = useRef(false);
+  const loadIdRef = useRef(0);
   const nudgeOpacity                = useRef(new Animated.Value(0)).current;
   const nudgeTimer                  = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Stores the coords that were active when the last fetch fired. */
@@ -462,6 +463,7 @@ export function DiscoveryCategoryTab({
 
   const load = useCallback(async (nextPage: number, currentFilters: DiscoveryFilters, reset: boolean) => {
     if (!destination) return;
+    const loadId = ++loadIdRef.current;
     if (reset) setLoading(true);
     setError(null); setMoreRefused(false);
 
@@ -489,6 +491,7 @@ export function DiscoveryCategoryTab({
 
     const requestFilters = intentMode ? { ...currentFilters, intentMode } : currentFilters;  // no mode ⇒ the filters object passed before §71
     const res = await getDiscoveryPlaces(destination, category, requestFilters, nextPage, contextMode, ageFilter, customMinAge, customMaxAge, lat, lng, nearestUserLat, nearestUserLng);
+    if (loadId !== loadIdRef.current) return;
 
     // Always clear — bootstrap guard is only needed during the async window.
     nearestFetchPendingWithCoords.current = false;
@@ -562,6 +565,7 @@ export function DiscoveryCategoryTab({
     }
     setPage(1);
     load(1, filters, cachedResult === null); // reset=true (skeleton) only on miss
+    return () => { loadIdRef.current += 1; };
   }, [destination, category, filters, ageFilter, customMinAge, customMaxAge, load]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Detect meaningful location changes while 'nearest' sort is active and
@@ -638,10 +642,10 @@ export function DiscoveryCategoryTab({
         </Animated.View>
       )}
 
-      {loading && places.length === 0 ? (
+      {viewMode === 'map' ? (
+        <DiscoveryMapView key={destination} places={places} placesLoading={loading || refreshing} placesError={error} placesPartial={partial} onRetryPlaces={handleRefresh} onSelectPlace={onSelectPlace} fallbackLat={lat} fallbackLng={lng} userLat={userLat} userLng={userLng} fallbackZoom={fallbackZoom} topInset={listTopInset} />
+      ) : loading && places.length === 0 ? (
         <PlaceSkeletonList count={6} />
-      ) : viewMode === 'map' ? (
-        <DiscoveryMapView key={destination} places={places} onSelectPlace={onSelectPlace} fallbackLat={lat} fallbackLng={lng} userLat={userLat} userLng={userLng} fallbackZoom={fallbackZoom} topInset={listTopInset} />
       ) : error && places.length === 0 ? (
         <View style={styles.center}>
           <Text style={styles.emptyTitle}>Couldn't load places</Text>

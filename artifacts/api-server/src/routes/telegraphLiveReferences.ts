@@ -27,6 +27,7 @@
  * person-shaped is on the wire: snapshot and version ids are opaque.
  */
 import { Router } from "express";
+import { readCanonicalPlaceVisibility } from "../lib/places/placeGovernance.js";
 import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
@@ -74,6 +75,9 @@ interface PlaceRow {
 
 /** The subject: an ACTIVE, unmerged place; null otherwise. A missing status is not "active". */
 async function readReferenceablePlace(sc: any, placeId: string): Promise<PlaceRow | null> {
+  const visibility = await readCanonicalPlaceVisibility(sc, [placeId]);
+  if (!visibility.ok) throw Object.assign(new Error("Place visibility unavailable"), { status: 503, code: "degraded_unavailable" });
+  if (!visibility.visibleIds.has(placeId)) return null;
   const { data, error } = await sc
     .from("places")
     .select("id, name, status, merged_into_place_id")
@@ -228,6 +232,12 @@ router.get(
       return;
     }
     let comparison: LiveReferenceComparison;
+    // A persisted live-reference body contains the old subject name and prose.
+    // Do not return any of it after catalog withdrawal, even if live data is off.
+    if (!(await readReferenceablePlace(sc, reference.subject.id))) {
+      sendError(res, "not_found", "Reference not available");
+      return;
+    }
     let current: { claims: unknown[]; truth: unknown } | null = null;
     if (!(await liveLabelsServable(sc))) {
       comparison = refusedComparison(reference, "live_intelligence_unavailable", nowMs);

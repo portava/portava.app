@@ -723,7 +723,7 @@ describe("J — §86.14: past the page, the viewer's view, and past the member w
     // §86.15: the tied pair is SEEDED smaller-id first, so only readMembers' `.order("id")` puts row 499 (larger id)
     // inside the window; without that tiebreak the window would end on row 500 and row 499 would be skipped.
     const seeded = [...rows.slice(0, 499), rows[500]!, rows[499]!, ...rows.slice(501)];
-    const db = makeRulesDb({ profiles: profiles(40), trails: [trailRow(T)], content_trails: seeded, posts: [blockedPost], places: [{ id: CP(1), name: "V", latitude: null, longitude: null }], blocks: [{ blocker_id: VIEWER, blocked_id: BLOCKED }] });
+    const db = makeRulesDb({ profiles: profiles(40), trails: [trailRow(T)], content_trails: seeded, posts: [blockedPost], places: [{ id: CP(1), name: "V", latitude: null, longitude: null }], discovery_places: rows.filter(row => row.source_type === 'place').map(row => ({ id: row.source_id, status: 'active' })), blocks: [{ blocker_id: VIEWER, blocked_id: BLOCKED }] });
     _setTestClient(db as any, true);
     const first = await call("GET", `/v1/discovery/trails/${T}/more`, U(3));
     assert.equal(typeof first.body.next, "string", "the window is full: a cursor to the older members");

@@ -24,7 +24,11 @@ export function MediaCaptionControls({ source, status, active = true, onSourceCh
 function CaptionSession({ source, status, onSourceChanged }: { source: string; status: CaptionPlaybackStatus | null; onSourceChanged?: () => void }) {
   const { preferredLanguage } = useLanguagePreference();
   const [descriptor, setDescriptor] = useState<CaptionSource | null>(null);
+  const [sourceAttempt, setSourceAttempt] = useState(0);
+  const [sourceFailed, setSourceFailed] = useState(false);
+  const [resolving, setResolving] = useState(false);
   const [track, setTrack] = useState<CaptionTrackResult | null>(null);
+  const [trackFailed, setTrackFailed] = useState(false);
   const [shown, setShown] = useState(false);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -41,15 +45,22 @@ function CaptionSession({ source, status, onSourceChanged }: { source: string; s
     const abort = new AbortController();
     setTrack(null);
     setDescriptor(null);
-    resolveCaptionSource(source, abort.signal).then((value) => { if (!abort.signal.aborted) setDescriptor(value); }).catch(() => {});
+    setResolving(true);
+    resolveCaptionSource(source, abort.signal).then((value) => {
+      if (!abort.signal.aborted) { setDescriptor(value); setSourceFailed(false); }
+    }).catch(() => {
+      if (!abort.signal.aborted) setSourceFailed(true);
+    }).finally(() => { if (!abort.signal.aborted) setResolving(false); });
     return () => abort.abort();
-  }, [source]);
+  }, [source, sourceAttempt]);
 
   useEffect(() => {
     if (!descriptor || (!shown && !editing)) return;
     const abort = new AbortController();
     setBusy(true);
     setTrack(null);
+    setTrackFailed(false);
+    setMessage('');
     const request = editing && reviewingDraft ? readCaptionDraft(descriptor, abort.signal) : readCaptionTrack(descriptor, abort.signal, language);
     request.then((value) => {
       if (abort.signal.aborted) return;
@@ -57,18 +68,30 @@ function CaptionSession({ source, status, onSourceChanged }: { source: string; s
       setExpiresAt(Date.now() + 10_000);
       setMessage(value.cues.length ? '' : 'No timed captions yet.');
     }).catch(() => {
-      if (!abort.signal.aborted) { setTrack(null); setMessage('Captions unavailable. Close and reopen this video to refresh.'); }
+      if (!abort.signal.aborted) { setTrack(null); setTrackFailed(true); setMessage('Captions unavailable. Try again.'); }
     }).finally(() => { if (!abort.signal.aborted) setBusy(false); });
     return () => abort.abort();
   }, [descriptor, shown, editing, refresh, language, reviewingDraft]);
 
   useEffect(() => {
-    if (!shown || editing) return;
+    if (!shown || editing || !descriptor || trackFailed) return;
     const timer = setInterval(() => { setTrack(null); setRefresh((value) => value + 1); }, 10_000);
     return () => clearInterval(timer);
-  }, [shown, editing]);
+  }, [shown, editing, descriptor, trackFailed]);
 
-  if (!descriptor) return null;
+  const retry = () => {
+    // Re-resolve access and generation as well as the track. Retrying an old
+    // descriptor forever cannot recover after the source video was replaced.
+    setTrack(null);
+    setDescriptor(null);
+    setSourceFailed(true);
+    setResolving(true);
+    setSourceAttempt((value) => value + 1);
+  };
+  if (!descriptor) return sourceFailed ? <View style={styles.controls}>
+    <Text accessibilityRole="alert" style={styles.message}>{resolving ? 'Loading captions…' : 'Captions unavailable. Try again.'}</Text>
+    <Pressable accessibilityRole="button" accessibilityLabel="Retry captions" accessibilityState={{ disabled: resolving, busy: resolving }} disabled={resolving} onPress={retry} style={styles.button}><Text style={styles.text}>Retry captions</Text></Pressable>
+  </View> : null;
   return <>
     {shown && track && Date.now() < expiresAt ? <TimedCaptionOverlay cues={track.cues} status={status} /> : null}
     <View style={styles.controls}>
@@ -84,6 +107,7 @@ function CaptionSession({ source, status, onSourceChanged }: { source: string; s
       }} style={styles.button}><Text style={styles.text}>{track.language}</Text></Pressable> : null}
       {shown && track?.aiLabel ? <Text style={styles.message}>{track.aiLabel}</Text> : null}
       {message && (shown || editing) ? <Text accessibilityRole="alert" style={styles.message}>{message}</Text> : null}
+      {trackFailed && (shown || editing) ? <Pressable accessibilityRole="button" accessibilityLabel="Retry captions" onPress={retry} style={styles.button}><Text style={styles.text}>Retry captions</Text></Pressable> : null}
     </View>
     {editing && track ? <CaptionAuthoringSheet key={`${descriptor.assetId}:${descriptor.version}:${track.revisionKey}`} source={{ ...descriptor, revisionKey: track.revisionKey }} initialVtt={track.vtt} initialLanguage={track.language} draftId={track.draftId} onClose={() => setEditing(false)} onSaved={(result) => {
       setEditing(false);

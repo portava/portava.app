@@ -1,3 +1,4 @@
+import {makeFakeClient} from "./telegraphCertificationHarness.js";
 /**
  * Tests for GET /api/places/:id/living (placeLiving assembler).
  *
@@ -79,13 +80,13 @@ function makeFakeSc(opts: {
       { flag: "live_places_enabled",     enabled: true },
       ...(opts.extraFlags ?? []),
     ],
-    places:                     place ? [place] : [],
+    places:                     place ? [{moderation_status:"visible",merged_into_place_id:null,governance_version:0,...place}] : [],
     external_place_references:  [],
     posts:                      posts,
     place_coverage_buckets:     buckets,
     media_dedup_groups:         dedupGroups,
     place_top_contributors:     contributors,
-    place_living_cache:         livingCache ? [livingCache] : [],
+    place_living_cache:         livingCache ? [{...livingCache,payload:{governanceVersion:0,...livingCache.payload}}] : [],
     place_best_of:              bestOf ? [bestOf] : [],
     place_ai_summaries:         aiSummaries ? [aiSummaries] : [],
     place_cache_invalidation_queue: [],
@@ -95,6 +96,7 @@ function makeFakeSc(opts: {
   function buildChain(tableData: any[], filters: Record<string, any> = {}) {
     let result = [...tableData];
     let _limit: number | null = null;
+    let _range:[number,number]|null=null;
     let _selectCols: string | null = null;
     let _maybeSingle = false;
     let _order: { col: string; asc: boolean } | null = null;
@@ -129,6 +131,7 @@ function makeFakeSc(opts: {
         _order = { col, asc: opts2?.ascending ?? false };
         return chain;
       },
+      range(a:number,b:number){_range=[a,b];return chain;},
       limit(n: number) { _limit = n; return chain; },
       maybeSingle() { _maybeSingle = true; return chain; },
       single() { _maybeSingle = true; return chain; },
@@ -140,11 +143,13 @@ function makeFakeSc(opts: {
             ? String(a[col] ?? "").localeCompare(String(b[col] ?? ""))
             : String(b[col] ?? "").localeCompare(String(a[col] ?? "")));
         }
+        const count=result.length;
+        if(_range)result=result.slice(_range[0],_range[1]+1);
         if (_limit !== null) result = result.slice(0, _limit);
         if (_maybeSingle) {
           return resolve({ data: result[0] ?? null, error: null });
         }
-        return resolve({ data: result, error: null });
+        return resolve({ data: result, error: null, count });
       },
     };
     return chain;
@@ -361,6 +366,19 @@ describe("GET /places/:id/living", () => {
     assert.equal(droneBucket.posts[0].id, "drone-post-0");
 
     server.close();
+  });
+
+  it("withholding prevents an old Living cache body from being served",async()=>{
+    const sc=makeFakeSc({place:{...FAKE_PLACE,moderation_status:'withheld'},livingCache:{place_id:PLACE_ID,cached_at:hoursAgo(0.1),sparse:false,payload:{_placeModeAware:true,governanceVersion:0,secret:'old cached place'}}} as any);
+    server=http.createServer(makeApp(sc));await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+    const result=await request(server,'GET',`/places/${PLACE_ID}/living`);
+    assert.equal(result.status,404);assert.equal(result.body.secret,undefined);server.close();
+  });
+  it("a cache rebuild from before a governance action cannot revive old details",async()=>{
+    const sc=makeFakeSc({place:{...FAKE_PLACE,governance_version:1},livingCache:{place_id:PLACE_ID,cached_at:hoursAgo(0.01),sparse:false,payload:{_placeModeAware:true,governanceVersion:0,secret:'stale provider details'}}} as any);
+    server=http.createServer(makeApp(sc));await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+    const result=await request(server,'GET',`/places/${PLACE_ID}/living`);
+    assert.equal(result.status,200);assert.equal(result.headers['x-cache']?.toLowerCase(),'miss');assert.equal(result.body.secret,undefined);assert.equal(result.body.governanceVersion,1);server.close();
   });
 
   it("cache hit: returns cached payload without reassembly", async () => {
@@ -776,27 +794,7 @@ describe("GET /places/:id/living/timeline", () => {
     // Override places table to include the merged place row too
     const origFrom = sc.from.bind(sc);
     sc.from = (table: string) => {
-      if (table === "places") {
-        const allPlaces = [FAKE_PLACE, mergedPlace];
-        const chain = origFrom(table);
-        // Rebuild with both rows: return a custom chain that filters correctly
-        return {
-          select: (cols: string) => {
-            let result = [...allPlaces];
-            let _maybeSingle = false;
-            const c: any = {
-              select(c2: string) { return c; },
-              eq(col: string, val: any) { result = result.filter((r) => r[col as keyof typeof r] === val); return c; },
-              in(col: string, vals: any[]) { result = result.filter((r) => vals.includes(r[col as keyof typeof r])); return c; },
-              maybeSingle() { _maybeSingle = true; return c; },
-              then(resolve: any) {
-                return resolve({ data: _maybeSingle ? (result[0] ?? null) : result, error: null });
-              },
-            };
-            return c;
-          },
-        };
-      }
+      if (table === "places") return makeFakeClient({places:[FAKE_PLACE,mergedPlace]}).from('places');
       return origFrom(table);
     };
 
@@ -815,4 +813,38 @@ describe("GET /places/:id/living/timeline", () => {
 
     server.close();
   });
+});
+
+
+describe('living dedup current-source projection across cache modes', () => {
+  for (const cacheMode of ['HIT', 'STALE', 'MISS']) {
+    it(`${cacheMode}: IDs resolve to original media and current privacy withdraws the preview`, async () => {
+      const mediaId = '55000000-0000-4000-8000-000000000001';
+      const postId = '44000000-0000-4000-8000-000000000001';
+      const groupId = '66000000-0000-4000-8000-000000000001';
+      const stalePayload = { placeId: PLACE_ID, governanceVersion: 0, _placeModeAware: true, sparseMode: false,
+        dedupGroups: [{ groupId, memberCount: 999, sampleUrls: [mediaId] }] };
+      const sc = makeFakeClient({
+        feature_flags: [{ flag: 'external_places_enabled', enabled: true }, { flag: 'live_places_enabled', enabled: true }],
+        places: [{ ...FAKE_PLACE, moderation_status: 'visible', governance_version: 0 }],
+        place_living_cache: cacheMode === 'MISS' ? [] : [{ place_id: PLACE_ID, payload: stalePayload, sparse: false, cached_at: hoursAgo(cacheMode === 'HIT' ? 0.1 : 2) }],
+        media_dedup_groups: [{ id: groupId, canonical_place_id: PLACE_ID, sample_media_ids: [mediaId], member_count: 999 }],
+        post_media: [{ id: mediaId, post_id: postId, user_id: USER_ID, canonical_place_id: PLACE_ID, media_type: 'image', processing_status: 'ready', moderation_status: 'approved', public_url: 'https://cdn.example/original.jpg', thumbnail_url: 'https://cdn.example/thumbnail.jpg' }],
+        posts: [{ id: postId, author_id: USER_ID, canonical_place_id: PLACE_ID, status: 'active', post_status: 'published', visibility: 'public', location_privacy_mode: 'none', created_at: now(), content: 'Photo', media_urls: ['https://cdn.example/original.jpg'], media_type: 'photo' }],
+        profiles: [{ id: USER_ID, is_private: false, account_status: 'active', user_account_states: [] }],
+      });
+      const server = http.createServer(makeApp(sc));
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      try {
+        const first = await request(server, 'GET', `/places/${PLACE_ID}/living`);
+        assert.equal(first.status, 200); assert.equal(first.headers['x-cache'], cacheMode);
+        assert.equal(first.body.dedupGroups[0].samples[0].mediaUrl, 'https://cdn.example/original.jpg');
+        assert.deepEqual(first.body.dedupGroups[0].sampleUrls, ['https://cdn.example/thumbnail.jpg']);
+        assert.equal(first.body.dedupGroups[0].memberCount, 1);
+        sc._store.posts[0]!.visibility = 'private';
+        const second = await request(server, 'GET', `/places/${PLACE_ID}/living`);
+        assert.equal(second.status, 200); assert.deepEqual(second.body.dedupGroups, []);
+      } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+    });
+  }
 });

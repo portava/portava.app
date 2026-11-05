@@ -270,13 +270,17 @@ describe("GET /api/me/export", () => {
   });
 });
 
-describe("X9 — the registry names only what production has", () => {
+describe("X9 — the registry names only baseline or explicitly migrated tables", () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const baseline = readFileSync(BASELINE_PATH, "utf8");
   const tables = new Map<string, Set<string>>();
   for (const m of baseline.matchAll(/^CREATE TABLE public\.([A-Za-z0-9_]+) \(([\s\S]*?)^\);/gm)) {
     tables.set(m[1], new Set([...m[2].matchAll(/^\s+([a-z_][a-z0-9_]*)\s+/gm)].map((c) => c[1])));
   }
+  const feedbackMigration=readFileSync(join(here,"../migrations/4017_telegraph_outcome_feedback.sql"),"utf8");
+  const feedbackDefinition=feedbackMigration.match(/CREATE TABLE IF NOT EXISTS public\.telegraph_outcome_feedback\(([\s\S]*?)\n\);/);
+  assert.ok(feedbackDefinition,'owned migration4017 defines the optional feedback table');
+  tables.set('telegraph_outcome_feedback',new Set([...feedbackDefinition[1].matchAll(/^\s+([a-z_][a-z0-9_]*)\s+/gm)].map(c=>c[1])));
   const migrationsDir = join(here, "../migrations");
   const migrations = readdirSync(migrationsDir).filter((f) => f.endsWith(".sql"))
     .map((f) => ({ f, sql: readFileSync(join(migrationsDir, f), "utf8") }));

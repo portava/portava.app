@@ -106,6 +106,8 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
 
   // ── Auth ─────────────────────────────────────────────────────────────────
 
+  { key: 'account-access', path: '(auth)/account-access', title: 'Account access & appeals', parent: 'sign-in', icon: null, requiresAuth: false },
+
   {
     key: 'sign-in',
     path: '(auth)/sign-in',
@@ -988,6 +990,18 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
 
   // ── Messages / Telegraph ──────────────────────────────────────────────────
 
+  { key: 'messages-recap-curation', path: 'messages/recap-curation', title: 'Curate your recap',
+    parent: 'tab-messages', icon: null, requiresAuth: true, deepLink: '/messages/recap-curation' },
+
+  {
+    key: 'messages-nearby',
+    path: 'messages/nearby',
+    title: 'Nearby & availability',
+    parent: 'tab-messages',
+    icon: null,
+    requiresAuth: true,
+    deepLink: '/messages/nearby',
+  },
   {
     key: 'message-thread',
     path: 'messages/[id]',
@@ -1098,6 +1112,16 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     icon: null,
     requiresAuth: true,
     ownerOnly: true,
+  },
+
+  {
+    key: 'highlight-detail',
+    path: 'highlights/[id]',
+    title: 'Highlight',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+    deepLink: '/highlights/[id]',
   },
 
   // ── Hashtag ───────────────────────────────────────────────────────────────
@@ -1724,6 +1748,15 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
   // ── Platform Admin ────────────────────────────────────────────────────────
 
   {
+    key: 'admin-reported-place',
+    path: 'admin/reported-place',
+    title: 'Review Reported Place',
+    parent: 'admin-place-mismatch-reports',
+    icon: null,
+    requiresAuth: true,
+    adminOnly: true,
+  },
+  {
     key: 'admin-place-mismatch-reports',
     path: 'admin/place-mismatch-reports',
     title: 'Place Mismatch Reports',
@@ -1982,6 +2015,9 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
   },
 
   // ── Settings ──────────────────────────────────────────────────────────────
+  { key: 'settings-community-guidelines', path: 'settings/community-guidelines', title: 'Community guidelines', parent: 'settings-index', icon: null, requiresAuth: false },
+  { key: 'admin-reported-content', path: 'admin/reported-content', title: 'Reported content', parent: 'admin-moderation-reports', icon: null, requiresAuth: true, adminOnly: true },
+  { key: 'admin-trail-reviews', path: 'admin/trail-reviews', title: 'Trail review', parent: 'admin-console', icon: null, requiresAuth: true, adminOnly: true },
   { key: 'settings-privacy-policy', path: 'settings/privacy-policy', title: 'Privacy information', parent: 'settings-index', icon: null, requiresAuth: false, deepLink: '/settings/privacy-policy' },
   {
     key: 'settings-index',
@@ -2126,7 +2162,7 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     // §4 Media Contribution (census-media §19). A current perspective of one
     // canonical place, through the existing upload + post write.
   },
-  { key: 'saved-people', path: 'saved-people', title: 'Saved People', parent: 'saved', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'stamp-collections', path: 'stamp-collections', title: 'Stamp Collections', parent: 'stamps', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'memory-new', path: 'memory/new', title: 'New Memory', parent: null, icon: null, requiresAuth: true, ownerOnly: true }, { key: 'messages-saved', path: 'messages/saved', title: 'Saved messages', parent: 'tab-messages', icon: null, requiresAuth: true, deepLink: '/messages/saved' }, { key: 'settings-messages', path: 'settings/messages', title: 'Message settings', parent: 'settings-index', icon: null, requiresAuth: true }, { key: 'meetups-invites', path: 'meetups/invites', title: 'Meetup Invites', parent: 'meetups-list', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'safe-return-live-share', path: 'safe-return/[shareId]', title: 'Live location', parent: null, icon: null, requiresAuth: true, deepLink: '/safe-return/[shareId]' }, { key: 'trip-join-requests', path: 'trip/join-requests', title: 'Join requests', parent: 'tab-trips', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'memory-timeline', path: 'memory/timeline', title: 'Your timeline', parent: null, icon: null, requiresAuth: true, ownerOnly: true }, { key: 'memory-place-history', path: 'memory/place-history', title: 'Your history here', parent: 'memory-detail', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'memory-people-history', path: 'memory/people-history', title: 'Shared history', parent: 'memory-detail', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'memory-saved', path: 'memory/saved', title: 'Saved memories', parent: null, icon: null, requiresAuth: true }, { key: 'trip-recap', path: 'trip/[id]/recap', title: 'Trip recap', parent: 'trip-detail', icon: null, requiresAuth: true, deepLink: '/trip/[id]/recap' }, { key: 'stories', path: 'stories', title: 'Stories', parent: null, icon: null, requiresAuth: true, deepLink: '/stories' }, { key: 'rab-dashboard-sessions', path: '(rent-a-buddy)/buddy-dashboard/sessions', title: 'My Sessions', parent: 'rab-dashboard', icon: null, requiresAuth: true, ownerOnly: true, featureFlag: 'rent_buddy_enabled' }, { key: 'rab-dashboard-my-offers', path: '(rent-a-buddy)/buddy-dashboard/my-offers', title: 'My Offers', parent: 'rab-dashboard', icon: null, requiresAuth: true, ownerOnly: true, featureFlag: 'rent_buddy_enabled' }, { key: 'rab-admin-reviews', path: '(rent-a-buddy)/admin/reviews', title: 'RAB Review Moderation', parent: 'rab-admin', icon: null, requiresAuth: true, adminOnly: true, featureFlag: 'rent_buddy_enabled' }, { key: 'rab-admin-support', path: '(rent-a-buddy)/admin/support', title: 'RAB Support Reports', parent: 'rab-admin', icon: null, requiresAuth: true, adminOnly: true, featureFlag: 'rent_buddy_enabled' }, { key: 'rab-admin-risk', path: '(rent-a-buddy)/admin/risk', title: 'RAB Risk Review', parent: 'rab-admin', icon: null, requiresAuth: true, adminOnly: true, featureFlag: 'rent_buddy_enabled' }, { key: 'rab-admin-launch-controls', path: '(rent-a-buddy)/admin/launch-controls', title: 'RAB Launch Controls', parent: 'rab-admin', icon: null, requiresAuth: true, adminOnly: true, featureFlag: 'rent_buddy_enabled' }, { key: 'passport-remembers', path: 'passport/remembers', title: 'Compass remembers', parent: 'tab-passport', icon: 'Brain', requiresAuth: true, ownerOnly: true, deepLink: '/passport/remembers' }, { key: 'passport-recaps', path: 'passport/recaps', title: 'Recaps & On this day', parent: 'tab-passport', icon: 'History', requiresAuth: true, ownerOnly: true, featureFlag: 'memory_recaps', deepLink: '/passport/recaps' }, { key: 'admin-console', path: 'admin/console', title: 'Testing Console', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'admin-hidden-gems', path: 'admin/hidden-gems', title: 'Hidden Gem Review', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'admin-local-guides', path: 'admin/local-guides', title: 'Local Guides', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'admin-live-scopes', path: 'admin/live-scopes', title: 'Live-Label Scopes', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'admin-user-stamps', path: 'admin/user-stamps', title: 'User Stamps', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'admin-airports', path: 'admin/airports', title: 'Airports', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'profile-age-policy', path: 'profile/age-policy', title: 'Age requirements', parent: 'profile-verification', icon: null, requiresAuth: true }, /* census-trust §31 (TV-2d): where an `underage` identity-check result routes instead of re-offering the check */ { key: 'trails', path: 'trails/index', title: 'Trails', parent: null, icon: 'Route', requiresAuth: true, deepLink: '/trails' }, { key: 'trail-detail', path: 'trails/[id]', title: 'Trail', parent: 'trails', icon: null, requiresAuth: true, deepLink: '/trails/[id]' }, { key: 'trail-new', path: 'trails/new', title: 'Start a Trail', parent: 'trails', icon: null, requiresAuth: true }, { key: 'trending', path: 'trending', title: 'Trending', parent: null, icon: 'TrendingUp', requiresAuth: true, deepLink: '/trending' }, /* lane C (owner decision 2026-10-04): Discovery Trails + Trending screens */ { key: 'gems-become-guide', path: 'gems/become-guide', title: 'Become a Local Guide', parent: 'gems-directory', icon: null, requiresAuth: true, featureFlag: 'local_guides_enabled' }, { key: 'admin-deletion-requests', path: 'admin/deletion-requests', title: 'Account Deletions', parent: null, icon: null, requiresAuth: true, adminOnly: true }, /* 2026-11-04 product calls: Local Guide applications; the account-deletion check before the worker flag */ ]; // testing mode: entries on the closing line so every cited line keeps its number
+  { key: 'saved-people', path: 'saved-people', title: 'Saved People', parent: 'saved', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'stamp-collections', path: 'stamp-collections', title: 'Stamp Collections', parent: 'stamps', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'memory-new', path: 'memory/new', title: 'New Memory', parent: null, icon: null, requiresAuth: true, ownerOnly: true }, { key: 'messages-saved', path: 'messages/saved', title: 'Saved messages', parent: 'tab-messages', icon: null, requiresAuth: true, deepLink: '/messages/saved' }, { key: 'settings-messages', path: 'settings/messages', title: 'Message settings', parent: 'settings-index', icon: null, requiresAuth: true }, { key: 'meetups-invites', path: 'meetups/invites', title: 'Meetup Invites', parent: 'meetups-list', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'safe-return-live-share', path: 'safe-return/[shareId]', title: 'Live location', parent: null, icon: null, requiresAuth: true, deepLink: '/safe-return/[shareId]' }, { key: 'trip-join-requests', path: 'trip/join-requests', title: 'Join requests', parent: 'tab-trips', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'memory-timeline', path: 'memory/timeline', title: 'Your timeline', parent: null, icon: null, requiresAuth: true, ownerOnly: true }, { key: 'memory-place-history', path: 'memory/place-history', title: 'Your history here', parent: 'memory-detail', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'memory-people-history', path: 'memory/people-history', title: 'Shared history', parent: 'memory-detail', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'memory-saved', path: 'memory/saved', title: 'Saved memories', parent: null, icon: null, requiresAuth: true }, { key: 'trip-recap', path: 'trip/[id]/recap', title: 'Trip recap', parent: 'trip-detail', icon: null, requiresAuth: true, deepLink: '/trip/[id]/recap' }, { key: 'stories', path: 'stories', title: 'Stories', parent: null, icon: null, requiresAuth: true, deepLink: '/stories' }, { key: 'rab-dashboard-sessions', path: '(rent-a-buddy)/buddy-dashboard/sessions', title: 'My Sessions', parent: 'rab-dashboard', icon: null, requiresAuth: true, ownerOnly: true, featureFlag: 'rent_buddy_enabled' }, { key: 'rab-dashboard-my-offers', path: '(rent-a-buddy)/buddy-dashboard/my-offers', title: 'My Offers', parent: 'rab-dashboard', icon: null, requiresAuth: true, ownerOnly: true, featureFlag: 'rent_buddy_enabled' }, { key: 'rab-admin-reviews', path: '(rent-a-buddy)/admin/reviews', title: 'RAB Review Moderation', parent: 'rab-admin', icon: null, requiresAuth: true, adminOnly: true, featureFlag: 'rent_buddy_enabled' }, { key: 'rab-admin-support', path: '(rent-a-buddy)/admin/support', title: 'RAB Support Reports', parent: 'rab-admin', icon: null, requiresAuth: true, adminOnly: true, featureFlag: 'rent_buddy_enabled' }, { key: 'rab-admin-risk', path: '(rent-a-buddy)/admin/risk', title: 'RAB Risk Review', parent: 'rab-admin', icon: null, requiresAuth: true, adminOnly: true, featureFlag: 'rent_buddy_enabled' }, { key: 'rab-admin-launch-controls', path: '(rent-a-buddy)/admin/launch-controls', title: 'RAB Launch Controls', parent: 'rab-admin', icon: null, requiresAuth: true, adminOnly: true, featureFlag: 'rent_buddy_enabled' }, { key: 'passport-remembers', path: 'passport/remembers', title: 'Compass remembers', parent: 'tab-passport', icon: 'Brain', requiresAuth: true, ownerOnly: true, deepLink: '/passport/remembers' }, { key: 'passport-recaps', path: 'passport/recaps', title: 'Recaps & On this day', parent: 'tab-passport', icon: 'History', requiresAuth: true, ownerOnly: true, featureFlag: 'memory_recaps', deepLink: '/passport/recaps' }, { key: 'admin-console', path: 'admin/console', title: 'Testing Console', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'admin-hidden-gems', path: 'admin/hidden-gems', title: 'Hidden Gem Review', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'admin-local-guides', path: 'admin/local-guides', title: 'Local Guides', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'admin-live-scopes', path: 'admin/live-scopes', title: 'Live-Label Scopes', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'admin-user-stamps', path: 'admin/user-stamps', title: 'User Stamps', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'admin-airports', path: 'admin/airports', title: 'Airports', parent: null, icon: null, requiresAuth: true, adminOnly: true }, { key: 'profile-age-policy', path: 'profile/age-policy', title: 'Age requirements', parent: 'profile-verification', icon: null, requiresAuth: true }, /* census-trust §31 (TV-2d): where an `underage` identity-check result routes instead of re-offering the check */ { key: 'trail-suggestions', path: 'trails/suggestions', title: 'Trail suggestions', parent: 'trails', icon: null, requiresAuth: true, ownerOnly: true }, { key: 'messages-conversation-tools', path: 'messages/conversation-tools', title: 'Conversation tools', parent: 'tab-messages', icon: null, requiresAuth: true }, { key: 'trails', path: 'trails/index', title: 'Trails', parent: null, icon: 'Route', requiresAuth: true, deepLink: '/trails' }, { key: 'trail-detail', path: 'trails/[id]', title: 'Trail', parent: 'trails', icon: null, requiresAuth: true, deepLink: '/trails/[id]' }, { key: 'trail-new', path: 'trails/new', title: 'Start a Trail', parent: 'trails', icon: null, requiresAuth: true }, { key: 'trending', path: 'trending', title: 'Trending', parent: null, icon: 'TrendingUp', requiresAuth: true, deepLink: '/trending' }, /* lane C (owner decision 2026-10-04): Discovery Trails + Trending screens */ { key: 'gems-become-guide', path: 'gems/become-guide', title: 'Become a Local Guide', parent: 'gems-directory', icon: null, requiresAuth: true, featureFlag: 'local_guides_enabled' }, { key: 'admin-deletion-requests', path: 'admin/deletion-requests', title: 'Account Deletions', parent: null, icon: null, requiresAuth: true, adminOnly: true }, /* 2026-11-04 product calls: Local Guide applications; the account-deletion check before the worker flag */ ]; // testing mode: entries on the closing line so every cited line keeps its number
 
 // ── Layout registry ───────────────────────────────────────────────────────────
 //

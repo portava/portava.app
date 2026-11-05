@@ -59,6 +59,7 @@ import {
 } from "./shareables.js";
 import type { TelegraphAction, TelegraphObjectType } from "./vocabulary.js";
 import { coalescingClient, type CoalescingStats } from "./coalescedReads.js";
+import { decodeObjectReference } from './objectReference.js';
 
 // ── the registry ─────────────────────────────────────────────────────────────
 
@@ -264,6 +265,7 @@ export const SHARED_CARD_REGISTRY: Readonly<Record<SharedCardKind, SharedCardSpe
 // ── recognising a card ───────────────────────────────────────────────────────
 
 export interface CardRowLike {
+  content_ref?: unknown;
   id?: unknown;
   thread_id?: unknown;
   msg_type?: unknown;
@@ -283,6 +285,7 @@ export function parseCardBody(body: unknown): Body | null {
   if (!t.startsWith("{")) return null;
   try {
     const parsed = JSON.parse(t);
+    if (parsed && typeof parsed === 'object' && 'cardSchemaVersion' in parsed && parsed.cardSchemaVersion !== 1) return null;
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Body) : null;
   } catch {
     return null;
@@ -308,7 +311,10 @@ export function sharedCardKindOf(row: CardRowLike): SharedCardKind | null {
     if (spec.subtypes === null || (st !== null && spec.subtypes.includes(st))) return kind;
   }
   if ((mt === "text" || mt === "system") && st === null) {
-    const parsed = parseCardBody(row.body);
+    // Recognise the carrier even for an unsupported version. The resolver
+    // then withholds it; treating it as TEXT would print its raw JSON.
+    let parsed: { type?: unknown } | null = null;
+    try { parsed = typeof row.body === 'string' ? JSON.parse(row.body) : null; } catch { /* plain text */ }
     if (parsed && parsed.type === "meetup_card") return "meetup_card";
   }
   return null;
@@ -358,7 +364,7 @@ function pick(body: Body | null, fields: readonly string[]): Body {
  */
 export function servedCardBody(kind: SharedCardKind, body: Body | null, truth: SharedCardTruth): string {
   const spec = SHARED_CARD_REGISTRY[kind];
-  const kept = { ...pick(body, spec.referenceFields), ...pick(body, spec.senderFields) };
+  const kept = { ...pick(body, spec.referenceFields), ...pick(body, spec.senderFields), cardSchemaVersion: 1 };
   if (spec.textForm !== undefined) return spec.textForm; /* T409 (wave 5) */ if (truth.state === "live") return JSON.stringify({ ...kept, ...spec.liveFields(truth.projection, truth.status) });
   return spec.withheldLabel ?? JSON.stringify({ ...kept, withheld: true }); // fix round 1: a plain neutral sentence where an installed client would otherwise print the withheld JSON
 }
@@ -428,7 +434,16 @@ export async function resolveSharedCards(
     if (!kind) continue;
     const id = String(row.id ?? "");
     if (!id) continue;
-    const named = SHARED_CARD_REGISTRY[kind].refOf(parseCardBody(row.body) ?? {}, row);
+    const parsedBody = parseCardBody(row.body);
+    // Only historical plain-text replies may use the subtype fallback.
+    // Unknown/malformed JSON must never borrow that legacy reference.
+    const bodyRef = !parsedBody && row.body.trim().startsWith("{") ? null
+      : SHARED_CARD_REGISTRY[kind].refOf(parsedBody ?? {}, row);
+    const storedRef = decodeObjectReference(row.content_ref);
+    // A malformed, unknown or contradictory explicit pointer is withheld.
+    // Old rows without one retain their established body reference path.
+    const named = row.content_ref == null ? bodyRef : parsedBody && storedRef && bodyRef
+      && storedRef.objectType === bodyRef.objectType && storedRef.objectId === normalizeSourceId(bodyRef.objectId) ? storedRef : null;
     // Fix round 1 (F1): a source id is resolved only in its canonical form —
     // the Discovery feed's `db/<uuid>` is the place it names — and an id that
     // is still not a uuid names nothing a §5 family can read. It is withheld
@@ -442,7 +457,7 @@ export async function resolveSharedCards(
       continue;
     }
     const jk = `${thread}\u0000${ref.objectType}\u0000${ref.objectId}`;
-    const job = jobs.get(jk) ?? { threadId: thread, ref, waiting: [] };
+    const job: Job = jobs.get(jk) ?? { threadId: thread, ref, waiting: [] };
     job.waiting.push({ id, kind });
     jobs.set(jk, job);
   }

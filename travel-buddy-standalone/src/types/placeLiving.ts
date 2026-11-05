@@ -22,7 +22,7 @@ export interface LivingBucketPost {
 export interface LivingBucket {
   bucket: string;
   posts: LivingBucketPost[];
-  postCount: number;
+  postCount: number | null;
   isThin: boolean;
 }
 
@@ -49,9 +49,12 @@ export interface LivingDedupGroup {
   groupId: string;
   memberCount: number;
   sampleUrls: string[];
+  samples?: Array<{ mediaId: string; postId: string; mediaUrl: string; thumbnailUrl: string | null; mediaType: 'image' }>;
 }
 
 export interface LivingBestOfItem {
+  /** Canonical source post ID returned by the Best Of API. */
+  postId?: string | null;
   id?: string | null;
   mediaUrl: string | null;
   thumbnailUrl?: string | null;
@@ -147,6 +150,8 @@ export interface PlaceLivingResponse {
     experiences: LivingBestOfItem[];
   } | null;
   dedupGroups: LivingDedupGroup[];
+  dedupStatus?: 'ready' | 'unavailable';
+  communityStatus?: 'ready' | 'unavailable';
   topContributor: {
     userId: string;
     displayName: string | null;

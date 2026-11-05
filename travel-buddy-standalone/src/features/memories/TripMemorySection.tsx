@@ -1,3 +1,5 @@
+import { PostReferenceCover } from '../../components/PostReferenceCard.tsx';
+import { POST_REFERENCE_MEDIA_TYPE } from '../../services/postDestinations.ts';
 /**
  * TripMemorySection — the "Trip Memory" block on the trip screen.
  *
@@ -87,7 +89,7 @@ export function TripMemorySection({
       <View style={tmRecap.row}><Text style={tm.title}>Trip Memory</Text>{memory ? <Pressable testID="trip-open-recap" onPress={() => router.push(`/trip/${tripId}/recap` as any)} accessibilityRole="button" hitSlop={6}><Text style={tmRecap.link}>View trip recap</Text></Pressable> : null}</View>
       {memory ? (
         <Pressable style={tm.card} onPress={() => router.push(`/memory/${memory.id}` as any)}>
-          {memory.cover?.mediaUrl && !memoryCoverFailed ? (
+          {memory.cover?.mediaType === POST_REFERENCE_MEDIA_TYPE ? <View style={tm.cover}><PostReferenceCover /></View> : memory.cover?.mediaUrl && !memoryCoverFailed ? (
             <CachedImage source={{ uri: memory.cover.mediaUrl }} style={tm.cover} onError={() => setMemoryCoverFailed(true)} />
           ) : (
             <View style={[tm.cover, tm.coverEmpty]}>

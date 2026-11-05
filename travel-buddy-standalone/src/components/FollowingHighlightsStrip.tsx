@@ -1,3 +1,4 @@
+import { POST_REFERENCE_MEDIA_TYPE } from '../services/postDestinations.ts';
 /**
  * FollowingHighlightsStrip — horizontal stories-style tray for the Explore tab.
  *
@@ -53,7 +54,7 @@ function resolveRingPosterUri(user: HighlightFeedUser): string | null {
   if (user.avatarUrl) return user.avatarUrl;
 
   const first = user.highlights[0];
-  if (!first) return null;
+  if (!first || first.mediaType === POST_REFERENCE_MEDIA_TYPE) return null;
 
   // For video highlights, only use a dedicated thumbnail — never the raw video URL
   if (first.mediaType.startsWith('video/')) {

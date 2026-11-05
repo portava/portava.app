@@ -134,9 +134,11 @@ export function startSensingCapture(deps: SensingCaptureDeps): SensingCaptureHan
   let stopped = false;
 
   const unsubs: Unsubscribe[] = [];
-  if (deps.motion) unsubs.push(deps.motion.subscribe((s) => push(motionBuf, s)));
-  if (deps.location) unsubs.push(deps.location.subscribe((s) => push(locationBuf, s)));
-  if (deps.acoustic) unsubs.push(deps.acoustic.subscribe((s) => push(acousticBuf, s)));
+  // A failed hardware source does not prevent the other sources from running.
+  // Late native callbacks after unsubscribe must never refill discarded buffers.
+  try { if (deps.motion) unsubs.push(deps.motion.subscribe((s) => { if (!stopped) push(motionBuf, s); })); } catch {}
+  try { if (deps.location) unsubs.push(deps.location.subscribe((s) => { if (!stopped) push(locationBuf, s); })); } catch {}
+  try { if (deps.acoustic) unsubs.push(deps.acoustic.subscribe((s) => { if (!stopped) push(acousticBuf, s); })); } catch {}
 
   async function closeWindow(): Promise<void> {
     if (stopped) return;
@@ -191,15 +193,20 @@ export function startSensingCapture(deps: SensingCaptureDeps): SensingCaptureHan
   }
 
   const cancelTick = deps.schedule(() => {
-    void closeWindow();
+    // The next window remains usable after a transport failure; there is no
+    // offline raw-data queue and no unhandled async rejection.
+    void closeWindow().catch(() => {});
   }, windowMs);
 
   return {
     currentZone: () => (stopped ? null : previousZone),
     flush: closeWindow,
     stop() {
+      if (stopped) return;
       stopped = true;
-      cancelTick();
+      previousZone = null;
+      priorDwellMs = 0;
+      try { cancelTick(); } catch {}
       for (const u of unsubs) {
         try {
           u();

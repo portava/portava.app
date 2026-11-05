@@ -1,4 +1,5 @@
 import { enrichSpans } from '../lib/enrichSpans';
+import { governDiscoveryPlaces } from '../lib/discoveryPlaceGovernance.js';
 import { resolveMediaForPosts } from "../lib/postMediaResolve.js";
 
 /**
@@ -639,8 +640,10 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
     try {
       // submitted_by allows filtering out content from blocked users
       const { data: places } = await sc
-        .from('discovery_places').select('id, name, city, place_type, image_url, submitted_by').in('id', sourceIds);
-      const items = (places ?? [])
+        .from('discovery_places').select('id, name, city, place_type, image_url, submitted_by').in('id', sourceIds).eq('status', 'active');
+      const governedPlaces = await governDiscoveryPlaces(sc, places ?? [], (place: any) => place.id);
+      if (!governedPlaces.readable) throw new Error('Place visibility could not be checked');
+      const items = governedPlaces.rows
         .filter((p: any) => !isExcluded(feedBlockedSet, p.submitted_by))
         .map((p: any) => ({
           id: p.id, type: 'place', name: p.name, city: p.city ?? null,

@@ -2,15 +2,12 @@
  * videoCompression — the DEVICE half of §37 "Compression/transcoding"
  * (census-media MD282).
  *
- * THE ROW. "Video bytes are re-encoded to a bounded bitrate before storage, on
- * the server or the device." The server has no decoder (artifacts/api-server
- * lib/mediaProcessing.ts). On the device, re-encoding needs a native encoder
- * — AVFoundation on iOS, MediaCodec / Media3 Transformer on Android — reached
- * through a native module, and no such module is in this app's package.json.
- * Adding one is a native-build decision (infra / owner), not a lane's.
+ * Local implementations now live in modules/portava-video-compressor:
+ * AVFoundation on iOS and Media3/MediaCodec on Android. Both need a rebuilt
+ * native app. The Android core has real emulator codec checks and an Expo
+ * bridge compile; integrated app/device acceptance remains outstanding.
  *
- * WHAT THIS FILE IS. The JS seam, finished, so the native half is the only
- * thing left:
+ * This JS seam preserves the original upload when compression is unavailable:
  *
  *   • It looks for ONE native module, by name, with
  *     `requireOptionalNativeModule` — which returns null instead of throwing
@@ -35,13 +32,6 @@
  *   The output must keep the rotation the player shows (a portrait clip stays
  *   portrait), carry no location metadata (the server scrubs it anyway), and be
  *   H.264/AAC in an MP4 container, which every player in the app decodes.
- *
- * CANDIDATES for the native side — named, not chosen:
- *   • a local Expo module (like vendor/expo-openmls) over AVAssetExportSession /
- *     AVAssetWriter (iOS) and androidx.media3 Transformer (Android);
- *   • or an Expo-module wrapper over `react-native-compressor` (iOS
- *     AVFoundation, Android MediaCodec), which is not itself an Expo module;
- *   • ffmpeg-kit is NOT a candidate: it was retired and its binaries withdrawn.
  *
  * SHIPS OFF. `DEFAULT_ENABLED` is false and stays false until a device run has
  * shown a compressed clip upload, play back at the right orientation, and keep

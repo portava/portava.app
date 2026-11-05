@@ -18,6 +18,9 @@
  *     and shows whether it is in effect now.
  */
 import React from 'react';
+import { SensingErasureControl } from './SensingErasureControl.tsx';
+import { useInputAccountEpoch } from '../../platform/input-assistance/hooks/useInputAccountEpoch.ts';
+import { currentDiscoveryScope, isCurrentDiscoveryScope } from '../../services/discoveryViewerScope.ts';
 import { SettingsSection, ToggleRow, SettingsRow, FieldHint } from '../settings/SettingsUI.tsx';
 import { SENSING_CONSENT_SCOPES, wordsFor, type SensingConsentScope } from '../../lib/sensing/consentSplit.ts';
 import {
@@ -40,6 +43,16 @@ function subtitleFor(scope: SensingConsentScope, state: SensingConsentState): st
 }
 
 export function SensingConsentSection() {
+  const epoch = useInputAccountEpoch();
+  return <SensingConsentSectionForOwner key={epoch} />;
+}
+
+function SensingConsentSectionForOwner() {
+  const owner = React.useRef(currentDiscoveryScope()).current;
+  const mounted = React.useRef(true);
+  const saving = React.useRef(false);
+  React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const current = () => mounted.current && isCurrentDiscoveryScope(owner);
   const [read, setRead] = React.useState<SensingConsentRead | undefined>(undefined);
   const [attempt, setAttempt] = React.useState(0);
   const [busy, setBusy] = React.useState<SensingConsentScope | null>(null);
@@ -55,10 +68,15 @@ export function SensingConsentSection() {
   const state = read?.status === 'ok' ? read.state : null;
 
   const toggle = React.useCallback(async (scope: SensingConsentScope, next: boolean) => {
-    if (!state) return;
+    if (!state || saving.current || !current()) return;
+    saving.current = true;
     setBusy(scope);
     setWriteFailed(null);
-    const out = await setSensingConsent(scope, next, state.consents[scope].currentVersion);
+    let out: Awaited<ReturnType<typeof setSensingConsent>>;
+    try { out = await setSensingConsent(scope, next, state.consents[scope].currentVersion); }
+    catch { out = { ok: false, reason: 'failed' }; }
+    saving.current = false;
+    if (!current()) return;
     setBusy(null);
     if (!out.ok) {
       setWriteFailed(
@@ -66,7 +84,7 @@ export function SensingConsentSection() {
           ? 'This version of the app can’t show the current words for that setting, so it wasn’t turned on. Update the app.'
           : out.reason === 'refused'
             ? 'That setting can’t be turned on right now. Nothing was changed.'
-            : 'Couldn’t save that change — your setting is unchanged. Please try again.',
+            : !next ? 'Couldn’t confirm the withdrawal with the server. The affected sensing is paused on this phone. Please retry turning it off.' : 'Couldn’t save that change — your setting is unchanged. Please try again.',
       );
       return;
     }
@@ -107,7 +125,9 @@ export function SensingConsentSection() {
       {state && !state.available ? (
         <FieldHint>Area sensing isn’t available yet, so these can’t be turned on. Anything already on can still be turned off.</FieldHint>
       ) : null}
+      {state?.localWithdrawalPending?.length ? <FieldHint tone="error">A withdrawal is waiting to be saved. The affected sensing stays paused on this phone. Turn the setting off again to retry.</FieldHint> : null}
       {writeFailed ? <FieldHint tone="error">{writeFailed}</FieldHint> : null}
+      <SensingErasureControl />
     </SettingsSection>
   );
 }

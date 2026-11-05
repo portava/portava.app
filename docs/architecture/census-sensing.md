@@ -6591,3 +6591,60 @@ The thirteen W rows and §36's legal, policy, migration, release, pepper,
 separate-grant and real-device gates remain. No activation, new permission
 policy, census grade, total or `head_commit` changes.
 
+
+
+## §38 — 2026-11-05: server privacy races, reachable erasure and device boundaries audited. No production certification claimed.
+
+The full current architecture and all 127 canonical rows were indexed in
+`docs/sensing/completion-20261105.md`. The recorded 113 C/13 W/1 X counts are preserved;
+local tests do not establish live completion. The earlier claim that no engineering
+remained was too strong: the fresh audit found the following executable gaps.
+
+- `sensingIngest` stored a contribution before charging its session budget.4006
+  now locks session validity, runtime availability, replay admission, insertion
+  and charging in one transaction. Expiry uses the clock after locking. A final
+  budget retry is free; concurrent new readings cannot exceed the budget.
+- `sensingDifferencingGate` read a previous publication and inserted separately.
+ 4006 binds each publish decision to that exact durable predecessor under a
+  cohort lock. Contention triggers bounded reread/re-evaluation, never a blind
+  insert. Publication remains OFF and the current policy still denies surface.
+- `sensingRevocation` is a new deletion-only transport. Epoch preimages derive
+  rotating deletion tokens; no account, device identifier or secret is retained.
+  It can atomically revoke the present credential and erase recent contributions
+  while the operational flag is OFF. A failure is never reported as success.
+  Existing aggregates retain the already-defined de-identified TTL behavior.
+- The public ingest now rejects invented independent-group labels and precision
+  above the existing six-character client limit. A device's own arbitrary text
+  cannot establish independent confirmations. Until an attested grouping source
+  is approved/integrated, anonymous group credit is zero and publication fails
+  its independence gate. Cohort reads also require exact count completeness;
+  malformed responses cannot become empty-world success. Schema presence is
+  cached per client, rather than one database's probe authorizing another.
+- The client agent independently repaired background/account/withdrawal cleanup,
+  aborted transport, late callbacks and durable device-secret/erasure handling.
+  Those device lifecycle changes have mounted tests; real hardware evidence is
+  still separate.
+
+S 18/S 32/S 33/S 34/S 35: the new admission behavior has local route and real PostgreSQL
+proof, but 4006 is unapplied and approved consent/ops configuration are still needed.
+S 19/S 97/S 111/S 118: production metadata supplied by the root agent now confirms
+3002/3003/3310 applied; do not repeat the old missing-schema claim.4006 adds no
+identity column or account FK. S 24: atomic publication is now tested; real
+surface-policy, independence and cohort evidence remain prerequisites.
+S 26: OD-MAP-7 already decided the 180-day identified contribution maximum; no new
+ruling is requested. Its production retention flag remainsOFF. Anonymous rows
+retain their 24 h default/72 h cap and existing registered sweeps.
+S 39: split-consent schema 3703 is applied, split/publication/presence flags areOFF;
+reviewed words and an explicit allowed surface policy remain. S 49/S 92/S 112: the
+previously missing projection/session migrations and relevant flags are now
+present/on according to Nov 5 metadata; end-to-end eligible evidence is required,
+not another schema invention. S 66 needs a real safety-precedence scenario.
+S 17: the public HTTPS health endpoint returned 200 and served HSTS at 08:30:16 UTC;
+project-specific encrypted-at-rest attestation remains external.
+
+The new exact import inventory admits only two narrow modules:
+`lib/sensingAtomicAdmission.ts` for the existing insertion path, and
+`routes/sensingRevocation.ts` for proof-authorized erasure. It does not admit a
+second insertion transport, account lookup, permanent identity link, canonical
+intel writer, Memory producer or publication permission. Required localPG and
+router checks are registered in the main API suite and mandatory native CI gate.

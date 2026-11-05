@@ -17,7 +17,9 @@
  * it away.
  */
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase.ts';
-import { freshToken } from '../../../services/apiToken.ts';
+import { captureMessagingOwnerRequest } from '../../../services/messagingOwnerRequest.ts';
+import { fetchOwnedApi } from '../../../services/ownedApiRequest.ts';
+import { telegraphIndexHeaders } from '../negotiation/clientCapabilities.ts';
 import type { SearchBucket, SearchResult } from '../types/index.ts';
 
 export type TelegraphSearchError =
@@ -69,19 +71,19 @@ export async function searchTelegraph(
   if (q.length < 2) return { ok: false, result: null, error: 'query_too_short' };
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, result: null, error: 'not_configured' };
 
-  const token = await freshToken();
-  if (!token) return { ok: false, result: null, error: 'unauthenticated' };
+  const owner = captureMessagingOwnerRequest();
+  if (!owner) return { ok: false, result: null, error: 'unauthenticated' };
 
   const params = new URLSearchParams({ q });
   if (opts.buckets && opts.buckets.length > 0) params.set('types', opts.buckets.join(','));
   if (opts.limit) params.set('limit', String(opts.limit));
 
   const path = opts.conversationId
-    ? `/api/threads/${opts.conversationId}/search?${params.toString()}`
+    ? `/api/threads/${encodeURIComponent(opts.conversationId)}/search?${params.toString()}`
     : `/api/telegraph/search?${params.toString()}`;
 
   try {
-    const res = await fetch(`${apiBase()}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+    const res = await fetchOwnedApi(path, {owner,headers:telegraphIndexHeaders()});
     if (!res.ok) {
       if (res.status === 401) return { ok: false, result: null, error: 'unauthenticated' };
       if (res.status === 400) return { ok: false, result: null, error: 'query_too_short' };
@@ -99,7 +101,7 @@ export async function searchTelegraph(
       },
     };
   } catch {
-    return { ok: false, result: null, error: 'network_unreachable' };
+    return { ok: false, result: null, error: owner.isCurrent() ? 'network_unreachable' : 'unauthenticated' };
   }
 }
 
@@ -119,14 +121,11 @@ export async function askConversation(
   if (!isSupabaseConfigured || !apiBase()) {
     return { ok: false, structured: [], prose: [], degraded: false, error: 'not_configured' };
   }
-  const token = await freshToken();
-  if (!token) return { ok: false, structured: [], prose: [], degraded: false, error: 'unauthenticated' };
+  const owner = captureMessagingOwnerRequest();
+  if (!owner) return { ok: false, structured: [], prose: [], degraded: false, error: 'unauthenticated' };
 
   try {
-    const res = await fetch(
-      `${apiBase()}/api/threads/${conversationId}/ask?q=${encodeURIComponent(q)}`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    );
+    const res = await fetchOwnedApi(`/api/threads/${encodeURIComponent(conversationId)}/ask?q=${encodeURIComponent(q)}`, {owner,headers:telegraphIndexHeaders()});
     if (!res.ok) return { ok: false, structured: [], prose: [], degraded: false, error: 'server_error' };
     const body = await res.json();
     return {
@@ -136,7 +135,7 @@ export async function askConversation(
       degraded: Boolean(body.degraded),
     };
   } catch {
-    return { ok: false, structured: [], prose: [], degraded: false, error: 'network_unreachable' };
+    return { ok: false, structured: [], prose: [], degraded: false, error: owner.isCurrent() ? 'network_unreachable' : 'unauthenticated' };
   }
 }
 

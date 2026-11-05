@@ -1,6 +1,7 @@
 /**
  * follows service — wraps the API server's follow endpoints.
  */
+import { fetchOwnedApi, type OwnedApiContext } from './ownedApiRequest.ts';
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 import { isCurrentDiscoveryScope, viewerKeyForToken } from './discoveryViewerScope.ts';
@@ -168,6 +169,7 @@ export interface TravelerSearchResult {
 }
 
 export interface SearchUsersRequest {
+  owner?: OwnedApiContext['owner'];
   signal: AbortSignal;
   isCurrent: () => boolean;
   scope: DiscoveryScope;
@@ -178,16 +180,16 @@ export async function searchUsers(query: string, limit = 20, request?: SearchUse
   const stale: FollowResult<TravelerSearchResult[]> = { ok: false, data: null, errorKind: 'stale_request' };
   if (!isCurrent()) return stale;
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
-  const token = await freshToken();
+  const token = request?.owner ? null : await freshToken();
   if (!isCurrent()) return stale;
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
-  if (request && request.scope.viewer !== viewerKeyForToken(token)) return stale;
+  if (!token && !request?.owner) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  if (request && token && request.scope.viewer !== viewerKeyForToken(token)) return stale;
 
   const q = encodeURIComponent(query.trim());
   if (!q) return { ok: true, data: [] };
 
   try {
-    const res = await fetch(
+    const res = request?.owner ? await fetchOwnedApi(`/api/users/search?q=${q}&limit=${limit}`, { ...request, isCurrent }) : await fetch(
       `${apiBase()}/api/users/search?q=${q}&limit=${limit}`,
       { headers: { Authorization: `Bearer ${token}` }, ...(request ? { signal: request.signal } : {}) },
     );

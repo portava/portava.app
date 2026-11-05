@@ -1,10 +1,11 @@
-import React from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, ScrollView, Pressable, StyleSheet, Linking } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppHeader } from '../../src/components/ui/AppHeader';
 import { VERIFICATION_KEPT, VERIFICATION_NEVER_STORED } from '../../src/lib/verificationDisclosure';
 import { color, space, type as t, radius, layout } from '../../src/theme/tokens';
+import { publicOwnerLink } from '../../src/lib/publicOwnerLink';
 
 function Paragraph({ children }: { children: React.ReactNode }) {
   return <Text selectable style={styles.body}>{children}</Text>;
@@ -21,6 +22,20 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 export default function PrivacyInformationScreen() {
   const insets = useSafeAreaInsets();
+  const [linkError, setLinkError] = useState<string | null>(null);
+  // Configure only after the owner approves the published policy and operating contacts.
+  const policy = publicOwnerLink(process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL);
+  const providerPolicy = publicOwnerLink(process.env.EXPO_PUBLIC_IDENTITY_PROVIDER_PRIVACY_URL);
+  const privacyContact = publicOwnerLink(process.env.EXPO_PUBLIC_PRIVACY_CONTACT_URL);
+  async function openLink(url: string) {
+    setLinkError(null);
+    try { await Linking.openURL(url); }
+    catch { setLinkError('Could not open this link. Please try again.'); }
+  }
+  function externalLink(label: string, url: string) {
+    return <Pressable accessibilityRole="link" accessibilityLabel={label} style={styles.link}
+      onPress={() => { void openLink(url); }}><Text style={styles.linkText}>{label}</Text></Pressable>;
+  }
 
   function goBack() {
     if (router.canGoBack()) router.back();
@@ -35,13 +50,22 @@ export default function PrivacyInformationScreen() {
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + space.xxxl }]}
       >
         <View style={styles.notice}>
-          <Section title="Not an approved privacy policy">
-            <Paragraph>
+          <Section title={policy ? 'Published privacy policy' : 'Not an approved privacy policy'}>
+            {policy ? <>
+              <Paragraph>Read the published privacy policy below. This screen also explains the documented identity-check flow.</Paragraph>
+              {externalLink('Read privacy policy', policy)}
+            </> : <Paragraph>
               The available policy text is a draft awaiting owner and legal review. This page explains
               only the documented identity-check flow; it is not a full privacy policy.
-            </Paragraph>
+            </Paragraph>}
           </Section>
         </View>
+        {linkError ? <Text accessibilityRole="alert" style={styles.body}>{linkError}</Text> : null}
+        {providerPolicy ? <Section title="Verification service privacy">{externalLink('Verification service privacy policy', providerPolicy)}</Section> : null}
+        <Section title="Privacy contact">
+          {privacyContact ? externalLink('Contact about privacy', privacyContact)
+            : <Paragraph>A privacy contact has not been supplied here yet.</Paragraph>}
+        </Section>
 
         <Section title="How an identity check works">
           <Paragraph>
@@ -91,17 +115,18 @@ export default function PrivacyInformationScreen() {
           </Paragraph>
         </Section>
 
-        <Section title="What is still awaiting approval">
+        {!policy ? <Section title="What is still awaiting approval">
           <Paragraph>
             A full policy needs reviewed text or a published policy URL, the company’s legal name,
             mailing address, privacy contact and effective date, plus the verification provider’s
             privacy-policy link. Age-policy choices and retention statements also need review.
           </Paragraph>
           <Paragraph>
-            No approved policy or provider privacy-policy link is supplied here. Reading this
+            No approved policy is supplied here. Reading this
             information does not give consent to a new use of your data or start an identity check.
           </Paragraph>
-        </Section>
+        </Section> : null}
+        {!providerPolicy ? <Paragraph>The verification service’s privacy-policy link has not been supplied here yet.</Paragraph> : null}
 
         <Section title="Related settings">
           <Pressable

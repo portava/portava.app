@@ -1,3 +1,4 @@
+import { readCanonicalPlaceVisibility } from "../../lib/places/placeGovernance.js";
 /**
  * memoryCorrections — §3 `memory_corrections` (migration 3673): the owner's
  * authoritative statements about where a Memory was. Census H28, H48, H49, H73
@@ -653,7 +654,28 @@ export async function placesForViewer<T extends { id: string; owner_id: string }
   });
   const through = await placesThroughCorrections(sc, asPlaces, now);
   if (!through.ok) return { ok: false, detail: through.detail };
-  const corrected = new Map(through.rows.map((r) => [r.id, r] as const));
+  const catalogIds=new Set(through.rows.map(row=>row.place_id).filter((id):id is string=>typeof id==='string'&&PLACE_UUID_RE.test(id)));
+  const locations=[...new Set(through.rows.map(row=>row.canonical_location_id).filter((id):id is string=>typeof id==='string'&&PLACE_UUID_RE.test(id)))];
+  const byLocation=new Map<string,string[]>();
+  try {
+    for(let offset=0;offset<locations.length;offset+=100){
+      const batch=locations.slice(offset,offset+100);
+      const result=await sc.from('places').select('id,canonical_location_id',{count:'exact'}).in('canonical_location_id',batch).limit(4097);
+      if(result.error||!Array.isArray(result.data)||result.count!==result.data.length||result.data.length>4096)return {ok:false,detail:'canonical place visibility unreadable'};
+      for(const place of result.data){
+        if(!place?.id||!batch.includes(place.canonical_location_id))return {ok:false,detail:'canonical place identity unreadable'};
+        catalogIds.add(place.id);byLocation.set(place.canonical_location_id,[...(byLocation.get(place.canonical_location_id)??[]),place.id]);
+      }
+    }
+  }catch{return {ok:false,detail:'canonical place visibility unreadable'};}
+  const visibility=await readCanonicalPlaceVisibility(sc,[...catalogIds]);
+  if(!visibility.ok)return {ok:false,detail:'canonical place visibility unreadable'};
+  const withheld=(id:string)=>visibility.existingIds.has(id)&&!visibility.visibleIds.has(id);
+  const governed=through.rows.map(row=>{
+    const held=(row.place_id&&withheld(row.place_id))||(byLocation.get(row.canonical_location_id??'')??[]).some(withheld);
+    return held?{...row,place_id:null,canonical_location_id:null,location_lat:null,location_lng:null,place_display_name_at_occurrence:null}:row;
+  });
+  const corrected = new Map(governed.map((r) => [r.id, r] as const));
   return { ok: true, rows: rows.map((r) => (corrected.get(r.id) as T | undefined) ?? r) }; // the viewer's own rows were never read, so they come back as stored
 }
 

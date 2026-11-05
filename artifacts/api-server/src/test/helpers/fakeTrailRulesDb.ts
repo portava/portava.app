@@ -32,6 +32,7 @@
  *               rls/denied-read-yields-zero-rows, rls/denied-write-yields-42501
  *               (no service-vs-user distinction: one seed, no policies)
  */
+import { applyProjection, projectionKeys } from './selectProjection.js';
 export type Row = Record<string, any>;
 
 type PgError = { code: string; message: string };
@@ -76,6 +77,9 @@ function lazy<T>(exec: () => T, extra: Record<string, unknown> = {}): any {
 
 export function makeRulesDb(seed: Record<string, Row[]>, opts: FakeRulesDbOptions = {}): FakeRulesDb {
   const tables: Record<string, Row[]> = { feature_flags: [], ...seed };
+  // SQL defaults are present on real rows; malformed values remain overridable.
+  tables.discovery_places = (tables.discovery_places ?? []).map(row => ({ status: 'active', ...row }));
+  tables.places = (tables.places ?? []).map(row => ({ status: 'active', moderation_status: 'visible', merged_into_place_id: null, ...row }));
   const writes: FakeRulesDb["writes"] = [];
   const reads: string[] = [];
   const missing = new Set(opts.missing ?? []);
@@ -92,6 +96,7 @@ export function makeRulesDb(seed: Record<string, Row[]>, opts: FakeRulesDbOption
     let limitN: number | null = null;
     let range: [number, number] | null = null;
     let wantCount = false;
+    let selected: ReturnType<typeof projectionKeys> = null;
     const store = () => (tables[table] ??= []);
     const matched = () => store().filter((r) => filters.every((f) => f(r)));
     const rows = () => {
@@ -111,7 +116,7 @@ export function makeRulesDb(seed: Record<string, Row[]>, opts: FakeRulesDbOption
       return out;
     };
     const b: any = {
-      select(_cols?: string, o?: { count?: string }) { if (o?.count) wantCount = true; return b; },
+      select(cols?: string, o?: { count?: string }) { selected = projectionKeys(cols); if (o?.count) wantCount = true; return b; },
       eq(c: string, v: any) { filters.push((r) => r[c] === v); return b; },
       neq(c: string, v: any) { filters.push((r) => r[c] !== v); return b; },
       in(c: string, v: any[]) { filters.push((r) => v.includes(r[c])); return b; },
@@ -128,7 +133,7 @@ export function makeRulesDb(seed: Record<string, Row[]>, opts: FakeRulesDbOption
         return lazy(() => {
           const e = readError(table);
           if (e) return { data: null, error: e };
-          const r = rows();
+          const r = applyProjection(rows(), selected);
           if (r.length > 1) return { data: null, error: { code: "PGRST116", message: "JSON object requested, multiple (or no) rows returned" } };
           return { data: r[0] ?? null, error: null };
         });
@@ -182,7 +187,7 @@ export function makeRulesDb(seed: Record<string, Row[]>, opts: FakeRulesDbOption
       },
       then(res: any, rej?: any) {
         const e = readError(table);
-        const r = e ? { data: null, error: e } : { data: rows(), error: null, ...(wantCount ? { count: matched().length } : {}) };
+        const r = e ? { data: null, error: e } : { data: applyProjection(rows(), selected), error: null, ...(wantCount ? { count: matched().length } : {}) };
         return Promise.resolve(r).then(res, rej);
       },
     };

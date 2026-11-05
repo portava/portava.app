@@ -72,10 +72,11 @@ function makeDb(seed: Record<string, Row[]>, erroring: string[] = []) {
     trail_health_snapshots: [], rank_events: [], blocks: [], posts: [], events: [],
     route_plans: [], discovery_places: [],
     // census-discovery §61: attach requires the content to exist; PLACE_2 is a canonical `places` row.
-    places: [{ id: PLACE_2 }],
+    places: [PLACE, PLACE_2].map(id => ({ id, status: 'active', moderation_status: 'visible', merged_into_place_id: null })),
     profiles: [VIEWER, BLOCKED, AUTHOR, C1, C2, C3].map((id) => ({ id, account_status: "active" })),
     ...seed,
   };
+  tables.discovery_places = tables.discovery_places!.map(row => ({ status: 'active', ...row }));
   const broken = new Set(erroring);
   const writes: Array<{ table: string; op: string }> = [];
   let n = 0;
@@ -353,6 +354,7 @@ describe("REVOCATION — content removed or hidden after it was attached is no l
     assert.deepEqual(await served(makeDb({
       trails: [trail(T)], content_trails: [member("m-pl", { source_id: PLACE })],
       discovery_places: [{ id: PLACE, submitted_by: BLOCKED }],
+      places: [],
       blocks: [{ blocker_id: BLOCKED, blocked_id: VIEWER }],
     })), []);
   });
@@ -377,6 +379,7 @@ describe("DV-13 — §10's creator cap counts the CREATOR, not whoever attached 
     const db = makeDb({
       trails: [trail(T)],
       content_trails: places.map((p, i) => member(`m-${i}`, { source_id: p, contributor_id: C1 })),
+      discovery_places: places.map(id => ({ id, status: 'active' })),
       rank_events: places.flatMap((p) => Array.from({ length: 8 }, (_, i) => ({
         id: `e-${p}-${i}`, surface: "discovery", item_id: p, outcome: "save",
         served_at: iso(3_600_000 + i), outcome_at: iso(3_500_000 + i),

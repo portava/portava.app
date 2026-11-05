@@ -160,9 +160,15 @@ router.post("/admin/discovery/trend-integrity/reviews", asyncHandler(async (req,
 router.get("/admin/discovery/trail-reviews/pending", asyncHandler(async (req, res) => {
   const ctx = await requireAdmin(req, res);
   if (!ctx) return;
-  const r = await listPendingTrailReviews(ctx.sc);
+  const query = z.object({ afterCreatedAt: z.string().datetime({ offset: true }).optional(), afterId: IdParam.optional() }).strict().safeParse(req.query);
+  if (!query.success || Boolean(query.data.afterCreatedAt) !== Boolean(query.data.afterId)) return sendError(res, "invalid_payload", "A complete review cursor is required.");
+  const after = query.data.afterCreatedAt && query.data.afterId ? { createdAt: query.data.afterCreatedAt, id: query.data.afterId } : undefined;
+  const r = await listPendingTrailReviews(ctx.sc, 50, after);
   if (r.refusal) return sendError(res, "degraded_unavailable", r.refusal === "unavailable" ? "Trail review is not available on this deployment (3977 not applied)." : "The review queue could not be read.");
-  res.json({ trails: r.trails.map((t) => ({ id: t.id, slug: t.slug, title: t.title, description: t.description, destination: t.destination, createdBy: t.created_by, createdAt: t.created_at, lifecycle: t.lifecycle_status })) });
+  const last = r.trails.at(-1);
+  res.setHeader("Cache-Control", "private, no-store");
+  res.json({ trails: r.trails.map((t) => ({ id: t.id, slug: t.slug, title: t.title, description: t.description, destination: t.destination, createdBy: t.created_by, createdAt: t.created_at, lifecycle: t.lifecycle_status })),
+    next: r.trails.length === 50 && last ? { createdAt: last.created_at, id: last.id } : null });
 }));
 
 /** Approve or reject a pending Trail. A rejection needs a reason, which its creator is shown. */

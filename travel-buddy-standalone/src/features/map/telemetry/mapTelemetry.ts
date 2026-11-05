@@ -1337,6 +1337,8 @@ export interface FetchTelemetryTransportOptions {
   fetchImpl?: typeof fetch;
   /** Defaults to '/api/map/telemetry'. */
   path?: string;
+  /** Bounded end-to-end deadline, including token refresh. Defaults to 10 s. */
+  timeoutMs?: number;
 }
 
 function tokenOwner(token: string): string | null {
@@ -1369,15 +1371,29 @@ export function createFetchTelemetryTransport(
   return async (batch: MapTelemetryBatch) => {
     if (epoch !== ownerEpoch) throw new Error('telemetry_owner_changed');
     if (!opts.baseUrl || typeof doFetch !== 'function') throw new Error('telemetry_transport_unavailable');
-    const token = await opts.getToken();
-    if (epoch !== ownerEpoch) throw new Error('telemetry_owner_changed');
-    if (!token) throw new Error('telemetry_unauthenticated');
-    if (boundOwner !== undefined && tokenOwner(token) !== boundOwner) throw new Error('telemetry_owner_changed');
-    const res = await doFetch(`${opts.baseUrl}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(batch),
-    });
-    if (!res.ok) throw new Error(`telemetry_http_${res.status}`);
+    const controller = new AbortController();
+    const duration = typeof opts.timeoutMs === 'number' && Number.isFinite(opts.timeoutMs) ? Math.max(1, Math.min(opts.timeoutMs, 10000)) : 10000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let rejectCancellation: (error: Error) => void = () => {};
+    const cancelled = new Promise<never>((_resolve, reject) => { rejectCancellation = reject; });
+    const cancel = (reason: string) => { controller.abort(); rejectCancellation(new Error(reason)); };
+    const unsubscribe = subscribeMapTelemetryOwner(() => cancel('telemetry_owner_changed'));
+    timer = setTimeout(() => cancel('telemetry_timeout'), duration);
+    try {
+      await Promise.race([cancelled, (async () => {
+        const token = await opts.getToken();
+        if (controller.signal.aborted || epoch !== ownerEpoch) throw new Error('telemetry_owner_changed');
+        if (!token) throw new Error('telemetry_unauthenticated');
+        if (boundOwner !== undefined && tokenOwner(token) !== boundOwner) throw new Error('telemetry_owner_changed');
+        const res = await doFetch(`${opts.baseUrl}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(batch),
+          signal: controller.signal,
+        });
+        if (epoch !== ownerEpoch) throw new Error('telemetry_owner_changed');
+        if (!res.ok) throw new Error(`telemetry_http_${res.status}`);
+      })()]);
+    } finally { if (timer !== undefined) clearTimeout(timer); unsubscribe(); }
   };
 }

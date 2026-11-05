@@ -53,6 +53,8 @@ export interface PortavaSheetProps {
   visible: boolean;
   /** Backdrop tap, hardware back, and Escape all route here. */
   onClose: () => void;
+  /** iOS: runs after the native modal has fully dismissed. */
+  onDismiss?: () => void;
   children: React.ReactNode;
   /** Grab handle at the top edge. Three of the four sheets had one. */
   showHandle?: boolean;
@@ -74,6 +76,7 @@ export interface PortavaSheetProps {
 export function PortavaSheet({
   visible,
   onClose,
+  onDismiss,
   children,
   showHandle = true,
   avoidKeyboard = false,
@@ -107,6 +110,7 @@ export function PortavaSheet({
       transparent
       animationType="slide"
       onRequestClose={onClose}
+      onDismiss={onDismiss}
       statusBarTranslucent
     >
       <Pressable

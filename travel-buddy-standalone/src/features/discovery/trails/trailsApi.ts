@@ -57,6 +57,55 @@ export interface TrailModule {
 
 export interface RelatedTrail { trail: Trail; edgeType: string; direction: string }
 
+export interface TrailSuggestion {
+  id: string; trailId: string; sourceType: string; sourceId: string;
+  relationship: string; signal: string | null; createdAt: string;
+}
+
+export async function getTrailSuggestions(): Promise<ApiRead<TrailSuggestion[]>> {
+  const answer = await readDiscoveryJson<{ suggestions: TrailSuggestion[] }>(
+    '/api/v1/discovery/trail-suggestions/pending',
+    (b) => Array.isArray(b?.suggestions) && b.suggestions.every((v: unknown) => {
+      const row = rec(v);
+      return ['id', 'trailId', 'sourceType', 'sourceId', 'relationship', 'createdAt'].every((key) => isStr(row[key]))
+        && (row.signal === null || isStr(row.signal));
+    }),
+  );
+  return answer.state === 'ok' ? { state: 'ok', data: answer.data.suggestions } : answer;
+}
+
+export async function decideTrailSuggestion(id: string, decision: 'accept' | 'decline'): Promise<ApiWrite<{ state: 'accepted' | 'declined' }>> {
+  const answer = await sendDiscoveryWrite<{ state?: unknown }>('POST', `/api/v1/discovery/trail-suggestions/${enc(id)}/${decision}`);
+  if (answer.state !== 'done') return answer;
+  const expected = decision === 'accept' ? 'accepted' : 'declined';
+  // A 201 can contain attachment refusals while the suggestion stays pending.
+  return answer.data?.state === expected
+    ? { ...answer, data: { state: expected } }
+    : { state: 'unavailable', detail: 'The decision was not confirmed. The item may be unavailable or at its Trail limit.' };
+}
+
+export interface TrailMorePage {
+  lists: Array<{ key: string; byPlace: Record<string, TrailModuleItem[]>; unplaced: TrailModuleItem[] }>;
+  next: string | null;
+}
+
+const isModuleItem = (v: unknown): boolean => {
+  const item = rec(v);
+  return isStr(item.id) && isStr(item.sourceType) && isStr(item.sourceId);
+};
+
+export function getMoreTrailContent(id: string, cursor: string | null = null): Promise<ApiRead<TrailMorePage>> {
+  return readDiscoveryJson<TrailMorePage>(
+    `/api/v1/discovery/trails/${enc(id)}/more${cursor ? `?cursor=${enc(cursor)}` : ''}`,
+    (b) => (b?.next === null || (isStr(b?.next) && b.next.length > 0)) && Array.isArray(b?.lists) && b.lists.every((entry: unknown) => {
+      const list = rec(entry);
+      return isStr(list.key) && Array.isArray(list.unplaced) && list.unplaced.every(isModuleItem)
+        && !!list.byPlace && typeof list.byPlace === 'object' && !Array.isArray(list.byPlace)
+        && Object.values(list.byPlace).every((items) => Array.isArray(items) && items.every(isModuleItem));
+    }),
+  );
+}
+
 export const TRAIL_REPORT_REASONS = ['unrelated_content', 'duplicate_trail', 'wrong_place_link', 'stale', 'abuse'] as const;
 export type TrailReportReason = (typeof TRAIL_REPORT_REASONS)[number];
 

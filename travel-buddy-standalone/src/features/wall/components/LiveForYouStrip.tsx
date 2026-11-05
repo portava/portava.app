@@ -19,6 +19,7 @@ import type { LiveForYouItem } from '../types/liveForYou.ts';
 import type { WallProjection } from '../types/wallProjection.ts';
 import { truthQualifierLabel } from '../types/wallProjection.ts';
 import { CONFLICT_LABEL, normalizeConflictState } from '../../../lib/intel/conflict.ts';
+import { useWallActionOptions } from './WallActionContext.tsx';
 
 const MAX_ITEMS = 4;
 
@@ -56,6 +57,7 @@ export function LiveForYouStrip({
   items: LiveForYouItem[];
   onSeeLive?: () => void;
 }) {
+  const actionOptions = useWallActionOptions();
   const bounded = items.slice(0, MAX_ITEMS);
 
   React.useEffect(() => {
@@ -99,7 +101,7 @@ export function LiveForYouStrip({
             style={s.card}
             onPress={() => {
               trackLiveOpen(item);
-              if (item.action) runWallAction(item.action, liveActionCarrier(item));
+              if (item.action) void runWallAction(item.action, liveActionCarrier(item), actionOptions);
             }}
             accessibilityRole="button"
             // §36 "the horizontal Live For You list supports logical focus

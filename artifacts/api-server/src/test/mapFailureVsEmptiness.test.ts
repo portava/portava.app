@@ -95,7 +95,7 @@ function buildQuery(spec: TableSpec) {
   const err = spec.error ?? null;
   const settle = <T>(value: T): Promise<T> =>
     spec.throws ? Promise.reject(new Error("transport failed")) : Promise.resolve(value);
-  const result = () => (err ? { data: null, error: err } : { data: rows, error: null });
+  const result = () => (err ? { data: null, error: err } : { data: rows, error: null, count: rows.length });
 
   const q: any = {
     select() { return q; },

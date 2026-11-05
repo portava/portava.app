@@ -20,7 +20,7 @@ it('never auto-consents or enqueues and sends the original revision only after e
   expect(captions.requestCaptionAsr).not.toHaveBeenCalled();
   await fireEvent.press(screen.getByLabelText("I have permission to transcribe this video's audio locally"));
   await fireEvent.press(screen.getByLabelText('Request local caption draft'));
-  expect(captions.requestCaptionAsr).toHaveBeenCalledWith(source, '', true, available.consentEpoch);
+  expect(captions.requestCaptionAsr).toHaveBeenCalledWith(source, '', true, available.consentEpoch, expect.anything());
   await screen.findByText(/Transcription: pending.*Review the generated draft/);
   expect(screen.getByRole('checkbox').props.accessibilityState.checked).toBe(false);
 });
@@ -33,7 +33,7 @@ it('language changes reset consent and select only the advertised language list'
   expect(screen.getByRole('checkbox').props.accessibilityState.checked).toBe(false);
   await fireEvent.press(screen.getByRole('checkbox'));
   await fireEvent.press(screen.getByLabelText('Request local caption draft'));
-  expect(captions.requestCaptionAsr).toHaveBeenCalledWith(source, 'en', true, available.consentEpoch);
+  expect(captions.requestCaptionAsr).toHaveBeenCalledWith(source, 'en', true, available.consentEpoch, expect.anything());
 });
 
 it('OFF/unavailable runtime refuses requests but permits confirmed revocation and reports pending erasure', async () => {
@@ -48,7 +48,7 @@ it('OFF/unavailable runtime refuses requests but permits confirmed revocation an
   await fireEvent.press(screen.getByLabelText('Stop transcription and delete drafts'));
   expect(captions.revokeCaptionAsr).not.toHaveBeenCalled();
   await fireEvent.press(screen.getByLabelText('Confirm stop transcription and delete drafts'));
-  expect(captions.revokeCaptionAsr).toHaveBeenCalledWith(source);
+  expect(captions.revokeCaptionAsr).toHaveBeenCalledWith(source, expect.anything());
   await screen.findByText(/Draft storage cleanup needs retry/);
   expect(revoked).toHaveBeenCalledTimes(1);
 });
@@ -80,7 +80,7 @@ it('clears consent after revoke and cannot re-request until a fresh status suppl
   expect(captions.requestCaptionAsr).not.toHaveBeenCalled();
   await fireEvent.press(screen.getByRole('checkbox'));
   await fireEvent.press(screen.getByLabelText('Request local caption draft'));
-  expect(captions.requestCaptionAsr).toHaveBeenCalledWith(source, '', true, refreshed.consentEpoch);
+  expect(captions.requestCaptionAsr).toHaveBeenCalledWith(source, '', true, refreshed.consentEpoch, expect.anything());
 });
 
 it('a rejected stale request clears permission and cannot auto-retry with an old epoch', async () => {
@@ -108,7 +108,7 @@ it('a late initial status cannot overwrite the fresh post-revocation epoch', asy
   await act(async () => initial(available));
   await fireEvent.press(screen.getByRole('checkbox'));
   await fireEvent.press(screen.getByLabelText('Request local caption draft'));
-  expect(captions.requestCaptionAsr).toHaveBeenCalledWith(source, '', true, refreshed.consentEpoch);
+  expect(captions.requestCaptionAsr).toHaveBeenCalledWith(source, '', true, refreshed.consentEpoch, expect.anything());
 });
 
 it('failed status refresh after withdrawal never reuses the pre-revoke epoch', async () => {
@@ -133,6 +133,7 @@ it('deduplicates in-flight taps and ignores request completion after unmount', a
   await fireEvent.press(screen.getByLabelText('Request local caption draft'));
   await waitFor(() => expect(captions.requestCaptionAsr).toHaveBeenCalledTimes(1));
   await mounted.unmount();
+  expect(jest.mocked(captions.requestCaptionAsr).mock.calls[0][4]?.aborted).toBe(true);
   await act(async () => resolve({ ...available, state: 'pending' }));
 });
 
@@ -145,6 +146,7 @@ it('does not carry consent or a late request response to another source generati
   await fireEvent.press(screen.getByLabelText('Request local caption draft'));
   jest.mocked(captions.getCaptionAsrStatus).mockResolvedValue({ ...available, sourceVersion: 3 });
   await mounted.rerender(<CaptionAsrSheet source={{ ...source, version: 3 }} onClose={jest.fn()} onRevoked={jest.fn()} />);
+  expect(jest.mocked(captions.requestCaptionAsr).mock.calls[0][4]?.aborted).toBe(true);
   await screen.findByText('Transcription: not requested');
   expect(screen.getByRole('checkbox').props.accessibilityState.checked).toBe(false);
   await act(async () => resolve({ ...available, state: 'pending' }));

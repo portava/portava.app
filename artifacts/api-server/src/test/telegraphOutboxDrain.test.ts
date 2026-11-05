@@ -23,7 +23,7 @@ import { subscribe, type TelegraphEvent } from "../lib/telegraphEvents.js";
 import messagingRouter from "../routes/messaging.js";
 import {
   runTelegraphOutboxDrainPass, runTelegraphOutboxDrainTick, getTelegraphOutboxDrainStatus,
-  _resetTelegraphOutboxDrainStatus, TELEGRAPH_OUTBOX_MAX_ATTEMPTS, outboxFanoutInForce,
+  _resetTelegraphOutboxDrainStatus, TELEGRAPH_OUTBOX_MAX_ATTEMPTS, TELEGRAPH_OUTBOX_FANOUT_MAX_AGE_MS, outboxFanoutInForce,
 } from "../lib/telegraphOutboxDrainScheduler.js";
 
 const ME = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -216,14 +216,60 @@ describe("T154 the drainer, pass by pass", () => {
     assert.notEqual(w.outbox[0].published_at, null);
   });
 
-  it("edited / unsent / deleted rows are acked route_direct and NOT re-published (their routes publish directly)", async () => {
+  it("edits, unsends and deletes are delivered from their durable rows without bodies", async () => {
     w.flags = { ...ON };
-    seedOutbox("message.edited", {}); seedOutbox("message.unsent", {}); seedOutbox("message.deleted", {});
+    seedOutbox("message.edited", {edited_at:'2026-10-10T12:00:01Z'});
+    seedOutbox("message.unsent", {unsent_at:'2026-10-10T12:00:02Z',deleted_at:'2026-10-10T12:00:02Z'});
+    seedOutbox("message.deleted", {deleted_at:'2026-10-10T12:00:03Z'});
     const rec = recorder();
     const r = await runTelegraphOutboxDrainPass({ client: db, nowMs: w.clock, publish: rec.fn });
-    assert.equal(r.routeDirect, 3);
-    assert.equal(rec.calls.length, 0);
-    assert.deepEqual(w.outbox.map((o) => o.disposition), ["route_direct", "route_direct", "route_direct"]);
+    assert.equal(r.fannedOut, 3);
+    assert.equal(r.routeDirect, 0);
+    assert.deepEqual(rec.calls.map(c=>c.event.type), ['message.updated','message.unsent','message.deleted']);
+    assert.ok(!JSON.stringify(rec.calls).includes('secret body'));
+    assert.ok(rec.calls.every(c=>!c.opts?.excludeUserId), 'other sessions of the actor also retire the old body');
+    assert.ok(w.outbox.every(o=>o.disposition === 'fanned_out'));
+  });
+
+  it('a deletion older than the new-message horizon still retires recipient caches', async () => {
+    w.flags = {...ON};
+    const row = seedOutbox('message.deleted', {deleted_at:'2026-10-10T12:00:03Z'});
+    row.created_at = new Date(w.clock - TELEGRAPH_OUTBOX_FANOUT_MAX_AGE_MS - 1).toISOString();
+    const rec = recorder();
+    const r = await runTelegraphOutboxDrainPass({client:db,nowMs:w.clock,publish:rec.fn});
+    assert.equal(r.fannedOut,1);
+    assert.equal(r.expired,0);
+    assert.equal(rec.calls[0].event.type,'message.deleted');
+  });
+
+  it('a queued edit overtaken by unsend publishes the tombstone, never an edit', async () => {
+    w.flags = {...ON};
+    seedOutbox('message.edited', {edited_at:'2026-10-10T12:00:01Z',unsent_at:'2026-10-10T12:00:03Z',deleted_at:'2026-10-10T12:00:03Z'});
+    const rec = recorder();
+    const r = await runTelegraphOutboxDrainPass({client:db,nowMs:w.clock,publish:rec.fn});
+    assert.equal(r.fannedOut,1);
+    assert.equal(rec.calls[0].event.type,'message.unsent');
+  });
+
+  it('an unreadable mutation stays retryable and is delivered after recovery', async () => {
+    w.flags = {...ON};
+    seedOutbox('message.edited', {edited_at:'2026-10-10T12:00:01Z'});
+    w.messageReadError = true;
+    const rec = recorder();
+    assert.equal((await runTelegraphOutboxDrainPass({client:db,nowMs:w.clock,publish:rec.fn})).failed,1);
+    assert.equal(rec.calls.length,0);
+    assert.equal(w.outbox[0].published_at,null);
+    w.messageReadError = false;
+    assert.equal((await runTelegraphOutboxDrainPass({client:db,nowMs:w.clock,publish:rec.fn})).fannedOut,1);
+  });
+
+  it('an unsend event whose row is still live is retried instead of announcing a false deletion', async () => {
+    w.flags = {...ON}; seedOutbox('message.unsent', {});
+    const rec = recorder();
+    const r = await runTelegraphOutboxDrainPass({client:db,nowMs:w.clock,publish:rec.fn});
+    assert.equal(r.failed,1);
+    assert.equal(rec.calls.length,0);
+    assert.equal(w.outbox[0].published_at,null);
   });
 
   it("a message retracted BEFORE fan-out is announced to nobody (message_absent)", async () => {
@@ -527,6 +573,40 @@ describe("V-TR F1: ONE publisher of message.created for every door", () => {
       }
     }
     assert.equal(sites, 7, "every door's publish site is counted (messaging text + media, share, voice, coordination, envelope, plain thread message)");
+  });
+
+  it('mutation publishers defer to the outbox when enabled and publish once when disabled', async () => {
+    const { publishMessageMutation } = await import('../lib/telegraphOutboxDrainScheduler.js');
+    for (const type of ['message.updated', 'message.deleted', 'message.unsent'] as const) {
+      const events: TelegraphEvent[] = [];
+      const unsub = subscribe(OTHER, event => { if (event.type === type) events.push(event); });
+      try {
+        w.flags = { ...ON };
+        _resetOutboxFanoutCache();
+        assert.equal(await publishMessageMutation(makeClient() as any, THREAD, { type, payload: { messageId: 'm-1' } }), 'outbox');
+        assert.equal(events.length, 0);
+        w.flags = { telegraph_message_kernel_enabled: true };
+        _resetOutboxFanoutCache();
+        assert.equal(await publishMessageMutation(makeClient() as any, THREAD, { type, payload: { messageId: 'm-1' } }), 'published');
+        assert.equal(events.length, 1);
+      } finally { unsub(); }
+    }
+  });
+
+  it('every edit/delete/unsend door uses the durable mutation publisher', async () => {
+    const { readFileSync } = await import('node:fs');
+    const doors = ['../routes/messaging.ts', '../routes/groupChat.ts', '../routes/telegraphLifecycle.ts', '../server/telegraph/commandRoute.ts'];
+    let sites = 0;
+    for (const door of doors) {
+      const text = readFileSync(new URL(door, import.meta.url), 'utf8');
+      for (const match of text.matchAll(/type:\s*['"]message\.(updated|deleted|unsent)['"]/g)) {
+        sites++;
+        const before = text.slice(Math.max(0, match.index! - 260), match.index);
+        assert.match(before, /publishMessageMutation\([^;]*$/, `${door}: mutation bypassed its durable publisher`);
+        assert.doesNotMatch(before.slice(before.lastIndexOf('publishMessageMutation(')), /publishToThread\(/);
+      }
+    }
+    assert.equal(sites, 5, 'DM edit, group edit/delete, lifecycle unsend and command unsend');
   });
 });
 

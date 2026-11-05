@@ -91,4 +91,14 @@ describe('SavedPostsList', () => {
     await fireEvent.press(row);
     expect(router.push).toHaveBeenCalledWith('/post/p1');
   });
+
+  it('can organize an existing save without navigating to the post', async () => {
+    collections.getMySavedPostIds.mockResolvedValue({ ok: true, postIds: ['p1'] });
+    posts.getPostById.mockResolvedValue(post('p1', 'Night market', 'bo'));
+    const onOrganize = jest.fn();
+    const view = await render(<SavedPostsList onBack={() => {}} onOrganize={onOrganize} />);
+    await fireEvent.press(await view.findByLabelText('Add Night market to collection'));
+    expect(onOrganize).toHaveBeenCalledWith('p1');
+    expect(router.push).not.toHaveBeenCalled();
+  });
 });

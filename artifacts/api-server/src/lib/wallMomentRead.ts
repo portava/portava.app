@@ -40,15 +40,21 @@ export async function readPreviousReadings(
   if (!sc) return { ok: false, reason: "no_client" };
   if (!subjectId || claimTypes.length === 0) return { ok: true, readings: [] };
   try {
-    const { data, error } = await sc
+    // A global limit lets a frequently-updated claim consume every slot and
+    // makes quiet claims appear to have no history. Each claim gets its own
+    // bounded window; independent reads run concurrently.
+    const types = [...new Set(claimTypes)];
+    const pages = await Promise.all(types.map((claimType) => sc
       .from(SNAPSHOT_VERSIONS_TABLE)
       .select("claim_type, value, observed_at, generated_at")
       .eq("subject_id", subjectId)
       .eq("privacy_eligible", true)
-      .in("claim_type", claimTypes)
+      .eq("claim_type", claimType)
       .order("generated_at", { ascending: false })
-      .limit(PREVIOUS_READINGS_PER_TYPE * claimTypes.length);
+      .limit(PREVIOUS_READINGS_PER_TYPE)));
+    const error = pages.find((page) => page.error)?.error;
     if (error) return { ok: false, reason: isMissingRelation(error) ? "versions_unavailable" : "error" };
+    const data = pages.flatMap((page) => page.data ?? []);
     const readings: PreviousReading[] = [];
     for (const row of (data as any[]) ?? []) {
       if (!row || typeof row.claim_type !== "string") continue;

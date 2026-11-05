@@ -59,7 +59,7 @@ function noBlocksClient() {
     maybeSingle: () => Promise.resolve({ data: null, error: null }),
     then: (onF: any, onR: any) => Promise.resolve({ data: [], error: null }).then(onF, onR),
   };
-  return { from: () => b };
+  return { from: (table: string) => { if (table !== "places") return b; const p: any = { select: () => p, in: () => p, limit: () => p, then: (onF: any, onR: any) => Promise.resolve({ data: [{ id: "place-1", moderation_status: "visible", merged_into_place_id: null }], error: null, count: 1 }).then(onF, onR) }; return p; } };
 }
 
 function postCandidate(over: Partial<WallCandidate> = {}): WallCandidate {

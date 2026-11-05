@@ -5,22 +5,7 @@
  * All mutations go through the API server (bearer token auth).
  * Never calls Supabase directly.
  */
-import { freshToken } from './apiToken.ts';
-
-function apiBase(): string {
-  return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-}
-
-function isNetworkError(e: unknown): boolean {
-  const m = (e instanceof Error ? e.message : String(e)).toLowerCase();
-  return (
-    m.includes('failed to fetch') ||
-    m.includes('network request failed') ||
-    m.includes('err_address_unreachable') ||
-    m.includes('networkerror') ||
-    m.includes('load failed')
-  );
-}
+import { requestMediaInteraction } from '../features/media/services/mediaActions.ts';
 
 export interface MediaActionResult {
   ok: boolean;
@@ -33,28 +18,9 @@ async function call(
   method: 'GET' | 'POST' | 'DELETE' | 'PATCH',
   path: string,
   body?: object,
+  signal?: AbortSignal,
 ): Promise<MediaActionResult> {
-  const token = await freshToken();
-  if (!token) return { ok: false, message: 'Not authenticated', errorKind: 'unauthenticated' };
-
-  try {
-    const res = await fetch(`${apiBase()}${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(body ? { 'Content-Type': 'application/json' } : {}),
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      return { ok: false, message: (json as any)?.message ?? `HTTP ${res.status}`, errorKind: (json as any)?.error };
-    }
-    return { ok: true, data: json };
-  } catch (e) {
-    if (isNetworkError(e)) return { ok: false, message: 'Network error', errorKind: 'network' };
-    return { ok: false, message: e instanceof Error ? e.message : 'Unknown error', errorKind: 'unknown' };
-  }
+  return requestMediaInteraction(method, path, body, signal);
 }
 
 // ── Like — RETIRED (MD424; testing-mode WP-17, census-media §46) ────────────
@@ -92,8 +58,9 @@ export async function reportMedia(
   mediaId: string,
   reason: string,
   notes?: string,
+  opts?: { signal?: AbortSignal },
 ): Promise<MediaActionResult> {
-  return call('POST', `/api/media/${encodeURIComponent(mediaId)}/report`, { reason, notes });
+  return call('POST', `/api/media/${encodeURIComponent(mediaId)}/report`, { reason, notes }, opts?.signal);
 }
 
 // ── Owner: visibility change ──────────────────────────────────────────────────

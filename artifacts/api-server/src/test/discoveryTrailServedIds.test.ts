@@ -66,6 +66,7 @@ function makeDb(seed: Record<string, Row[]>) {
     trails: [], content_trails: [], trail_follows: [], trail_reports: [],
     trail_health_snapshots: [], trail_edges: [], rank_events: [], blocks: [],
     profiles: [USER, OTHER].map((id) => ({ id, account_status: "active" })),
+    discovery_places: [P_HOT, P_COLD].map(id => ({ id, status: 'active' })),
     ...seed,
   };
   function from(table: string) {
@@ -98,7 +99,7 @@ function makeDb(seed: Record<string, Row[]>) {
         return r;
       },
       then(res: (r: any) => any, rej?: (e: any) => any) {
-        return Promise.resolve({ data: rows(), error: null }).then(res, rej);
+        return Promise.resolve({ data: rows(), error: null, count: store().filter(row => filters.every(filter => filter(row))).length }).then(res, rej);
       },
     };
     return b;

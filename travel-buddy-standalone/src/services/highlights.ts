@@ -181,7 +181,7 @@ function isNetworkError(e: unknown): boolean {
   );
 }
 
-function mapHighlight(r: any): Highlight {
+export function mapHighlight(r: any): Highlight {
   return {
     id: r.id,
     ownerId: r.owner_id,

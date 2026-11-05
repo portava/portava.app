@@ -1,0 +1,1 @@
+{"platforms":["ios","android"],"apple":{"modules":["PortavaOnDeviceSpeechModule"]},"android":{"modules":["com.portava.input.speech.PortavaOnDeviceSpeechModule"]}}

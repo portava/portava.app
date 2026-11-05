@@ -1,3 +1,4 @@
+import { readCanonicalPlaceVisibility } from "../lib/places/placeGovernance.js";
 /**
  * Sensing §5.4 — the ExperienceSession bridge, reachable:
  *
@@ -277,6 +278,10 @@ router.post(
       res.status(409).json({ ok: false, refusal: "already_open", session: existing.open.envelope });
       return;
     }
+
+    const visibility=await readCanonicalPlaceVisibility(g.sc,[q.subjectId]);
+    if(!visibility.ok){sendError(res,'degraded_unavailable','Place visibility unavailable');return;}
+    if(!visibility.visibleIds.has(q.subjectId)){sendError(res,'not_found','Place unavailable');return;}
 
     // ── Re-derive the opportunity. The caller described none. ────────────────
     const etaMinutesBySubject: Record<string, number | null> = { [q.subjectId]: null };

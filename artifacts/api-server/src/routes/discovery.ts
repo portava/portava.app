@@ -106,12 +106,12 @@ import {
   CACHE_B_TTL_MS,
 } from "../lib/discoveryCacheEligibility.js";
 import { logger } from "../lib/logger.js";
+import { readDiscoveryProvider } from '../lib/discoveryProviderDeadline.js';
 
 const router = Router();
 
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 const OVERPASS_URL  = "https://overpass-api.de/api/interpreter";
-const FETCH_TIMEOUT_MS = 25_000;
 const CACHE_TTL_MS     = 2 * 60 * 60 * 1_000; // 2 hours
 const MAX_FETCH        = 60;
 const PAGE_SIZE        = 20;
@@ -355,23 +355,14 @@ export function patchOsmSavedCount(osmId: string, newCount: number): void {
 
 // ── Fetch helpers ─────────────────────────────────────────────────────────────
 
-async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
-  try {
-    return await fetch(url, { ...init, signal: ctrl.signal });
-  } finally {
-    clearTimeout(t);
-  }
-}
-
 async function geocode(location: string): Promise<{ lat: number; lng: number; display: string } | null> {
   const url = `${NOMINATIM_URL}?q=${encodeURIComponent(location)}&format=json&limit=1`;
-  const res = await upstreamCall("nominatim", () => fetchWithTimeout(url, {
-    headers: { "User-Agent": "TravelBuddy/1.0 (travel-buddy-app; discovery)" },
+  const data = await upstreamCall('nominatim', () => readDiscoveryProvider(url, {
+    headers: { 'User-Agent': 'TravelBuddy/1.0 (travel-buddy-app; discovery)' },
+  }, async response => {
+    if (!response.ok) throw new UpstreamUnavailableError('nominatim', `nominatim_http_${response.status}`);
+    return await response.json() as Array<{ lat: string; lon: string; display_name: string }>;
   }));
-  if (!res.ok) throw new UpstreamUnavailableError("nominatim", `nominatim_http_${res.status}`);
-  const data = await upstreamCall("nominatim", async () => (await res.json()) as Array<{ lat: string; lon: string; display_name: string }>);
   const r = data?.[0];
   if (!r) return null; // THE ONLY null: Nominatim answered and knows no such place — a fact, and cacheable. See GEOCODE OUTAGES at the foot of this file.
   return { lat: parseFloat(r.lat), lng: parseFloat(r.lon), display: r.display_name };
@@ -671,18 +662,18 @@ async function queryOverpass(
 
   // GET avoids Content-Type 406 issues with undici (Node built-in fetch).
   const url = `${OVERPASS_URL}?data=${encodeURIComponent(query)}`;
-  let res: Response;
+  let data: { elements: OsmElement[] };
   try {
-    res = await fetchWithTimeout(url, {
+    data = await readDiscoveryProvider(url, {
       headers: { "User-Agent": "TravelBuddy/1.0 (travel-buddy-app; discovery)" },
+    }, async response => {
+      if (!response.ok) throw new Error(`Overpass returned ${response.status}`);
+      return await response.json() as { elements: OsmElement[] };
     });
   } catch {
     return overpassFailed();  // census-discovery §94.10: [] as before, MARKED — the read did not happen
   }
 
-  if (!res.ok) return overpassFailed();
-
-  let data: { elements: OsmElement[] }; try { data = (await res.json()) as { elements: OsmElement[] }; } catch { return overpassFailed(); }
   if (overpassAnswerFailed(data)) return overpassFailed(); if (!data?.elements?.length) return [];  // census-discovery §126 (DV-83): a 200 whose body says the query did not finish is a failed read, empty or truncated
 
   return data.elements
@@ -3592,10 +3583,14 @@ router.get("/discovery/wikidata/:wikidataId", async (req, res) => {
   url.searchParams.set("languages", "en");
   url.searchParams.set("props", "descriptions|sitelinks/urls|claims");
 
-  let raw: Response;
+  let raw: { ok: boolean; status: number; body: unknown; invalidJson: boolean };
   try {
-    raw = await fetchWithTimeout(url.toString(), {
+    raw = await readDiscoveryProvider(url.toString(), {
       headers: { "User-Agent": "TravelBuddy/1.0 (travel-buddy-app; discovery)" },
+    }, async response => {
+      if (!response.ok) return { ok: false, status: response.status, body: null, invalidJson: false };
+      try { return { ok: true, status: response.status, body: await response.json(), invalidJson: false }; }
+      catch { return { ok: true, status: response.status, body: null, invalidJson: true }; }
     });
   } catch {
     sendError(res, "upstream_error", "Wikidata fetch failed");
@@ -3607,15 +3602,12 @@ router.get("/discovery/wikidata/:wikidataId", async (req, res) => {
     return;
   }
 
-  let body: unknown;
-  try {
-    body = await raw.json();
-  } catch {
+  if (raw.invalidJson) {
     sendError(res, "upstream_error", "Wikidata response was not valid JSON");
     return;
   }
 
-  const entities = (body as Record<string, unknown>)?.entities as Record<string, unknown> | undefined;
+  const entities = (raw.body as Record<string, unknown>)?.entities as Record<string, unknown> | undefined;
   const item = entities?.[wikidataId] as Record<string, unknown> | undefined;
 
   if (!item || (item as { missing?: string }).missing !== undefined) {
@@ -4062,14 +4054,18 @@ async function layoverGatedPlaces<T extends { id: string; lat?: number | null; l
  * The failure is carried out on `failedSources` instead, so the response says
  * the page may contain dismissed places rather than pretending it cannot.
  *
- * ANONYMOUS CALLERS pass straight through: no viewer, no dismissals, nothing to
- * read and nothing to report.
+ * Canonical moderation is checked first for every caller, including anonymous
+ * and cached responses. An unreadable moderation decision withholds database
+ * place IDs and is reported separately; only personal dismissal is fail-soft.
  */
 async function dismissGatedPlaces<T extends { id: string }>(
   userId: string | null,
   places: T[],
   failedSources: readonly string[],
 ): Promise<{ places: T[]; failedSources: string[] }> {
+  const governed = await governDiscoveryPlaces(getServiceClient(), places, row => row.id);
+  places = governed.rows;
+  if (!governed.readable) failedSources = [...failedSources, 'canonical_place_governance'];
   // Nothing to remove from an empty page, and no reason to spend a read on it.
   if (!userId || places.length === 0) return { places, failedSources: [...failedSources] };
   const dismissed = await loadDismissedPlaceIds(getServiceClient(), userId);
@@ -4082,6 +4078,8 @@ async function dismissGatedPlaces<T extends { id: string }>(
       : [...failedSources],
   };
 }
+
+import { governDiscoveryPlaces } from '../lib/discoveryPlaceGovernance.js';
 
 /**
  * The `GET /discovery` empty body, for the arm that refuses before any page

@@ -382,6 +382,8 @@ export function StampsTab({
         )}
       </View>
 
+      <Text style={styles.progressSub}>Passport collection{viewingUsername ? ' · visible stamps' : ''}. Stamps Earned also includes stamps received on posts.</Text>
+
       {/* Category filter strip (shown for both views so public profiles can browse) */}
       <StampCategoryFilter selected={category} onCategoryChange={setCategory} />
 

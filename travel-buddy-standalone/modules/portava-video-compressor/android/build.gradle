@@ -1,0 +1,26 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.portava.media'
+version = '1.0.0'
+
+android {
+  namespace 'com.portava.media.compression'
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+    minSdkVersion 24
+    testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+  }
+}
+
+dependencies {
+  implementation 'androidx.media3:media3-transformer:1.11.1'
+  implementation 'androidx.media3:media3-effect:1.11.1'
+  implementation 'androidx.media3:media3-muxer:1.11.1'
+  testImplementation 'junit:junit:4.13.2'
+  androidTestImplementation 'androidx.test:runner:1.6.2'
+  androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+}

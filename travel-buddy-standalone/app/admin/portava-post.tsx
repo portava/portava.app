@@ -12,7 +12,7 @@
  *
  * Requires admin role (enforced by useRequireAdmin hook + server-side).
  */
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -27,7 +27,13 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
-import { adminPost } from '../../src/services/adminApi';
+import { createOfficialPost } from '../../src/services/officialPosts';
+import { useSession } from '../../src/context/SessionContext';
+import { captureMessagingOwnerRequest } from '../../src/services/messagingOwnerRequest';
+import { newPostDestinationOperation } from '../../src/services/postDestinations';
+import { useMediaPicker } from '../../src/hooks/useMediaPicker';
+import { uploadMedia } from '../../src/services/media';
+import { VIDEO_MAX_DURATION_SECONDS } from '../../src/constants/mediaLimits';
 import { icon } from '../../src/theme/tokens';
 
 // ── Category definitions ───────────────────────────────────────────────────────
@@ -56,7 +62,7 @@ type CategoryKey = (typeof CATEGORIES)[number]['key'];
 function nowPlusOneHourISO(): string {
   const d = new Date(Date.now() + 60 * 60 * 1000);
   // Format: YYYY-MM-DDTHH:MM
-  return d.toISOString().slice(0, 16);
+  return new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0, 16);
 }
 
 /** Very light validation: ISO datetime string from a text input. */
@@ -72,6 +78,11 @@ function parseScheduledAt(raw: string): string | null {
 
 export default function PortavaPostScreen() {
   useRequireAdmin();
+  const { userId } = useSession();
+  return userId ? <OfficialPostEditor key={userId} ownerId={userId} /> : null;
+}
+
+function OfficialPostEditor({ ownerId }: { ownerId: string }) {
 
   const [content, setContent]         = useState('');
   const [category, setCategory]       = useState<CategoryKey | null>(null);
@@ -82,8 +93,33 @@ export default function PortavaPostScreen() {
   const [scheduledAt, setScheduledAt] = useState(nowPlusOneHourISO());
   const [submitting, setSubmitting]   = useState(false);
   const scrollRef = useRef<ScrollView>(null);
+  const { pickMedia } = useMediaPicker();
+  const [uploadedUrls, setUploadedUrls] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const requestOwner = useRef(captureMessagingOwnerRequest());
+  const mounted = useRef(true); const busy = useRef(false);
+  const intent = useRef<{fingerprint:string;operationId:string}|null>(null);
+  useEffect(() => { mounted.current=true; requestOwner.current=captureMessagingOwnerRequest(); return () => { mounted.current=false; requestOwner.current?.invalidate(); }; }, []);
+  const current = () => mounted.current && requestOwner.current?.ownerId===ownerId && requestOwner.current.isCurrent();
+  const addMedia = async () => {
+    if(busy.current || !current()) return;
+    busy.current=true; setUploading(true);
+    try {
+      const picks=await pickMedia({title:'Add official post media',mediaTypes:['images','videos'],allowsMultipleSelection:true,selectionLimit:Math.max(1,10-uploadedUrls.length),videoMaxDuration:VIDEO_MAX_DURATION_SECONDS.postcard});
+      if(!picks || !current()) return;
+      for(const picked of picks.slice(0,10-uploadedUrls.length)) {
+        const result=await uploadMedia({...picked,duration:typeof picked.duration==='number'?picked.duration/1000:null},{surface:'postcard'},requestOwner.current!);
+        if(!current()) return;
+        if(!result.ok || !result.url) {Alert.alert('Upload failed',result.message ?? 'Try again.');break;}
+        setUploadedUrls(previous=>[...previous,result.url!]);
+      }
+    } catch { if(current()) Alert.alert('Upload failed', 'Could not read the selected media. Try again.'); }
+    finally { busy.current=false;if(current())setUploading(false); }
+  };
+
 
   const onSubmit = async () => {
+    if (busy.current || !current()) return;
     const body = content.trim();
     if (!body) {
       Alert.alert('Body required', 'Please enter post content before publishing.');
@@ -103,20 +139,27 @@ export default function PortavaPostScreen() {
       }
     }
 
-    const mediaUrls = mediaRaw
+    const externalUrls = mediaRaw
       .split(',')
       .map((u) => u.trim())
       .filter((u) => u.length > 0);
 
-    setSubmitting(true);
-    const res = await adminPost('/api/admin/portava/posts', {
+    const mediaUrls = [...uploadedUrls, ...externalUrls];
+    if (mediaUrls.length>10) {Alert.alert('Too many files', 'Choose up to 10 photos, videos or external links.');return;}
+    const payload = {
       content: body,
       category: category ?? undefined,
       mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
       locationCity:    locationCity.trim() || undefined,
       locationCountry: locationCountry.trim() || undefined,
       scheduledAt:     isoScheduled ?? undefined,
-    });
+    };
+    const fingerprint=JSON.stringify(payload);
+    if(intent.current?.fingerprint!==fingerprint) intent.current={fingerprint,operationId:newPostDestinationOperation()};
+    busy.current=true;setSubmitting(true);
+    const res = await createOfficialPost({...payload,operationId:intent.current.operationId},requestOwner.current!);
+    busy.current=false;
+    if(!current()) return;
     setSubmitting(false);
 
     if (!res.ok) {
@@ -128,8 +171,8 @@ export default function PortavaPostScreen() {
       isoScheduled ? 'Post scheduled' : 'Post published',
       isoScheduled
         ? `Post will go live on ${new Date(isoScheduled).toLocaleString()}`
-        : 'Post is now live.',
-      [{ text: 'OK', onPress: () => router.replace('/admin/portava-posts' as any) }],
+        : 'Post saved. Uploaded media remains subject to moderation.',
+      [{ text: 'OK', onPress: () => {if(current()) router.replace('/admin/portava-posts' as any);} }],
     );
   };
 
@@ -198,8 +241,16 @@ export default function PortavaPostScreen() {
           />
         </View>
 
-        {/* Media URLs */}
-        <Text style={s.label}>Media URLs (optional, comma-separated)</Text>
+        {/* Uploaded media and external references remain distinct in storage. */}
+        <Pressable accessibilityRole="button" accessibilityLabel="Add official post media" disabled={uploading || submitting || uploadedUrls.length>=10} onPress={() => {void addMedia();}} style={s.input}>
+          <Text>{uploading ? 'Uploading…' : 'Add photos or videos'}</Text>
+        </Pressable>
+        {uploadedUrls.map((url,index)=><View key={url} style={s.scheduleRow}>
+          <Text>Uploaded file {index+1}</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel={`Remove uploaded file ${index+1}`} disabled={submitting || uploading} onPress={()=>setUploadedUrls(previous=>previous.filter(value=>value!==url))}><Text>Remove</Text></Pressable>
+        </View>)}
+        <Text style={s.helperText}>Uploads stay yours. Publishing attaches them to the official post; removing the original later also withdraws it there.</Text>
+        <Text style={s.label}>External media links (optional, comma-separated)</Text>
         <TextInput
           style={s.input}
           placeholder="https://… , https://…"
@@ -241,9 +292,12 @@ export default function PortavaPostScreen() {
 
         {/* Submit */}
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Publish official post"
+          accessibilityState={{ disabled: submitting || uploading, busy: submitting }}
           style={[s.submitBtn, submitting && s.submitBtnDisabled]}
-          onPress={onSubmit}
-          disabled={submitting}
+          onPress={() => {void onSubmit();}}
+          disabled={submitting || uploading}
         >
           {submitting ? (
             <ActivityIndicator color="#FFFFFF" />

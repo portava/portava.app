@@ -22,6 +22,7 @@ import { AdminHeader, adminStyles as a } from '../../src/components/admin/AdminC
 import { color } from '../../src/theme/tokens';
 
 const SCREENS: Array<{ path: string; title: string; detail: string; flow: string }> = [
+  { path: '/admin/trail-reviews', title: 'Trail review', detail: 'Approve or reject new Trails before they appear in Discovery', flow: 'DISC-F23' },
   { path: '/admin/hidden-gems', title: 'Hidden gem review', detail: 'Approve or reject submitted gems; resolve reports', flow: 'PLAT-F39' },
   { path: '/admin/local-guides', title: 'Local guides', detail: 'Approve or decline guide applications', flow: 'PLAT-F38' },
   { path: '/admin/live-scopes', title: 'Live-label scopes', detail: 'Promote or withdraw where LIVE labels may show', flow: 'SEN-F06' },

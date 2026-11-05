@@ -25,7 +25,7 @@ import express from "express";
 import { _setTestClient, _clearTestClient } from "../lib/http.js";
 import trendingRouter from "../routes/discoveryTrending.js";
 import {
-  explainExposures, eligibleListPlaces, mayNameNeighbourhood, parseDestination, zoneAllowsPosition, TREND_DISCLOSURE_MIN_TRAVELERS, TREND_LIST_STATES,
+  explainExposures, eligibleListPlaces, readTrendSnapshot, mayNameNeighbourhood, parseDestination, zoneAllowsPosition, TREND_DISCLOSURE_MIN_TRAVELERS, TREND_LIST_STATES,
   type TrendAreaRow, type TrendSnapshotRow,
 } from "../lib/discoveryTrendExplanation.js";
 import { TREND_STATE_MODEL_VERSION_V2, TREND_FEATURE_VERSION_V2, TREND_PRIOR_MS, explainTrendReading } from "../lib/discoveryTrendState.js";
@@ -268,8 +268,47 @@ describe("L-E — what a list may name, for this viewer", () => {
       withDb(SEED(), { erroring: [t] });
       const r = await get("places", "lisbon");
       assert.equal(r.status, 503, `${t}: ${r.text}`);
-      if (t !== "profiles") assert.equal(r.body.reason, "eligibility_read_failed", t);  // profiles down: lib/http's account-status read refuses first (503)
+      if (t !== "profiles") assert.equal(r.body.reason, t === 'discovery_places' ? 'trend_read_failed' : 'eligibility_read_failed', t);  // Current alias visibility precedes user eligibility; profiles down refuses at auth.
     }
+  });
+});
+
+describe('Canonical registry Trending and current moderation', () => {
+  function canonicalSeed() {
+    const seed = SEED();
+    seed.places = seed.discovery_places!.map(row => ({ id: row.id, name: row.name, status: row.status,
+      latitude: row.lat, longitude: row.lng, primary_category: row.category,
+      moderation_status: 'visible', merged_into_place_id: null }));
+    seed.discovery_places = [];
+    return seed;
+  }
+  it('lists canonical-only trends with their actual location and category', async () => {
+    const seed = canonicalSeed(); withDb(seed);
+    const result = await get('places', 'lisbon');
+    assert.equal(result.status, 200); assert.ok(ids(result.body).includes(`db/${pid(2)}`));
+    const eligible = await eligibleListPlaces(makeDb(seed), USER, [pid(2)]);
+    assert.equal(eligible!.get(pid(2))!.category, seed.places![1]!.primary_category);
+  });
+  it('does not revive a withheld canonical place through a community shadow', async () => {
+    const seed = canonicalSeed();
+    seed.places!.find(row => row.id === pid(2))!.moderation_status = 'withheld';
+    seed.discovery_places = [dp(2)]; withDb(seed);
+    const result = await get('places', 'lisbon');
+    assert.equal(result.status, 200); assert.ok(!ids(result.body).includes(`db/${pid(2)}`));
+    assert.ok(ids(result.body).includes(`db/${pid(3)}`));
+  });
+  it('clears canonical cells, then suppresses a whole stored aggregate after one contributor is withheld', async () => {
+    const seed = canonicalSeed(); withDb(seed);
+    assert.deepEqual((await get('areas', 'lisbon')).body.areas.map((area: any) => area.area), ['Alfama']);
+    seed.places!.find(row => row.id === pid(2))!.moderation_status = 'withheld'; withDb(seed);
+    assert.deepEqual((await get('areas', 'lisbon')).body.areas, []);
+    const snapshot = await readTrendSnapshot(makeDb(seed), [`db/${pid(2)}`, `db/${pid(3)}`]);
+    assert.equal(snapshot.ok, true);
+    if (snapshot.ok) { assert.deepEqual(snapshot.rows.map(row => row.place_id), [`db/${pid(3)}`]); assert.deepEqual(snapshot.areas, []); }
+  });
+  it('reports canonical visibility read failure instead of an empty successful list', async () => {
+    withDb(canonicalSeed(), { erroring: ['places'] });
+    assert.equal((await get('places', 'lisbon')).status, 503);
   });
 });
 

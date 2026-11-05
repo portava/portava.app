@@ -22,6 +22,7 @@ import { AppHeader } from '../../src/components/ui/AppHeader';
 import { CachedImage } from '../../src/components/CachedImage';
 import { AvatarImage } from '../../src/components/ui/DisplayMediaImage.tsx';
 import { MediaStampOverlay } from '../../src/components/StampOverlayBadge';
+import { FullscreenPhoto } from '../../src/components/ui/FullscreenPhoto.tsx';
 import { SharedVideoPlayer } from '../../src/components/ui/SharedVideoPlayer';
 import { getPostById, type PostRow } from '../../src/services/posts';
 import type { PostcardMediaItem } from '../../src/types/models.ts';
@@ -59,7 +60,7 @@ function PostcardMedia({ item, filterId, filterIntensity }: {
           style={s.mediaFill}
         />
       ) : (
-        <>
+        <FullscreenPhoto uri={item.url} style={s.mediaFill} filterId={filterId} filterIntensity={filterIntensity}>
           <CachedImage
             // feed_url ?? url — never construct the derivative path (it 404s for
             // pre-0208 uploads / failed derives); CachedImage signs the
@@ -74,7 +75,7 @@ function PostcardMedia({ item, filterId, filterIntensity }: {
             fallbackLabel=""
           />
           {!failed ? <MediaStampOverlay raw={item.stamp_overlay} /> : null}
-        </>
+        </FullscreenPhoto>
       )}
     </View>
   );

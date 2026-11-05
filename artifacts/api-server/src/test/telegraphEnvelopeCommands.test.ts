@@ -95,6 +95,37 @@ const DECISION = { question: "Which bar?", options: [{ id: "a", label: "Ola" }, 
 const STATUS = { state: "ON_MY_WAY", approximateLabel: "near the station" };
 const share = () => ({ label: "Pier 2", precision: "area", expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
 
+describe("the command bus uses the structured schema contract", () => {
+  const enabled = () => store({ feature_flags: [{ flag: "telegraph_structured_schemas_enabled", enabled: true }] });
+  for (const [type, schema, params] of [
+    ["CREATE_DECISION", "coordination.decision.v1", () => DECISION],
+    ["SET_COORDINATION_STATUS", "coordination.status.v1", () => STATUS],
+    ["SHARE_LOCATION", "location.scope.v1", share],
+    ["CREATE_COORDINATION_SESSION", "coordination.session.v1", () => ({ title: "Dinner", idempotencyKey: "schema-session" })],
+  ] as const) {
+    it(`${type} stamps its schema when enabled`, async () => {
+      const c = use(enabled());
+      const result = await post('/telegraph/commands', A, { type, conversationId: GROUP, params: params() });
+      assert.equal(result.status, 200, JSON.stringify(result.body));
+      assert.equal(JSON.parse(messagesIn(c, GROUP)[0].body).schema, schema);
+    });
+    it(`${type} rejects a mismatched or unknown schema before any message is written`, async () => {
+      const c = use(enabled());
+      for (const requested of ['object.share.v1', 'future.v99', 2]) {
+        const result = await post('/telegraph/commands', A, { type, conversationId: GROUP, schema: requested, params: params() });
+        assert.equal(result.status, 400, JSON.stringify(result.body));
+      }
+      assert.equal(messagesIn(c, GROUP).length, 0);
+    });
+  }
+  it('preserves unstamped legacy envelopes while the schema gate is off', async () => {
+    const c = use(store());
+    const result = await post('/telegraph/commands', A, { type: 'CREATE_DECISION', conversationId: GROUP, schema: 'future.v99', params: DECISION });
+    assert.equal(result.status, 200);
+    assert.equal(JSON.parse(messagesIn(c, GROUP)[0].body).schema, undefined);
+  });
+});
+
 describe("the vocabulary: issued here, not sent away, not unimplemented", () => {
   for (const type of Object.keys(ENVELOPE_COMMAND_KINDS)) {
     it(`${type} is issuable and is no longer a legacy path`, () => {

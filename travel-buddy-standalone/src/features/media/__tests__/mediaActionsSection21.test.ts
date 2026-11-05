@@ -166,7 +166,7 @@ test('MD103 linkMediaToEvent posts the event id to the link endpoint; a refusal 
   const rail = read('features/media/components/MediaActionRail.tsx');
   assert.match(rail, /case 'link_event':\s*setPanel\(\{ kind: 'link_event', mediaId: exec\.mediaId, candidates: exec\.candidates \}\);/);
   assert.match(rail, /setNotice\('Linked to the event\.'\);\s*reload\(\);/);
-  assert.match(read('features/media/components/MediaActionPanels.tsx'), /const r = await linkMediaToEvent\(mediaId, eventId\);/);
+  assert.match(read('features/media/components/MediaActionPanels.tsx'), /const r = await linkMediaToEvent\(mediaId, eventId, \{ signal: request.context.signal \}\);/);
 });
 
 // ── 1b. Go There — Directions STARTED only when the maps app opened ──────────
@@ -377,21 +377,21 @@ test('rail: Go There records media_route + directions_tap inside the opened call
 test('rail: Telegraph share sends an object reference; Save Route / plan / invite / gem reach their executors', () => {
   const rail = read('features/media/components/MediaActionRail.tsx');
   assert.match(rail, /<TelegraphObjectShareSheet mediaId=\{mediaId\} object=\{shareObject\}/);
-  assert.match(rail, /saveRailRoute\(\{ title: exec\.title, stops: exec\.stops, mediaId: exec\.mediaId \}\)/);
-  assert.match(rail, /fetchCompiledExperiencePlan\(exec\.experienceId, \{ source: exec\.source \}\)/);
+  assert.match(rail, /saveRailRoute\(\{ title: exec\.title, stops: exec\.stops, mediaId: exec\.mediaId \}, \{ owner: lifetime.owner/);
+  assert.match(rail, /fetchCompiledExperiencePlan\(exec\.experienceId, \{ source: exec\.source, signal: lifetime\.controller\.signal \}\)/);
   assert.match(rail, /<InvitePanel momentId=\{panel\.momentId\} mediaId=\{panel\.mediaId\}/);
   assert.match(rail, /<ContributePanel gemId=\{panel\.gemId\} mediaId=\{panel\.mediaId\}/);
   const panels = read('features/media/components/MediaActionPanels.tsx');
   assert.match(panels, /telegraphObject=\{object\}/);
-  assert.match(panels, /inviteToSharedMoment\(momentId, userId, mediaId\)/);
+  assert.match(panels, /inviteToSharedMoment\(momentId, userId, mediaId, request.context\)/);
   assert.match(panels, /<GemContributeSection gemId=\{gemId\} isAuthed originMediaId=\{mediaId\} \/>/);
-  assert.match(panels, /applyCompiledPlan\(plan, tripId, createPlanItem\)/);
+  assert.match(panels, /applyCompiledPlan\(plan, tripId, \(id, item\) => createPlanItem\(id, item, request.context\), request.current\)/);
   const share = read('components/ShareSheet.tsx');
   assert.equal((share.match(/telegraphObject\s*\n?\s*\? await shareObjectIntoThread\(/g) ?? []).length, 2, 'both in-app send paths honour the reference');
 });
 
 test('services forward originMediaId to the endpoints that attribute it', () => {
-  assert.match(read('services/sharedMoments.ts'), /JSON\.stringify\(originMediaId \? \{ userId, originMediaId \} : \{ userId \}\)/);
+  assert.match(read('services/sharedMoments.ts'), /body: originMediaId \? \{ userId, originMediaId \} : \{ userId \}/);
   assert.match(read('services/hiddenGems.ts'), /opts\.originMediaId \? \{ contributionType, notes, originMediaId: opts\.originMediaId \}/);
   assert.match(read('components/gems/GemContributeSection.tsx'), /contributeToGem\(gemId, type, undefined, \{ originMediaId \}\)/);
 });
@@ -461,4 +461,25 @@ test('MD393 profile_open / place_open, MD376 gem_open, MD374 visual_opportunity_
   assert.match(gems, /if \(it\.gemId && it\.location\?\.canonicalPlaceId\) emitMediaSignal\(mediaSignalRecorder, 'gem_open', \{ mediaId: it\.id, gemId: it\.gemId/);
   const shell = read('features/media/screens/MediaWorldShell.tsx');
   assert.equal((shell.match(/emitMediaSignal\(mediaSignalRecorder, 'visual_opportunity_open'/g) ?? []).length, 3);
+});
+
+
+test('compiled plan stops dispatching after the chooser is retired', async () => {
+  const plan = mapCompiledPlan(compiledRaw())!;
+  let current = true;
+  let dispatched = 0;
+  const result = await applyCompiledPlan(plan, 'trip-a', async () => { dispatched += 1; current = false; }, () => current);
+  assert.equal(dispatched, 1);
+  assert.equal(result.created, 1);
+});
+test('route resolution cannot create a route after its owner is retired', async () => {
+  let current = true;
+  let dispatched = 0;
+  const result = await saveMediaRoute({ title: 'Route', mediaId: M, stops: [{ sourceType: 'place', sourceId: P, title: 'A' }, { sourceType: 'place', sourceId: Q, title: 'B' }] }, {
+    isCurrent: () => current,
+    resolveCoords: async () => { current = false; return { lat: 10, lng: 20 }; },
+    createRoute: async () => { dispatched += 1; return { plan: { id: 'route' } }; },
+  });
+  assert.equal(dispatched, 0);
+  assert.equal(result.ok, false);
 });
