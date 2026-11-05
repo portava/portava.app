@@ -73,13 +73,13 @@ jobs:
       # finds out when the purge is not happening.
       - name: Refuse to run unconfigured
         env:
-          APP_BASE_URL: ${{ vars.PORTAVA_APP_BASE_URL }}
+          APP_BASE_URL: ${{ vars.PORTAVA_APP_BASE_URL || 'https://rumazi.com' }}
           CLEANUP_ADMIN_SECRET: ${{ secrets.CLEANUP_ADMIN_SECRET }}
         run: |
           set -euo pipefail
           missing=0
           if [ -z "${APP_BASE_URL}" ]; then
-            echo "::error::repository variable PORTAVA_APP_BASE_URL is not set (e.g. https://portava.replit.app)"
+            echo "::error::no app URL: the repository variable PORTAVA_APP_BASE_URL is empty and the rumazi.com default did not apply"
             missing=1
           fi
           if [ -z "${CLEANUP_ADMIN_SECRET}" ]; then
@@ -90,7 +90,7 @@ jobs:
 
       - name: POST /api/admin/jobs/story-retention
         env:
-          APP_BASE_URL: ${{ vars.PORTAVA_APP_BASE_URL }}
+          APP_BASE_URL: ${{ vars.PORTAVA_APP_BASE_URL || 'https://rumazi.com' }}
           CLEANUP_ADMIN_SECRET: ${{ secrets.CLEANUP_ADMIN_SECRET }}
         run: |
           set -euo pipefail
