@@ -74,6 +74,13 @@ const DECLARED_UNRESOLVED: Array<{ file: string; expr: string; reason: string }>
     expr: "parent",
     reason: "FeatureFlagsContext's own parent check, `flags[parent] === true`, over its requirements map, which R4 reads.",
   },
+  {
+    file: "src/services/authProviders.ts",
+    expr: "key",
+    reason:
+      "Not a feature flag: parseAuthSettings reads Supabase Auth's /auth/v1/settings `external` object " +
+      "(apple, google, email provider switches) through a local named `flags`. No served flag is read.",
+  },
 ];
 
 /** A reader handed to another function, which then calls it with names. */

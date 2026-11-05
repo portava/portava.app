@@ -20,11 +20,27 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 const PROD_DB = 'https://ajrurzioarfkagpuxfnb.supabase.co';
 const BETA_DB = 'https://emfpckykpzfturllshly.supabase.co';
 const PROD_API = 'https://portava.replit.app';
+const PROD_DOMAIN = 'https://rumazi.com';
 const BETA_API = 'https://portava-beta.replit.app';
 
 describe('deploymentConsistencyProblem', () => {
   it('production build, production addresses: runs (production unchanged)', () => {
     assert.equal(problem({ supabaseUrl: PROD_DB, apiBaseUrl: PROD_API, webOrigin: PROD_API }), null);
+  });
+
+  it("production build on the public domain (eas.json's production profile since 2026-11): runs", () => {
+    assert.equal(problem({ supabaseUrl: PROD_DB, apiBaseUrl: PROD_DOMAIN, webOrigin: PROD_DOMAIN }), null);
+    assert.equal(problem({ supabaseUrl: PROD_DB, apiBaseUrl: `${PROD_DOMAIN}/`, webOrigin: 'https://RUMAZI.com' }), null);
+    // the Replit name and the public domain are the same deployment
+    assert.equal(problem({ supabaseUrl: PROD_DB, apiBaseUrl: PROD_DOMAIN, webOrigin: PROD_API }), null);
+  });
+
+  it('REFUSED: beta database with the public production domain as its API or web origin', () => {
+    assert.match(String(problem({ supabaseUrl: BETA_DB, apiBaseUrl: PROD_DOMAIN })), /database is beta but its API is production/);
+    assert.ok(problem({ supabaseUrl: BETA_DB, apiBaseUrl: BETA_API, webOrigin: PROD_DOMAIN }));
+    assert.match(String(problem({ supabaseUrl: BETA_DB, apiBaseUrl: PROD_DOMAIN, deploymentEnv: 'beta' })), /its API \(rumazi\.com\)/);
+    // a host that merely ends in the domain's letters is not it
+    assert.equal(problem({ supabaseUrl: BETA_DB, apiBaseUrl: 'https://notrumazi.com' }), null);
   });
 
   it('beta build, beta addresses: runs', () => {

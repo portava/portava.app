@@ -7291,3 +7291,56 @@ nineteen functions.
 
 **Rollback.** `db/rollback/2026-11-04-3985-definer-client-execute-and-search-path-pins-rollback.sql` grants client
 EXECUTE back as the replayed chain had it, RESETs the ten search_paths and deletes the ledger row.
+
+## 2026-11-04 — `4001_media_upload_store_codified.sql`, written and NOT applied anywhere (production's chunked-upload store codified)
+
+**What it is.** Production's chunked-upload store, as a migration: `media_upload_sessions`, `media_upload_chunks`,
+`commit_media_upload_chunk(uuid, uuid, bigint, integer, text, text)` and three `media_assets` columns (`hls_path`,
+`subtitle_paths`, `subtitle_processing_status` with its CHECK). Code outside this repository created them on production
+between the 2026-09-22 and 2026-10-24 captures and writes rows through them (3 sessions, 3 assets with `hls_path` set on
+2026-10-24); no file in this tree declared them and nothing in this tree reads or writes them. `check:undeclared-production-objects`
+(PR #820) carried all nine as owner-pending; on 2026-11-04 the owner chose "codify", and this file strikes them.
+
+**The text.** Every definition is the census note's transcription of production's catalogue
+(`docs/architecture/census-media.md`, "Note (2026-10-24, capability refresh, PR #788)"): the columns, checks, keys and
+indexes by name, and the function byte for byte. The census records `md5(pg_get_functiondef)` =
+`016ffeae860d57898841514512beabb1` for production's copy; the same text applied on PostgreSQL 16 yields the same digest,
+and the postcondition requires it. Privileges are production's: RLS on with no policy, table privileges and EXECUTE to
+`service_role` only, nothing to `anon`, `authenticated` or PUBLIC. The function is SECURITY DEFINER with `search_path`
+pinned; nothing in this tree references it, so `SECURITY_DEFINER_ORACLES.json` carries it as OPERATOR-ONLY.
+
+**By starting shape:**
+
+- **Production.** Every object exists and matches. The function is skipped by its digest guard; every other statement is
+  `IF NOT EXISTS` or a privilege already held. Only the postconditions read.
+- **portava-ci and the local-db harness.** Neither carries any of it (the 2026-08-19 baseline predates the store), so the
+  body creates the two tables, the function and the three columns with production's privileges.
+
+**Shape.** Body inside `BEGIN; … COMMIT;`, postconditions after the COMMIT as read-only DO blocks: the shape
+`scripts/src/apply-migrations.ts` applies and `certify:migrations` stage 4 re-runs.
+
+**Rollback.** None at the schema level: on production 4001 changes nothing, and elsewhere undoing it would re-open the gap
+between the tree and production. Deleting its ledger row is the whole rollback.
+
+**Proofs.** `src/test/db/undeclaredObjectsCodified4001And4002.db.test.ts`, U0–U3: the postconditions hold on the replayed
+chain (U0); re-running the body keeps every oid and the definition fingerprint (U1); on portava-ci's shape, rebuilt in a
+rolled-back transaction, the body creates everything and the postconditions then hold (U2); the commit function accepts a
+first chunk, answers replay to an identical re-send, invalid past `total_bytes` and invalid to a stranger (U3). Applied
+twice on an embedded PostgreSQL 16 (PGlite) before commit, with the digest read back.
+
+## 2026-11-04 — `4002_user_deletion_execution_lease_codified.sql`, written and NOT applied anywhere (production's deletion execution lease codified)
+
+**What it is.** The deletion execution lease on `user_deletion_requests`: `execution_token`, `execution_started_at`,
+`execution_lease_expires_at`, the CHECK `user_deletion_requests_execution_claim_check` and the partial index
+`user_deletion_requests_execution_lease_idx`. Production has carried them in every capture since 2026-09-07,
+`checkSchemaReferences` tolerated the three columns as undeclared-but-live since 2026-09-04, and no row holds an
+`execution_token`. The `executing` status the CHECK refers to is declared by 2178. Same owner decision and same census
+source as 4001.
+
+**By starting shape:** on production a strict no-op apart from the read-only postcondition; on portava-ci and the harness it
+adds the three nullable columns (no default, so no row is rewritten), the CHECK and the index. It changes no row anywhere.
+
+**Shape, rollback, proofs.** As 4001: body inside `BEGIN; … COMMIT;` with the postcondition after the COMMIT; no schema
+rollback, the ledger row is the whole rollback; U0–U2 of `undeclaredObjectsCodified4001And4002.db.test.ts` cover it. After
+4002, `checkSchemaReferences`' tolerated columns are the six journey-shadow ones only
+(`undeclaredProductionObjects.test.ts` pins that the three lease columns are no longer tolerated).

@@ -217,8 +217,8 @@ function providerIsCertified(provider: string, env: NodeJS.ProcessEnv): boolean 
 // label-only rule would not protect it. A sandbox key is permitted only where the
 // process positively shows it is NOT production:
 //   - a production signal refuses first: PORTAVA_DEPLOYMENT_ENV=production, or
-//     REPLIT_DOMAINS naming the production host (lib/deploymentEnvironment.ts'
-//     PRODUCTION_API_HOST — the production-host rule);
+//     REPLIT_DOMAINS naming a production host (lib/deploymentEnvironment.ts'
+//     PRODUCTION_API_HOSTS — the production-host rule);
 //   - then a deployment labelled PORTAVA_DEPLOYMENT_ENV=beta is permitted. The
 //     label is trusted because lib/deploymentEnvironmentGuard.ts (imported by
 //     src/index.ts before ./app) refuses to START a beta-labelled process whose
@@ -227,13 +227,14 @@ function providerIsCertified(provider: string, env: NodeJS.ProcessEnv): boolean 
 //   - anything else (an unlabelled host, a dev host, an unlabelled deployment)
 //     is treated as production and refused.
 // The reason names the signal, never a key or a value.
-import { DEPLOYMENT_ENV_VAR, PRODUCTION_API_HOST } from "../../lib/deploymentEnvironment.js";
+import { DEPLOYMENT_ENV_VAR, PRODUCTION_API_HOSTS } from "../../lib/deploymentEnvironment.js";
 
 /** The first production signal this environment carries, or null. Names the signal, never a value. */
 export function productionDeploymentSignal(env: NodeJS.ProcessEnv = process.env): string | null {
   if (env[DEPLOYMENT_ENV_VAR] === "production") return `${DEPLOYMENT_ENV_VAR}=production`;
   const domains = (env["REPLIT_DOMAINS"] ?? "").toLowerCase().split(",").map((d) => d.trim());
-  if (domains.includes(PRODUCTION_API_HOST)) return `REPLIT_DOMAINS names ${PRODUCTION_API_HOST}`;
+  const named = PRODUCTION_API_HOSTS.find((host) => domains.includes(host));
+  if (named !== undefined) return `REPLIT_DOMAINS names ${named}`;
   return null;
 }
 
