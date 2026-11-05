@@ -14,7 +14,7 @@ change, change this.
 | Placeholder | What goes there |
 |---|---|
 | `[COMPANY LEGAL NAME]` | The registered legal entity that operates Portava (e.g. "Portava Inc."), as it appears on incorporation documents. |
-| `[PRIVACY EMAIL]` | A monitored email address for privacy requests (e.g. privacy@...); required for GDPR/CCPA rights requests. |
+| `[PRIVACY EMAIL]` | A monitored email address for privacy requests (e.g. privacy@...); required for GDPR/CCPA rights requests. Set to portavainc@gmail.com by pota on 2026-11-05 (for now). |
 | `[ADDRESS]` | The company's registered mailing address (required in most jurisdictions for a privacy contact). |
 | `[DATE]` | The "Last updated" date — set to the day this policy is published. |
 | `[PROVIDER NAME]` | The identity-verification vendor (Stripe Identity vs Persona — decision pending, Phase V-6). |
@@ -142,7 +142,7 @@ consent for optional features like precise location and verification.
 
 Depending on where you live (GDPR, UK GDPR, CCPA and similar): access,
 correction, deletion, portability, objection, and complaint to your
-supervisory authority. Exercise them in-app or at [PRIVACY EMAIL].
+supervisory authority. Exercise them in-app or at portavainc@gmail.com.
 We respond within the legally required window.
 
 ## Encryption honesty
@@ -167,7 +167,7 @@ We'll notify you in-app of material changes and update the date above.
 
 ## Contact
 
-[COMPANY LEGAL NAME] · [ADDRESS] · [PRIVACY EMAIL]
+[COMPANY LEGAL NAME] · [ADDRESS] · portavainc@gmail.com
 
 ---
 
