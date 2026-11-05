@@ -82,10 +82,15 @@ describe("deploymentEnvironmentRefusal — the rule", () => {
       ["EXPO_PUBLIC_WEB_ORIGIN", "https://PORTAVA.Replit.App"],
       ["ALLOWED_ORIGINS", "https://portava-beta.replit.app,https://portava.replit.app"],
       ["API_BASE_URL", "https://api.portava.replit.app/v1"],
+      // the public domain in front of the same deployment (2026-11)
+      ["EXPO_PUBLIC_API_BASE_URL", "https://rumazi.com"],
+      ["ALLOWED_ORIGINS", "https://portava-beta.replit.app,https://RUMAZI.com"],
     ] as const) {
       const r = deploymentEnvironmentRefusal({ ...base, [name]: value });
-      assert.ok(r && r.includes(name) && r.includes("portava.replit.app"), `${name}=${value} → ${r}`);
+      assert.ok(r && r.includes(name) && r.includes("portava.replit.app") && r.includes("rumazi.com"), `${name}=${value} → ${r}`);
     }
+    // a host that merely ends in the domain's letters is not it
+    assert.equal(deploymentEnvironmentRefusal({ ...base, EXPO_PUBLIC_WEB_ORIGIN: "https://notrumazi.com" }), null);
     // the beta origin itself is not production's
     assert.equal(
       deploymentEnvironmentRefusal({ ...base, EXPO_PUBLIC_API_BASE_URL: "https://portava-beta.replit.app", ALLOWED_ORIGINS: "https://portava-beta.replit.app" }),

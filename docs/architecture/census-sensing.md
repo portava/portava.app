@@ -5635,7 +5635,7 @@ sensor health — and empties the raw buffers the moment the window closes.
 `` `travel-buddy-standalone/src/services/sensing/__tests__/sensingCapture.test.ts:244#  test('no sentinel coordinate or accelerometer axis reaches `submit`', async () => {` ``
 pins that no coordinate and no axis reaches the transport; the nine features
 are pinned at `` `travel-buddy-standalone/src/services/sensing/__tests__/sensingCapture.test.ts:164#  test('a window of real samples is submitted as the nine named features', async () => {` ``.
-The loop is mounted for the app in `` `travel-buddy-standalone/app/_layout.tsx:273#    const handle = installSensingCapture();` ``,
+The loop is mounted for the app in `` `travel-buddy-standalone/app/_layout.tsx:274#    const handle = installSensingCapture();` ``,
 which starts nothing without an API base and valid consent and re-checks
 consent on every foreground.
 

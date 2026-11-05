@@ -48,7 +48,7 @@ describe("validatePrefixBand — reserved buffer 2096-2099", () => {
   });
 });
 
-describe("validatePrefixBand — new-format ranges 2100-2999 and 3000-3999", () => {
+describe("validatePrefixBand — new-format ranges 2100-2999, 3000-3999 and 4000-4999", () => {
   it("accepts prefixes across the valid range", () => {
     for (const n of [2100, 2150, 2500, 2999]) {
       assert.equal(validatePrefixBand(`${n}_ok.sql`), null, `${n} should be valid`);
@@ -76,11 +76,24 @@ describe("validatePrefixBand — new-format ranges 2100-2999 and 3000-3999", () 
       "this is why a dated prefix is not the escape hatch for a dependent migration");
   });
 
-  it("rejects a 4-digit prefix at or above 4000, which is not allocated", () => {
-    const v = validatePrefixBand("4000_too_far.sql");
-    assert.ok(v);
-    assert.match(v!.reason, /3000-3999/);
-    assert.match(v!.reason, /not allocated yet/);
+  it("accepts 4000-4999, added 2026-10-24 because a fix to 3999's function must sort after 3999", () => {
+    // This assertion used to reject 4000, and it changed on purpose (migrationPrefixRules.ts says why):
+    // an override and a gap number are both ruled out in writing for a migration that depends on 3999.
+    for (const n of [4000, 4001, 4500, 4999]) {
+      assert.equal(validatePrefixBand(`${n}_ok.sql`), null, `${n} should now be valid`);
+    }
+    assert.ok("4000_x.sql" > "3999_x.sql", "a 4xxx prefix must sort after every 3xxx one");
+    assert.ok("4000_x.sql".slice(0, 4) >= "2100", "a 4xxx prefix must still read as post-cutover");
+    assert.ok("20261024_x.sql" < "4000_x.sql", "no dated prefix this millennium sorts with or after it");
+  });
+
+  it("rejects a 4-digit prefix at or above 5000, which is not allocated", () => {
+    for (const name of ["5000_too_far.sql", "9999_too_far.sql"]) {
+      const v = validatePrefixBand(name);
+      assert.ok(v, `${name} must be refused`);
+      assert.match(v!.reason, /4000-4999/);
+      assert.match(v!.reason, /not allocated yet/);
+    }
   });
 
   it("rejects a prefix whose second digit is 0 (would collide in spirit with the 20xx dated shape)", () => {
@@ -121,12 +134,13 @@ describe("validateAllPrefixBands", () => {
       "2097_sneaks_into_the_buffer.sql",
       "2100_valid_new_format.sql",
       "3000_valid_new_format.sql",
-      "4000_out_of_range.sql",
+      "4000_valid_new_format.sql",
+      "5000_out_of_range.sql",
     ];
     const violations = validateAllPrefixBands(files);
     assert.deepEqual(
       violations.map((v) => v.file).sort(),
-      ["2097_sneaks_into_the_buffer.sql", "4000_out_of_range.sql"].sort(),
+      ["2097_sneaks_into_the_buffer.sql", "5000_out_of_range.sql"].sort(),
     );
   });
 
