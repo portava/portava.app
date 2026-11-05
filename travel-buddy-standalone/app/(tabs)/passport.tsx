@@ -69,7 +69,7 @@ import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 
 export default function PassportScreen() {
   const { pickMedia } = useMediaPicker();
-  const { profile, postcards, stamps, stampsNew, memories, memoriesUnreadable, suggestions, loading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, updateStamp, reload, lastLoadedAt } = usePassport();
+  const { profile, postcards, postcardsUnreadable, stamps, stampsNew, memories, memoriesUnreadable, suggestions, loading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, updateStamp, reload, lastLoadedAt } = usePassport();
   const { markFirstContent, epoch } = useScreenTiming('Passport');
   const { userId: ownUserId, signOut } = useSession();
   // Deep links (e.g. the stamp-earned toast) can request a specific tab via
@@ -84,7 +84,7 @@ export default function PassportScreen() {
   const [tab, setTab] = useState<PassportTabKey>(initialTab);
   const [menuOpen, setMenuOpen] = useState(false);
   const [trips, setTrips] = useState<TripRow[]>([]);
-  const [tripsLoaded, setTripsLoaded] = useState(false);
+  const [tripsLoaded, setTripsLoaded] = useState(false); const [tripsError, setTripsError] = useState(false);
   const [stampsViewOpen, setStampsViewOpen] = useState(false);
   const [reorderOpen, setReorderOpen] = useState(false);
   const [sectionOrderOverride, setSectionOrderOverride] = useState<PassportSectionKey[] | null>(null);
@@ -177,11 +177,15 @@ export default function PassportScreen() {
   const [localPostcards, setLocalPostcards] = useState<PassportPostcard[]>([]);
   React.useEffect(() => { setLocalPostcards(postcards); }, [postcards]);
 
-  React.useEffect(() => {
-    if ((tab === 'plans' || tab === 'destinations') && !tripsLoaded) {
-      listMyTrips().then(setTrips).finally(() => setTripsLoaded(true)).catch(() => {});
-    }
-  }, [tab, tripsLoaded]);
+  // Trips load once on mount (per signed-in owner). They used to load only when
+  // the Plans or Destinations tab opened, so "Before you go" in the dossier
+  // stayed empty until then; and a failed read was swallowed into "No trips
+  // shown yet". A failure is now `tripsError`, which the Plans tab shows.
+  const loadTrips = useCallback(() => {
+    setTripsError(false); setTripsLoaded(false);
+    listMyTrips().then(setTrips).catch(() => setTripsError(true)).finally(() => setTripsLoaded(true));
+  }, []);
+  React.useEffect(() => { if (ownUserId) loadTrips(); }, [ownUserId, loadTrips]);
 
   const actions = usePostcardActions(setLocalPostcards);
 
@@ -274,9 +278,9 @@ export default function PassportScreen() {
         stampsNew={stampsNew}
         onStampUpdated={updateStamp}
         memories={memories}
-        memoriesUnreadable={memoriesUnreadable}
+        memoriesUnreadable={memoriesUnreadable} postcardsUnreadable={postcardsUnreadable}
         trips={trips}
-        tripsLoaded={tripsLoaded}
+        tripsLoaded={tripsLoaded} tripsError={tripsError} onRetryTrips={loadTrips}
         tab={tab}
         setTab={setTab}
         menuOpen={menuOpen}
@@ -372,7 +376,7 @@ export default function PassportScreen() {
 // ─── PassportContent ──────────────────────────────────────────────────────────
 
 function PassportContent({
-  profile, postcards, stamps, stampsNew, onStampUpdated, memories, memoriesUnreadable, trips, tripsLoaded, tab, setTab,
+  profile, postcards, postcardsUnreadable, stamps, stampsNew, onStampUpdated, memories, memoriesUnreadable, trips, tripsLoaded, tripsError, onRetryTrips, tab, setTab,
   menuOpen, setMenuOpen,
   openSettings, actions, handleEditProfile, handleViewAsPublic,
   reload, stampsTotal, loadingMoreStamps, loadMoreStamps,
@@ -392,10 +396,10 @@ function PassportContent({
   memories: PassportMemory[];
   /** §28.11 — true when the Memories READ FAILED, so `memories` being empty is
    *  "we could not find out" rather than "you have none". See MemoriesTab. */
-  memoriesUnreadable: boolean;
+  memoriesUnreadable: boolean; postcardsUnreadable: boolean; // the postcards read failed: PostcardsTab and MapTab say "didn't load"
   trips: TripRow[];
   /** True once the initial trips fetch (for the Plans tab) has resolved. */
-  tripsLoaded: boolean;
+  tripsLoaded: boolean; /** True when the trips read FAILED — not "you have no trips". */ tripsError: boolean; onRetryTrips: () => void;
   tab: PassportTabKey;
   setTab: (t: PassportTabKey) => void;
   menuOpen: boolean; setMenuOpen: (v: boolean) => void;
@@ -598,7 +602,7 @@ function PassportContent({
         {tab === 'postcards' && (
           <PostcardsTab
             postcards={postcards}
-            isOwner
+            isOwner sentinel={postcardsUnreadable ? 'load_failed' : undefined}
             actions={actions}
             onAddPostcard={onAddPostcard}
           />
@@ -607,7 +611,7 @@ function PassportContent({
           <MemoriesTab memories={memories} onReload={reload} trips={trips} unreadable={memoriesUnreadable} />
         )}
         {tab === 'plans' && (
-          <TripsTab trips={trips} isOwner loading={!tripsLoaded} />
+          <TripsTab trips={trips} isOwner loading={!tripsLoaded} error={tripsError} onRetry={onRetryTrips} />
         )}
         {tab === 'stamps' && (
           <StampsTab
@@ -629,7 +633,7 @@ function PassportContent({
           />
         )}
         {tab === 'map' && (
-          <MapTab postcards={postcards} />
+          <MapTab postcards={postcards} sentinel={postcardsUnreadable ? 'load_failed' : undefined} />
         )}
         {tab === 'destinations' && (
           <DestinationsTab
@@ -894,7 +898,7 @@ function PassportContent({
           displayName={profile.displayName ?? profile.name ?? null}
           username={profile.username ?? null}
           avatarUrl={profile.avatarUrl ?? null}
-          // trips[] only loads once the Plans tab is opened — without the
+          // trips[] may still be loading (or have failed) — without the
           // profile count a shared card could say 0 trips.
           tripCount={profile.tripCount ?? trips.length}
           stampCount={verifiedStamps}

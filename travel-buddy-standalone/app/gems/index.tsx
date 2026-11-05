@@ -20,6 +20,7 @@ import { GemStateBadge } from '../../src/components/gems/GemStateBadge';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../../src/hooks/useNavBarCollapse';
+import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 
 // ── Category filter chips ─────────────────────────────────────────────────────
 
@@ -370,6 +371,9 @@ export default function GemsScreen() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>('Discover');
   const [viewMode, setViewMode]   = useState<ViewMode>('list');
+  // Local Guide applications (2026-11-04): the apply route existed with no
+  // caller, so nobody could become a guide. Offered while the feature is on.
+  const guidesOn = useFeatureFlags().isEnabled('local_guides_enabled');
 
   return (
     <SafeAreaView style={styles.root} edges={['top']}>
@@ -412,6 +416,19 @@ export default function GemsScreen() {
           </TouchableOpacity>
         ))}
       </View>
+
+      {activeTab === 'Discover' && guidesOn && (
+        <TouchableOpacity
+          style={styles.guideRow}
+          onPress={() => router.push('/gems/become-guide' as any)}
+          accessibilityRole="button"
+          accessibilityLabel="Become a Local Guide"
+        >
+          <Ionicons name="ribbon-outline" size={18} color="#4C8BF5" />
+          <Text style={styles.guideRowText}>Know a city well? Become a Local Guide</Text>
+          <Ionicons name="chevron-forward" size={16} color="#8A9BB5" />
+        </TouchableOpacity>
+      )}
 
       {/* Content */}
       <View style={{ flex: 1 }}>
@@ -483,6 +500,12 @@ const styles = StyleSheet.create({
   tabActive: { borderBottomWidth: 2, borderBottomColor: '#4C8BF5' },
   tabText: { color: '#8A9BB5', fontSize: 14, fontWeight: '500' },
   tabTextActive: { color: '#4C8BF5', fontWeight: '700' },
+  guideRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    marginHorizontal: 20, marginTop: 10, paddingHorizontal: 14, paddingVertical: 10,
+    backgroundColor: '#13213A', borderRadius: 12,
+  },
+  guideRowText: { flex: 1, color: '#E8F0FE', fontSize: 14, fontWeight: '500' },
 
   searchRow: {
     flexDirection: 'row',

@@ -18,6 +18,7 @@ import { UserAvatarButton } from '../src/components/interaction/UserAvatarButton
 import { UserNameButton } from '../src/components/interaction/UserNameButton';
 import { secondaryIdentityText } from '../src/lib/displayIdentity';
 import { router, useFocusEffect } from 'expo-router';
+import { normalizeNotificationRoute } from '../src/lib/notificationRoute.ts';
 import { FEED_FOCUS_TTL_MS } from '../src/hooks/usePosts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, CheckCheck, UserCheck, UserMinus, Bell, Inbox } from 'lucide-react-native';
@@ -159,9 +160,10 @@ function ActivityCard({
 
   const handlePress = useCallback(() => {
     if (!notification.readAt) onMarkRead(notification.id);
-    if (notification.actionUrl && !isFeaturedReq) {
+    const target = normalizeNotificationRoute(notification.actionUrl);
+    if (target && !isFeaturedReq) {
       try {
-        router.push(notification.actionUrl as any);
+        router.push(target as any);
       } catch {
         Alert.alert('Content unavailable', 'This content is no longer available.', [{ text: 'OK' }]);
       }

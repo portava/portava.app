@@ -2,7 +2,7 @@
  * Admin — Local guide applications (testing-mode WP-21, PLAT-F38).
  *
  * Closes the "apply → admin approves → guide profile shows" loop: an applicant
- * (gems/guide → Apply) is `applicant` until an admin sets them `active` here.
+ * (gems/become-guide → Send application) is `applicant` until an admin sets them `active` here.
  * Decline sets `demoted`, the only non-active state the profile table allows
  * for someone who was never approved.
  *

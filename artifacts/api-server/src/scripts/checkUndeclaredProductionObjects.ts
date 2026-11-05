@@ -129,9 +129,15 @@ export interface RatchetEntry {
 const CENSUS_NOTE =
   'docs/architecture/census-media.md, "Note (2026-10-24, capability refresh, PR #788)"';
 
-/** Group 3 — long-standing: the dormant journey-shadow programme. */
+/**
+ * Group 3 — long-standing: the dormant journey-shadow programme. Decision
+ * "drop", 2026-11-05: 4003_journey_shadow_programme_retired.sql retires it.
+ * The entries stay until a production capture no longer holds the objects,
+ * which is the capability refresh after the release that applies 4003; that
+ * refresh strikes all 50 at once (the check fails until it does).
+ */
 const JOURNEY_SHADOW: RatchetEntry = {
-  decision: "owner-pending",
+  decision: "drop",
   note:
     "The dormant journey-shadow programme: migration 2127 on a branch never merged to main, applied to " +
     "production anyway (2976's header establishes the origin). Nine tables with RLS on and no client grant, " +
@@ -140,7 +146,10 @@ const JOURNEY_SHADOW: RatchetEntry = {
     "every observation, segment, cohort, stage and revocation table is empty, no location session carries " +
     "journey_purpose = 'journey_observation_v1', and no preference row has the observation switch on. " +
     `Recorded, with each function's definition digest, at ${CENSUS_NOTE}. ` +
-    "Owner decision pending: codify, drop, or keep.",
+    "Owner decision 2026-11-05 00:29 UTC: drop (\"approve all calls on 50 journey shadow objects\", on the " +
+    "recommendation to retire). 4003_journey_shadow_programme_retired.sql drops every object, 2976's stop and " +
+    "the three COMPASS_JOURNEY_* flag rows with them, and refuses unless the programme is still dormant. " +
+    "Struck the day a production capture no longer holds them: the refresh after the release that applies 4003.",
 };
 
 function entries(
@@ -159,11 +168,13 @@ function entries(
  * 4001_media_upload_store_codified.sql declares the chunked-upload store (two
  * tables, commit_media_upload_chunk, three media_assets columns) and
  * 4002_user_deletion_execution_lease_codified.sql the deletion lease (three
- * user_deletion_requests columns), so their 9 entries are struck. The
- * journey-shadow programme (44 entries) stays owner-pending.
+ * user_deletion_requests columns), so their 9 entries are struck. On
+ * 2026-11-05 the owner chose "drop" for the journey-shadow programme (50
+ * entries): 4003_journey_shadow_programme_retired.sql is the drop, and the
+ * entries leave with the first production capture taken after it is applied.
  */
 export const UNDECLARED_PRODUCTION_OBJECTS: Readonly<Record<string, RatchetEntry>> = {
-  // ── The journey-shadow programme (groups 1 and 2 were codified by 4001 and 4002) ──
+  // ── The journey-shadow programme: decision drop, 4003 (groups 1 and 2 were codified by 4001 and 4002) ──
   ...entries(
     "table",
     [
@@ -589,6 +600,7 @@ function main(): void {
 
   const keys = Object.keys(UNDECLARED_PRODUCTION_OBJECTS);
   const pending = keys.filter((k) => UNDECLARED_PRODUCTION_OBJECTS[k]!.decision === "owner-pending");
+  const dropping = keys.filter((k) => UNDECLARED_PRODUCTION_OBJECTS[k]!.decision === "drop");
 
   if (verbose) {
     console.log("Ratchet, by decision:");
@@ -606,6 +618,12 @@ function main(): void {
     if (pending.length > 0) {
       console.log(
         `  The pending ones are recorded, with their DDL, at ${CENSUS_NOTE}; codify, drop or keep is the owner's call.`,
+      );
+    }
+    if (dropping.length > 0) {
+      console.log(
+        `  ${dropping.length} carry the decision "drop": the migration that drops them is in the tree, and they leave\n` +
+          "  this ratchet with the first production capture taken after it is applied there.",
       );
     }
   }

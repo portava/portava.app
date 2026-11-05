@@ -11,7 +11,7 @@ import { SaveToCollectionSheet } from '../SaveToCollectionSheet.tsx';
 
 jest.mock('../../services/collections.ts', () => ({
   ...jest.requireActual('../../services/collections.ts'),
-  getCollections: jest.fn(async () => []),
+  readCollections: jest.fn(async () => ({ ok: true, data: [] })),
   createCollection: jest.fn(async () => null),
   saveItem: jest.fn(async () => undefined),
 }));

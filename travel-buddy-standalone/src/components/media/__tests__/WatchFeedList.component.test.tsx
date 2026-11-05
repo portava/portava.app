@@ -4,7 +4,7 @@
  * Covers:
  *   1. Only the active item receives isActive=true; all others receive false.
  *   2. Mute-toggle button press persists the new mute state to AsyncStorage.
- *   3. The mute button label switches from "Unmute" → "Mute" after pressing.
+ *   3. The feed starts WITH sound (label "Mute"); pressing mutes it ("Unmute").
  *   4. Overlay like action calls onLike when item is not yet liked.
  *   5. onLike is NOT called on mount (no spurious like on render).
  *
@@ -225,12 +225,12 @@ describe('WatchFeedList — mute button', () => {
     jest.clearAllMocks();
     mockCapturedOnLike = null;
     // Clear the in-memory AsyncStorage store so getItem returns null and
-    // isMuted stays at its default (true / Unmute) regardless of prior tests.
+    // isMuted stays at its default (false / Mute) regardless of prior tests.
     const AsyncStorage = require('@react-native-async-storage/async-storage');
     AsyncStorage.clear();
   });
 
-  it('mute button: label flips Unmute→Mute and AsyncStorage.setItem is called', async () => {
+  it('mute button: starts with sound, label flips Mute→Unmute and AsyncStorage.setItem is called', async () => {
     // Single test to avoid cross-test AsyncStorage store contamination.
     // Use screen (always bound to current render tree) rather than destructuring
     // from render() which returns a Promise in React 19 + RNTL v14.
@@ -240,20 +240,20 @@ describe('WatchFeedList — mute button', () => {
     // Flush the AsyncStorage.getItem useEffect so isMuted state settles.
     await act(async () => {});
 
-    // Default: isMuted=true → label "Unmute"
-    expect(screen.getByRole('button', { name: 'Unmute' })).toBeTruthy();
+    // Default in the app: sound on (2026-11-04, "the videos have no sound") → label "Mute"
+    expect(screen.getByRole('button', { name: 'Mute' })).toBeTruthy();
 
-    fireEvent.press(screen.getByRole('button', { name: 'Unmute' }));
+    fireEvent.press(screen.getByRole('button', { name: 'Mute' }));
     await act(async () => {});
 
-    // After toggle: isMuted=false → label "Mute"
-    expect(screen.queryByRole('button', { name: 'Unmute' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Mute' })).toBeTruthy();
+    // After toggle: isMuted=true → label "Unmute"
+    expect(screen.queryByRole('button', { name: 'Mute' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Unmute' })).toBeTruthy();
 
     // Persistence: setItem called with the mute key.
     expect(AsyncStorage.setItem).toHaveBeenCalledWith(
       'media:muted',
-      expect.any(String),
+      'true',
     );
   });
 });

@@ -13,7 +13,7 @@
  */
 
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
+import { View, Text, Pressable, StyleSheet, useWindowDimensions, Share, Alert } from 'react-native';
 import { CachedImage } from '../../../../components/CachedImage.tsx';
 import { router } from 'expo-router';
 import {
@@ -101,7 +101,7 @@ export function resolveActionRoute(
   const objId = projection.canonicalObjectId;
   switch (action.type) {
     case 'open_object':
-      if (projection.objectType === 'shared_moment') return '/shared-moments';
+      if (projection.objectType === 'shared_moment') return `/shared-moments/${objId}`; // the screen is app/shared-moments/[id]; a bare /shared-moments opened "This screen doesn't exist"
       if (projection.objectType === 'video') return `/media-viewer/${objId}`;
       // A Postcard opens the canonical Postcard viewer, not the post detail —
       // its story presentation is preserved through the open (§10/§24).
@@ -478,7 +478,7 @@ export function SocialActionRow({ projection }: { projection: WallProjection }) 
   };
   const share = () => {
     trackEngagement(projection, 'share');
-    trackAction(projection, 'share');
+    trackAction(projection, 'share'); void shareWallObject(projection); // this used to stop at analytics: the Share button opened nothing
   };
   return (
     <View style={s.actionRow}>
@@ -627,3 +627,33 @@ const s = StyleSheet.create({
 
 // Imported at the TAIL so no cited line above moves; ESM hoists it.
 import { pickWallImageRef, wallImageTargetPx } from '../../services/wallImageVariant.ts';
+import { entityUrl } from '../../../../services/shareAdapters.ts';
+
+// ── Share (spec §2 "share") — at the tail for the same reason ───────────────
+
+/**
+ * The public link for a Wall object, from the share layer's one path map
+ * (services/shareAdapters): the post's page for a post-like object, the
+ * Moment's page for a shared moment, null for an object with no page.
+ */
+export function wallShareUrl(projection: WallProjection): string | null {
+  if (projection.objectType === 'shared_moment') return entityUrl('sharedMoment', projection.canonicalObjectId);
+  if (POST_SAVEABLE_TYPES.has(projection.objectType)) return entityUrl('post', projection.canonicalObjectId);
+  return null;
+}
+
+/** Opens the OS share sheet with the object's link; says so when it cannot. */
+async function shareWallObject(projection: WallProjection): Promise<void> {
+  const url = wallShareUrl(projection);
+  if (!url) {
+    Alert.alert('Can’t share this', 'This item has no link to share.');
+    return;
+  }
+  const text = projection.text?.trim() ?? '';
+  const preview = text ? `${text.length > 120 ? `${text.slice(0, 120)}…` : text}\n\n` : '';
+  try {
+    await Share.share({ message: `${preview}${url}`, url });
+  } catch {
+    Alert.alert('Couldn’t share', 'Sharing isn’t available right now. Please try again.');
+  }
+}

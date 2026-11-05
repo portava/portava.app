@@ -18,6 +18,7 @@ import {
 } from '../../src/lib/invitePreviewMapper';
 import { mapAcceptResultToAction } from '../../src/lib/acceptResultMapper';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
+import { clearPostAuthRedirect, setPostAuthRedirect } from '../../src/lib/postAuthRedirect.ts';
 
 function formatDateRange(start: string | null, end: string | null): string {
   if (!start) return '';
@@ -37,6 +38,8 @@ export default function InviteLinkScreen() {
     if (!configured) return;
     if (!isAuthed) { setScreen({ kind: 'not_authed' }); return; }
     if (!token) { setScreen({ kind: 'gone', message: 'Invalid invite link.' }); return; }
+    // Signed in and on the invite: the sign-in detour (if any) is finished.
+    clearPostAuthRedirect();
     setScreen({ kind: 'loading' });
     const result = await previewInviteLink(token);
     setScreen(mapInvitePreviewToScreenState(result));
@@ -98,7 +101,11 @@ export default function InviteLinkScreen() {
           </Text>
           <Pressable
             style={styles.primaryBtn}
-            onPress={() => router.replace('/(auth)/sign-in' as Parameters<typeof router.replace>[0])}
+            onPress={() => {
+              // Bring them back to this invite once they have signed in.
+              if (token) setPostAuthRedirect(`/invite/${encodeURIComponent(token)}`);
+              router.replace('/(auth)/sign-in' as Parameters<typeof router.replace>[0]);
+            }}
           >
             <Text style={styles.primaryBtnText}>Sign in</Text>
           </Pressable>

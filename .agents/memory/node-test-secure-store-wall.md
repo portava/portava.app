@@ -17,8 +17,10 @@ failed identically. Do not spend time trying to fix the transform (tsconfig, esb
 `moduleNameMapper`, etc.) — Jest's own transform (babel + jest-expo preset) is what actually handles this
 correctly; plain node/tsx cannot.
 
-**How to apply:** if a new node:test file's import chain will hit this wall, write it in Jest syntax
-instead (`import { describe, it, expect, beforeEach, afterEach } from '@jest/globals'`, no `node:assert`)
-and add its path to the `KNOWN_BROKEN` array in `run-node-tests.mjs` with a one-line comment citing the
-chain (mirrors existing entries like `auth.requestPasswordReset.test.ts`). It will then run automatically
-under `pnpm test:component` (Jest's `testMatch` picks up any `*.test.ts`, not just `*.component.test.*`).
+**How to apply:** if a new test file's import chain will hit this wall, name it `*.component.test.ts`
+so `pnpm test:component` runs it under jest (Jest globals; `node:assert` works there too). Do NOT name it
+`*.test.ts` and add it to `KNOWN_BROKEN`: `test:component` passes `--testPathPattern='\.component\.test\.'`,
+so such a file runs in neither runner. That is how 25 files sat unrun until 2026-11-04, when they were
+renamed and `KNOWN_BROKEN` emptied. Under jest, load a module that reads env at import time with
+`require()` after setting the env (a static `import` is hoisted above it; `await import()` needs
+`--experimental-vm-modules`).

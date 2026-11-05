@@ -6,6 +6,8 @@
  *   - The MEDIA_HIDDEN_GEMS_CREATE_ENABLED feature flag is on
  *
  * A standard option opens the screen CreateHubSheet opens for it (none yet → "Soon").
+ * Plan and Group activity were "Soon" rows with no screen and were removed
+ * (2026-11-04): a plan lives inside a trip, and a group meetup is an Event.
  * Tapping "Add a Gem" routes to /media/add-gem.
  */
 import React from 'react';
@@ -25,8 +27,6 @@ import {
   BookImage,
   CalendarDays,
   MapPin,
-  Compass,
-  Users,
   Gem,
   X,
 } from 'lucide-react-native';
@@ -80,20 +80,6 @@ const STANDARD_ENTRIES: QuickEntry[] = [
     sublabel: 'Plan or share a journey',
     icon: MapPin,
     iconColor: '#059669',
-  },
-  {
-    id: 'plan',
-    label: 'Plan',
-    sublabel: 'Build an itinerary',
-    icon: Compass,
-    iconColor: '#7C3AED',
-  },
-  {
-    id: 'group',
-    label: 'Group activity',
-    sublabel: 'Organise a group experience',
-    icon: Users,
-    iconColor: '#D97706',
   },
 ];
 
@@ -198,7 +184,8 @@ export function MediaQuickCreateSheet({
  * Where a row goes: its own route (Add a Gem → /media/add-gem), otherwise the
  * route CreateHubSheet gives the same id — the hub's table is the one source,
  * so the two create menus cannot send one label to two screens. Undefined
- * means no live screen yet (Plan; Group activity has no hub entry at all).
+ * means no live screen yet (no row is in that state since Plan and Group
+ * activity were removed; the guard stays so a new row cannot crash).
  */
 function routeFor(entry: QuickEntry): string | undefined {
   return entry.route ?? createHubRouteFor(entry.id);

@@ -90,10 +90,16 @@ export function TripsTab({
   trips,
   isOwner,
   loading = false,
+  error = false,
+  onRetry,
 }: {
   trips: TripRow[];
   isOwner: boolean;
   loading?: boolean;
+  /** The trips read FAILED. Shown as an error with a retry — it used to fall
+   *  through to "No trips shown yet", telling the owner they had no trips. */
+  error?: boolean;
+  onRetry?: () => void;
 }) {
   const visible = isOwner ? trips : trips.filter((t) => t.visibility === 'public');
   const [filter, setFilter] = useState<Filter>('all');
@@ -134,6 +140,20 @@ export function TripsTab({
     return (
       <View style={[tr.empty, { paddingBottom: bottomInset }]}>
         <ActivityIndicator size="small" color={color.deep} />
+      </View>
+    );
+  }
+
+  if (error && visible.length === 0) {
+    return (
+      <View style={[tr.empty, { paddingBottom: bottomInset }]} testID="trips-tab-error">
+        <Text style={tr.emptyTitle}>Couldn't load your trips</Text>
+        <Text style={tr.emptySub}>Check your connection and try again.</Text>
+        {onRetry ? (
+          <Pressable style={tr.newBtn} onPress={onRetry} accessibilityRole="button">
+            <Text style={tr.newBtnText}>Try again</Text>
+          </Pressable>
+        ) : null}
       </View>
     );
   }

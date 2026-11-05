@@ -65,7 +65,7 @@ const IOS_BUNDLE_ID = "com.passporttravelbuddy.app";
 const ANDROID_PACKAGE = "com.passporttravelbuddy.app";
 const APP_SCHEME = "travelbuddy";
 /** Deep-link path prefixes — keep in sync with app.json android.intentFilters. */
-const APP_LINK_PATHS = ["/passport", "/passport/*", "/u", "/u/*"];
+const APP_LINK_PATHS = ["/passport", "/passport/*", "/u", "/u/*", "/invite/*"];
 
 /** Shared-cache lifetime for share pages (~5 min). */
 const SHARE_PAGE_CACHE = "public, max-age=300";
@@ -717,5 +717,38 @@ function makeEntityShareHandler(spec: EntitySpec) {
 for (const spec of ENTITY_SPECS) {
   router.get(`/${spec.webSegment}/:id`, makeEntityShareHandler(spec));
 }
+
+// ── Trip invite landing page ─────────────────────────────────────────────────
+//
+// A trip owner's "Share Trip" used to send travelbuddy://invite/<token>, which
+// most chat apps do not make tappable and which opens nothing without the app.
+// It now sends <origin>/invite/<token>. With the app installed and the link
+// verified (APP_LINK_PATHS), the app opens app/invite/[token].tsx directly.
+// Otherwise this page answers, with an Open in Portava button that carries
+// the same token to the same screen.
+//
+// The token is a bearer secret for joining the trip, so this page never looks
+// it up: no trip name, no destination, no "expired" or "unknown" — every token
+// gets the same card, and the page is noindex. The app shows the trip once the
+// signed-in viewer opens it.
+router.get("/invite/:token", (req: any, res: any) => {
+  const token = String(req.params.token ?? "");
+  const origin = requestOrigin(req);
+  res
+    .status(200)
+    .set({ "Content-Type": "text/html; charset=utf-8", "Cache-Control": "private, no-store" })
+    .send(
+      buildSharePageHtml({
+        title: `You're invited to a trip · ${APP_NAME}`,
+        description: `Open this invite in ${APP_NAME} to see the trip and join it.`,
+        pageUrl: `${origin}/invite/${encodeURIComponent(token)}`,
+        imageUrl: `${origin}/api/users/_/og-image.png`,
+        deepLink: `${APP_SCHEME}://invite/${encodeURIComponent(token)}`,
+        noindex: true,
+        ogType: "website",
+        kicker: `${APP_NAME.toUpperCase()} · TRIP INVITE`,
+      }),
+    );
+});
 
 export default router;

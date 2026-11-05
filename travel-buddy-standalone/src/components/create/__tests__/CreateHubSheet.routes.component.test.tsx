@@ -2,8 +2,9 @@
  * CreateHubSheet.routes.component.test.tsx
  *
  * Covers task #2842: tapping a live entry in the Create Hub sheet closes the
- * sheet and navigates to its route (no dead-end); "Soon" entries are
- * disabled and never navigate.
+ * sheet and navigates to its route (no dead-end). Since 2026-11-04 the hub has
+ * no "Soon" rows: Plan and Add Place were removed and Review Place opens place
+ * search.
  *
  * Run with: pnpm --dir travel-buddy-standalone run test:component
  */
@@ -29,7 +30,7 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 describe('CreateHubSheet — route navigation', () => {
-  it('navigates each live entry to its route after closing, and never navigates for "Soon" entries', async () => {
+  it('navigates each entry to its route after closing, and shows no "Soon" rows', async () => {
     jest.useFakeTimers();
     try {
       const liveEntries: Array<[string, string]> = [
@@ -42,25 +43,19 @@ describe('CreateHubSheet — route navigation', () => {
         // Testing mode WP-06 (PLAT-F32/F33): Story is live — /stories mounts the
         // viewer and composer that nothing reached before. Restated from "Soon".
         ['Story', '/stories'],
+        // 2026-11-04: Review Place opens place search; a place's page holds
+        // its reviews and the Write a review button.
+        ['Review Place', '/search?type=places'],
       ];
-      const soonEntries = ['Plan', 'Add Place', 'Review Place'];
 
       // Single mount; exercise every row in the same tree to avoid
       // render/unmount interaction contamination across cases.
       const onClose = jest.fn();
       await render(<CreateHubSheet visible onClose={onClose} />);
 
-      // "Soon" entries: disabled, tapping them does nothing.
-      for (const label of soonEntries) {
-        const row = screen.getByLabelText(label);
-        expect(row.props.accessibilityState?.disabled).toBe(true);
-        fireEvent.press(row);
-      }
-      await act(async () => {
-        jest.advanceTimersByTime(320);
-      });
-      expect(onClose).not.toHaveBeenCalled();
-      expect(pushMock).not.toHaveBeenCalled();
+      // The dead rows are gone, and nothing is left showing "Soon".
+      for (const label of ['Plan', 'Add Place']) expect(screen.queryByLabelText(label)).toBeNull();
+      expect(screen.queryByText('Soon')).toBeNull();
 
       // Live entries: each tap closes the sheet, then (after the deferred
       // navigation window) pushes its route.

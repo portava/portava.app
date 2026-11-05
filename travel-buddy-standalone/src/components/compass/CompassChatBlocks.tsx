@@ -94,7 +94,7 @@ function BlockRenderer({ block, onAddPlaceToPlan }: {
 
 // ── Navigation targets (all real screens) ─────────────────────────────────────
 
-function usePlaceNavigation() {
+export function usePlaceNavigation() {
   const router = useRouter();
   return (place: CompassUiPlace) => {
     // Fire-and-forget "viewed" outcome — the user actually opened this card.

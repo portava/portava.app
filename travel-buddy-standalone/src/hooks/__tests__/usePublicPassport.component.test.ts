@@ -157,9 +157,10 @@ describe('usePublicPassport — reload() refresh coverage', () => {
     });
 
     // Postcards service was invoked (not skipped) even though it failed —
-    // its failure clears stale postcards rather than leaving them stuck.
+    // its failure clears stale postcards rather than leaving them stuck, and
+    // says the wall did not load (an empty wall would read as "no postcards").
     expect(result.current.postcards).toEqual([]);
-    expect(result.current.postcardSentinel).toBeNull();
+    expect(result.current.postcardSentinel).toBe('load_failed');
     // A postcards-only failure must not surface as a page-level error.
     expect(result.current.error).toBeNull();
   });

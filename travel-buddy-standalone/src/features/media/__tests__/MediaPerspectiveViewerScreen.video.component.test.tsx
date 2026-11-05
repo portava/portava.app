@@ -232,20 +232,21 @@ describe('MediaPerspectiveViewerScreen video controls', () => {
   it('persists mute state through AsyncStorage', async () => {
     renderVideo();
 
-    await waitFor(() => expect(screen.getByLabelText('Unmute video')).toBeTruthy());
+    // A tapped video plays WITH sound unless the viewer muted it (2026-11-04).
+    await waitFor(() => expect(screen.getByLabelText('Mute video')).toBeTruthy());
     await act(async () => {
-      fireEvent.press(screen.getByLabelText('Unmute video'));
+      fireEvent.press(screen.getByLabelText('Mute video'));
     });
 
-    expect(mockSetItem).toHaveBeenCalledWith('media:muted', 'false');
-    expect(screen.getByLabelText('Mute video')).toBeTruthy();
+    expect(mockSetItem).toHaveBeenCalledWith('media:muted', 'true');
+    expect(screen.getByLabelText('Unmute video')).toBeTruthy();
   });
 
   it('restores persisted mute state and supports retry after playback error', async () => {
-    mockGetItem.mockResolvedValue('false');
+    mockGetItem.mockResolvedValue('true');
     renderVideo();
 
-    await waitFor(() => expect(screen.getByLabelText('Mute video')).toBeTruthy());
+    await waitFor(() => expect(screen.getByLabelText('Unmute video')).toBeTruthy());
     await act(async () => {
       latestVideoProps.onPlaybackStatusUpdate({ isLoaded: false, error: 'decoder failed' });
     });

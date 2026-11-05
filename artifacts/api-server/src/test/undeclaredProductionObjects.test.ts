@@ -28,6 +28,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import {
   UNDECLARED_PRODUCTION_OBJECTS,
   EXTENSION_RELATIONS,
@@ -265,7 +266,8 @@ describe("the real tree, against the current capture", () => {
 
   it("a function only production has is not declared (negative control)", () => {
     // commit_media_upload_chunk served here until 4001 codified it on 2026-11-04;
-    // the journey-shadow programme's functions are still production-only.
+    // the journey-shadow programme's functions are production-only until the
+    // release that applies 4003 and the capture refresh after it.
     assert.ok(!real.functions.has("set_journey_observation_consent_v1"));
     assert.ok(prod.functions.includes("set_journey_observation_consent_v1"));
     assert.ok(real.functions.has("commit_media_upload_chunk"), "4001 declares the upload commit now");
@@ -293,7 +295,22 @@ describe("the real tree, against the current capture", () => {
     }
   });
 
-  it("the ratchet's columns are the list checkSchemaReferences tolerates: the six journey columns it kept by hand, and no longer the three lease columns 4002 declares", () => {
+  it("every journey-shadow entry carries the owner's 2026-11-05 decision, drop, and names the migration that drops it", () => {
+    const journey = Object.entries(UNDECLARED_PRODUCTION_OBJECTS).filter(([k]) => k.includes("journey"));
+    assert.equal(journey.length, 50, "9 tables, 6 columns, 35 functions");
+    assert.equal(journey.length, Object.keys(UNDECLARED_PRODUCTION_OBJECTS).length, "nothing else is on the ratchet");
+    for (const [key, e] of journey) {
+      assert.equal(e.decision, "drop", `${key}: the owner chose drop on 2026-11-05`);
+      assert.match(e.note, /4003_journey_shadow_programme_retired\.sql/, `${key}: the note names the migration`);
+      assert.match(e.note, /2026-11-05/, `${key}: the note dates the decision`);
+    }
+    assert.ok(
+      existsSync(new URL("../migrations/4003_journey_shadow_programme_retired.sql", import.meta.url)),
+      "the migration the notes name is in the tree",
+    );
+  });
+
+  it("the ratchet's columns are the list checkSchemaReferences tolerates: the six journey columns, until the capture after 4003's apply drops them, and no longer the three lease columns 4002 declares", () => {
     const cols = undeclaredProductionColumns();
     for (const c of [
       "user_deletion_requests.execution_lease_expires_at",
@@ -310,7 +327,7 @@ describe("the real tree, against the current capture", () => {
       "user_location_preferences.journey_consent_version",
       "user_location_preferences.journey_observation_enabled",
     ]) {
-      assert.ok(cols.has(c), `${c} was on UNDECLARED_LIVE_COLUMNS since 2026-09-04 and must still be tolerated`);
+      assert.ok(cols.has(c), `${c} was on UNDECLARED_LIVE_COLUMNS since 2026-09-04 and is tolerated until a capture no longer holds it`);
     }
     assert.equal(
       cols.size,

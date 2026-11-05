@@ -106,6 +106,9 @@ export default function TravelHistoryScreen() {
   const [pastTrips, setPastTrips] = useState<TripRow[]>([]);
   const [visitedPlaces, setVisitedPlaces] = useState<VisitedPlace[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // A failed read is not an empty history: say it could not be read.
+  const [tripsUnavailable, setTripsUnavailable] = useState(false);
+  const [placesUnavailable, setPlacesUnavailable] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -120,7 +123,10 @@ export default function TravelHistoryScreen() {
 
         if (tripsRes.status === 'fulfilled') {
           setPastTrips(tripsRes.value.filter(isPastTrip));
+        } else {
+          setTripsUnavailable(true);
         }
+        if (stampsRes.status !== 'fulfilled' || !stampsRes.value.ok) setPlacesUnavailable(true);
 
         if (stampsRes.status === 'fulfilled' && stampsRes.value.ok) {
           // Deduplicate by city+country, count stamps per place
@@ -188,8 +194,8 @@ export default function TravelHistoryScreen() {
             </View>
             {pastTrips.length === 0 ? (
               <View style={r.emptyCard}>
-                <Text style={r.emptyText}>No completed trips yet.</Text>
-                <Text style={r.emptyHint}>Trips you finish will appear here.</Text>
+                <Text style={r.emptyText}>{tripsUnavailable ? 'Your trips could not be loaded.' : 'No completed trips yet.'}</Text>
+                <Text style={r.emptyHint}>{tripsUnavailable ? 'Check your connection and open this page again.' : 'Trips you finish will appear here.'}</Text>
               </View>
             ) : (
               <View style={r.card}>
@@ -213,8 +219,8 @@ export default function TravelHistoryScreen() {
             </View>
             {visitedPlaces.length === 0 ? (
               <View style={r.emptyCard}>
-                <Text style={r.emptyText}>No stamps collected yet.</Text>
-                <Text style={r.emptyHint}>Places you stamp will appear here.</Text>
+                <Text style={r.emptyText}>{placesUnavailable ? 'Your stamps could not be loaded.' : 'No stamps collected yet.'}</Text>
+                <Text style={r.emptyHint}>{placesUnavailable ? 'Check your connection and open this page again.' : 'Places you stamp will appear here.'}</Text>
               </View>
             ) : (
               <View style={r.card}>

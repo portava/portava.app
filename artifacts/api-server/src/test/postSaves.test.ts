@@ -3,7 +3,8 @@
  *
  * Covers:
  *   - POST /api/posts/:id/save  — save succeeds; duplicate is idempotent
- *   - DELETE /api/posts/:id/save — unsave succeeds; unsaving a non-saved post is graceful
+ *   - DELETE /api/posts/:id/save — unsave succeeds; unsaving a non-saved post is graceful;
+ *     the post also leaves the caller's own collections (lib/collectionUnfile.ts)
  *   - savedByMe is correct per user; save_count is correct
  *   - Invalid post ID → 400; post not found → 404; DB error → 500
  *
@@ -34,6 +35,8 @@ const TOKEN_OTHER  = 'fake-save-other';
 let posts: Record<string, any> = {};
 let postSaves: Array<{ post_id: string; user_id: string; created_at: string }> = [];
 let tripMembers: Array<{ trip_id: string; user_id: string; status: string; role: string }> = [];
+let collections: Array<{ id: string; owner_id: string }> = [];
+let collectionItems: Array<{ id: string; collection_id: string; entity_type: string; entity_id: string }> = [];
 
 function resetDb() {
   posts = {
@@ -54,6 +57,8 @@ function resetDb() {
     },
   };
   postSaves = [];
+  collections = [];
+  collectionItems = [];
   tripMembers = [
     { trip_id: TRIP_ID, user_id: AUTHOR_ID, status: 'accepted', role: 'owner' },
   ];
@@ -147,6 +152,8 @@ function buildFakeClient(tokenToId: Record<string, string>, dbError?: { table: s
             postSaves = postSaves.filter(
               (s) => !filtered.some((f) => f.post_id === s.post_id && f.user_id === s.user_id),
             );
+          } else if (table === 'collection_items') {
+            collectionItems = collectionItems.filter((i) => !filtered.some((f) => f.id === i.id));
           }
           return resolve({ data: filtered, error: null });
         }
@@ -182,6 +189,8 @@ function buildFakeClient(tokenToId: Record<string, string>, dbError?: { table: s
       if (table === 'posts') rows = Object.values(posts).map((r) => ({ ...r }));
       else if (table === 'post_saves') rows = postSaves.map((r) => ({ ...r }));
       else if (table === 'trip_members') rows = tripMembers.map((r) => ({ ...r }));
+      else if (table === 'collections') rows = collections.map((r) => ({ ...r }));
+      else if (table === 'collection_items') rows = collectionItems.map((r) => ({ ...r }));
       else if (table === 'profiles') rows = [
         { id: AUTHOR_ID, handle: 'authoruser', name: 'Author', avatar_url: null },
         { id: OTHER_ID,  handle: 'otheruser',  name: 'Other',  avatar_url: null },
@@ -320,6 +329,19 @@ describe('DELETE /api/posts/:id/save', () => {
     assert.equal(data.saveCount, 1, 'other user\'s save must remain');
     assert.equal(postSaves.length, 1);
     assert.equal(postSaves[0].user_id, OTHER_ID);
+  });
+
+  it("an unsave also takes the post out of the caller's collections, and only theirs", async () => {
+    collections = [{ id: 'col-mine', owner_id: AUTHOR_ID }, { id: 'col-theirs', owner_id: OTHER_ID }];
+    collectionItems = [
+      { id: 'ci-1', collection_id: 'col-mine', entity_type: 'post', entity_id: POST_ID },
+      { id: 'ci-2', collection_id: 'col-theirs', entity_type: 'post', entity_id: POST_ID },
+      { id: 'ci-3', collection_id: 'col-mine', entity_type: 'post', entity_id: TRIP_POST_ID },
+    ];
+    await req('POST', `/api/posts/${POST_ID}/save`, TOKEN_AUTHOR);
+    const { status, data } = await req('DELETE', `/api/posts/${POST_ID}/save`, TOKEN_AUTHOR);
+    assert.equal(status, 200, JSON.stringify(data));
+    assert.deepEqual(collectionItems.map((i) => i.id).sort(), ['ci-2', 'ci-3']);
   });
 
   it('returns 400 for an invalid post ID', async () => {

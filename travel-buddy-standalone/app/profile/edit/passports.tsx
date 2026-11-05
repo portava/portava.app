@@ -28,9 +28,9 @@ import {
   type SaveState,
 } from '../../../src/components/settings/SettingsUI.tsx';
 import { DatePickerField } from '../../../src/components/DatePickerField.tsx';
-import { TravelEmptyState, TravelLoadingState } from '../../../src/components/primitives.tsx';
+import { TravelEmptyState, TravelErrorState, TravelLoadingState } from '../../../src/components/primitives.tsx';
 import {
-  listMyPassports,
+  readMyPassports,
   addPassport,
   updatePassport,
   deletePassport,
@@ -560,6 +560,7 @@ const pc = StyleSheet.create({
 export default function PassportManagerScreen() {
   const [passports, setPassports] = useState<TravelerPassport[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   // Form / modal state
   const [formVisible, setFormVisible] = useState(false);
@@ -568,8 +569,9 @@ export default function PassportManagerScreen() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const result = await listMyPassports();
-    setPassports(result);
+    const result = await readMyPassports();
+    setPassports(result.data);
+    setLoadFailed(!result.ok);
     setLoading(false);
   }, []);
 
@@ -676,6 +678,15 @@ export default function PassportManagerScreen() {
       >
         {loading ? (
           <TravelLoadingState label="Loading passports…" />
+        ) : loadFailed && passports.length === 0 ? (
+          // Not "No passports yet": its one action, Add passport, would make a duplicate.
+          <View style={scr.emptyWrap} testID="passports-load-error">
+            <TravelErrorState
+              title="Your passports could not be loaded"
+              sub="They are still saved."
+              onRetry={() => void load()}
+            />
+          </View>
         ) : passports.length === 0 ? (
           <View style={scr.emptyWrap}>
             <TravelEmptyState

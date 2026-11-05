@@ -144,6 +144,7 @@ export default function Circle() {
   const [tab, setTab]               = useState<'circle' | 'followers'>('circle');
   const [following, setFollowing]   = useState<FollowUser[]>([]);
   const [followers, setFollowers]   = useState<FollowUser[]>([]);
+  const [listFailed, setListFailed] = useState({ circle: false, followers: false }); // a failed read, not an empty list
   const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [chatLoading, setChatLoading] = useState(false);
@@ -168,6 +169,7 @@ export default function Circle() {
     const [fwRes, frRes] = await Promise.all([getMyFollowing(), getMyFollowers()]);
     setFollowing(fwRes.data ?? []);
     setFollowers(frRes.data ?? []);
+    setListFailed({ circle: !fwRes.ok, followers: !frRes.ok });
     if (isRefresh) setRefreshing(false); else setLoading(false);
   }, []);
 
@@ -475,7 +477,17 @@ export default function Circle() {
             {list.map((u) => (
               <CircleUserRow key={u.id} u={u} reason={circleReason(u, tab)} tripId={tripId} />
             ))}
-            {list.length === 0 && (
+            {list.length === 0 && listFailed[tab] && (
+              <View style={styles.emptyBox} testID="circle-list-error">
+                <Text style={styles.emptyTitle}>
+                  {tab === 'circle' ? 'Your circle could not be loaded' : 'Your followers could not be loaded'}
+                </Text>
+                <Pressable onPress={() => void load(true)} accessibilityRole="button" accessibilityLabel={tab === 'circle' ? 'Try loading your circle again' : 'Try loading your followers again'}>
+                  <Text style={styles.retry}>Try again</Text>
+                </Pressable>
+              </View>
+            )}
+            {list.length === 0 && !listFailed[tab] && (
               <View style={styles.emptyBox}>
                 <Text style={styles.emptyIcon}>{tab === 'circle' ? '🌍' : '👥'}</Text>
                 <Text style={styles.emptyTitle}>
@@ -552,6 +564,7 @@ const styles = StyleSheet.create({
   emptyIcon: { fontSize: 48 },
   emptyTitle: { ...t.bodyStrong, color: color.ink, textAlign: 'center' },
   emptyNote: { ...t.small, color: color.mute, textAlign: 'center', lineHeight: 18 },
+  retry: { ...t.bodyStrong, color: color.signal, marginTop: space.sm, textAlign: 'center' },
   discoverBtn: { padding: 4 },
 
   ageSection: { marginHorizontal: space.lg, marginTop: space.md, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised, overflow: 'hidden', ...shadow.card },

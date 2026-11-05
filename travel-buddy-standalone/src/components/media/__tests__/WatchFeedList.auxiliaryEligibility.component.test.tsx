@@ -165,7 +165,7 @@ afterEach(() => { expect(global.fetch).not.toHaveBeenCalled(); jest.restoreAllMo
 it.each(['blur', 'global pause'] as const)('%s retires playing auxiliary audio and captions despite an unresolved native pause and stale playing callback', async kind => {
   const view = await render(<WatchFeedList {...feedProps} />);
   await waitFor(() => expect(view.getByLabelText('Audio language options')).toBeTruthy());
-  await fireEvent.press(view.getByLabelText('Unmute'));
+  expect(view.getByLabelText('Mute')).toBeTruthy(); // the feed starts with sound (2026-11-04); it used to need an Unmute press here
   await fireEvent.press(view.getByLabelText('Show timed captions'));
   await act(async () => { mockNativeStatus(playingStatus); });
   await waitFor(() => expect(view.getByText('Synthetic caption')).toBeTruthy());
