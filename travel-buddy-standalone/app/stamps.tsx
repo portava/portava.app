@@ -73,6 +73,7 @@ export default function StampsPage() {
   const [selected, setSelected]   = useState<PassportStampNew | null>(null);
   const [visUpdating, setVisUpdating] = useState(false); const [visError, setVisError] = useState<string | null>(null); // a refused save is said in the sheet
   const [refreshing, setRefreshing] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false); // a failed read is not "no stamps"
 
   const navBarScrollHandler = useNavBarScrollHandler();
 
@@ -82,6 +83,7 @@ export default function StampsPage() {
     const res = await getMyPassportStamps();
     setLoading(false);
     setRefreshing(false);
+    setLoadFailed(!res.ok);
     if (res.ok) setStamps(res.data);
   }, []);
 
@@ -161,7 +163,7 @@ export default function StampsPage() {
           </View>
           )}
           {shown.length === 0 && (
-            <View style={styles.empty}><Text style={styles.emptyText}>No stamps in this category yet.</Text></View>
+            <View style={styles.empty}><Text style={styles.emptyText}>{loadFailed && stamps.length === 0 ? 'Your stamps could not be loaded. Pull down to try again.' : 'No stamps in this category yet.'}</Text></View>
           )}
           <NavBarFiller />
         </ScrollView>

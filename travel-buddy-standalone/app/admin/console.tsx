@@ -27,6 +27,7 @@ const SCREENS: Array<{ path: string; title: string; detail: string; flow: string
   { path: '/admin/live-scopes', title: 'Live-label scopes', detail: 'Promote or withdraw where LIVE labels may show', flow: 'SEN-F06' },
   { path: '/admin/user-stamps', title: 'User stamps', detail: "Award, revoke and restore a person's stamps", flow: 'PASS-F23' },
   { path: '/admin/airports', title: 'Airports', detail: 'Airport profiles and caution zones for layover tests', flow: 'LAY-F16' },
+  { path: '/admin/deletion-requests', title: 'Account deletions', detail: 'Run a pending deletion by hand and see every step', flow: 'PRIV-DEL' },
 ];
 
 const API_ONLY = [

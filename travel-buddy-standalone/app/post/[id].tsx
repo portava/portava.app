@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
-  View, Text, ScrollView, Pressable, Modal, Share, StyleSheet,
+  View, Text, ScrollView, Pressable, Modal, Share, StyleSheet, Alert,
   ActivityIndicator, useWindowDimensions,
   Keyboard,
 } from 'react-native';
@@ -10,7 +10,7 @@ import { navigateToProfile } from '../../src/lib/navigateToProfile.ts';
 import * as Linking from 'expo-linking';
 import {
   MoreVertical, Flag, Flag as FlagFill,
-  MapPin, MessageCircle, Pencil, BookmarkPlus,
+  MapPin, MessageCircle, Pencil, BookmarkPlus, Trash2,
 } from 'lucide-react-native';
 import { StampIcon } from '../../src/components/stamps/StampIcon';
 import { PortavaShareIcon } from '../../src/components/icons/PortavaShareIcon';
@@ -22,7 +22,7 @@ import { CommentsSection } from '../../src/components/CommentsSheet';
 import { TranslatedContent } from '../../src/components/TranslatedContent.tsx';
 import { MediaStampOverlay } from '../../src/components/StampOverlayBadge';
 import { SharedVideoPlayer } from '../../src/components/ui/SharedVideoPlayer';
-import { getPostById, type PostRow } from '../../src/services/posts';
+import { getPostById, type PostRow } from '../../src/services/posts'; import { deletePost } from '../../src/services/postEngagement'; // the feed's own delete
 import { useSession } from '../../src/context/SessionContext';
 import { primaryIdentityText } from '../../src/lib/displayIdentity.ts';
 import { DisplayMediaImage, AvatarImage } from '../../src/components/ui/DisplayMediaImage.tsx';
@@ -43,14 +43,14 @@ function PostOverflowSheet({
   onShare,
   onReport,
   onEdit,
-  onWrongPlace, onSaveToMemory,
+  onWrongPlace, onSaveToMemory, onDelete,
 }: {
   visible: boolean;
   onClose: () => void;
   onShare: () => void;
   onReport?: () => void;
   onEdit?: () => void;
-  onWrongPlace?: () => void; /** MD385: own post with media, flag on. */ onSaveToMemory?: () => void;
+  onWrongPlace?: () => void; /** MD385: own post with media, flag on. */ onSaveToMemory?: () => void; /** Own post only. */ onDelete?: () => void;
 }) {
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -88,7 +88,7 @@ function PostOverflowSheet({
                 <Text style={[ov.rowLabel, { color: color.signal }]}>Report post</Text>
               </Pressable>
             </>
-          )}
+          )}{onDelete && (<><View style={ov.divider} /><Pressable style={ov.row} onPress={() => { onClose(); onDelete(); }} testID="overflow-delete-post" accessibilityRole="button"><Trash2 size={20} color={color.signal} /><Text style={[ov.rowLabel, { color: color.signal }]}>Delete post</Text></Pressable></>)}
         </View>
       </View>
     </Modal>
@@ -110,10 +110,10 @@ function ReportedBanner({
         <FlagFill size={28} color={color.signal} />
       </View>
       <Text style={rb.title}>You reported this post</Text>
-      <Text style={rb.sub}>Thank you — our team will review it shortly.</Text>
+      <Text style={rb.sub}>Thank you. A reviewer will look at it. Showing the post again does not withdraw your report.</Text>
       {undoAvailable && (
-        <Pressable style={rb.undoBtn} onPress={onUndo} hitSlop={8}>
-          <Text style={rb.undoLabel}>Undo</Text>
+        <Pressable style={rb.undoBtn} onPress={onUndo} hitSlop={8} accessibilityRole="button" accessibilityLabel="Show the post. Your report stays sent.">
+          <Text style={rb.undoLabel}>Show post</Text>{/* was "Undo": no route withdraws a report, so this only shows the post again */}
         </Pressable>
       )}
     </View>
@@ -319,6 +319,32 @@ export default function PostDetail() {
     await Share.share({ message: `${preview}${deepLink}`, url: deepLink });
   }
 
+  // The owner had Edit here but no Delete, while the edit screen tells them to
+  // "delete this post and create a new one" to change its media. Called as the
+  // overflow sheet closes; the confirm waits out the dismissal, because an
+  // alert raised mid-dismissal can be lost on iOS (as in SafeReturnSetupSheet).
+  function confirmDelete() {
+    if (!post) return;
+    const postId = post.id;
+    const ask = () => Alert.alert('Delete post?', 'This cannot be undone.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          const ok = await deletePost(postId);
+          if (!ok) {
+            Alert.alert('Error', 'Could not delete post. Please try again.');
+            return;
+          }
+          if (router.canGoBack()) router.back();
+          else router.replace('/(tabs)' as any);
+        },
+      },
+    ]);
+    setTimeout(ask, 400);
+  }
+
   const headerRight = post ? (
     <Pressable
       onPress={() => setOverflowOpen(true)}
@@ -389,6 +415,7 @@ export default function PostDetail() {
             onClose={() => setOverflowOpen(false)}
             onShare={handleShare}
             onEdit={isOwnPost ? () => router.push(`/post/edit/${post.id}` as any) : undefined}
+            onDelete={isOwnPost ? confirmDelete : undefined}
             onReport={!isOwnPost ? () => setReportOpen(true) : undefined}
             onWrongPlace={!isOwnPost && !!post.locationName ? () => setWrongPlaceOpen(true) : undefined} onSaveToMemory={canSaveToMemory ? () => setSaveToMemoryOpen(true) : undefined}
           />{canSaveToMemory && userId ? <SaveOwnPostToMemorySheet visible={saveToMemoryOpen} post={post} viewerId={userId} onClose={() => setSaveToMemoryOpen(false)} /> : null}

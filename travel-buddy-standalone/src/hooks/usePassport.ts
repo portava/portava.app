@@ -66,7 +66,7 @@ export interface PassportState {
    * a person that their own history could not be loaded — which is the worst
    * lie this app can tell, because it is about them.
    */
-  memoriesUnreadable: boolean;
+  memoriesUnreadable: boolean; postcardsUnreadable: boolean; // the same for Postcards: a failed read, shown as "didn't load"
   suggestions: PassportMemory[];
   loading: boolean;
   error: string | null;
@@ -100,7 +100,7 @@ export function usePassport(): PassportState {
   const [stamps, setStamps] = useState<PassportStamp[]>([]);
   const [stampsNew, setStampsNew] = useState<PassportStampNew[]>([]);
   const [memories, setMemories] = useState<PassportMemory[]>([]);
-  const [memoriesUnreadable, setMemoriesUnreadable] = useState(false);
+  const [memoriesUnreadable, setMemoriesUnreadable] = useState(false); const [postcardsUnreadable, setPostcardsUnreadable] = useState(false);
   const [suggestions, setSuggestions] = useState<PassportMemory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -290,7 +290,7 @@ export function usePassport(): PassportState {
         hadErrorRef.current = true;
         setError(pRes.message ?? 'Could not load profile');
       }
-      setPostcards(pcRes.ok ? (pcRes.data ?? []) : []);
+      setPostcards(pcRes.ok ? (pcRes.data ?? []) : []); setPostcardsUnreadable(!pcRes.ok);
       const firstPage = stRes.ok ? (stRes.data ?? []) : [];
       applyStamps(firstPage);
       const total = stRes.ok && typeof stRes.total === 'number' ? stRes.total : firstPage.length;
@@ -328,5 +328,5 @@ export function usePassport(): PassportState {
     return () => { alive = false; };
   }, [tick]);
 
-  return { profile, postcards, stamps, stampsNew, memories, memoriesUnreadable, suggestions, loading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, updateStamp, reload, lastLoadedAt };
+  return { profile, postcards, postcardsUnreadable, stamps, stampsNew, memories, memoriesUnreadable, suggestions, loading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, updateStamp, reload, lastLoadedAt };
 }

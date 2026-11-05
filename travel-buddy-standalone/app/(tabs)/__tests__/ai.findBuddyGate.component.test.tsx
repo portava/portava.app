@@ -52,7 +52,7 @@ jest.mock('../../../src/components/ui/KeyboardSafeView', () => {
 // NOTE: intentionally exhaustive — the nav-bar collapse needs the tab bar's animated context.
 jest.mock('../../../src/hooks/useNavBarCollapse', () => ({ useNavBarScrollHandler: () => () => undefined, NavBarFiller: () => null }));
 // NOTE: intentionally exhaustive — the chat blocks are empty in this answer.
-jest.mock('../../../src/components/compass/CompassChatBlocks', () => ({ CompassChatBlocks: () => null }));
+jest.mock('../../../src/components/compass/CompassChatBlocks', () => ({ CompassChatBlocks: () => null, usePlaceNavigation: () => jest.fn() }));
 // NOTE: intentional stub — AppHeader chrome is not under test.
 jest.mock('../../../src/components/ui/AppHeader', () => ({ AppHeader: () => null }));
 // NOTE: intentional stub — the layover sheet is closed.

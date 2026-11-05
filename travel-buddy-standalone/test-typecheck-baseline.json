@@ -6,7 +6,7 @@
     "baseline never sits above reality. Do not hand-edit."
   ],
   "project": "travel-buddy-standalone/tsconfig.test.json",
-  "total": 173,
+  "total": 151,
   "files": {
     "app/__tests__/discover.followRollback.component.test.tsx": 1,
     "app/__tests__/following.socialVersion.component.test.tsx": 1,
@@ -63,8 +63,6 @@
     "src/lib/__tests__/localMessageDb.e0.component.test.ts": 2,
     "src/lib/__tests__/mlsSession.e2.component.test.ts": 3,
     "src/lib/__tests__/secureStoreResilience.component.test.ts": 2,
-    "src/services/__tests__/catalogDetail.archivedVersions.test.ts": 19,
-    "src/services/__tests__/postcardWall.blockGate.test.ts": 3,
     "src/services/__tests__/savedScreen.handleRemove.test.ts": 3,
     "src/services/deviceTimezoneSync.test.ts": 4,
     "src/services/sdk54-downgrade-compat.test.ts": 8

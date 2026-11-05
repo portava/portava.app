@@ -29,16 +29,19 @@ export default function RecapDetailScreen() {
     setActing(false);
     if (!result) { Alert.alert('Couldn’t update recap', 'Please try again.'); return; } void load();
   };
-  if (detail === undefined) return <SafeAreaView style={styles.safe}><ActivityIndicator color={color.signal} style={styles.loader} /></SafeAreaView>;
+  // The header (and its back button) shows in every state: the loading and
+  // unavailable screens used to have none, so the only way out was a gesture.
+  const header = <Stack.Screen options={{ title: 'Travel recap', headerShown: true }} />;
+  if (detail === undefined) return <SafeAreaView style={styles.safe} edges={['bottom']}>{header}<ActivityIndicator color={color.signal} style={styles.loader} /></SafeAreaView>;
   if (!detail || !detail.version) {
     const message = loadError === 'disabled' ? 'Recaps are not enabled for this place yet.'
       : loadError === 'removed' ? 'This recap was removed from your archive.'
         : loadError === 'network' ? 'Check your connection and try again.'
           : 'This recap is unavailable right now.';
-    return <SafeAreaView style={styles.safe}><View style={styles.center}><Text style={styles.title}>This recap is unavailable</Text><Text style={styles.body}>{message}</Text>{loadError === 'network' || loadError === 'server' ? <Button label="Try again" onPress={() => void load()} /> : null}</View></SafeAreaView>;
+    return <SafeAreaView style={styles.safe} edges={['bottom']}>{header}<View style={styles.center}><Text style={styles.title}>This recap is unavailable</Text><Text style={styles.body}>{message}</Text>{loadError === 'network' || loadError === 'server' ? <Button label="Try again" onPress={() => void load()} /> : null}</View></SafeAreaView>;
   }
   const version = detail.version; const canReview = version.status === 'draft'; const canPublish = version.status === 'reviewed';
-  return <SafeAreaView style={styles.safe} edges={['bottom']}><Stack.Screen options={{ title: 'Travel recap', headerShown: true }} /><ScrollView contentContainerStyle={styles.content}>
+  return <SafeAreaView style={styles.safe} edges={['bottom']}>{header}<ScrollView contentContainerStyle={styles.content}>
     <Text style={styles.eyebrow}>VERSION {version.version_number} · {version.status.toUpperCase()}</Text><Text style={styles.heading}>{version.title}</Text>
     <Text style={styles.body}>{version.summary || 'Draft recap — review the suggested chapters before publishing.'}</Text>
     {detail.chapters.map((chapter) => <View key={chapter.id} style={styles.card}><Text style={styles.title}>{chapter.title}</Text><Text style={styles.body}>{chapter.body}</Text>{chapter.origin === 'compass_suggested' ? <Text style={styles.note}>Compass suggestion grounded in selected sources</Text> : null}</View>)}

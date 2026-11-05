@@ -8464,7 +8464,7 @@ was written to any hosted database. Paths are repository-relative, as in §41.
    So an outage, the gate's refusal and a switched-off marketplace all rendered as no section at all.
    `travel-buddy-standalone/src/services/layover.ts:1521#export async function getLayoverBuddies(` now
    resolves the whole answer, and
-   `travel-buddy-standalone/src/components/layover/LayoverPeopleSection.tsx:239#function BuddiesNotice(`
+   `travel-buddy-standalone/src/components/layover/LayoverPeopleSection.tsx:240#function BuddiesNotice(`
    says which case it is. `availableDuringLayover: null` reads as "not checked", not as false.
 3. **Starting a layover hid the server's sentence** (L294). Every refusal, including "already departed",
    read "Please try again". A failed airport search read "no airport matches", and a slow answer to "TP"
@@ -8474,7 +8474,7 @@ was written to any hosted database. Paths are repository-relative, as in §41.
    outcomes, and the sheet tickets its searches
    (`travel-buddy-standalone/src/components/layover/LayoverModeSheet.tsx:142#if (ticket !== searchTicket.current) return;`).
 4. **A layover started from a trip was not linked to it** (L267).
-   `travel-buddy-standalone/app/trip/[id].tsx:869#tripId={trip.id}`. Detection from the trip's segments
+   `travel-buddy-standalone/app/trip/[id].tsx:877#tripId={trip.id}`. Detection from the trip's segments
    (L169) is still unbuilt.
 5. **The crew card spun forever offline** (L294). `getLayoverCrew` had no `try`, so the rejection escaped
    a floated `refresh()`. The card now says "could not be loaded" with a retry, and only the newest of
@@ -10069,7 +10069,7 @@ No migration and no flag. The buddy route stays behind `rent_buddy_enabled` (FAL
 
 §19.4 held the arm back for one reason: `sessionRow` staged sessions from `Date.now()`, so a clock-dependent arm would flake. The fixture now takes a pinned clock (`artifacts/api-server/src/test/helpers/fakeLayoverDb.ts:263#export function sessionRow(over: Row = {}, opts: { nowMs?: number } = {}): Row {`), and the two buddies route suites pin `Date` with node:test's mock timers. The 126 suites that use the double, the engine or the gate pass (2,594 tests); the one suite whose control was a midnight window (`blockGateFailClosedRoutes.test.ts`) was moved to a daytime window, with the reason written beside it.
 
-The arm is a function of the certified record alone (`artifacts/api-server/src/services/airport/LayoverBuddyGate.ts:233#export function isNightLayoverRecord(`): the landside window the record certifies, `[max(inputs.nowMs, earliestOutTime), hardReturnTime)`, read in the airport's timezone against the engine's own night band, which is now named once (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1570#export function isNightBandHour(`) and read by the engine's buffer, the Safe Return suggestion at session create, and this gate. When it fires, the trust requirement applies exactly as the tight arm's does (`artifacts/api-server/src/services/airport/LayoverBuddyGate.ts:177#const night = isNightLayoverRecord(record);`). `reasons` names every arm, tight first, and `reason` keeps its old meaning. An unusable zone or an unreadable instant counts as night. The client caption names the arm that fired (`travel-buddy-standalone/src/components/layover/LayoverPeopleSection.tsx:276#export function verifiedOnlyCaption(`).
+The arm is a function of the certified record alone (`artifacts/api-server/src/services/airport/LayoverBuddyGate.ts:233#export function isNightLayoverRecord(`): the landside window the record certifies, `[max(inputs.nowMs, earliestOutTime), hardReturnTime)`, read in the airport's timezone against the engine's own night band, which is now named once (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1570#export function isNightBandHour(`) and read by the engine's buffer, the Safe Return suggestion at session create, and this gate. When it fires, the trust requirement applies exactly as the tight arm's does (`artifacts/api-server/src/services/airport/LayoverBuddyGate.ts:177#const night = isNightLayoverRecord(record);`). `reasons` names every arm, tight first, and `reason` keeps its old meaning. An unusable zone or an unreadable instant counts as night. The client caption names the arm that fired (`travel-buddy-standalone/src/components/layover/LayoverPeopleSection.tsx:280#export function verifiedOnlyCaption(`).
 
 Tests cover both sides of each edge: 22:00 and 06:00 local, half-open (`artifacts/api-server/src/services/airport/__tests__/layoverBuddySafetyGate.test.ts:282#the 22:00 edge`). The same instants are day in Taipei and night in New York (`artifacts/api-server/src/services/airport/__tests__/layoverBuddySafetyGate.test.ts:293#the SAME instants are day at one airport and night at another`). The suite also covers a +05:30 zone, a DST fall-back, fail-closed inputs, the route at 23:00 local (`artifacts/api-server/src/services/airport/__tests__/layoverBuddySafetyGate.test.ts:324#a night layover requires a verified`), tight and night combined (`artifacts/api-server/src/services/airport/__tests__/layoverBuddySafetyGate.test.ts:358#tight AND night`), and a night already behind the traveller. Red on main: the suite does not load (no night export), and no request applied a requirement at 23:00. Mutants: 11 on the arm, all killed (arm off; each edge flipped; end made inclusive; zone ignored; invalid zone and NaN opened; long-span shortcut opened; reason order swapped; requirement keyed to tight only; window start taken from landing instead of now).
 
@@ -11228,7 +11228,7 @@ per-abort choice?* Nothing here answers it. The plan's fail-closed default is bu
    No reason, time, place, actor id or metadata. The source id is an opaque digest of crew + session
    (`artifacts/api-server/src/services/layover/LayoverCrewAbortNotice.ts:268#export function crewAbortNoticeSourceId(`).
    The template has no push channel
-   (`artifacts/api-server/src/services/notifications/NotificationTemplateService.ts:1190#eventType: 'layover.crew.member_heading_back',`).
+   (`artifacts/api-server/src/services/notifications/NotificationTemplateService.ts:1210#eventType: 'layover.crew.member_heading_back',`).
 6. **A count, never a person.** The abort publishes `crewNotifiedCount` and a named reason; crewmates' ids are not on
    the wire (`artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:382#crewNotifiedCount: crew.notifiedCount,`;
    the `bindingMemberHidden` precedent, §48).

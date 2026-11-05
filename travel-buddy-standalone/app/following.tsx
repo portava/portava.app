@@ -19,6 +19,7 @@ export default function FollowingScreen() {
   const { userId, title } = useLocalSearchParams<{ userId?: string; title?: string }>();
   const [users, setUsers] = useState<FollowUser[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const navBarScrollHandler = useNavBarScrollHandler();
 
   const load = useCallback(async () => {
@@ -26,6 +27,8 @@ export default function FollowingScreen() {
     const res = userId ? await getUserFollowing(userId) : await getMyFollowing();
     if (res.ok && res.data) setUsers(res.data);
     else setUsers([]);
+    // A failed read is said as one, not shown as an empty list.
+    setLoadError(!res.ok);
     setLoading(false);
   }, [userId]);
 
@@ -50,11 +53,18 @@ export default function FollowingScreen() {
         <View style={s.center}>
           <ActivityIndicator color={color.signal} />
         </View>
+      ) : loadError ? (
+        <View style={s.center} testID="following-error">
+          <Text style={s.empty}>Following could not be loaded</Text>
+          <Pressable onPress={() => void load()} accessibilityRole="button" accessibilityLabel="Try loading following again">
+            <Text style={s.retry}>Try again</Text>
+          </Pressable>
+        </View>
       ) : users.length === 0 ? (
         <View style={s.center}>
           <UserPlus size={32} color={color.haze} />
           <Text style={s.empty}>Not following anyone yet</Text>
-          <Text style={s.emptySub}>People you follow will appear here.</Text>
+          <Text style={s.emptySub}>{userId ? 'People they follow will appear here.' : 'People you follow will appear here.'}</Text>
         </View>
       ) : (
         <FlatList
@@ -98,6 +108,7 @@ const s = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: space.sm },
   empty: { ...t.body, color: color.mute, fontWeight: '600' },
   emptySub: { ...t.small, color: color.faint },
+  retry: { ...t.bodyStrong, color: color.signal, marginTop: space.sm },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

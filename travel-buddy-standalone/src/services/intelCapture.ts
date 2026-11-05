@@ -149,6 +149,9 @@ export function submitTrailMovement(args: TrailMovementArgs): Promise<CaptureRes
 export interface ProposeResult {
   ok: boolean;
   claim?: { id: string; [k: string]: unknown };
+  /** The server says this caller may approve (a reviewer). False for a traveller,
+   *  and for an older server that does not send it. */
+  canApprove?: boolean;
   code?: string;
   error?: string;
 }
@@ -160,7 +163,7 @@ export async function proposeClaim(observationId: string): Promise<ProposeResult
     const res = await authedFetch(`${INTEL_BASE}/observations/${observationId}/claims:propose`, { method: 'POST' });
     if (!res.ok) return { ok: false, ...(await readError(res)) };
     const data = await res.json();
-    return { ok: true, claim: data?.claim };
+    return { ok: true, claim: data?.claim, canApprove: data?.canApprove === true };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? 'network_error' };
   }

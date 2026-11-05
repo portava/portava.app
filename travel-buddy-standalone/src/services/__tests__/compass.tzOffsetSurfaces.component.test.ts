@@ -1,0 +1,109 @@
+/**
+ * Verifies every time-aware Compass call sends the device's real UTC offset
+ * (tzOffsetMinutes) — feed, feed sections, ask, recommendations (all
+ * surfaces), and telegraph — matching /compass/home, so evening styling
+ * follows the traveler's clock even without a saved timezone.
+ *
+ * Run via:
+ *   npx jest src/services/__tests__/compass.tzOffsetSurfaces.component.test.ts
+ */
+import assert from 'node:assert/strict';
+
+process.env.EXPO_PUBLIC_SUPABASE_URL ??= 'https://test.supabase.co';
+process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ??= 'test-anon-key';
+process.env.EXPO_PUBLIC_API_BASE_URL = 'http://api.test';
+
+let compass: typeof import('../compass.ts');
+
+let calls: Array<{ url: string; body?: string }> = [];
+
+const realFetch = globalThis.fetch;
+globalThis.fetch = ((url: string, init?: RequestInit) => {
+  calls.push({ url: String(url), body: init?.body ? String(init.body) : undefined });
+  return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+}) as typeof fetch;
+
+afterAll(() => { globalThis.fetch = realFetch; });
+
+// +0 normalizes -0 (UTC devices) so strict equality doesn't trip on sign.
+const expected = -new Date().getTimezoneOffset() + 0;
+
+function assertQueryOffset(url: string) {
+  const raw = new URL(url).searchParams.get('tzOffsetMinutes');
+  assert.notEqual(raw, null);
+  assert.equal(Number(raw) + 0, expected);
+}
+
+describe('Compass surfaces send tzOffsetMinutes', () => {
+  beforeAll(async () => {
+    compass = require('../compass.ts');
+  });
+
+  beforeEach(() => {
+    calls = [];
+    compass._setTestAuthToken('test-token');
+  });
+
+  // Restated (testing-mode WP-12, COMP-F03): the full GET /compass/feed is
+  // RETIRED from the client. Compass Home (/compass/home, the server-built
+  // projection CPV2-05 asks for) and the per-section feed below are what the
+  // app renders; a whole-feed call had no screen and would be a second
+  // recommendation surface. There is no longer a feed call to carry an offset —
+  // the section call below still does.
+  it('the full feed is retired: no fetchCompassFeed, and no client source calls GET /compass/feed', async () => {
+    assert.equal((compass as Record<string, unknown>).fetchCompassFeed, undefined);
+    const { readFileSync, readdirSync, statSync } = require('node:fs');
+    const path = require('node:path');
+    const { join } = path;
+    const root = join(__dirname, '../../..');
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        if (name === 'node_modules' || name === '__tests__') continue;
+        const full = path.resolve(dir, name);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (/\.(ts|tsx)$/.test(name) && /\/api\/compass\/feed\?/.test(readFileSync(full, 'utf8'))) offenders.push(full);
+      }
+    };
+    walk(join(root, 'src'));
+    walk(join(root, 'app'));
+    assert.deepEqual(offenders, []);
+  });
+
+  it('feed section appends tzOffsetMinutes', async () => {
+    await compass.fetchCompassSection('tonight', {});
+    assert.equal(calls.length, 1);
+    assertQueryOffset(calls[0].url);
+  });
+
+  it('ask includes tzOffsetMinutes in the body', async () => {
+    await compass.postCompassAsk('what should I do tonight?');
+    assert.equal(calls.length, 1);
+    const body = JSON.parse(calls[0].body ?? '{}');
+    assert.equal(Number(body.tzOffsetMinutes) + 0, expected);
+  });
+
+  it('recommendations appends tzOffsetMinutes', async () => {
+    await compass.fetchCompassRecommendations({ surface: 'explore' });
+    assert.equal(calls.length, 1);
+    assertQueryOffset(calls[0].url);
+  });
+
+  it('buddy matches appends tzOffsetMinutes', async () => {
+    await compass.fetchCompassBuddyMatches({});
+    assert.equal(calls.length, 1);
+    assertQueryOffset(calls[0].url);
+  });
+
+  it('traveler matches appends tzOffsetMinutes', async () => {
+    await compass.fetchCompassTravelerMatches({});
+    assert.equal(calls.length, 1);
+    assertQueryOffset(calls[0].url);
+  });
+
+  it('telegraph appends tzOffsetMinutes', async () => {
+    await compass.fetchCompassTelegraphCards('thread-1');
+    assert.equal(calls.length, 1);
+    assertQueryOffset(calls[0].url);
+  });
+});

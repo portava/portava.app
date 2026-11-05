@@ -38,6 +38,12 @@ describe('TripHero — §8 readiness explained, never a percentage', () => {
     expect(screen.queryByText(/\d+ ?%/)).toBeNull();
   });
 
+  it("the meta line is the trip's real visibility, not travelStyle · Open to Meet/Private (fields nothing sets)", async () => {
+    await render(<TripHero trip={{ ...mockTripDetail, visibility: 'public', travelStyle: '', openToMeet: false }} />);
+    expect(screen.getByText('Public trip')).toBeTruthy();
+    expect(screen.queryByText(/Open to Meet|· Private/)).toBeNull();
+  });
+
   it('an older server with a number but no headline still gets no percentage', async () => {
     await render(<TripHero trip={{ ...mockTripDetail, progress: 70, readinessHeadline: null }} />);
     expect(screen.getByText('What is ready, and what is not:')).toBeTruthy();

@@ -272,7 +272,7 @@ It is not. The file is discovered by `scripts/run-node-tests.mjs`, is not exclud
 executes 12 assertions across 4 suites, all passing.
 
 The `ERR_REQUIRE_CYCLE_MODULE` is real but belongs to the **runner**, not the file. The
-runner spawns `node --import tsx/esm --test` (`scripts/run-node-tests.mjs:170`), and under
+runner spawns `node --import tsx/esm --test` (`scripts/run-node-tests.mjs:122`), and under
 Node 22 every one of the 260 discovered files fails to load that way - 257 fail, 3 pass.
 Swapping only the loader to `--import tsx` runs the same 260 files to 6,028 passing tests,
 exit 0. CI pins Node 24 (`.github/workflows/ci.yml:61`), where `require(esm)` cycle rules

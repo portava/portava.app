@@ -134,6 +134,7 @@ function EventsTabScreen() {
   // ── Near-me location request ───────────────────────────────────────────────
   const [nearMeRequested, setNearMeRequested] = useState(false);
   const [nearMeLoading, setNearMeLoading]     = useState(false);
+  const [nearMeOutcome, setNearMeOutcome]     = useState<'idle' | 'empty' | 'failed' | 'no_location'>('idle');
 
   // ── Optimistic save state ──────────────────────────────────────────────────
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
@@ -310,37 +311,47 @@ function EventsTabScreen() {
   }, [loading, error, todayEvents, tomorrowEvents, weekendEvents, followingEvents, categoryRows, saveEventsSnapshot]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Near-me load ───────────────────────────────────────────────────────────
-  async function handleNearMeRequest() {
-    if (!locationState.coords) {
-      setNearMeRequested(true);
-      await requestLocation();
-      if (!locationState.coords) {
-        Alert.alert(
-          'Location not available',
-          'Enable location in your device settings, or search by city instead.',
-          [{ text: 'OK' }],
-        );
-        return;
-      }
-    }
-    if (!locationState.coords) return;
+  // requestLocation() resolves before this render sees the new coords, so the
+  // old code read a stale `locationState` right after it and always alerted
+  // "Location not available", even when permission had just been granted. The
+  // fetch now runs from the effect below once coords arrive, and every outcome
+  // (no fix, nothing nearby, a failed read) is said in the Near Me card.
+  async function loadNearMe(coords: { lat: number; lng: number }, km: number) {
     setNearMeLoading(true);
+    setNearMeOutcome('idle');
     const res = await listEvents({
-      nearLat: locationState.coords.lat,
-      nearLng: locationState.coords.lng,
-      nearRadiusKm: radiusKm,
+      nearLat: coords.lat,
+      nearLng: coords.lng,
+      nearRadiusKm: km,
       limit: 15,
     });
-    if (res.ok) setNearMeEvents((res.data?.events ?? []).filter((e) => !myEventIdsRef.current.has(e.id)));
+    if (res.ok) {
+      const found = (res.data?.events ?? []).filter((e) => !myEventIdsRef.current.has(e.id));
+      setNearMeEvents(found);
+      setNearMeOutcome(found.length === 0 ? 'empty' : 'idle');
+    } else {
+      setNearMeOutcome('failed');
+    }
     setNearMeLoading(false);
   }
 
+  async function handleNearMeRequest(km: number = radiusKm) {
+    if (locationState.coords) { await loadNearMe(locationState.coords, km); return; }
+    setNearMeRequested(true);
+    setNearMeOutcome('idle');
+    await requestLocation();
+  }
+
   useEffect(() => {
-    if (nearMeRequested && locationState.coords) {
-      handleNearMeRequest();
+    if (!nearMeRequested) return;
+    if (locationState.coords) {
       setNearMeRequested(false);
+      loadNearMe(locationState.coords, radiusKm);
+    } else if (locationState.permissionStatus === 'denied') {
+      setNearMeRequested(false);
+      setNearMeOutcome('no_location');
     }
-  }, [locationState.coords, nearMeRequested]);
+  }, [locationState.coords, locationState.permissionStatus, nearMeRequested]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Save toggle ────────────────────────────────────────────────────────────
   async function handleSaveToggle(ev: EventListItem) {
@@ -353,12 +364,19 @@ function EventsTabScreen() {
       return next;
     });
     try {
-      if (wasSaved) {
-        await unsaveEvent(ev.id);
-        setSavedEvents((prev) => prev.filter((e) => e.id !== ev.id));
-      } else {
-        await saveEvent(ev.id);
+      const res = wasSaved ? await unsaveEvent(ev.id) : await saveEvent(ev.id);
+      if (!res.ok) {
+        // The heart flipped before the write; a refused write flips it back and says so.
+        setSavedIds((prev) => {
+          const next = new Set(prev);
+          if (wasSaved) next.add(ev.id); else next.delete(ev.id);
+          return next;
+        });
+        Alert.alert(wasSaved ? "Couldn't remove from saved" : "Couldn't save event", res.message ?? 'Please try again.');
+        return;
       }
+      if (wasSaved) setSavedEvents((prev) => prev.filter((e) => e.id !== ev.id));
+      else setSavedEvents((prev) => (prev.some((e) => e.id === ev.id) ? prev : [ev, ...prev]));
     } finally {
       savingLockRef.current.delete(ev.id);
     }
@@ -546,7 +564,7 @@ function EventsTabScreen() {
                 <Pressable
                   key={r.km}
                   style={[styles.chip, radiusKm === r.km && styles.chipActive]}
-                  onPress={() => { setRadiusKm(r.km); if (locationState.coords) handleNearMeRequest(); }}
+                  onPress={() => { setRadiusKm(r.km); if (locationState.coords) handleNearMeRequest(r.km); }}
                 >
                   <Text style={[styles.chipText, radiusKm === r.km && styles.chipTextActive]}>{r.label}</Text>
                 </Pressable>
@@ -816,8 +834,9 @@ function EventsTabScreen() {
                 </View>
                 <Pressable
                   style={styles.nearMePrompt}
-                  onPress={handleNearMeRequest}
+                  onPress={() => handleNearMeRequest()}
                   disabled={nearMeLoading}
+                  accessibilityRole="button"
                 >
                   {nearMeLoading ? (
                     <ActivityIndicator size="small" color={color.signal} />
@@ -829,7 +848,15 @@ function EventsTabScreen() {
                       {nearMeLoading ? 'Looking for events nearby…' : 'Find events near you'}
                     </Text>
                     {!nearMeLoading && (
-                      <Text style={styles.nearMeSubtitle}>Tap to enable location and see what's happening close by</Text>
+                      <Text style={styles.nearMeSubtitle}>
+                        {nearMeOutcome === 'empty'
+                          ? `No events within ${radiusKm} km right now. Try a wider radius, or tap to look again.`
+                          : nearMeOutcome === 'failed'
+                            ? "We couldn't load events near you. Tap to try again."
+                            : nearMeOutcome === 'no_location'
+                              ? 'Location is off for Portava. Turn it on in your device settings, or search by city.'
+                              : "Tap to enable location and see what's happening close by"}
+                      </Text>
                     )}
                   </View>
                 </Pressable>
@@ -880,7 +907,7 @@ function EventsTabScreen() {
                 title="Sign in to see events"
                 description="Discover events from travellers around you."
               />
-            ) : nearMeRequested && !locationState.coords ? (
+            ) : nearMeOutcome === 'no_location' ? (
               <EmptyState
                 icon={MapPin}
                 title="Location not available"
