@@ -25,7 +25,7 @@ export interface TelegraphShareProjection {
   subtitle: string | null;
   imageUrl: string | null;
   projectionVersion: string | null;
-  deepLink: string;
+  deepLink: string; /** census-telegraph T265: on a PLACE, Discovery's own why-now and its validity, when Discovery would serve one. */ liveIntelligence?: PlaceLiveIntelligenceWire | null;
 }
 
 export type ResolvedShare =
@@ -249,3 +249,5 @@ export function normalizeLegacySourceId(raw: unknown): string | null {
   const id = t.startsWith('db/') ? t.slice(3) : t;
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ? id : null;
 }
+
+import type { PlaceLiveIntelligenceWire } from './placeLiveIntelligence.ts'; // census-telegraph T265 (appended so cited lines keep their numbers)

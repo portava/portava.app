@@ -9,7 +9,7 @@ import { Router, type Request, type Response } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { HIDDEN_ITEM_VISIBILITY, setItemVisibility } from "../services/memory/memoryItemVisibility.js";
+import { HIDDEN_ITEM_VISIBILITY, setItemVisibility } from "../services/memory/memoryItemVisibility.js"; import { readMemoryCommandEnvelope } from "../lib/memoryCommandBus.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -28,8 +28,8 @@ router.put("/memories/:id/items/:itemId/visibility", asyncHandler(async (req: Re
   if (error) { sendError(res, "degraded_unavailable", "Your Memory could not be read. Please try again."); return; }
   const row = data as { owner_id: string; state: string | null } | null;
   if (!row || row.owner_id !== auth.user.id || row.state === "deleted") { sendError(res, "not_found", "Memory not found"); return; }
-  const out = await setItemVisibility(sc, { memoryId: id, itemId, visibility: raw });
-  if (out.ok) { res.status(204).send(); return; }
+  const envelope = readMemoryCommandEnvelope(req); const out = await setItemVisibility(sc, { memoryId: id, itemId, visibility: raw, actorUserId: auth.user.id, idempotencyKey: envelope.ok ? envelope.idempotencyKey : "", kernelEnvelopeError: envelope.ok ? null : envelope.message }); // census-highlights-memories §CC (3912): CHANGE_ITEM_VISIBILITY through the §17 kernel
+  if (out.ok) { res.status(204).send(); return; } if (out.reason === "invalid_payload") { sendError(res, "invalid_payload", out.detail); return; }
   if (out.reason === "not_deployed") { sendError(res, "feature_disabled", "Photo privacy is not available yet."); return; }
   if (out.reason === "not_found") { sendError(res, "not_found", "Photo not found"); return; }
   req.log.error({ detail: out.detail }, "memory item visibility: write failed");

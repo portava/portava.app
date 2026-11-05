@@ -60,7 +60,7 @@ router.get(
 
     const result = await searchConversations(sc, auth.user.id, q, {
       buckets: parseBuckets(req.query["types"]),
-      limit: Number(req.query["limit"] ?? 40),
+      limit: Number(req.query["limit"] ?? 40), negotiation: await structuredNegotiation(sc, req.headers as Record<string, unknown>), // census-telegraph T431
     });
     res.status(200).json(result);
   }),
@@ -111,7 +111,7 @@ router.get(
     const sc = getServiceClient();
     if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-    const { structured, prose, result } = await askConversation(sc, auth.user.id, threadId, q);
+    const { structured, prose, result } = await askConversation(sc, auth.user.id, threadId, q, await structuredNegotiation(sc, req.headers as Record<string, unknown>)); // census-telegraph T431
     res.status(200).json({
       query: result.query,
       // §21: structured plans/decisions/actions are PREFERRED over inferred
@@ -127,3 +127,5 @@ router.get(
 );
 
 export default router;
+
+import { structuredNegotiation } from "../../services/telegraph/platformReadDecorations.js"; // census-telegraph T431 (batch 4), at the foot so no cited line moves

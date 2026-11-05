@@ -39,8 +39,8 @@ export type SaveFromPostRefusal =
   | 'failed';
 
 export type SaveFromPostResult =
-  | { ok: true; itemId: string | null }
-  | { ok: false; kind: SaveFromPostRefusal; message: string };
+  | { ok: true; itemId: string | null; mediaCount?: number }
+  | { ok: false; kind: SaveFromPostRefusal; message: string; mediaCount?: number };
 
 /** The sentence a person sees for each outcome. The server's own words are kept where it sent them. */
 export const SAVE_FROM_POST_COPY: Readonly<Record<SaveFromPostRefusal, string>> = {
@@ -103,9 +103,9 @@ export async function saveOwnPostMediaToMemory(input: {
       body: JSON.stringify({ postId: input.postId, mediaIndex: input.mediaIndex, position: input.position ?? input.mediaIndex }),
     });
     const body = await res.json().catch(() => ({}));
-    if (res.ok) return { ok: true, itemId: typeof body?.item?.id === 'string' ? body.item.id : null };
+    if (res.ok) return { ok: true, itemId: typeof body?.item?.id === 'string' ? body.item.id : null, ...serverMediaCount(body) };
     const kind = refusalFor(res.status, body);
-    return { ok: false, kind, message: SAVE_FROM_POST_COPY[kind] };
+    return { ok: false, kind, message: SAVE_FROM_POST_COPY[kind], ...serverMediaCount(body) };
   } catch (e) {
     const kind: SaveFromPostRefusal = isNetworkError(e) ? 'network' : 'failed';
     return { ok: false, kind, message: SAVE_FROM_POST_COPY[kind] };
@@ -129,14 +129,25 @@ export interface SavePostReport {
  * would succeed. A retryable failure part-way stops too, and the report says
  * exactly how many made it, so the screen can say "2 of 3 saved" rather than
  * "saved" or "failed".
+ *
+ * THE COUNT (2026-10-25, #808 verdict finding 2). `mediaCount` is the screen's
+ * estimate and only opens the copy at index 0. From the first answer on, the
+ * server's own count (`mediaCount` on every answer about the caller's post)
+ * replaces it, so no index past the server's list is ever asked for. Should
+ * the server answer "no media at that position" for an index at or past the
+ * count it states, the post simply has fewer media: the copy ends there and
+ * reports the server's total — it is not a refusal (fail closed, never a
+ * half-saved error the person cannot act on).
  */
 export async function saveOwnPostToMemory(input: { memoryId: string; postId: string; mediaCount: number }): Promise<SavePostReport> {
-  const total = Math.max(0, Math.min(MAX_POST_MEDIA, Math.floor(input.mediaCount)));
-  const report: SavePostReport = { saved: 0, alreadyThere: 0, total, refusal: null };
-  for (let i = 0; i < total; i++) {
+  const cap = (n: number) => Math.max(0, Math.min(MAX_POST_MEDIA, Math.floor(n)));
+  const report: SavePostReport = { saved: 0, alreadyThere: 0, total: cap(input.mediaCount), refusal: null };
+  for (let i = 0; i < report.total; i++) {
     const r = await saveOwnPostMediaToMemory({ memoryId: input.memoryId, postId: input.postId, mediaIndex: i });
+    if (r.mediaCount !== undefined) report.total = cap(r.mediaCount);
     if (r.ok) { report.saved++; continue; }
     if (r.kind === 'already_saved') { report.alreadyThere++; continue; }
+    if (r.kind === 'no_media' && r.mediaCount !== undefined && i > 0 && i >= r.mediaCount) break; // past the server's list: done, not refused
     report.refusal = r.kind;
     break;
   }
@@ -155,4 +166,16 @@ export function describeSavePostReport(report: SavePostReport, memoryTitle: stri
   }
   if (report.saved === 0 && report.alreadyThere > 0) return `Already in ${where}.`;
   return report.total === 1 ? `Saved to ${where}.` : `All ${report.total} saved to ${where}.`;
+}
+
+// ── 2026-10-25, PR #808 verdict finding 2 — appended at the TAIL so no cited line above moves ──
+
+/**
+ * How many media the SERVER says the post has (2026-10-25, #808 verdict finding 2). The route stamps `mediaCount` on
+ * every answer about the caller's own post (api-server memoryFromOwnMedia.ts stampPostMediaCount); it is the one
+ * count this module follows. Anything that is not a whole number ≥ 0 is no count at all.
+ */
+function serverMediaCount(body: any): { mediaCount?: number } {
+  const n = body?.mediaCount;
+  return typeof n === 'number' && Number.isInteger(n) && n >= 0 ? { mediaCount: n } : {};
 }

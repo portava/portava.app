@@ -240,10 +240,10 @@ router.post(
     });
 
     // The realtime payload is the target thread's own facts — nothing about the source.
-    void notifyNewMessage(sc, { threadId, senderId: user.id, messageId, msgType: decision.msgType, subtype: decision.subtype, nowMs: Date.parse(createdAt) || Date.now() }, { log }); /* census-telegraph T256 (wave 5 safety lane): a forward is a message the forwarder sent — reachable only with telegraph_forwarding_enabled ON (refused above while off) */ void publishToThread(sc, threadId, {
+    void notifyNewMessage(sc, { threadId, senderId: user.id, messageId, msgType: decision.msgType, subtype: decision.subtype, nowMs: Date.parse(createdAt) || Date.now() }, { log }); /* census-telegraph T256 (wave 5 safety lane): a forward is a message the forwarder sent — reachable only with telegraph_forwarding_enabled ON (refused above while off) */ void publishMessageCreated(sc, threadId, {
       type: "message.created",
       payload: { messageId, senderId: user.id, msgType: decision.msgType, subtype: decision.subtype, createdAt },
-    });
+    }, { excludeUserId: user.id }); // census-telegraph batch 2: the ONE publisher (V-TR F1) — with fan-out in force the drainer announces this row, so a direct publish here announced every forward twice
   }),
 );
 
@@ -347,3 +347,5 @@ router.get(
 );
 
 export default router;
+
+import { publishMessageCreated } from "../lib/telegraphOutboxDrainScheduler.js"; // appended at the foot so every cited line keeps its number

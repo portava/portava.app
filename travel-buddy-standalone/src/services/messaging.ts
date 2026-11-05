@@ -169,7 +169,7 @@ export interface Message {
   senderName: string | null;
   senderAvatarUrl: string | null;
   body: string | null;
-  deleted: boolean;
+  deleted: boolean; /** census T370: the server's reaction aggregate ([{ emoji, count, mine }]), null when unreadable, absent when not served. */ reactions?: Array<{ emoji: string; count: number; mine: boolean }> | null; /** census T406/T407: the capability in force, and the provenance word on a forward. */ contentCapability?: string; forwarded?: { provenance: string } | null;
   createdAt: string;
   editedAt: string | null;
   displayBody: string | null;

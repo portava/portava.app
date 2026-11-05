@@ -193,3 +193,15 @@ describe('applyReadToReceipts — a read event only ever upgrades', () => {
     expect(applyReadToReceipts(before, 'u-2', () => false).get(M1)!.status).toBe('SENT');
   });
 });
+
+// ── census-telegraph T73 (lane TELEGRAPH batch 2) — appended so cited lines keep their numbers ──
+describe('T73 — DELIVERED from the server cursor survives the screen closing', () => {
+  it('a stored delivered:true reads Delivered with no live observation at all', () => {
+    expect(ownMessageStatus({ deliveryStatus: 'sent', receipt: receipt({ delivered: true, deliveredUnavailableReason: null }), receiptsState: 'ready' }).kind).toBe('delivered');
+  });
+  it('Seen still outranks it; a measured false or a null is not Delivered', () => {
+    expect(ownMessageStatus({ deliveryStatus: 'sent', receipt: receipt({ status: 'SEEN', seenBy: 1, delivered: true }), receiptsState: 'ready' }).kind).toBe('seen');
+    expect(ownMessageStatus({ deliveryStatus: 'sent', receipt: receipt({ delivered: false, deliveredUnavailableReason: null }), receiptsState: 'ready' }).kind).toBe('sent');
+    expect(ownMessageStatus({ deliveryStatus: 'sent', receipt: receipt({ delivered: null }), receiptsState: 'ready' }).kind).toBe('sent');
+  });
+});

@@ -634,7 +634,7 @@ router.delete('/messages/:messageId', asyncHandler(async (req, res) => {
   // The payload carries the ID and not the body, because there is no body left:
   // the row above redacted it in place. A consumer wanting the old text is
   // asking for exactly the thing the delete removed.
-  void publishToThread(sc, m.thread_id, {
+  void publishMessageLifecycle(sc, m.thread_id, { // census T154 (batch 3): the outbox announces it when fan-out is on
     type: 'message.deleted',
     payload: { messageId, deletedAt: now, senderId: user.id },
   }, { excludeUserId: user.id });
@@ -695,3 +695,4 @@ router.post('/circles/:circleId/chat/sync', asyncHandler(async (req, res) => {
 }));
 
 export default router;
+import { publishMessageLifecycle } from '../lib/telegraphOutboxDrainScheduler.js'; // census T154 (batch 3), at the foot so no cited line moves

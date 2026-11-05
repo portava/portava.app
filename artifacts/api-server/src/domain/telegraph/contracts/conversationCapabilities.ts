@@ -106,7 +106,7 @@ export const CAPABILITY_ENFORCEMENT_SITES: Record<ConversationCapabilityName, st
   canCall: "routes/calls.ts — canUserStartCall / canUserStartGroupCall / canUserJoinCall",
   canCreatePlan: "routes/telegraphCommands.ts — trip membership re-verified at execution",
   canShareExactLocation: "routes/safeReturn.ts + trip_crew_location_sessions.visibility_level",
-  canInvite: null,          // §14.3: no add-participant operation exists on any thread
+  canInvite: "routes/telegraphGroups.ts POST /threads/:threadId/add-people — a DM forms a NEW group (3660): flag, actor restriction, every pair", // census-telegraph T201
   canRequestPayment: null,  // §20: no in-chat payment request exists, by policy
   canCreateBooking: "routes/rentABuddy.ts — enforceBookingCreationGates / checkBookingKycGate",
   canBroadcast: null,       // §14.1 names it; no broadcast primitive exists

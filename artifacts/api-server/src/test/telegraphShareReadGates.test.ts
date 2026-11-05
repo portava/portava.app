@@ -876,3 +876,38 @@ describe("Telegraph share card — a Memory's city takes the §10 precision gate
     assert.equal(r.projection?.subtitle, "Hue");
   });
 });
+
+// ── census-highlights-memories §CD (H33): and the owner's per-audience ceiling ──
+// memory_visibility_policies (3997) is applied in production and its switch is ON. Before §CD
+// this card read §10's per-Memory rung alone, so a `public` ceiling of `country` still let the
+// city out to every reader of a shared Memory.
+describe("Telegraph share card — a Memory's city is never finer than its owner's ceiling for the Memory's audience (H33)", () => {
+  const withCeiling = (rows: Row[], policies = true): Record<string, Row[]> => {
+    const db = precisionWorld(true, "exact");
+    db.feature_flags = [...(db.feature_flags ?? []), { flag: "memory_visibility_policies_enabled", enabled: policies }];
+    db.memory_visibility_policies = rows;
+    return db;
+  };
+  const ceiling = (audience: string, rung: string): Row[] => [{ owner_id: BOB, audience, location_precision: rung }];
+
+  it("a `public` ceiling of `country` (or `hidden`): the card resolves with NO city, though the Memory's own rung is `exact`", async () => {
+    for (const rung of ["country", "hidden"]) {
+      const r = await card("MEMORY", M_PUBLIC, withCeiling(ceiling("public", rung)));
+      assert.equal(r.available, true, rung);
+      assert.equal(r.projection?.subtitle, null, rung);
+    }
+  });
+
+  it("a policy table that cannot be read: no city — never `exact`", async () => {
+    const r = await card("MEMORY", M_PUBLIC, withCeiling([]), new Set(["memory_visibility_policies"]));
+    assert.equal(r.available, true);
+    assert.equal(r.projection?.subtitle, null);
+  });
+
+  it("controls: no ceiling, a ceiling for another audience, the switch off, and the owner's own card keep the city", async () => {
+    assert.equal((await card("MEMORY", M_PUBLIC, withCeiling([]))).projection?.subtitle, "Hue");
+    assert.equal((await card("MEMORY", M_PUBLIC, withCeiling(ceiling("followers", "hidden")))).projection?.subtitle, "Hue");
+    assert.equal((await card("MEMORY", M_PUBLIC, withCeiling(ceiling("public", "hidden"), false))).projection?.subtitle, "Hue");
+    assert.equal((await card("MEMORY", M_PUBLIC, withCeiling(ceiling("public", "hidden")), new Set(), BOB)).projection?.subtitle, "Hue");
+  });
+});

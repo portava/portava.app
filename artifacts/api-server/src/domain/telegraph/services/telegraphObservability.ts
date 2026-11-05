@@ -73,17 +73,17 @@ export const TELEGRAPH_SLOS: readonly TelegraphSlo[] = [
     requirement: "duplicate canonical messages = 0 under the idempotency contract",
     target: { kind: "count", max: 0 },
     severity: "delivery",
-    status: "partially_measured",
-    emitters: ["src/middlewares/telegraphObservability.ts"],
+    status: "measured",
+    emitters: ["src/middlewares/telegraphObservability.ts", "src/lib/telegraphCanonicalSlo.ts"],
     note:
-      "The middleware remembers the (threadId, clientId) pairs it has seen accepted " +
-      "and counts a second acceptance as a violation. That is a REAL detector for " +
-      "the case that actually happens — an offline client retrying a send that did " +
-      "in fact land — and it is bounded by this process's memory: a duplicate " +
-      "across two instances, or across a restart, is not seen. The exact version " +
-      "needs the idempotency key the send path does not have (T231); until then " +
-      "this is a floor on the true number, never a ceiling, and it is labelled " +
-      "as one.",
+      "Measured EXACTLY from the canonical store (census T347, migration 3937): " +
+      "telegraph_duplicate_canonical_messages() counts the rows one sender put into " +
+      "one conversation under one idempotency key beyond the first, read by the " +
+      "audited diagnostics route (lib/telegraphCanonicalSlo.ts); an unreadable count " +
+      "is unknown, never zero. The middleware's in-process detector stays as the live " +
+      "floor between reads. A message carrying no key (pre-2810, or a client that " +
+      "sent none) is outside the contract and counted neither way; the store also " +
+      "reports how many keys the contract covers.",
   },
   {
     id: "SLO-03",
@@ -93,15 +93,15 @@ export const TELEGRAPH_SLOS: readonly TelegraphSlo[] = [
     requirement: "unsend-after-seen violations = 0",
     target: { kind: "count", max: 0 },
     severity: "privacy",
-    status: "unmeasurable",
-    emitters: [],
+    status: "measured",
+    emitters: ["src/services/telegraph/unsend.ts"],
     note:
-      "Vacuously zero: there is no unsend operation in this tree, so there is " +
-      "nothing that could violate it. Declared with its target anyway, and that " +
-      "is the point of declaring it — when unsend lands (PR #472, unmerged, " +
-      "CI-only) the target already exists and the person building it does not " +
-      "also have to remember to define one. A zero produced by absence is not a " +
-      "measurement and is not counted as one.",
+      "Counted where every unsend is decided — the locked function both doors call " +
+      "(census T348): a verdict, unsent or refused, is ok; no verdict is unknown (the " +
+      "gate refused without knowing); `unsent` while the function reports a recipient " +
+      "who had seen it is a violation. A counter cannot prove a negative: the zero is " +
+      "established by the lock itself (T77, the receipt FOR UPDATE seen in pg_locks), " +
+      "and this counts whether the gate ran with knowledge, as SLO-04 and SLO-05 do.",
   },
   {
     id: "SLO-04",

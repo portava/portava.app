@@ -253,7 +253,7 @@ router.post(
       });
     }
 
-    const resolved = await resolveShareProjections(client, user.id, threadId, refs, req.log);
+    const resolved = await resolveShareProjections(client, user.id, threadId, refs, req.log); await narrowShareActions(viewerCapabilityLookup(client, user.id, req.log), threadId, resolved); /* census-telegraph T445: each card offers only what THIS viewer may do in this thread (services/telegraph/shareActionAuthority.ts) */
 
     // §30A.16 (T431): an action this client has not declared it can perform, at
     // the version the server requires, is not offered. A client that declares
@@ -290,3 +290,5 @@ router.post(
 );
 
 export default router;
+
+import { narrowShareActions, viewerCapabilityLookup } from "../services/telegraph/shareActionAuthority.js"; // census-telegraph T445 (appended at the foot so every cited line keeps its number)

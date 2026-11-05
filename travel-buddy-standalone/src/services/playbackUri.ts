@@ -24,7 +24,7 @@ const STORAGE_PUBLIC_BUCKET_RE = /\/storage\/v1\/object\/public\/([^/?#]+)\//;
  *   2. Bare storage path: `<bucket>/<path>` — what the upload endpoints return (no scheme, bucket first).
  */
 export function storageBucketOf(url: string): string | null {
-  const m = STORAGE_PUBLIC_BUCKET_RE.exec(url);
+  const relay = relayStorageRefOf(url); if (relay) return relay.slice(0, relay.indexOf('/')); const m = STORAGE_PUBLIC_BUCKET_RE.exec(url); // 2026-10-24: a relay URL names a private object too (relayStorageRefOf, at the tail)
   if (m) return m[1] ?? null;
   if (!url.startsWith('//') && !url.includes('://')) {
     const slash = url.indexOf('/');
@@ -65,4 +65,33 @@ export function playbackUriState(raw: string | null | undefined, resolved: Recor
   if (typeof hydrated === 'string') return isLoadablePlaybackUri(hydrated) ? { state: 'ready', uri: hydrated } : { state: 'unavailable' };
   if (isLoadablePlaybackUri(raw)) return { state: 'ready', uri: raw };
   return isPrivateMediaRefOf(raw) ? { state: 'resolving' } : { state: 'unavailable' };
+}
+
+// ── 2026-10-24, video on every surface — appended at the TAIL so no cited line above moves ───────────────────────
+// The API's private-media relay, relative or absolute: `[https://<api>]/api/media/file/<bucket>/<path>[?…]`
+// (api-server lib/mediaFeedItem.ts relayUrlFor; the Watch, grid and /media/:id payloads carry it).
+const RELAY_RE = /^(?:https?:\/\/[^/?#]+)?\/api\/media\/file\/([^/?#]+)\/([^?#]+)/i;
+
+/**
+ * The bare `<bucket>/<path>` a relay URL names, or null when `url` is not a relay URL into a PRIVATE bucket.
+ *
+ * The relay answers only a request carrying `Authorization: Bearer` (api-server routes/mediaFile.ts requireUser).
+ * A player or an <Image> sends no such header, so a relay URL handed to one is a 401. A relay URL is therefore a
+ * private-bucket ref like any other: it is signed through POST /api/media/sign (which takes the bare form) and is
+ * never handed to a player as it is. Any origin is accepted: the sign endpoint authorizes the object for THIS
+ * viewer, so a relay link can only ever yield what the viewer may already see.
+ */
+export function relayStorageRefOf(url: string): string | null {
+  const m = typeof url === 'string' ? RELAY_RE.exec(url) : null;
+  if (!m) return null;
+  let bucket: string;
+  let path: string;
+  try { bucket = decodeURIComponent(m[1] ?? ''); path = decodeURIComponent(m[2] ?? ''); } catch { return null; }
+  if (!PRIVATE_MEDIA_BUCKETS.includes(bucket) || !path || path.split('/').includes('..')) return null;
+  return `${bucket}/${path}`;
+}
+
+/** The form POST /api/media/sign accepts for `url`: a relay URL's bare ref, anything else unchanged. */
+export function signableMediaRef(url: string): string {
+  return relayStorageRefOf(url) ?? url;
 }

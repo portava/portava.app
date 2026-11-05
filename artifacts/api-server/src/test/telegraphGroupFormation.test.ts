@@ -382,3 +382,36 @@ describe("the flag (3660, seeded OFF) — existing behaviour unchanged when off"
     assert.equal(c._observed.inserts.length, 0);
   });
 });
+
+// ── #786 verifier probe V6, committed: the ACTOR must be allowed to message each added person ──
+describe("§14.3 the ACTOR must be allowed to message each added person, not only the partner (#786 verifier V6)", () => {
+  it("refuses when the added person accepts messages only from people they follow, and follows the partner but not the actor", async () => {
+    const c = use({
+      user_message_settings: [{ user_id: C, message_privacy: "following", allow_message_requests: true }],
+      user_follows: [{ follower_id: C, following_id: B }],
+    });
+    const r = await addPeople(DM, { userIds: [C] });
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(groups(c).length, 0);
+  });
+  it("control: the same person, following BOTH, can be added", async () => {
+    const c = use({
+      user_message_settings: [{ user_id: C, message_privacy: "following", allow_message_requests: true }],
+      user_follows: [{ follower_id: C, following_id: B }, { follower_id: C, following_id: A }],
+    });
+    const r = await addPeople(DM, { userIds: [C] });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(groups(c).length, 1);
+  });
+});
+
+// ── #786 verifier: the route now applies canInvite's own rule — a non-active DM forms no group ──
+describe("§14.3 an ARCHIVED DM forms no group, as canInvite says (#786 verifier)", () => {
+  it("refuses with source_not_active and writes nothing", async () => {
+    const c = use({ message_threads: [thread(DM, "direct", { status: "archived" }), thread(DM_LEFT, "direct"), thread(TRIP_T, "trip")] });
+    const r = await addPeople(DM, { userIds: [C] });
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(groups(c).length, 0);
+    assert.equal(c._observed.inserts.length, 0);
+  });
+});

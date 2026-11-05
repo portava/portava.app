@@ -92,7 +92,7 @@ export function useAnnouncementAcknowledgement(opts: {
     if (!alive.current || !r.ok) return;
     const row = r.data.announcements.find((a) => a.messageId === messageId);
     if (!row) return;
-    setCount(row.acknowledgedBy.length);
+    setCount(typeof row.acknowledgedCount === 'number' ? row.acknowledgedCount : row.acknowledgedBy.length); // census-telegraph T417: a bounded roster's acknowledgedBy is a sample; the count is exact
     setAcknowledged(viewerId ? row.acknowledgedBy.some((a) => a.userId === viewerId) : false);
   }, [enabled, threadId, messageId, viewerId]);
 

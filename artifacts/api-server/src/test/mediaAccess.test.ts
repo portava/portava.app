@@ -1812,3 +1812,105 @@ describe("census-media §28.8 — an unreadable header setting masks with the ge
     assert.ok(r.location?.includes("generic"), `an unreadable setting must mask, got: ${r.location}`);
   });
 });
+
+// ── 2026-10-24, video on every surface: the relay URLs the feeds hand out serve bytes only behind auth and the
+// post's own gates. Watch, the grid and /media/:id name a private post's video by GET /api/media/file/… (and the
+// adaptive player by /api/media/adaptive/…). The client now signs those through POST /api/media/sign instead of
+// handing them to a player; these cases pin that the relay itself never serves an unauthenticated request and
+// applies the same visibility / block gates as the post, for an upload stored the 3924 / #795 way (a post_media
+// row, an empty media_urls). No server code changed for this: the routes already called requireUser.
+//   RG1  no bearer token → 401 on every media-serving relay route, and nothing is signed or read
+//   RG2  an upload post's row: a public post's viewer is served (302 to a signed URL); a followers-only or private
+//        post, an unpublished post, a viewer the author blocked, and a rejected row are each refused
+describe("relay gate — the media relays require auth and the post's gates (2026-10-24)", () => {
+  let gateServer: http.Server;
+  let gateBase = "";
+  let adaptiveCalls = 0;
+  before(() => {
+    const app = express();
+    app.use(express.json());
+    app.use((r: any, _res: any, next: any) => { r.log = { error() {}, info() {}, warn() {}, debug() {} }; next(); });
+    app.use("/api", mediaFileRouter);
+    app.use("/api", createMediaAdaptiveRouter(() => ({
+      playback: async () => { adaptiveCalls++; return { manifest: "x" } as any; },
+      readFile: async () => { adaptiveCalls++; return Buffer.from("x"); },
+    })));
+    return new Promise<void>((resolve) => { gateServer = app.listen(0, "127.0.0.1", () => { gateBase = `http://127.0.0.1:${(gateServer.address() as any).port}`; resolve(); }); });
+  });
+  after(() => new Promise<void>((r) => gateServer.close(() => r())));
+
+  function raw(method: string, path: string, auth: string | null, body?: unknown): Promise<{ status: number; location?: string; body: any }> {
+    return new Promise((resolve, reject) => {
+      const url = new URL(path, gateBase);
+      const payload = body ? JSON.stringify(body) : null;
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (auth) headers.authorization = auth;
+      if (payload) headers["content-length"] = String(Buffer.byteLength(payload));
+      const r = http.request({ hostname: url.hostname, port: Number(url.port), path: url.pathname + url.search, method, headers }, (res) => {
+        let text = ""; res.on("data", (c) => (text += c));
+        res.on("end", () => { let b: any; try { b = JSON.parse(text); } catch { b = text; } resolve({ status: res.statusCode ?? 0, location: res.headers.location as string | undefined, body: b }); });
+      });
+      r.on("error", reject);
+      if (payload) r.write(payload);
+      r.end();
+    });
+  }
+
+  const KEY = `${OWNER}/1792727980484.mov`;
+  const uploadPost = (over: Record<string, unknown> = {}, rowOver: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) => ({
+    posts: [{ id: "post-up", author_id: OWNER, visibility: "public", status: "active", post_status: "published", trip_id: null, media_urls: [], ...over }],
+    postMedia: [{ id: "pm-up", post_id: "post-up", user_id: OWNER, storage_bucket: "post-media", storage_path: KEY, public_url: `post-media/${KEY}`,
+      media_type: "video", processing_status: "ready", moderation_status: "pending", ...rowOver }],
+    ...extra,
+  });
+
+  it("RG1 no bearer token: 401 on every media-serving relay, nothing signed or read", async () => {
+    let reads = 0;
+    const counting = makeClient(uploadPost());
+    const from = counting.from.bind(counting);
+    counting.from = (t: string) => { reads++; return from(t); };
+    setClients(counting);
+    for (const auth of [null, "Basic abc", "Bearer "]) {
+      const routes: Array<[string, string, unknown?]> = [
+        ["GET", `/api/media/file/post-media/${KEY}`],
+        ["POST", "/api/media/sign", { urls: [`post-media/${KEY}`] }],
+        ["GET", `/api/media/adaptive/source?source=${encodeURIComponent(`post-media/${KEY}`)}`],
+        ["GET", "/api/media/adaptive/d2000000-0000-4000-a000-000000000001/playback"],
+        ["GET", "/api/media/adaptive/d2000000-0000-4000-a000-000000000001/1/index.m3u8"],
+      ];
+      for (const [method, path, body] of routes) {
+        const r = await raw(method, path, auth, body);
+        assert.equal(r.status, 401, `${method} ${path} with ${auth ?? "no auth"}: ${JSON.stringify(r.body)}`);
+        assert.equal(r.location, undefined);
+      }
+    }
+    assert.equal(reads, 0, "no table is read for an unauthenticated request");
+    assert.equal(adaptiveCalls, 0);
+  });
+
+  it("RG2 an upload post's row: served to a viewer the post allows, refused by every gate the post has", async () => {
+    const get = () => raw("GET", `/api/media/file/post-media/${KEY}`, `Bearer ${TOKEN}`);
+    _clearMediaAccessCache();
+    setClients(makeClient(uploadPost()));
+    const ok = await get();
+    assert.equal(ok.status, 302);
+    assert.ok(ok.location?.includes("/object/sign/post-media/") && ok.location.includes("token=signed"), ok.location);
+    const refused: Array<[string, any]> = [
+      ["followers-only post, a viewer who does not follow", uploadPost({ visibility: "followers" })],
+      ["private post", uploadPost({ visibility: "private" })],
+      ["unpublished (scheduled) post", uploadPost({ post_status: "scheduled" })],
+      ["the author blocked the viewer", uploadPost({}, {}, { blocks: [{ blocker_id: OWNER, blocked_id: VIEWER }] })],
+      ["the viewer blocked the author", uploadPost({}, {}, { blocks: [{ blocker_id: VIEWER, blocked_id: OWNER }] })],
+      ["a rejected row", uploadPost({}, { moderation_status: "rejected" })],
+    ];
+    for (const [why, state] of refused) {
+      _clearMediaAccessCache();
+      setClients(makeClient(state));
+      const r = await get();
+      assert.equal(r.status, 403, `${why}: ${r.status} ${r.location ?? JSON.stringify(r.body)}`);
+      assert.equal(r.location, undefined, why);
+    }
+  });
+});
+
+import { createMediaAdaptiveRouter } from "../routes/mediaAdaptive.js";
