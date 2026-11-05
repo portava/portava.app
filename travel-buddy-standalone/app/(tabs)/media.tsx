@@ -145,21 +145,10 @@ function MediaScreenInner() {
         </View>
       )}
 
-      {/* ── Grid mode: subtle create button at top-right (screen coordinates)
-          Rendered here — not inside GridFeed — so `top` is measured from the
-          screen's safe-area origin, not GridFeed's offset container.         */}
-      {selectedMode === 'grid' && (
-        <Pressable
-          style={[styles.gridCreateBtn, { top: insets.top + 8 }]}
-          onPress={() => router.push('/create')}
-          accessibilityRole="button"
-          accessibilityLabel="Create a post"
-          hitSlop={8}
-        >
-          <Camera size={18} color={color.ink} strokeWidth={2} />
-        </Pressable>
-      )}
-
+      {/* Grid mode has no second, top-right create button: the FAB below is
+          already "Create a post" in Grid, and the extra one sat in the mode
+          selector's row, where four chips (World · Watch · Grid · Gems) reach
+          it on 375 and 390 pt wide phones. */}
       {/* ── Floating create button ───────────────────────────────────── */}
       {/* In Gems mode: Gem icon that opens the quick-create sheet.
           In Watch / Grid: Camera icon that navigates directly to /create. */}
@@ -300,20 +289,5 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     letterSpacing: -0.2,
-  },
-  // Grid-mode create button: subtle, positioned at screen top-right (not inside
-  // the GridFeed offset container, so safe-area inset is not double-counted).
-  gridCreateBtn: {
-    position: 'absolute',
-    right: 16,
-    width: avatar.s36, height: avatar.s36,
-    borderRadius: avatar.s36 / 2,
-    backgroundColor: color.paperRaised,
-    borderWidth: 1,
-    borderColor: color.haze,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 20,
-    ...shadow.card,
   },
 });

@@ -180,7 +180,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Surface | V | Evidence |
 | --- | --- | --- | --- |
-| P2 | Passport Home | C | `travel-buddy-standalone/app/(tabs)/passport.tsx` — identity card (`:723#<PassportIdentityCard`), stats row, quick links (`:52#PassportQuickLinks`), home previews (`:53#PassportHomePreviews`). *(Corrected 2026-09-27, verdict unmoved: the path is spelled out so it cannot resolve to the repo-root mock; the identity card moved from 719 to 723, and 52 and 53 still hold the two imports.)* |
+| P2 | Passport Home | C | `travel-buddy-standalone/app/(tabs)/passport.tsx` — identity card (`:727#<PassportIdentityCard`), stats row, quick links (`:52#PassportQuickLinks`), home previews (`:53#PassportHomePreviews`). *(Corrected 2026-09-27, verdict unmoved: the path is spelled out so it cannot resolve to the repo-root mock; the identity card moved from 719 to 723, and 52 and 53 still hold the two imports.)* |
 | P3 | Stamps | C | `services/passport/UnifiedStampService.ts` + `src/components/passport/PassportStampCollection.tsx`, `src/components/stamps/StampDetailModal.tsx`. |
 | P4 | Journeys | C | `services/passport/PassportJourneyService.ts`; `src/features/passport/JourneysScreen.tsx`; route `app/passport/journeys.tsx`. |
 | P5 | Memories | C | `services/passport/PassportMemoryService.ts`; `src/components/MemoriesTab.tsx`; viewer path now real (P77/F3 below). |
@@ -2136,7 +2136,7 @@ person could not see a collection, how much of it they had earned, or what stamp
   — two views: *Collections* (earned of total, a progress bar, "Complete") and *All stamps*
   (the active catalog grouped by category). Every state is a true one:
   `travel-buddy-standalone/app/stamp-collections.tsx:36#return r.disabled ? { state: 'disabled' } : { state: 'error' };`.
-  Entry: the Stamps screen header, `travel-buddy-standalone/app/stamps.tsx:115#router.push('/stamp-collections' as never)`.
+  Entry: the Stamps screen header, `travel-buddy-standalone/app/stamps.tsx:117#router.push('/stamp-collections' as never)`.
 
 ### 22.3 Tests, seen red, and mutations
 

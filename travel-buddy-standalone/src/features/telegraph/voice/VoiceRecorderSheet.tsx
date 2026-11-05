@@ -47,6 +47,7 @@ import {
   recordingShouldStop,
 } from './voicePolicy.ts';
 import { uploadVoiceRecording, sendVoiceMessage } from './voiceApi.ts';
+import { applyPlaybackAudioMode } from '../../../services/audio/playbackAudioMode.ts';
 
 /** The slice of `expo-av`'s `Audio.Recording` this sheet uses. */
 export interface VoiceRecorderHandle {
@@ -63,14 +64,47 @@ export type RecorderFactory = () => Promise<
 async function createExpoAvRecorder(): ReturnType<RecorderFactory> {
   try {
     const { Audio } = await import('expo-av');
+    return await startExpoAvRecording(Audio);
+  } catch {
+    return { ok: false, reason: 'error' };
+  }
+}
+
+/** The slice of expo-av's `Audio` the recorder uses. */
+export type RecorderAudio = Pick<typeof import('expo-av').Audio, 'requestPermissionsAsync' | 'setAudioModeAsync' | 'Recording' | 'RecordingOptionsPresets'>;
+
+/**
+ * The expo-av recorder, given the `Audio` module. Separate from the lazy import
+ * above only so a test can hand it a stand-in (jest cannot run a dynamic import).
+ *
+ * Stopping hands the session back to playback. It used to stay in
+ * allowsRecordingIOS (iOS PlayAndRecord), which plays through the EARPIECE:
+ * after one voice note the review playback and every video afterwards were
+ * nearly silent until the app restarted (services/audio/playbackAudioMode.ts).
+ */
+export async function startExpoAvRecording(Audio: RecorderAudio): ReturnType<RecorderFactory> {
+  const restorePlayback = () => applyPlaybackAudioMode((mode) => Audio.setAudioModeAsync(mode));
+  try {
     const perm = await Audio.requestPermissionsAsync();
     if (!perm.granted) return { ok: false, reason: 'permission' };
     await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-    const { recording } = await Audio.Recording.createAsync({
-      ...Audio.RecordingOptionsPresets.HIGH_QUALITY,
-      isMeteringEnabled: true,
-    });
-    return { ok: true, recorder: recording as unknown as VoiceRecorderHandle };
+    let recording: InstanceType<typeof Audio.Recording>;
+    try {
+      ({ recording } = await Audio.Recording.createAsync({
+        ...Audio.RecordingOptionsPresets.HIGH_QUALITY,
+        isMeteringEnabled: true,
+      }));
+    } catch (e) {
+      await restorePlayback();
+      throw e;
+    }
+    const recorder: VoiceRecorderHandle = {
+      stopAndUnloadAsync: () => recording.stopAndUnloadAsync().finally(restorePlayback),
+      getURI: () => recording.getURI(),
+      setOnRecordingStatusUpdate: (cb) => recording.setOnRecordingStatusUpdate(cb),
+      setProgressUpdateInterval: (ms) => recording.setProgressUpdateInterval(ms),
+    };
+    return { ok: true, recorder };
   } catch {
     return { ok: false, reason: 'error' };
   }

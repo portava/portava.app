@@ -28,6 +28,8 @@ export interface UseRoutePlanResult {
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
+  /** Re-reads who is on the route (after joining or leaving it). */
+  refreshMembers: () => Promise<void>;
   markArrived: (stopId: string) => Promise<void>;
   skipStop: (stopId: string) => Promise<void>;
   patchStop: (stopId: string, payload: PatchStopPayload) => Promise<void>;
@@ -133,6 +135,8 @@ export function useRoutePlan({ planId, pollingEnabled = true }: UseRoutePlanOpti
     loading,
     error,
     refresh: load,
+    /** Re-reads who is on the route (after joining or leaving it). */
+    refreshMembers: loadMembers,
     markArrived,
     skipStop,
     patchStop,

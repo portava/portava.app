@@ -59,6 +59,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { reportCrash } from '@/src/lib/crashReporter';
 import { useCryptoInit } from '../src/hooks/useCryptoInit';
 import { supabase } from '../src/lib/supabase';
+import { recoveryLinkAction } from '../src/lib/recoveryLink';
 import { freshToken } from '../src/services/apiToken';
 import { getIntelConsent, hasValidConsent } from '../src/services/intelConsent';
 import {
@@ -341,32 +342,29 @@ function RootLayoutApp() { // the app; RootLayout (at the foot) renders it only 
   // Because detectSessionInUrl is false on the Supabase client (required for RN),
   // supabase-js never sees the URL on its own — we must feed it the tokens so it
   // can fire the PASSWORD_RECOVERY onAuthStateChange event above.
+  //
+  // ONLY the update-password route is handled here (src/lib/recoveryLink.ts
+  // decides). This used to exchange every deep link carrying `?code=`, which
+  // included the Google sign-in callback (travelbuddy://auth/callback?code=…):
+  // on Android that URL arrives here AND as the browser result signInWithGoogle
+  // awaits, the PKCE verifier is consumed by whichever exchange runs first, and
+  // the second reported "Google sign-in failed" over a session that existed.
+  // Any other link with a `code` parameter was handed to the auth server too.
   useEffect(() => {
     async function handleDeepLink(url: string) {
       try {
-        // ── PKCE flow: ?code=<authorization_code> ─────────────────────────────
-        const parsed = new URL(url);
-        const code = parsed.searchParams.get('code');
-        if (code) {
-          await supabase.auth.exchangeCodeForSession(code);
+        const action = recoveryLinkAction(url);
+        if (!action) return;
+        if (action.kind === 'pkce') {
+          await supabase.auth.exchangeCodeForSession(action.code);
           // onAuthStateChange PASSWORD_RECOVERY fires after exchange — routing
           // is handled there.
           return;
         }
-
-        // ── Implicit flow: #access_token=…&refresh_token=…&type=recovery ─────
-        const fragment = url.includes('#') ? url.split('#')[1] : '';
-        if (!fragment) return;
-        const params = new URLSearchParams(fragment);
-        const type = params.get('type');
-        const access_token = params.get('access_token');
-        const refresh_token = params.get('refresh_token');
-        if (type === 'recovery' && access_token && refresh_token) {
-          await supabase.auth.setSession({ access_token, refresh_token });
-          // onAuthStateChange PASSWORD_RECOVERY fires after setSession.
-        }
+        await supabase.auth.setSession({ access_token: action.accessToken, refresh_token: action.refreshToken });
+        // onAuthStateChange PASSWORD_RECOVERY fires after setSession.
       } catch {
-        // Non-fatal — if parsing fails the user stays on the current screen
+        // Non-fatal — if the exchange fails the user stays on the current screen
         // and can request another reset link.
       }
     }
@@ -407,7 +405,7 @@ function RootLayoutApp() { // the app; RootLayout (at the foot) renders it only 
                       <GeographicFieldsSetup />
                       <SensingCaptureSetup />
                       <MediaUploadResumeSetup />
-                      <MediaOfflineWarmupSetup />
+                      <MediaOfflineWarmupSetup /><PlaybackAudioModeSetup />
                       <CompassFrontloadSetup />
                       <WallAnalyticsSetup />
                       <StatusBar style="dark" />
@@ -483,6 +481,18 @@ function MediaOfflineWarmupSetup() {
 }
 import { useFeatureFlags } from '../src/context/FeatureFlagsContext';
 import { installMediaOfflineWarmup } from '../src/services/media/mediaOfflineDevice';
+
+/**
+ * Video and sound play through the iPhone's ringer switch, out of the speaker.
+ * Without this the session ran on expo-av's default (Ambient), so a phone on
+ * silent played every video with no sound — src/services/audio/playbackAudioMode.ts.
+ * Defined at the tail with its import, for the same reason as the setups above.
+ */
+function PlaybackAudioModeSetup() {
+  useEffect(() => { void applyPlaybackAudioMode(); }, []);
+  return null;
+}
+import { applyPlaybackAudioMode } from '../src/services/audio/playbackAudioMode';
 
 // ── Deployment consistency gate ─────────────────────────────────────────────
 // Appended at the foot so every line the censuses cite keeps its number; ES

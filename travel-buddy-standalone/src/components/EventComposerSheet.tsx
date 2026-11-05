@@ -30,6 +30,7 @@ import { formatEventLocation } from '../lib/location/formatEventLocation.ts';
 import { resolvePickedPlace } from '../lib/location/applyPickedPlace.ts';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { isTicketLinkRefusal, ticketLinkForSave } from '../lib/ticketLink.ts';
+import { changedFields } from '../lib/eventEditDiff.ts';
 interface Props {
   onDismiss: () => void;
   onCreated: (ev: EventSummary) => void;
@@ -310,15 +311,8 @@ export function EventComposerSheet({ onDismiss, onCreated, initialEvent, onUpdat
     if (prev) setStep(prev);
   }
 
-  async function handleSave(publishNow: boolean) {
-    if (uploadingCover) {
-      setError('Please wait for the cover upload to finish');
-      return;
-    }
-    setSaving(true);
-    setError(null);
-
-    const sharedFields = {
+  function buildSharedFields() {
+    return {
       title:        title.trim(),
       description:  description.trim() || undefined,
       locationName: locationName.trim() || undefined,
@@ -342,13 +336,35 @@ export function EventComposerSheet({ onDismiss, onCreated, initialEvent, onUpdat
       priceType,
       priceUrl:     ticketLinkForSave(priceType, priceUrl), // null, never undefined: Free or an emptied field REMOVES the stored link (REV-020)
     };
+  }
+
+  // Edit mode: the fields as they were when the sheet opened, so a save sends
+  // only what the host changed. PATCH /events/:id pushes "Event updated" to
+  // everyone going whenever a time or place field is in the body, and refuses
+  // a co-host any body that carries state or visibility.
+  const initialSharedRef = React.useRef<Record<string, unknown> | null>(null);
+  if (isEditMode && initialSharedRef.current === null) initialSharedRef.current = buildSharedFields();
+
+  async function handleSave(publishNow: boolean) {
+    if (uploadingCover) {
+      setError('Please wait for the cover upload to finish');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+
+    const sharedFields = buildSharedFields();
 
     // ── Edit mode ───────────────────────────────────────────────────────────
     if (isEditMode && initialEvent) {
-      const updateInput: UpdateEventInput = {
-        ...sharedFields,
-        state: publishNow ? 'open' : 'draft',
-      };
+      // The event keeps its state: publishing, postponing and cancelling are
+      // the Host Dashboard's controls, not an edit.
+      const updateInput = changedFields(sharedFields, initialSharedRef.current ?? {}) as UpdateEventInput;
+      if (Object.keys(updateInput).length === 0) {
+        setSaving(false);
+        onUpdated?.(initialEvent);
+        return;
+      }
       const res = await updateEvent(initialEvent.id, updateInput);
       setSaving(false);
       if (!res.ok || !res.data) {

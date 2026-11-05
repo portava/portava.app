@@ -23,6 +23,7 @@ import {
   type AcousticPermission,
 } from '../../lib/sensing/acousticPermission.ts';
 import type { AcousticMeterSource, Unsubscribe } from './sensingCapture.ts';
+import { applyPlaybackAudioMode } from '../audio/playbackAudioMode.ts';
 
 /** How often a level is read. Fast enough for a tempo, far below speech rates. */
 export const ACOUSTIC_METER_INTERVAL_MS = 250;
@@ -109,7 +110,11 @@ export function createAcousticMeterSource(
             else releaseUncertain = true;
           }
           if (modeAttempted) {
-            try { await Audio?.setAudioModeAsync?.({ allowsRecordingIOS: false }); } catch { releaseUncertain = true; }
+            // The FULL playback mode, not { allowsRecordingIOS: false }: expo-av fills every key a call
+            // leaves out from the last mode, so that partial reset kept playsInSilentModeIOS: false from
+            // above and videos went silent behind the ringer switch (services/audio/playbackAudioMode.ts).
+            const setMode = Audio?.setAudioModeAsync;
+            if (setMode && !(await applyPlaybackAudioMode(setMode))) releaseUncertain = true;
           }
           await deleteOwnedRecording(releasedUri);
         }

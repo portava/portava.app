@@ -3,12 +3,16 @@
  *
  * Three sections:
  *   Share   — Post, Story, Memory, Add a Gem
- *   Plan    — Event, Trip, Plan
- *   Contribute — Add Place, Review Place, Recommend Hidden Gem
+ *   Plan    — Event, Trip
+ *   Contribute — Review Place, Recommend Hidden Gem
  *
- * Routes that don't have a live destination show a "Soon" badge and are
- * rendered disabled so they never crash. Every live action navigates to
- * its existing route after closing the sheet.
+ * Every row opens a live screen after closing the sheet. Plan and Add Place
+ * were "Soon" rows with nothing behind them and were removed (2026-11-04):
+ * a day-by-day plan lives inside a trip (TripPlanSection), and a new spot on
+ * the map goes in as a gem, which has moderation. Review Place opens place
+ * search; a place's page carries its reviews and the Write a review button.
+ * A row without a route still renders as a disabled "Soon" row, so a future
+ * entry can never crash.
  */
 import React from 'react';
 import {
@@ -26,9 +30,7 @@ import {
   BookImage,
   CalendarDays,
   MapPin,
-  Compass,
   Gem,
-  Plus,
   Star,
   X,
 } from 'lucide-react-native';
@@ -100,32 +102,16 @@ const PLAN_ENTRIES: HubEntry[] = [
     iconColor: '#059669',
     route: '/trip/new',
   },
-  {
-    id: 'plan',
-    label: 'Plan',
-    sublabel: 'Build a day-by-day itinerary',
-    icon: Compass,
-    iconColor: '#7C3AED',
-    // No live route yet — shows "Soon" badge
-  },
 ];
 
 const CONTRIBUTE_ENTRIES: HubEntry[] = [
   {
-    id: 'add_place',
-    label: 'Add Place',
-    sublabel: 'Put a new spot on the map',
-    icon: Plus,
-    iconColor: '#D97706',
-    // No live route yet — shows "Soon" badge
-  },
-  {
     id: 'review_place',
     label: 'Review Place',
-    sublabel: "Rate and review somewhere you've been",
+    sublabel: "Find somewhere you've been and rate it",
     icon: Star,
     iconColor: '#F59E0B',
-    // No live route yet — shows "Soon" badge
+    route: '/search?type=places',
   },
   {
     id: 'hidden_gem',

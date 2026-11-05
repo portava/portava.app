@@ -3,7 +3,7 @@
  * whether each one is still running.
  *
  * ── WHY THIS FILE EXISTS ─────────────────────────────────────────────────────
- * `index.ts` starts 66 schedulers at boot (65 until layover lane 5's presence expiry sweep, census L196, which like the crew sweep leaves no trace; 64 until the Telegraph safety re-drive (Fable pass 3 §1.1), which reports and writes job_health; 63 until lane T-REL's message-media parts sweep, which reports; 62 until lane T-REL's Telegraph outbox drainer and 61 until H-REST's highlight expiry events, each of which reports and writes job_health; 60 until both lane R's layover audit retention sweep and lane H's Memory deletion redrive were merged, 58 until #549; each of those three reports, and the redrive also writes job_health). Every one is a `setInterval` inside
+ * `index.ts` starts 69 schedulers at boot (68 until the scheduler heartbeat, which reports and writes job_health so the 45 holds; 66 until layover lane 5's presence expiry sweep, census L196, which like the crew sweep leaves no trace; 64 until the Telegraph safety re-drive (Fable pass 3 §1.1), which reports and writes job_health; 63 until lane T-REL's message-media parts sweep, which reports; 62 until lane T-REL's Telegraph outbox drainer and 61 until H-REST's highlight expiry events, each of which reports and writes job_health; 60 until both lane R's layover audit retention sweep and lane H's Memory deletion redrive were merged, 58 until #549; each of those three reports, and the redrive also writes job_health). Every one is a `setInterval` inside
  * the process, and `.replit` sets `deploymentTarget = "autoscale"`, which
  * suspends a container after fifteen idle minutes; a suspended container's
  * event loop does not advance. On 2026-09-30 15:28 all 58 stopped together and
@@ -116,7 +116,7 @@ export const STARTED_SCHEDULERS: readonly SchedulerRow[] = [
   { start: "startPushRetryWorker" },
   { start: "startRankingDebugSamplePurgeScheduler", reportedAs: ["rankingDebugSamplePurge"], persists: ["rankingDebugSamplePurge"] }, // census-discovery §133 (DV-52): reports and writes job_health, so the 45 holds and 68 are started
   { start: "startRankingFatigueSweeper" },
-  { start: "startSafeReturnScheduler" }, { start: "startSafetySignalRedriveScheduler", reportedAs: ["safetySignalRedrive"], persists: ["safetySignalRedrive"] }, // Fable pass 3 §1.1: reports and writes job_health, so the 45 holds; line-neutral
+  { start: "startSafeReturnScheduler" }, { start: "startSafetySignalRedriveScheduler", reportedAs: ["safetySignalRedrive"], persists: ["safetySignalRedrive"] }, { start: "startSchedulerHeartbeat", reportedAs: ["schedulerHeartbeat"], persists: ["scheduler_heartbeat"] }, // Fable pass 3 §1.1: reports and writes job_health, so the 45 holds; lib/schedulerHeartbeat.ts: one beat a minute for the whole process, so a stop of all 69 at once is measured (45 holds); line-neutral
   { start: "startSensingPublicationScheduler" },
   { start: "startSensingRetentionScheduler" },
   { start: "startStoryRetentionScheduler", reportedAs: ["storyRetention"], persists: ["storyRetention"] },

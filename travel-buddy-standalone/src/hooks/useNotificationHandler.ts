@@ -22,6 +22,7 @@ import {
   getLastNotificationResponseAsync,
   addNotificationResponseReceivedListener,
 } from '../lib/safeNotifications.ts';
+import { normalizeNotificationRoute } from '../lib/notificationRoute.ts';
 
 type NotifData = Record<string, unknown> | null | undefined;
 
@@ -29,7 +30,7 @@ function resolveRoute(data: NotifData): string | null {
   if (!data) return null;
 
   if (typeof data.actionUrl === 'string' && data.actionUrl.length > 0) {
-    return data.actionUrl;
+    return normalizeNotificationRoute(data.actionUrl);
   }
 
   if (data.screen === 'availability' && typeof data.tripId === 'string') {

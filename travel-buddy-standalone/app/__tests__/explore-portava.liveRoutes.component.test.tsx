@@ -12,7 +12,7 @@
  *   - Hidden Gems    → /gems
  *   - Blocked Accounts → /blocked-users
  *   - Muted Accounts   → /muted-users
- *   - Report a Problem → /profile/edit/reports
+ *   - Your Reports → /profile/edit/reports (it lists the reports you sent; it was labelled "Report a Problem")
  *
  * For each row this suite asserts:
  *   1. The row is not marked `disabled`.
@@ -52,7 +52,7 @@ describe('ExplorePortavaScreen SECTIONS — live route wiring', () => {
     { key: 'hidden-gems',  label: 'Hidden Gems',      expectedRoute: '/gems' },
     { key: 'acc-blocked',  label: 'Blocked Accounts', expectedRoute: '/blocked-users' },
     { key: 'acc-muted',    label: 'Muted Accounts',   expectedRoute: '/muted-users' },
-    { key: 'acc-report',   label: 'Report a Problem', expectedRoute: '/profile/edit/reports' },
+    { key: 'acc-report',   label: 'Your Reports', expectedRoute: '/profile/edit/reports' },
     // Following/Followers must route to the correct, distinct screens — not
     // swapped, and not a dead route — so tapping either never dead-ends.
     { key: 'following',    label: 'Following',        expectedRoute: '/following' },

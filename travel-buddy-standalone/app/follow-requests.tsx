@@ -6,6 +6,7 @@ import {
 import { useFocusEffect, router } from 'expo-router';
 import { UserCheck } from 'lucide-react-native';
 import { AppHeader } from '../src/components/ui/AppHeader';
+import { ErrorState } from '../src/components/ui/ErrorState';
 import { Avatar } from '../src/components/ui/Avatar';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 import {
@@ -19,13 +20,16 @@ export default function FollowRequestsScreen() {
   const [requests, setRequests] = useState<FollowRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [responding, setResponding] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const navBarScrollHandler = useNavBarScrollHandler();
 
   const load = useCallback(async () => {
     setLoading(true);
     const res = await getMyFollowRequests();
+    // A failed read used to empty the list and say "No pending requests", so
+    // a private account's requests looked like they were not there.
     if (res.ok && res.data) setRequests(res.data);
-    else setRequests([]);
+    setLoadFailed(!res.ok);
     setLoading(false);
   }, []);
 
@@ -49,6 +53,10 @@ export default function FollowRequestsScreen() {
       {loading ? (
         <View style={s.center}>
           <ActivityIndicator color={color.signal} />
+        </View>
+      ) : loadFailed && requests.length === 0 ? (
+        <View style={s.center} testID="follow-requests-load-error">
+          <ErrorState message="Your follow requests could not be loaded." onRetry={() => { void load(); }} />
         </View>
       ) : requests.length === 0 ? (
         <View style={s.center}>

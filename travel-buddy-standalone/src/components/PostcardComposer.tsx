@@ -71,17 +71,20 @@ interface PickedAsset {
 
 const VISIBILITIES: { key: PostcardVisibility; label: string }[] = [
   { key: 'public',   label: 'Public' },
-  { key: 'trip_only', label: 'Trip crew only' },
+  { key: 'trip_only', label: 'Trip crew only' }, // offered only with a tripId — see `visibilities` below
   { key: 'private',  label: 'Only me' },
 ];
 
 interface Props {
   visible: boolean;
   onClose: () => void;
-  onSuccess: () => void; /** census-layover L275: a postcard of this COMPLETED layover. The place comes from the layover, the picker is off, and it starts as Only me. */ layover?: LayoverPostcardSource | null;
+  onSuccess: () => void; /** census-layover L275: a postcard of this COMPLETED layover. The place comes from the layover, the picker is off, and it starts as Only me. */ layover?: LayoverPostcardSource | null; /** The trip this postcard is posted to (sent as `tripId`). Without one there is no crew to show it to, so "Trip crew only" is not offered. */ tripId?: string | null;
 }
 
-export function PostcardComposer({ visible, onClose, onSuccess, layover = null }: Props) {
+export function PostcardComposer({ visible, onClose, onSuccess, layover = null, tripId = null }: Props) {
+  // "Trip crew only" used to be offered with no trip: the postcard was stored
+  // trip_only with trip_id null, which nobody but its author could ever see.
+  const visibilities = tripId ? VISIBILITIES : VISIBILITIES.filter((v) => v.key !== 'trip_only'); const tripFields = tripId ? { tripId } : {};
   const insets = useSafeAreaInsets();
   const [phase, setPhase] = useState<Phase>('pick');
   const [asset, setAsset] = useState<PickedAsset | null>(null);
@@ -298,7 +301,7 @@ export function PostcardComposer({ visible, onClose, onSuccess, layover = null }
     const postRes = await createPostcard({
       caption: caption.trim() || undefined,
       visibility,
-      ...postcardLocationFields(place, layover), // census-layover L275: a layover postcard sends only its layover id
+      ...postcardLocationFields(place, layover), ...tripFields, // census-layover L275: a layover postcard sends only its layover id
       addToPassport: true,
     });
 
@@ -459,7 +462,7 @@ export function PostcardComposer({ visible, onClose, onSuccess, layover = null }
       }),
       caption: caption.trim() || undefined,
       visibility,
-      location: { ...postcardLocationFields(place, layover) },
+      location: { ...postcardLocationFields(place, layover), ...tripFields },
       addToPassport: true,
       stampOverlay: stampOverlay && !upload.isVideo ? completePayloadFromDraft(stampOverlay) : undefined,
     });
@@ -730,7 +733,7 @@ export function PostcardComposer({ visible, onClose, onSuccess, layover = null }
                 </Pressable>
                 {showVis && (
                   <View style={s.visDropdown}>
-                    {VISIBILITIES.map((v) => (
+                    {visibilities.map((v) => (
                       <Pressable
                         key={v.key}
                         style={[s.visOption, visibility === v.key && s.visOptionActive]}

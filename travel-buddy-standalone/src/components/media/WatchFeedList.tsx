@@ -29,7 +29,7 @@ import {
   Text,
   Image,
   Animated,
-  type ViewToken, AppState,
+  type ViewToken, AppState, Platform,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -491,7 +491,7 @@ export function WatchFeedList({
   const tapToPlay = useMediaSurfaceDecisions().tapToPlay; const playback = useWatchPlayback({ autoplay: !tapToPlay }); // census-media §34 (F2): tapToPlay false — the seed — is today's autoplaying manager and cells
 
   // Mute state — persisted to AsyncStorage.
-  const [isMuted, setIsMuted] = useState(true);
+  const [isMuted, setIsMuted] = useState(Platform.OS === 'web'); // 2026-11-04: sound on in the app ("the videos have no sound"); web starts muted because browsers refuse to autoplay with sound
 
   useEffect(() => {
     AsyncStorage.getItem(MUTE_KEY).then((val) => {

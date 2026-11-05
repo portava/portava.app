@@ -54,12 +54,21 @@ export default function AvailabilityScreen() {
   const days = availability.weekly?.days ?? {};
   const [saved, setSaved] = useState(false);
   const [settingQuick, setSettingQuick] = useState<QuickStatus | null>(null);
+  const [quickError, setQuickError] = useState<string | null>(null);
 
-  const status = resolveStatus(availability, new Date().toISOString(), 'cebu');
+  // The city is the one a trip window of yours covers today (it was a fixed
+  // 'cebu', so "On a trip" showed only for trips to Cebu).
+  const nowISO = new Date().toISOString();
+  const todaysTripCity = (availability.trips ?? []).find((t) => {
+    const now = Date.parse(nowISO);
+    return now >= Date.parse(t.startDate) && now <= Date.parse(`${t.endDate}T23:59:59`);
+  })?.citySlug;
+  const status = resolveStatus(availability, nowISO, todaysTripCity);
 
   async function onSave() {
-    await save();
-    if (!saveError) {
+    // `saveError` read here would be the value from the render that started
+    // the save, so a failed save used to flash "Saved!". save() answers.
+    if (await save()) {
       setSaved(true);
       setTimeout(() => setSaved(false), 1800);
     }
@@ -67,8 +76,10 @@ export default function AvailabilityScreen() {
 
   async function onQuickPill(key: QuickStatus) {
     setSettingQuick(key);
-    await setQuickStatus(key);
+    setQuickError(null);
+    const ok = await setQuickStatus(key);
     setSettingQuick(null);
+    if (!ok) setQuickError("Couldn't update your status. Check your connection and try again.");
   }
 
   return (
@@ -116,6 +127,7 @@ export default function AvailabilityScreen() {
               );
             })}
           </View>
+          {quickError ? <Text style={s.errorText} accessibilityLiveRegion="polite">{quickError}</Text> : null}
         </View>
 
         {/* Weekly rhythm */}

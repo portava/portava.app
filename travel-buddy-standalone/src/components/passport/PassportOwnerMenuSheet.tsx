@@ -252,8 +252,9 @@ const SECTIONS: Section[] = [
         label: 'My Stories',
         Icon: Film,
         iconColor: '#7B5CE5',
-        live: false,
-        action: (_p) => {},
+        live: true,
+        // /stories opens your own story (viewer, or the composer when you have none).
+        action: (p) => { closeThenNavigate(p.onClose, '/stories'); },
       },
       {
         key: 'story-archive',
@@ -277,7 +278,9 @@ const SECTIONS: Section[] = [
         Icon: Calendar,
         iconColor: '#D97706',
         live: true,
-        action: (p) => { closeThenNavigate(p.onClose, '/events/list'); },
+        // The Events hub (drafts, invites, hosting, going). /events/list is the
+        // public browse list, so "My Events" there showed other people's events.
+        action: (p) => { closeThenNavigate(p.onClose, '/(tabs)/events'); },
       },
       {
         key: 'my-trips',
@@ -294,14 +297,6 @@ const SECTIONS: Section[] = [
         iconColor: '#D4A017',
         live: true,
         action: (p) => { closeThenNavigate(p.onClose, '/saved'); },
-      },
-      {
-        key: 'drafts',
-        label: 'Drafts',
-        Icon: FileText,
-        iconColor: '#6B6862',
-        live: false,
-        action: (_p) => {},
       },
     ],
   },

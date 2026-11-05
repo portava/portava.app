@@ -30,7 +30,7 @@ import { SEARCH_FIELD_IDS } from '../src/platform/input-assistance/search/search
 import type { InputSuggestion } from '../src/platform/input-assistance/types/inputSuggestion';
 import { TripWishlistPicker, type AddToTripPayload } from '../src/components/discovery/TripWishlistPicker';
 import { usePlainBottomInset } from '../src/hooks/useBottomInset';
-import { resolveRoute } from '../src/components/search/searchNav';
+import { resolveRoute, taxonomySearchTerm } from '../src/components/search/searchNav';
 import { color, space, radius, type as t } from '../src/theme/tokens';
 
 type TabKey = 'all' | 'travelers' | 'events' | 'trips' | 'places' | 'hashtags';
@@ -446,11 +446,11 @@ export default function SearchScreen() {
       submitSearch(submitQuery);
       return;
     }
-    const route = resolveRoute(result);
-    if (route) {
+    const route = resolveRoute(result); const term = taxonomySearchTerm(result); // a language / interest / vibe row is a search for that word — run it here, not on a new search screen
+    if (route && !term) {
       router.push(route as any);
     } else {
-      submitSearch(trimmed);
+      submitSearch(term ?? trimmed);
     }
   }
 
@@ -915,7 +915,7 @@ export default function SearchScreen() {
           renderItem={({ item }) => (
             <SearchResultCard
               result={item}
-              onActionStateChange={handleActionStateChange}
+              onActionStateChange={handleActionStateChange} onSearchTerm={submitSearch}
             />
           )}
           contentContainerStyle={{ paddingBottom: plainInset }}

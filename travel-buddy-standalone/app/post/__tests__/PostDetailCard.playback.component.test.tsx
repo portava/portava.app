@@ -2,8 +2,9 @@
  * PostDetailCard — video playback integration test.
  *
  * Renders the REAL SharedVideoPlayer (no stub) through the PostDetailCard
- * mounting path with autoplay=false, then asserts that pressing the
- * "Play video" tap zone calls playAsync on the Video ref.
+ * mounting path. Opening a video post plays it at once WITH sound
+ * (2026-11-04: "videos should play on auto and the videos have no sound"),
+ * and pressing the tap zone of the playing video pauses it.
  *
  * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
@@ -46,11 +47,38 @@ jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
+// Every focus effect the screen registers: blurScreen() runs their cleanups (another
+// screen pushed on top), focusScreen() runs them again (back in front).
+type MockFocusEntry = { run: () => void | (() => void); cleanup: void | (() => void) };
+const mockFocusEffects = new Set<MockFocusEntry>();
 jest.mock('expo-router', () => ({
   ...jest.requireActual('expo-router'),
   useLocalSearchParams: () => ({ id: 'post-abc' }),
   router: { push: jest.fn(), back: jest.fn() },
+  useFocusEffect: (effect: () => void | (() => void)) => {
+    const React = require('react');
+    const latest = React.useRef(effect);
+    latest.current = effect;
+    React.useEffect(() => {
+      const entry: MockFocusEntry = { run: () => latest.current(), cleanup: undefined };
+      entry.cleanup = entry.run();
+      mockFocusEffects.add(entry);
+      return () => {
+        mockFocusEffects.delete(entry);
+        if (typeof entry.cleanup === 'function') entry.cleanup();
+      };
+    }, []);
+  },
 }));
+function blurScreen() {
+  for (const entry of mockFocusEffects) {
+    if (typeof entry.cleanup === 'function') entry.cleanup();
+    entry.cleanup = undefined;
+  }
+}
+function focusScreen() {
+  for (const entry of mockFocusEffects) entry.cleanup = entry.run();
+}
 
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/SessionContext', () => ({
@@ -164,24 +192,50 @@ function makeVideoPost(overrides: Partial<any> = {}): any {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockFocusEffects.clear();
 });
 
 describe('PostDetailCard video playback', () => {
-  it('calls playAsync when the Play video tap zone is pressed (autoplay=false)', async () => {
+  it('opening a video post plays it at once, with sound', async () => {
     mockGetPostById.mockResolvedValue({ ok: true as const, data: makeVideoPost() });
 
     await render(<PostDetail />);
 
     // Wait for the post to load and the real SharedVideoPlayer to mount
+    await waitFor(() => expect(screen.getByTestId('mock-video')).toBeTruthy());
+    const video = screen.getByTestId('mock-video') as any;
+    expect(video.props.shouldPlay).toBe(true);
+    expect(video.props.isMuted).toBe(false);
+    expect(screen.getByLabelText('Mute')).toBeTruthy();
+  });
+
+  it('calls pauseAsync when the tap zone of the playing video is pressed', async () => {
+    mockGetPostById.mockResolvedValue({ ok: true as const, data: makeVideoPost() });
+
+    await render(<PostDetail />);
+
     await waitFor(() =>
-      expect(screen.getByLabelText('Play video')).toBeTruthy(),
+      expect(screen.getByLabelText('Pause video')).toBeTruthy(),
     );
 
-    // Press the tap zone — this should call playAsync on the Video ref
     await act(async () => {
-      fireEvent.press(screen.getByLabelText('Play video'));
+      fireEvent.press(screen.getByLabelText('Pause video'));
     });
 
-    expect(mockPlayAsync).toHaveBeenCalledTimes(1);
+    expect(mockPauseAsync).toHaveBeenCalledTimes(1);
+    expect(mockPlayAsync).not.toHaveBeenCalled();
+  });
+
+  it('stops while another screen is on top and plays again on return (no sound under the next screen)', async () => {
+    mockGetPostById.mockResolvedValue({ ok: true as const, data: makeVideoPost() });
+
+    await render(<PostDetail />);
+    await waitFor(() => expect((screen.getByTestId('mock-video') as any).props.shouldPlay).toBe(true));
+
+    await act(async () => { blurScreen(); });
+    expect((screen.getByTestId('mock-video') as any).props.shouldPlay).toBe(false);
+
+    await act(async () => { focusScreen(); });
+    await waitFor(() => expect((screen.getByTestId('mock-video') as any).props.shouldPlay).toBe(true));
   });
 });

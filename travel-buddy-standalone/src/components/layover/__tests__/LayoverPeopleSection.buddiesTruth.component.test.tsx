@@ -86,9 +86,11 @@ describe('LayoverPeopleSection — the buddy list is an answer, or it says why n
     expect(screen.getByText(/time to head back/i)).toBeTruthy();
   });
 
-  it('4. the marketplace switched OFF is said plainly', async () => {
+  it('4. the marketplace switched OFF draws no buddy section and advertises nothing', async () => {
     await renderCard(measured({ buddies: [], refusal: 'rent_buddy_not_enabled' }));
-    expect(screen.getByTestId('layover-buddies-off')).toBeTruthy();
+    expect(screen.queryByTestId('layover-buddies-off')).toBeNull();
+    expect(screen.queryByText(/Local buddies for a few hours/i)).toBeNull();
+    expect(screen.queryByText(/switched on yet/i)).toBeNull();
   });
 
   it('5. an unreadable block list served nobody ON PURPOSE — and says that is not a count', async () => {

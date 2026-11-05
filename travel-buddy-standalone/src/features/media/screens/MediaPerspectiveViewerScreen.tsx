@@ -281,7 +281,7 @@ function PerspectiveFrame({ media }: { media: MediaProjection }) {
   const sourceState = playbackUriState(media.url ?? null, hydrated); const playbackUri = sourceState.state === 'ready' ? sourceState.uri : null; // 2026-10-24: no player until the source is loadable (a bare ref is never handed to <Video>)
   const unresolvable = isVideo && sourceState.state === 'unavailable'; void hydratedUrl;
   const videoRef = useRef<Video>(null);
-  const [isMuted, setIsMuted] = useState(true);
+  const [isMuted, setIsMuted] = useState(false); // 2026-11-04: a video the viewer TAPS to play plays with sound (it was muted by default, so a tap played silence); a saved mute still wins
   const [isPlaying, setIsPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
   const [hasPlaybackError, setHasPlaybackError] = useState(false); useEffect(() => { setHasPlaybackError(false); }, [playbackUri]); // a new source (a late or refreshed signature) starts clean

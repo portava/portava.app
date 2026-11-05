@@ -47,3 +47,26 @@ export function refPlaysAsVideo(
   if (IMAGE_FILE.test(pathOf(ref))) return false;
   return (typeof declared.mediaType === 'string' && declared.mediaType.toLowerCase().startsWith('video')) || declared.hasVideo === true;
 }
+
+/**
+ * The still a small post tile draws (the trip page's Trip Posts strip), and
+ * whether it stands for a video. Same choice as the post detail screen: the
+ * first media item, else the first `media_urls` entry; a video draws its
+ * poster (the item's thumbnail, the post's recorded poster, else the derived
+ * `.poster.jpg`) because an image cannot draw a video file. `uri` is null for
+ * a text-only post.
+ */
+export function postTileStill(post: {
+  media?: ReadonlyArray<{ url: string; media_type: string; thumbnail_url: string | null }> | null;
+  mediaUrls?: readonly string[] | null;
+  mediaThumbnailUrl?: string | null;
+  mediaType?: string | null;
+  hasVideo?: boolean | null;
+}): { uri: string | null; isVideo: boolean } {
+  const item = post.media?.[0] ?? null;
+  const first = item?.url ?? post.mediaUrls?.[0] ?? null;
+  if (!first) return { uri: null, isVideo: false };
+  const isVideo = item ? item.media_type === 'video' : refPlaysAsVideo(first, post);
+  if (isVideo) return { uri: item?.thumbnail_url ?? post.mediaThumbnailUrl ?? derivedVideoPosterRef(first), isVideo };
+  return { uri: item?.thumbnail_url ?? first, isVideo };
+}

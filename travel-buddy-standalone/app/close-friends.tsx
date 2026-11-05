@@ -26,14 +26,14 @@ export default function CloseFriendsScreen() {
   const [friends, setFriends] = useState<CloseFriend[]>([]);
   const [loading, setLoading] = useState(true);
   const [addInput, setAddInput] = useState('');
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState(false); const [loadError, setLoadError] = useState(false); // a failed read is not "No Close Friends yet"
   const navBarScrollHandler = useNavBarScrollHandler();
 
   const load = useCallback(async () => {
     setLoading(true);
     const res = await getCloseFriends();
     setLoading(false);
-    if (res.ok) setFriends(res.closeFriends);
+    setLoadError(!res.ok); if (res.ok) setFriends(res.closeFriends);
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -73,7 +73,13 @@ export default function CloseFriendsScreen() {
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Remove', style: 'destructive', onPress: async () => {
-            await removeCloseFriend(userId);
+            // The row leaves only when the server removed them: a failed remove
+            // that looked done would leave them seeing Close Friends stories.
+            const res = await removeCloseFriend(userId);
+            if (!res.ok) {
+              Alert.alert('Not removed', `${name} is still on your list and can still see your Close Friends stories. Try again.`);
+              return;
+            }
             setFriends((f) => f.filter((x) => x.userId !== userId));
           },
         },
@@ -126,6 +132,14 @@ export default function CloseFriendsScreen() {
 
       {loading ? (
         <ActivityIndicator color={color.deep} style={{ flex: 1 }} />
+      ) : loadError && friends.length === 0 ? (
+        <View style={s.empty} testID="close-friends-error">
+          <Text style={s.emptyText}>Couldn't load your list</Text>
+          <Text style={s.emptySub}>Your Trusted Crew is unchanged. Check your connection and try again.</Text>
+          <Pressable onPress={() => void load()} accessibilityRole="button" hitSlop={8}>
+            <Text style={[s.emptySub, { color: color.signal, fontWeight: '600' }]}>Try again</Text>
+          </Pressable>
+        </View>
       ) : friends.length === 0 ? (
         <View style={s.empty}>
           <Text style={s.emptyText}>No Close Friends yet</Text>
@@ -145,6 +159,8 @@ export default function CloseFriendsScreen() {
               <Pressable
                 onPress={() => handleRemove(item.userId, item.name ?? item.handle ?? 'Traveler')}
                 hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={`Remove ${item.name ?? item.handle ?? 'Traveler'}`}
               >
                 <X size={18} color={color.mute} />
               </Pressable>

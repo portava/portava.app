@@ -30,11 +30,13 @@ interface Props {
   event: EventDetail;
   onDismiss: () => void;
   onRefresh: () => void;
+  /** Opens the event editor (title, time, place, cover, settings). */
+  onEdit?: () => void;
 }
 
 type Tab = 'requests' | 'attendees' | 'attendance' | 'cohosts' | 'waitlist' | 'invite' | 'controls';
 
-export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
+export function HostDashboardPanel({ event, onDismiss, onRefresh, onEdit }: Props) {
   const [tab, setTab] = useState<Tab>('requests');
   const [requests, setRequests] = useState<JoinRequest[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(true);
@@ -364,6 +366,16 @@ export function HostDashboardPanel({ event, onDismiss, onRefresh }: Props) {
             {/* ── Controls tab ── */}
             {tab === 'controls' && (
               <>
+                {onEdit && !['cancelled', 'completed', 'archived'].includes(event.state) && (
+                  <Pressable
+                    style={[s.stateBtn, { marginBottom: space.lg }]}
+                    onPress={onEdit}
+                    accessibilityRole="button"
+                    testID="host-edit-details"
+                  >
+                    <Text style={s.stateBtnText}>Edit details</Text>
+                  </Pressable>
+                )}
                 <Text style={s.controlsLabel}>Event state</Text>
                 <Text style={s.stateCurrent}>Current: <Text style={{ fontWeight: '700' }}>{event.state}</Text></Text>
 

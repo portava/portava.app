@@ -1246,12 +1246,12 @@ silently checking for the wrong thing.
 It prints these limits on every run, in the log and in the job summary, so a
 green result cannot be mistaken for "every test in this tree runs":
 
-- **The `KNOWN_BROKEN` list in `scripts/run-node-tests.mjs`** — 30 unique files
-  excluded from node:test discovery with recorded reasons (the
-  `react-native@0.81.5` esbuild wall, `expo-modules-core` native requirements).
-  They do not run either. Growth there is caught by the node:test **discovery
-  floor of 142** in `ci.yml`, which drops when an entry is added — not by this
-  guard.
+- **The `KNOWN_BROKEN` list in `scripts/run-node-tests.mjs`** — empty since
+  2026-11-04: its 25 files (the `react-native@0.81.5` esbuild wall, three in Jest
+  syntax) ran in no runner and are now `*.component.test.ts` files under jest.
+  A file listed there would not run either. Growth there is caught by the node:test
+  **discovery floor of 142** in `ci.yml`, which drops when an entry is added — not
+  by this guard.
 - **Other jest `testPathIgnorePatterns` entries** (currently
   `src/services/__tests__/fsqPhotoLookup.test.ts`, which *is* run by
   `run-node-tests.mjs`, so it is not orphaned).
@@ -1911,3 +1911,26 @@ For reference, the contract:
 | 1 | the script never chooses 1 — involuntary death | **block** (a crash proves nothing) |
 | 2 | CANNOT-RUN — no URL, no token, or unparseable ref | **block** ("A gate that silently no-ops without credentials is not a gate.") |
 | 3 | BLOCKED — rejected, or result could not be established | **block** |
+
+## Scheduled upkeep: `source-cache-warm.yml` (2026-11-04)
+
+`.github/workflows/source-cache-warm.yml` needs no secrets. Every third day at
+04:41 UTC, and on `workflow_dispatch`, it restores the three pinned source
+archives that ci.yml's node:test job builds its toolchains from (PostgreSQL
+17.11, ffmpeg 8.0, x264 b35605a) from the Actions cache, and re-downloads an
+archive set only when its restore missed, through the same
+`.github/scripts/prepare-memory-native-postgres.mjs` or
+`.github/scripts/prepare-media-encoding-tools.mjs` script ci.yml uses, so the
+SHA-256 pins and the verification stay in one place.
+
+Why: GitHub evicts a cache entry seven days after its last restore, and ci.yml
+restores these only on a push or a pull request. On 2026-11-03 a cold cache met
+an hour-long ffmpeg.org outage, and #810 stayed red for that hour with all of
+its 41,588 tests passed. A pull request's run reads main's cache, so keeping
+main's entries warm is what makes PR runs start from a hit.
+
+The workflow runs no tests and says nothing about the tree, so it is not a
+required status check and must not become one. Its cache `path:` and `key:`
+lines are copied from ci.yml and must stay byte-identical to it, or it would
+warm entries nobody reads; change both files in the same commit when a pin
+moves.

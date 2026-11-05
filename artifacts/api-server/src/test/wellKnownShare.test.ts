@@ -16,6 +16,8 @@
  *      /buddy /shared-moments /plan /:id) —
  *      public entity renders its title; private, deleted and unknown-id all
  *      render the identical generic card at 200; never 404, never 500.
+ *   H. /invite/:token — the trip invite landing page: same card for every
+ *      token, no lookup, noindex, not cached, deep link carries the token.
  *
  * Run: node --import tsx/esm --test src/test/wellKnownShare.test.ts
  */
@@ -203,7 +205,7 @@ describe("A: /.well-known/apple-app-site-association", () => {
     assert.deepEqual(body.applinks.apps, [], "legacy apps key must stay empty");
     assert.equal(body.applinks.details.length, 1);
     assert.equal(body.applinks.details[0].appID, "A1B2C3D4E5.com.passporttravelbuddy.app");
-    assert.deepEqual(body.applinks.details[0].paths, ["/passport", "/passport/*", "/u", "/u/*"]);
+    assert.deepEqual(body.applinks.details[0].paths, ["/passport", "/passport/*", "/u", "/u/*", "/invite/*"]);
   });
 });
 
@@ -803,5 +805,46 @@ describe("E: the Memory preview's place words take the §10 precision gate", () 
     assert.match(r.text, /og:title" content="First night out · Portava"/);
     assert.match(r.text, /og:description" content="A memory on Portava\."/);
     assert.doesNotMatch(r.text, /Lisbon/);
+  });
+});
+
+// ── H. /invite/:token — the trip invite a trip owner shares ──────────────────
+
+describe("H: trip invite landing page", () => {
+  const TOKEN = "0123456789abcdef0123456789abcdef01234567";
+
+  it("serves the invite card with a deep link that carries the token", async () => {
+    const { status, headers, text } = await getReq(`/invite/${TOKEN}`);
+    assert.equal(status, 200);
+    assert.match(headers["content-type"] ?? "", /text\/html/);
+    assert.match(text, new RegExp(`href="travelbuddy://invite/${TOKEN}"`));
+    assert.match(text, /Open in Portava/);
+    assert.match(text, /TRIP INVITE/);
+    assert.match(text, /og:title" content="You&#39;re invited to a trip · Portava"/);
+  });
+
+  it("never looks the token up, so it says nothing about the trip", async () => {
+    let touched = false;
+    _setTestServiceClient({ from: () => { touched = true; throw new Error("no lookup expected"); } } as any);
+    const a = await getReq(`/invite/${TOKEN}`);
+    const b = await getReq(`/invite/not-a-real-token`);
+    assert.equal(touched, false);
+    assert.equal(a.status, 200);
+    assert.equal(b.status, 200);
+    // Same card for a live token and a made-up one, apart from the token itself.
+    assert.equal(a.text.split(TOKEN).join("T"), b.text.split("not-a-real-token").join("T"));
+  });
+
+  it("is noindex and not stored by shared caches (the token is a secret)", async () => {
+    const { headers, text } = await getReq(`/invite/${TOKEN}`);
+    assert.match(text, /<meta name="robots" content="noindex, nofollow"\/>/);
+    assert.match(headers["cache-control"] ?? "", /no-store/);
+    assert.doesNotMatch(headers["cache-control"] ?? "", /public/);
+  });
+
+  it("HTML-escapes a hostile token", async () => {
+    const { status, text } = await getReq(`/invite/${encodeURIComponent('"><script>x</script>')}`);
+    assert.equal(status, 200);
+    assert.doesNotMatch(text, /<script>x<\/script>/);
   });
 });

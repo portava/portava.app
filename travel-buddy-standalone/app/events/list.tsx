@@ -9,7 +9,7 @@
 import React, { useCallback, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
-  StyleSheet, RefreshControl, TextInput,
+  StyleSheet, RefreshControl, TextInput, Alert,
 } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -93,9 +93,17 @@ export default function EventsScreen() {
     rsvpingLockRef.current.add(eventId);
     try {
       const res = await rsvpEvent(eventId, status);
-      if (res.ok) {
-        setEvents((prev) => prev.map((e) => e.id === eventId ? { ...e, myRsvp: status } : e));
+      if (!res.ok) {
+        // A full event, an approval-only event or an age/trust gate answers with
+        // a refusal; the button used to stay as it was with nothing said.
+        Alert.alert("Couldn't RSVP", res.message ?? 'Please open the event and try again.');
+        return;
       }
+      if (res.data && (res.data as { status?: string }).status === 'waitlisted') {
+        Alert.alert('Added to the waitlist', (res.data as { message?: string }).message ?? 'This event is full. You will be told if a place opens up.');
+        return;
+      }
+      setEvents((prev) => prev.map((e) => e.id === eventId ? { ...e, myRsvp: status } : e));
     } finally {
       rsvpingLockRef.current.delete(eventId);
     }

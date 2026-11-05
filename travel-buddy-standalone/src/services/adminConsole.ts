@@ -319,3 +319,60 @@ export function buildCautionZoneBody(f: CautionZoneForm): { ok: true; body: Caut
 export function createCautionZone(body: CautionZoneBody): Promise<AdminApiResult<{ ok: boolean; id: string }>> {
   return adminPost('/api/admin/airport/caution-zones', body);
 }
+
+// ── Account deletions (2026-11-04) ───────────────────────────────────────────
+//
+// GET  /api/admin/deletion-requests              pending requests, soonest first
+// POST /api/admin/deletion-requests/:id/execute  run the cascade now
+//
+// The scheduled worker (account_deletion_worker_enabled) shares the same
+// cascade (AccountDeletionService), so one request run from here and coming
+// back with every step ok is the check migration 2073 asks for before the
+// worker is switched on.
+
+export interface DeletionRequest {
+  /** The user id; the table is keyed by user_id and the route echoes it as id. */
+  id: string;
+  user_id: string;
+  requested_at: string | null;
+  scheduled_at: string | null;
+  status: string;
+}
+
+export interface DeletionStep {
+  step: string;
+  ok: boolean;
+  count?: number;
+  error?: string;
+}
+
+export interface DeletionOutcome {
+  ok: boolean;
+  userId: string;
+  executedAt?: string;
+  steps: DeletionStep[];
+  warnings: string[];
+}
+
+export async function listDeletionRequests(): Promise<AdminApiResult<DeletionRequest[]>> {
+  const r = await adminGet<{ requests?: DeletionRequest[] }>('/api/admin/deletion-requests');
+  if (!r.ok) return r;
+  if (!Array.isArray(r.data?.requests)) return { ok: false, error: 'The deletion requests came back in a shape this build does not understand.' };
+  return { ok: true, data: r.data.requests };
+}
+
+/** Irreversible: deletes the account now. A failed step comes back as the error text. */
+export async function executeDeletionRequest(userId: string): Promise<AdminApiResult<DeletionOutcome>> {
+  const r = await adminPost<Partial<DeletionOutcome>>(`/api/admin/deletion-requests/${encodeURIComponent(userId)}/execute`, {});
+  if (!r.ok) return r;
+  return {
+    ok: true,
+    data: {
+      ok: r.data?.ok === true,
+      userId: r.data?.userId ?? userId,
+      executedAt: r.data?.executedAt,
+      steps: Array.isArray(r.data?.steps) ? r.data.steps : [],
+      warnings: Array.isArray(r.data?.warnings) ? r.data.warnings : [],
+    },
+  };
+}

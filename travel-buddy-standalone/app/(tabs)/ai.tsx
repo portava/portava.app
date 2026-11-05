@@ -12,7 +12,7 @@ import {
   confirmCompassProposal, declineCompassProposal,
 } from '../../src/services/compass';
 import type { CompassAskResponse, CompassPendingProposal, CompassUiPlace } from '../../src/services/compass';
-import { CompassChatBlocks } from '../../src/components/compass/CompassChatBlocks';
+import { CompassChatBlocks, usePlaceNavigation } from '../../src/components/compass/CompassChatBlocks'; import { solePlaceCard, soleEventCard } from '../../src/lib/compassActionTarget.ts';
 import { AppHeader } from '../../src/components/ui/AppHeader';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import { usePlanPicker } from '../../src/components/PlanPickerController';
@@ -44,7 +44,7 @@ type ChatEntry =
 export default function AiChat() {
   const router = useRouter();
   const { prefillMessage, mediaId } = useLocalSearchParams<{ prefillMessage?: string; mediaId?: string }>();
-  const planPicker = usePlanPicker();
+  const planPicker = usePlanPicker(); const openPlace = usePlaceNavigation();
   // Pre-seed Compass with the user's resolved city (GPS → last-known → home)
   // so it never has to ask "where are you right now?" when the app already
   // knows — mirrors the "Using home city" notice shown on Discovery.
@@ -270,12 +270,12 @@ export default function AiChat() {
         router.push('/(tabs)/messages');
         break;
       case 'explore':
-      case 'viewPlace':
         router.push('/(tabs)/discovery' as any);
         break;
-      case 'viewEvent':
-        router.push('/(tabs)/events' as any);
-        break;
+      // The one place or event the reply showed (ids the server checked), else the tab: lib/compassActionTarget.ts.
+      case 'viewPlace': { const p = solePlaceCard(rec.uiBlocks); if (p) openPlace(p); else router.push('/(tabs)/discovery' as any); break; }
+      case 'viewEvent': { const ev = soleEventCard(rec.uiBlocks); router.push((ev ? `/event/${ev.id}` : '/(tabs)/events') as any); break; }
+
       case 'openMap':
         // §35: this is Compass acting on an openMap action, not a map tab.
         router.push('/map?entry=compass' as any);

@@ -3975,8 +3975,8 @@ and its time-awareness test; retiring it server-side is a separate, larger chang
   and `:180#describe(` — nine component cases over the real service with `fetch` stubbed.
 - `travel-buddy-standalone/src/services/__tests__/compassFeedRetired.component.test.ts:38#describe(` —
   red while `fetchCompassFeed` existed. `compass.tzOffsetSurfaces.test.ts`'s feed case is restated to
-  the retirement; that file is on `run-node-tests.mjs`'s KNOWN_BROKEN list, so it is not counted as
-  evidence here.
+  the retirement; that file was then on `run-node-tests.mjs`'s KNOWN_BROKEN list, so it is not counted
+  as evidence here (since 2026-11-04 it runs under jest as `compass.tzOffsetSurfaces.component.test.ts`).
 - Mutations (each restored by sha256): group availability forced `"ok"`; the derived / profile /
   suppression failure not recorded; `safe()` not recording; the withhold disabled; the recap's
   suppression refusal removed; the trip-read throw removed; the windowed-derived failure not
@@ -3997,7 +3997,7 @@ and its time-awareness test; retiring it server-side is a separate, larger chang
 
 - NOT-GRADED: travel-buddy-standalone/app/passport/remembers.tsx — §31.1's route wrapper for Compass remembers; it only mounts the screen, no row rests on it.
 - NOT-GRADED: travel-buddy-standalone/app/passport/recaps.tsx — §31.1's route wrapper for Recaps & On this day; it only mounts the screen, no row rests on it.
-- NOT-GRADED: travel-buddy-standalone/src/services/__tests__/compass.tzOffsetSurfaces.test.ts — §31.4 names it only because its feed case was restated to the retirement; it is on the node runner's KNOWN_BROKEN list and is not evidence here.
+- NOT-GRADED: travel-buddy-standalone/src/services/__tests__/compass.tzOffsetSurfaces.component.test.ts — §31.4 names it only because its feed case was restated to the retirement; it was on the node runner's KNOWN_BROKEN list when graded (it runs under jest since 2026-11-04) and is not evidence here.
 - NOT-GRADED: travel-buddy-standalone/scripts/run-node-tests.mjs — §31.4 names its KNOWN_BROKEN list only to say why one test is not counted; it grades nothing.
 - NOT-GRADED: travel-buddy-standalone/src/features/passport/CompassRemembersScreen.tsx — §29's client screen for COMP-F16; built work, no Compass row rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/features/passport/MemoryRecapsScreen.tsx — §29's client screen for COMP-F17; built work, no Compass row rests on it.

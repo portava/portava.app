@@ -134,6 +134,18 @@ describe('usePassport — an unread section is never written down as an empty on
     expect(state.memoriesUnreadable).toBe(true);
   });
 
+  it('a failed Postcards read is said as one and not persisted either', async () => {
+    // getMyPassportPostcards used to answer an HTTP error with { ok: true, data: [] },
+    // so this guard never saw a postcards failure; it now answers ok:false.
+    mockGetMyPassportPostcards.mockResolvedValue({ ok: false, data: null, errorKind: 'db_error' });
+
+    const state = await mountPassport();
+
+    expect(mockSaveSnapshot).not.toHaveBeenCalled();
+    expect(state.postcardsUnreadable).toBe(true);
+    expect(state.memoriesUnreadable).toBe(false);
+  });
+
   it('still persists the snapshot when every section read succeeded', async () => {
     const state = await mountPassport();
 
@@ -142,6 +154,7 @@ describe('usePassport — an unread section is never written down as an empty on
       expect.objectContaining({ memories: [expect.objectContaining({ id: 'mem-1' })] }),
     );
     expect(state.memoriesUnreadable).toBe(false);
+    expect(state.postcardsUnreadable).toBe(false);
   });
 
   it('persists a genuinely empty Memories list, because that one is true', async () => {

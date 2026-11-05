@@ -1,16 +1,19 @@
-import React, { useState, useEffect, Component, type ErrorInfo, type ReactNode } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Component, type ErrorInfo, type ReactNode } from 'react';
 import { View, Text, Image, Pressable, ScrollView, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { Avatar } from './ui/Avatar.tsx';
 import { CachedImage } from './CachedImage.tsx';
+import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
 import { fallbackUriFor } from '../lib/visuals/fallbackAssets.ts';
+import { postTileStill } from '../lib/media/videoPosterRef.ts';
 import { SharedVideoPlayer } from './ui/SharedVideoPlayer.tsx';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import {
   CalendarDays, User as UserIcon, Clock, MapPin, CheckCircle2, Circle as CircleIcon,
   CalendarPlus, UserPlus, Sparkles, Settings, Bookmark, Plus, ChevronRight, Plane,
   Map as MapIcon,
-  MessageCircle, ShieldCheck, ImagePlus, Info, X, Bell,
+  MessageCircle, ShieldCheck, ImagePlus, Info, X, Bell, Play,
 } from 'lucide-react-native';
+import { useTripPosts } from '../hooks/usePosts.ts';
 import { useTripSavedPlaces } from '../hooks/useTripSavedPlaces.ts';
 import { fetchCompassTripBrief, reportCompassViewed, type CompassRecommendation, type CompassBriefAttention } from '../services/compass.ts';
 import { resolveCompassTitle, formatCompassSubtitle } from '../utils/compassFormat.ts';
@@ -22,12 +25,20 @@ import type { TripPlan, TripPlanStatus } from '../__fixtures__/tripDetail.ts';
 import { color, space, radius, type as t, shadow, layout, avatar, icon, dot } from '../theme/tokens.ts';
 import { fromISODate } from '../lib/dateTime/formatters.ts';
 import { PassportStampCard } from './PassportStampCard.tsx';
-import { TravelSectionHeader, TravelEmptyState } from './primitives.tsx';
+import { TravelSectionHeader, TravelEmptyState, TravelLoadingState, TravelErrorState } from './primitives.tsx';
 import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { AddToPlanSheet } from './AddToPlanSheet.tsx';
 import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
 import { deriveTripDisplayStatus, tripStatusLabel } from '../lib/tripStatus.ts';
+
+/** Same words trip edit uses for each visibility (app/trip/edit.tsx). */
+const TRIP_VISIBILITY_LABEL: Record<string, string> = {
+  public: 'Public trip',
+  buddies: 'Buddies only',
+  private: 'Private trip',
+  invite: 'Invite only',
+};
 
 /* ── Trip hero header ── */
 export function TripHero({ trip }: { trip: TripDetail }) {
@@ -66,11 +77,15 @@ export function TripHero({ trip }: { trip: TripDetail }) {
           </View>
           <Text style={hero.dest}>{trip.destinationCity}, {trip.destinationCountry}</Text>
           <View style={hero.metaRow}><CalendarDays size={14} color={color.onInk} /><Text style={hero.meta}>{dates ? `${dates} (${trip.nights} nights)` : 'No dates yet'}</Text></View>
-          <View style={hero.metaRow}>
-            <UserIcon size={14} color={color.onInk} />
-            <Text style={hero.meta}>{trip.travelStyle} · {trip.openToMeet ? 'Open to Meet' : 'Private'}</Text>
-            {trip.openToMeet && <View style={hero.openChip}><Text style={hero.openText}>Open</Text></View>}
-          </View>
+          {/* This line read `{travelStyle} · Open to Meet/Private` from two trip
+              fields nothing in the app sets, so every trip said " · Private"
+              whatever its real visibility. It shows the trip's visibility now. */}
+          {TRIP_VISIBILITY_LABEL[trip.visibility] ? (
+            <View style={hero.metaRow} testID="trip-hero-visibility">
+              <UserIcon size={14} color={color.onInk} />
+              <Text style={hero.meta}>{TRIP_VISIBILITY_LABEL[trip.visibility]}</Text>
+            </View>
+          ) : null}
           {trip.availabilityLabel ? (
             <View style={hero.availChip}><Clock size={13} color={color.onInk} /><Text style={hero.availText}>{trip.availabilityLabel}</Text></View>
           ) : null}
@@ -127,7 +142,7 @@ function Action({ icon, label, onPress }: { icon: React.ReactNode; label: string
 }
 
 /* ── Today / Next Up ── */
-export function TodayNextUp({ nextUp, tripId, action }: {
+export function TodayNextUp({ nextUp, tripId, action, onViewPlan }: {
   nextUp: any | null;
   tripId?: string;
   /** Next-best-action payload from useNextBestAction (Trip Brain wave). */
@@ -138,10 +153,16 @@ export function TodayNextUp({ nextUp, tripId, action }: {
     severity: string;
     dueAt: string | null;
   } | null;
+  /**
+   * Brings this trip's plan into view. "View Plan" used to push the Trips tab,
+   * which LEFT the trip the traveller was reading; the plan is a section of
+   * this same page. Without it the button is not drawn.
+   */
+  onViewPlan?: () => void;
 }) {
   return (
     <View style={section.wrap}>
-      <SectionHead title="Today / Next Up" onViewAll={nextUp ? () => router.push('/(tabs)/trips') : undefined} />
+      <SectionHead title="Today / Next Up" onViewAll={nextUp && onViewPlan ? onViewPlan : undefined} />
       {!nextUp && action ? (
         // Next-best-action card (readiness-driven; server flag-gated — absent flag
         // means `action` is null and the empty state below renders as before).
@@ -156,7 +177,7 @@ export function TodayNextUp({ nextUp, tripId, action }: {
               <View style={nx.metaRow}><Text style={nx.meta}>{action.detail}</Text></View>
             ) : null}
             <View style={nx.btns}>
-              <Pressable style={nx.primary} onPress={() => router.push('/(tabs)/trips')}><Text style={nx.primaryText}>View Plan</Text></Pressable>
+              {onViewPlan ? <Pressable style={nx.primary} onPress={onViewPlan}><Text style={nx.primaryText}>View Plan</Text></Pressable> : null}
               <Pressable style={nx.ghost} onPress={() => router.push('/(tabs)/ai')}><Text style={nx.ghostText}>Ask Compass</Text></Pressable>
             </View>
           </View>
@@ -185,7 +206,7 @@ export function TodayNextUp({ nextUp, tripId, action }: {
               <Text style={nx.going}>{nextUp.attendeeCount} going</Text>
             </View>
             <View style={nx.btns}>
-              <Pressable style={nx.primary} onPress={() => router.push('/(tabs)/trips')}><Text style={nx.primaryText}>View Plan</Text></Pressable>
+              {onViewPlan ? <Pressable style={nx.primary} onPress={onViewPlan}><Text style={nx.primaryText}>View Plan</Text></Pressable> : null}
               <Pressable
                 style={nx.ghost}
                 onPress={async () => {
@@ -957,24 +978,64 @@ export function TripSafety({ tripId }: { tripId?: string }) {
   );
 }
 
-/* ── Trip Posts (compact stub) ── */
-export function TripPostsSection({ posts }: { posts: { id: string; city: string; caption: string; mediaUrl?: string }[] }) {
+/* ── Trip Posts ── */
+/**
+ * The trip's own feed, GET /trips/:tripId/posts. It used to be mounted with
+ * `posts={[]}` (so it was always empty), drew a blank box where a picture
+ * belonged, and its Add Post opened the composer with no trip — a post made
+ * from here never reached this list. Posts with a trip_id are kept out of the
+ * public feeds on purpose (api-server routes/posts.ts), so this strip is where
+ * they are seen. Add Post is offered to accepted members only: the server
+ * refuses anyone else's trip post.
+ */
+export function TripPostsSection({ tripId }: { tripId: string }) {
+  const { data: posts, isMember, loading, error, reload } = useTripPosts(tripId);
+  // Coming back from /create after posting must show the new post, so the list
+  // is re-read when the page regains focus. The first focus is the mount, which
+  // the hook has already loaded.
+  const firstFocus = useRef(true);
+  useFocusEffect(useCallback(() => {
+    if (firstFocus.current) { firstFocus.current = false; return; }
+    void reload();
+  }, [reload]));
+  const addPost = () => router.push(`/create?tripId=${encodeURIComponent(tripId)}` as any);
   return (
-    <View>
-      <TravelSectionHeader title="Trip Posts" onAction={posts.length ? () => router.push('/(tabs)/passport') : undefined} actionLabel="View all" />
-      {posts.length === 0 ? (
-        <TravelEmptyState title="No trip posts yet" sub="Share your first post from this trip — it'll appear here and on your Passport." action="Add Post" onAction={() => router.push('/create')} />
+    <View testID="trip-posts-section">
+      <TravelSectionHeader title="Trip Posts" />
+      {loading && posts.length === 0 ? (
+        <TravelLoadingState />
+      ) : error ? (
+        <TravelErrorState title="Couldn't load this trip's posts" onRetry={() => { void reload(); }} />
+      ) : posts.length === 0 ? (
+        <TravelEmptyState
+          title="No trip posts yet"
+          sub={isMember ? 'Share a post to this trip — it shows here, on the trip page.' : 'Posts the crew shares to this trip show here.'}
+          action={isMember ? 'Add Post' : undefined}
+          onAction={isMember ? addPost : undefined}
+        />
       ) : (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={tp.strip}>
-          {posts.map((post) => (
-            <Pressable key={post.id} style={tp.tile} onPress={() => router.push(`/post/${post.id}`)}>
-              <View style={tp.media} />
-              <Text style={tp.caption} numberOfLines={2}>{post.caption}</Text>
+          {posts.map((post) => {
+            const still = postTileStill(post);
+            return (
+              <Pressable key={post.id} style={tp.tile} onPress={() => router.push(`/post/${post.id}` as any)}>
+                {still.uri ? (
+                  <View>
+                    <DisplayMediaImage uri={still.uri} width={140} height={100} style={tp.media} alt={post.content || 'Trip post'} />
+                    {still.isVideo ? <View style={tp.play}><Play size={12} color={color.onInk} fill={color.onInk} /></View> : null}
+                  </View>
+                ) : (
+                  <View style={[tp.media, tp.textOnly]}><Text style={tp.textOnlyText} numberOfLines={4}>{post.content}</Text></View>
+                )}
+                {still.uri && post.content ? <Text style={tp.caption} numberOfLines={2}>{post.content}</Text> : null}
+              </Pressable>
+            );
+          })}
+          {isMember ? (
+            <Pressable style={tp.addTile} onPress={addPost}>
+              <ImagePlus size={20} color={color.signal} /><Text style={tp.addText}>Add Post</Text>
             </Pressable>
-          ))}
-          <Pressable style={tp.addTile} onPress={() => router.push('/create' as any)}>
-            <ImagePlus size={20} color={color.signal} /><Text style={tp.addText}>Add Post</Text>
-          </Pressable>
+          ) : null}
         </ScrollView>
       )}
     </View>
@@ -998,8 +1059,6 @@ const hero = StyleSheet.create({
   dest: { ...t.bodyStrong, color: color.onInk },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2, flexWrap: 'wrap' },
   meta: { ...t.small, color: color.haze },
-  openChip: { backgroundColor: color.success, paddingHorizontal: space.sm, paddingVertical: 2, borderRadius: radius.sm },
-  openText: { ...t.small, color: color.onInk, fontWeight: '700', fontSize: 10 },
   availChip: { flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start', backgroundColor: 'rgba(255,255,255,0.12)', paddingHorizontal: space.md, paddingVertical: 6, borderRadius: radius.pill, marginTop: space.sm },
   availText: { ...t.small, color: color.onInk, fontWeight: '600' },
   actions: { flexDirection: 'row', gap: space.sm, flexWrap: 'wrap' },
@@ -1194,7 +1253,10 @@ const sf = StyleSheet.create({
 const tp = StyleSheet.create({
   strip: { gap: space.md, paddingHorizontal: space.lg },
   tile: { width: 140, gap: 6 },
-  media: { height: 100, borderRadius: radius.sm, backgroundColor: color.deep },
+  media: { width: 140, height: 100, borderRadius: radius.sm, overflow: 'hidden' },
+  play: { position: 'absolute', right: 6, bottom: 6, width: icon.s22, height: icon.s22, borderRadius: icon.s22 / 2, backgroundColor: 'rgba(17,17,15,0.55)', alignItems: 'center', justifyContent: 'center' },
+  textOnly: { backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, padding: space.sm },
+  textOnlyText: { ...t.small, color: color.ink, fontSize: 12 },
   caption: { ...t.small, color: color.ink, fontSize: 12 },
   addTile: { width: 140, height: 130, borderRadius: radius.md, borderWidth: 1.5, borderStyle: 'dashed', borderColor: color.signal, alignItems: 'center', justifyContent: 'center', gap: 6 },
   addText: { ...t.small, fontWeight: '700', color: color.signal },

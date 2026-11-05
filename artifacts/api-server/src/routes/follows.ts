@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { getServiceClient } from "../lib/supabase.js";
+import { notifyFollowed, notifyFriendRequested } from "../services/notifications/socialActivityNotifier.js";
 import { requireUser, sendError, optionalUserFromToken, resolveAccountRestriction } from "../lib/http";
 import { nameVisibilitySet, nameVisibleFor, readNameVisibilitySet } from "../lib/publicIdentity";
 import { decideUnfollow, isUuid } from "../lib/followDecisions";
@@ -162,6 +164,7 @@ router.post("/users/:userId/follow", async (req, res) => {
         return;
       }
       res.status(201).json({ following: false, userId: target, friendRequest: true, status: "outgoing_pending", requestId: (newReq as any).id });
+      void notifyFriendRequested(getServiceClient(), { actorId: user.id, recipientId: target, requestId: (newReq as any).id });
       return;
     }
 
@@ -195,6 +198,9 @@ router.post("/users/:userId/follow", async (req, res) => {
     return;
   }
   res.status(201).json({ following: true, userId: target });
+
+  // The person followed hears about it (socialActivityNotifier.ts).
+  void notifyFollowed(getServiceClient(), { actorId: user.id, targetId: target });
 
   // Fire-and-forget: award social follow-count stamps (non-fatal).
   // community_connector → caller follows 10+ people.

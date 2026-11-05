@@ -9,6 +9,7 @@ import {
   isUuid,
 } from "../lib/friendDecisions";
 import { getServiceClient } from "../lib/supabase";
+import { notifyFriendRequested } from "../services/notifications/socialActivityNotifier.js";
 import { syncCircleChatMembers } from "../lib/chatSync";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity";
@@ -182,6 +183,7 @@ router.post("/users/:userId/friend-request", async (req, res) => {
     return;
   }
   res.status(201).json({ requestId: (newReq as any).id, status: "outgoing_pending" });
+  void notifyFriendRequested(sc, { actorId: user.id, recipientId, requestId: (newReq as any).id }); // the recipient hears about it (socialActivityNotifier.ts)
 });
 
 /* ===========================================================================

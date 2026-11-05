@@ -7,6 +7,7 @@
  *   { private: true, postcards: [] }      → private passport message
  *   { blocked: true, postcards: [] }      → content unavailable message
  *   { unavailable: true, postcards: [] }  → account unavailable message
+ *   a failed read ('load_failed')         → "didn't load", never the empty state
  *
  * Also confirms the normal (non-sentinel) empty path still renders the
  * empty-state component for owners.
@@ -228,5 +229,23 @@ describe('PostcardsTab — no sentinel, empty list', () => {
       />,
     );
     expect(screen.getByText('No postcards yet')).toBeTruthy();
+  });
+});
+
+// ── Notice: load_failed (the read itself failed) ───────────────────────────
+
+describe('PostcardsTab — notice: load_failed', () => {
+  it('says the postcards did not load, not that there are none', async () => {
+    await render(
+      <PostcardsTab
+        postcards={[]}
+        isOwner={true}
+        actions={NO_ACTIONS}
+        sentinel="load_failed"
+      />,
+    );
+    expect(screen.getByText("Postcards didn't load")).toBeTruthy();
+    expect(screen.getByText(/Open this passport again to retry/)).toBeTruthy();
+    expect(screen.queryByTestId('postcard-empty-state')).toBeNull();
   });
 });

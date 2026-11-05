@@ -37,6 +37,8 @@ export interface SSOResult {
   error: string | null;
   /** True when the user dismissed the provider sheet without completing auth. */
   cancelled?: boolean;
+  /** On a cancelled BROWSER sign-in: how the session ended, and the return address it was waiting for. A test build shows them, because a redirect the backend refuses ends exactly this way. */
+  browserOutcome?: 'cancel' | 'dismiss'; redirectTo?: string;
   /**
    * Display name captured from provider metadata.
    * Apple: only present on the very first authorization.
@@ -234,7 +236,7 @@ export async function signInWithGoogle(): Promise<SSOResult> {
 
   // Step 3: handle the result
   if (result.type === 'cancel' || result.type === 'dismiss') {
-    return { userId: null, error: null, cancelled: true };
+    return { userId: null, error: null, cancelled: true, browserOutcome: result.type, redirectTo };
   }
   if (result.type !== 'success' || !result.url) {
     return {

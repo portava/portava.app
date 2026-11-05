@@ -96,6 +96,11 @@
               "scheme": "https",
               "host": "rumazi.com",
               "pathPrefix": "/u"
+            },
+            {
+              "scheme": "https",
+              "host": "rumazi.com",
+              "pathPrefix": "/invite"
             }
           ],
           "category": [
@@ -136,6 +141,7 @@
       "@maplibre/maplibre-react-native",
       "@livekit/react-native-expo-plugin",
       "./plugins/withPortavaNSE",
+      "./plugins/withPodDeploymentTargetFloor",
       "@sentry/react-native"
     ],
     "experiments": {

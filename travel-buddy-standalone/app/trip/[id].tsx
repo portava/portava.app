@@ -12,9 +12,9 @@ import { useNextBestAction } from '../../src/hooks/useNextBestAction';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet'; import { TripLayoverConnectionsCard } from '../../src/features/trips/layover/TripLayoverConnectionsCard.tsx'; // census-layover L267 / L11: the trip's flights, its connections and their layover status
 import type { ReadinessRead, ReadinessSummary } from '../../src/services/tripIntel';
 import {
-  TripHero, TodayNextUp, SavedIdeas, TripSavedPlacesSection,
-  CompassTripBrief, CompassBriefErrorBoundary, TripStamps, TripPostsSection,
-  TripCrewSection, TripCircle, TripMapPreview,
+  TripHero, TodayNextUp, TripSavedPlacesSection,
+  CompassTripBrief, CompassBriefErrorBoundary, TripPostsSection,
+  TripCrewSection, TripMapPreview,
 } from '../../src/components/TripPage';
 import { ActiveSafeReturnCard } from '../../src/components/safeReturn/ActiveSafeReturnCard';
 import { TripHeartbeatCard } from '../../src/components/compass/TripHeartbeatCard';
@@ -80,6 +80,11 @@ function TripDetailScreen() {
   // §17.2's mode as the Today card last read it; §17.3's entry mounts under it when not NORMAL.
   const [attentionMode, setAttentionMode] = useState<string | null>(null);
   const { data: realTrip, loading, error: tripError, reload: reloadTrip } = useTrip(live ? id : undefined);
+  // A deleted or archived trip leaves the traveller's lists (GET /trips/me), so
+  // staying on its page after the action read as if nothing had happened.
+  const leaveDeletedTrip = useCallback(() => {
+    if (router.canGoBack()) router.back(); else router.replace('/(tabs)/trips' as any);
+  }, []);
   // Next best action (Trip Brain wave) — fail-soft null when the server flag
   // is off or the request fails, so TodayNextUp keeps its empty state.
   const { action: nextBestAction } = useNextBestAction(live ? id : null);
@@ -171,6 +176,7 @@ function TripDetailScreen() {
   // re-render (or the user scrolling away) does not yank them back.
   const planSectionY = useRef<number>(0);
   const focusHandled = useRef(false); const sectionY = useRef<Record<string, number>>({}); const { isEnabled: flagOn } = useFeatureFlags(); const readinessFix = (category: string) => { const y = category === 'plan' || category === 'stay' || category === 'transport' ? planSectionY.current : sectionY.current[category]; if (y != null) pageScrollRef.current?.scrollTo({ y: Math.max(0, y - 16), animated: true }); }; // a readiness row scrolls to the section where that category is added (stay / transport: the plan's Add)
+  const scrollToPlan = useCallback(() => { pageScrollRef.current?.scrollTo({ y: Math.max(0, planSectionY.current - 16), animated: true }); }, []); // Today / Next Up's "View Plan": the plan is a section of this page (it used to push the Trips tab and leave the trip)
   useEffect(() => {
     if (focus !== 'plan' || !realTrip || focusHandled.current) return;
     focusHandled.current = true;
@@ -266,8 +272,8 @@ function TripDetailScreen() {
     try {
       const link = await createInviteLink(id); // the button is the owner's; a failed link shares NOTHING (§79)
       if (!link) { Alert.alert('Could not create an invite link', 'Your invite link could not be created right now, so nothing was shared. Try again.'); return; }
-      // It used to fall back to canonicalUrl(`/trips/${id}`), silently: a page a friend cannot join a private trip through.
-      const inviteUrl = `travelbuddy://invite/${link.token}`;
+      // It used to fall back to canonicalUrl(`/trips/${id}`), silently: a page a friend cannot join a private trip through. And the travelbuddy:// link it then sent is not tappable in most chat apps and opens nothing without the app; the web link opens the app (universal link) or a page with an Open in Portava button.
+      const inviteUrl = canonicalUrl(`/invite/${encodeURIComponent(link.token)}`);
       const tripName = realTrip.title ?? realTrip.destinationCity ?? 'a trip';
       await Share.share({
         title: `Join my trip${realTrip.title ? ` — ${realTrip.title}` : ''}!`,
@@ -428,7 +434,16 @@ function TripDetailScreen() {
             <ChevronLeft size={22} color={color.signal} />
             <Text style={styles.backText}>My Trip</Text>
           </Pressable>
-          <View style={{ flex: 1 }} />
+          {/* An owner gets up to seven actions here (Chat, Invite, Share Trip,
+              Links, Edit Trip, Remind me, and Rent a Buddy when it is on): about
+              720pt in one row on a ~390pt phone, so Links and Remind me were off
+              the screen. They scroll sideways now, right-aligned when they fit. */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={{ flex: 1 }}
+            contentContainerStyle={styles.topActions}
+          >
           {isAuthed && (
             <Pressable
               style={[styles.topBtn, chatLoading && { opacity: 0.5 }]}
@@ -513,6 +528,7 @@ function TripDetailScreen() {
               <Bell size={15} color={color.ink} /><Text style={styles.topBtnText}>Remind me</Text>
             </Pressable>
           )}
+          </ScrollView>
         </View>
         <TripHero trip={trip} />
 
@@ -634,7 +650,7 @@ function TripDetailScreen() {
         {/* Planning prompts don't make sense once the trip has ended — derive
             from end date rather than the (possibly stale) stored status. */}
         {deriveTripDisplayStatus(trip.status, trip.endDate) !== 'completed' && (
-          <TodayNextUp nextUp={null} tripId={trip.id} action={nextBestAction} />
+          <TodayNextUp nextUp={null} tripId={trip.id} action={nextBestAction} onViewPlan={scrollToPlan} />
         )}
 
         {/* ── Gap-day nudge ── */}
@@ -686,23 +702,16 @@ function TripDetailScreen() {
           <EventsNearTripSection tripId={trip.id} />
         ) : null}
 
-        <SavedIdeas ideas={[]} tripId={trip.id} />
+        {/* A "Saved Ideas" section sat here, fed `ideas={[]}`: it always said
+            "Save places from the Discovery Wall…" directly above the real Saved
+            Places list below. Removed, as was a Trip Circle card hardwired to
+            "0 buddies" (the Find Your Circle banner further down is the real
+            entry) and a Trip Stamps card hardwired to "No stamps yet". */}
         <TripSavedPlacesSection tripId={trip.id} />{live && trip.id ? <View onLayout={(e: LayoutChangeEvent) => { sectionY.current.documents = e.nativeEvent.layout.y; }}><TripSharedContentSection tripId={trip.id} isHost={realTrip.ownerId === userId || memberRole === 'co_host'} /></View> : null}
 
         {live && trip.id ? (
           <NeighborhoodMatchSection tripId={trip.id} />
         ) : null}
-
-        {live && (
-          <TripCircle
-            cityCount={0}
-            inCity={[]}
-            suggested={[]}
-            currentUserId={userId}
-            tripId={trip.id}
-            city={trip.destinationCity ?? undefined}
-          />
-        )}
 
         {live && trip.id && (
           <Pressable
@@ -735,7 +744,7 @@ function TripDetailScreen() {
           </Pressable>
         )}
 
-        {/* Layover Mode entry — shown between TripCircle and CompassTripBrief */}{live && trip.id ? <TripLayoverConnectionsCard tripId={trip.id} /> : null}
+        {/* Layover Mode entry — shown between the circle banners and CompassTripBrief */}{live && trip.id ? <TripLayoverConnectionsCard tripId={trip.id} /> : null}
         <Pressable style={styles.layoverBanner} onPress={() => setLayoverOpen(true)}>
           <View style={styles.layoverBannerIcon}>
             <Plane size={18} color="#1565C0" />
@@ -768,7 +777,6 @@ function TripDetailScreen() {
         <CompassBriefErrorBoundary>
           <TripHeartbeatCard tripId={id} />
         </CompassBriefErrorBoundary>
-        <TripStamps stamps={[]} />
         <TripMapPreview tripId={trip.id} />
         {live && trip.id ? (
           <TripCrewSection tripId={trip.id} refreshKey={crewRefreshKey} />
@@ -809,7 +817,7 @@ function TripDetailScreen() {
             onExtended={(s) => { setShowMissedPrompt(false); setActiveSafeReturnSession(s); }}
           />
         )}
-        {live && isAuthed ? <TripLifecycleCard tripId={trip.id} isOwner={realTrip.ownerId === userId} storedStatus={realTrip.status} exclude={['complete']} onChanged={() => { void reloadTrip(); }} /> : null}{/* Mark as complete — shown to trip owner when trip is not yet completed (WP-10: cancel/archive/delete live in TripLifecycleCard above) */}
+        {live && isAuthed ? <TripLifecycleCard tripId={trip.id} isOwner={realTrip.ownerId === userId} storedStatus={realTrip.status} exclude={['complete']} onChanged={(action) => { if (action === 'delete' || action === 'archive') { leaveDeletedTrip(); return; } void reloadTrip(); }} /> : null}{/* Mark as complete — shown to trip owner when trip is not yet completed (WP-10: cancel/archive/delete live in TripLifecycleCard above) */}
         {live && isAuthed && realTrip?.ownerId === userId && realTrip?.status !== 'completed' && (
           <Pressable
             style={[styles.markCompleteBtn, completingTrip && { opacity: 0.6 }]}
@@ -835,7 +843,7 @@ function TripDetailScreen() {
             </View>
           </View>
         </Modal>
-        <TripPostsSection posts={[]} />
+        {live && trip.id ? <TripPostsSection tripId={trip.id} /> : null}
         {live && trip.id ? (
           <TripMemorySection
             tripId={trip.id}
@@ -956,6 +964,7 @@ const nl = StyleSheet.create({
 
 const styles = StyleSheet.create({
   topBar: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.lg, paddingBottom: space.sm, backgroundColor: color.paper, borderBottomWidth: 1, borderBottomColor: color.haze },
+  topActions: { flexGrow: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: space.sm },
   backBtn: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   backText: { ...t.bodyStrong, color: color.signal },
   topBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
