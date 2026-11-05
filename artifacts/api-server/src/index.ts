@@ -4,7 +4,7 @@ import { Sentry } from "./lib/sentry.js"; import "./lib/deploymentEnvironmentGua
 
 import app from "./app";
 import { logger } from "./lib/logger";
-import { startDailyBriefCleanup, queryCleanupHealth } from "./lib/dailyBriefCleanup";
+import { startDailyBriefCleanup, queryCleanupHealth } from "./lib/dailyBriefCleanup"; import { startSchedulerHeartbeat } from "./lib/schedulerHeartbeat.js"; // one durable job_health beat a minute: a stop of every scheduler at once is measured at the next boot (on this line so no cited line moves)
 import { startSuggestionSeenCleanup } from "./lib/suggestionSeenCleanup";
 import { startWeatherCacheCleanup } from "./lib/weatherCacheCleanup";
 import { startDiscoveryCacheCleanup } from "./lib/discoveryCacheCleanup";
@@ -111,7 +111,7 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
-  startDailyBriefCleanup();
+  startDailyBriefCleanup(); startSchedulerHeartbeat(); // schedulerHeartbeat: reported at /healthz/schedulers, line-neutral
   startSuggestionSeenCleanup();
   startWeatherCacheCleanup();
   startDiscoveryCacheCleanup();

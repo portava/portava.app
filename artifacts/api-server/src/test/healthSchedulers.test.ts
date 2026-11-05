@@ -51,7 +51,7 @@ import {
   STORY_RETENTION_STALE_AFTER_MS,
 } from "../lib/storyRetentionScheduler.js";
 import healthRouter from "../routes/health.js";
-import { runHighlightExpiryTick, _resetHighlightExpiryStatus } from "../lib/highlightExpiryEventScheduler.js";
+import { runHighlightExpiryTick, _resetHighlightExpiryStatus } from "../lib/highlightExpiryEventScheduler.js"; import { runCallSweepTick, _resetCallSweepFailureState } from "../lib/callSweepScheduler.js";
 
 const PATH = "/api/healthz/schedulers";
 
@@ -74,7 +74,7 @@ const EXPECTED_JOBS = [
   // stopped being reported is exactly the failure that list exists to catch.
   "storyRetention", "discoveryServeLogRetention", "memoryDeletionRedrive", // census-discovery §120 (3501): the serve-log retention must be as visible as the story one; census-highlights-memories §AV (H193): the Memory deletion redrive (3670) likewise
   "layoverAuditRetention", "messageMediaPartsSweep", "layoverSnapshotCompaction", "layoverMetrics", // census-layover L208-L217 (B2-PLATFORM, docs/ops/layover-165-remediation-progress.md): the operational-metrics collector (startLayoverMetricsScheduler) reports collection, delivery, failures and staleness, as schedulerCoverage.ts registers it; census-telegraph T223 (3656): raw message-media parts; census-layover L163 (3621, OD-MAP-4): the pseudonymised layover audit record's 12-month deletion; census-layover L261 (3624): the same scheduler's flag-gated snapshot compaction, reported as its own job
-  "highlightExpiryEvents", "telegraphOutboxDrain", "safetySignalRedrive", "placeCollectionsStaleSweep", "rankingDebugSamplePurge", // census-discovery §133 (3922): the debug-sample purge, flag-gated, reported like every retention job; owner ruling 2026-10-17: the place stale sweep reports backlog, max wait and failures; census-highlights-memories H157 (3677): highlight.expired from the clock; census-telegraph T154 (3655): the §13.3 outbox drainer; Fable pass 3 §1.1: the durable re-drive of a help request
+  "highlightExpiryEvents", "telegraphOutboxDrain", "safetySignalRedrive", "placeCollectionsStaleSweep", "rankingDebugSamplePurge", "schedulerHeartbeat", // lib/schedulerHeartbeat.ts: the process-wide durable beat; census-discovery §133 (3922): the debug-sample purge, flag-gated, reported like every retention job; owner ruling 2026-10-17: the place stale sweep reports backlog, max wait and failures; census-highlights-memories H157 (3677): highlight.expired from the clock; census-telegraph T154 (3655): the §13.3 outbox drainer; Fable pass 3 §1.1: the durable re-drive of a help request
 ].sort();
 
 // ── HTTP plumbing ────────────────────────────────────────────────────────────
@@ -234,15 +234,34 @@ describe("never_ran is distinguished, and does NOT alarm", () => {
     }
   });
 
-  it("a job that exports no run timestamp is 'unknown', not borrowed 'healthy'", async () => {
+  it("callSweepScheduler is never_ran until a sweep COMPLETES, then healthy — a clean counter alone proves nothing", async () => {
+    // It used to export no run timestamp and read `unknown`. It now records the
+    // last completed sweep, so nothing on the list is unknown any more.
+    _resetCallSweepFailureState();
     const r = await get(base, PATH);
     const calls = (r.body.jobs as any[]).find((j) => j.job === "callSweepScheduler");
-    assert.equal(
-      calls.status,
-      "unknown",
-      "callSweepScheduler keeps no lastRunAt, so a zero failure counter cannot prove it ever ticked",
-    );
-    assert.equal(r.body.unknownCount, 1);
+    assert.equal(calls.status, "never_ran", "a zero failure counter with no completed sweep is not a run");
+    assert.equal(calls.lastRunAt, null);
+    assert.equal(r.body.unknownCount, 0);
+
+    // A real tick through the scheduler's own entry point, with the sweep seam
+    // answering a completed pass.
+    const out = await runCallSweepTick({}, async () => ({ missed: 0, capped: 0, ghosted: 0 }));
+    assert.equal(out.ok, true);
+    const after = await get(base, PATH);
+    const ran = (after.body.jobs as any[]).find((j) => j.job === "callSweepScheduler");
+    assert.equal(ran.status, "healthy");
+    assert.ok(ran.lastRunAt, "a completed sweep records when it ran");
+
+    // CONTROL: a failed tick does not move lastRunAt and reads failing.
+    const failed = await runCallSweepTick({}, async () => { throw new Error("listOpenSessions failed"); });
+    assert.equal(failed.ok, false);
+    const broken = await get(base, PATH);
+    const down = (broken.body.jobs as any[]).find((j) => j.job === "callSweepScheduler");
+    assert.equal(down.status, "failing");
+    assert.equal(down.lastRunAt, ran.lastRunAt, "a failed tick is not a run");
+    assert.equal(broken.status, 503);
+    _resetCallSweepFailureState();
   });
 });
 

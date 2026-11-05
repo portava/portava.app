@@ -297,10 +297,10 @@ router.post("/admin/jobs/story-retention", asyncHandler(async (req, res) => {
  *                is legitimately here; a process that has been up for hours is
  *                not, and the operator can tell the difference from uptime.
  *   "unknown"    the job exposes NO run timestamp, so "it ran and was fine"
- *                cannot be told from "it never started". Only callSweepScheduler
- *                is in this state today; it is reported honestly rather than
- *                being counted as healthy, and giving it a lastRunAt is a
- *                one-line change in a file this pass does not own.
+ *                cannot be told from "it never started". No job is in this
+ *                state today: callSweepScheduler was, until it began recording
+ *                the time of its last completed sweep. The state stays so a
+ *                job without a timestamp is never counted as healthy.
  *
  * THE STATUS CODE IS THE VERDICT. 503 when anything is failing — an operator's
  * probe must not have to parse the body to learn that eight sweepers are down.
@@ -375,7 +375,7 @@ function classify(o: {
 }
 
 function schedulerReports(): JobReport[] {
-  const reports: JobReport[] = []; const layoverMetrics=getLayoverMetricsStatus();reports.push({job: "layoverMetrics",status:classify({lastRunAt:layoverMetrics.lastAttemptAt,lastSuccessAt:layoverMetrics.lastSuccessAt,consecutiveFailures:layoverMetrics.consecutiveFailures,requiresSuccess:true,staleAfterMs:layoverMetrics.staleAfterMs}),lastRunAt:layoverMetrics.lastAttemptAt,lastSuccessAt:layoverMetrics.lastSuccessAt,consecutiveFailures:layoverMetrics.consecutiveFailures,detail:layoverMetrics.detail});
+  const reports: JobReport[] = []; const layoverMetrics=getLayoverMetricsStatus();reports.push({job: "layoverMetrics",status:classify({lastRunAt:layoverMetrics.lastAttemptAt,lastSuccessAt:layoverMetrics.lastSuccessAt,consecutiveFailures:layoverMetrics.consecutiveFailures,requiresSuccess:true,staleAfterMs:layoverMetrics.staleAfterMs}),lastRunAt:layoverMetrics.lastAttemptAt,lastSuccessAt:layoverMetrics.lastSuccessAt,consecutiveFailures:layoverMetrics.consecutiveFailures,detail:layoverMetrics.detail}); const heartbeat = schedulerHeartbeatReport(); reports.push({ job: "schedulerHeartbeat", ...heartbeat }); /* lib/schedulerHeartbeat.ts: one durable beat a minute for the whole process, so a stop of every scheduler at once (2026-09-30) is measured and answers 503. On this line so no cited line of this file moves. */
 
   const reconcile = getReconcileStatus();
   reports.push({
@@ -425,16 +425,16 @@ function schedulerReports(): JobReport[] {
   const calls = callSweepFailureState();
   reports.push({
     job: "callSweepScheduler",
-    // No lastRunAt is exported by this scheduler, so a clean counter proves
-    // only "not failing", never "it ran". Reported as `unknown` rather than
-    // borrowed optimism.
-    status: classify({ consecutiveFailures: calls.consecutiveFailures, tracksLastRun: false }),
-    lastRunAt: null,
+    // lastRunAt is the last sweep that COMPLETED (a failed tick is not a run),
+    // so a clean counter with no timestamp reads never_ran, not healthy. It
+    // was `unknown` until callSweepScheduler.ts recorded one.
+    status: classify({ lastRunAt: calls.lastRunAt, consecutiveFailures: calls.consecutiveFailures }),
+    lastRunAt: calls.lastRunAt,
     lastSuccessAt: null,
     consecutiveFailures: calls.consecutiveFailures,
     detail: calls.lastError
       ? `last error: ${calls.lastError}`
-      : "this scheduler exports no run timestamp — a clean counter cannot prove it ticked",
+      : undefined,
   });
 
   const liveShare = getLiveShareSweepStatus();
@@ -524,7 +524,7 @@ function schedulerReports(): JobReport[] {
   const serveLog = getDiscoveryServeLogRetentionStatus(); reports.push({ job: "discoveryServeLogRetention", status: classify({ lastRunAt: serveLog.lastAttemptAt, lastSuccessAt: serveLog.lastSuccessAt, consecutiveFailures: serveLog.consecutiveFailures, requiresSuccess: true }), lastRunAt: serveLog.lastAttemptAt, lastSuccessAt: serveLog.lastSuccessAt, consecutiveFailures: serveLog.consecutiveFailures, detail: [serveLog.lastFailures.length > 0 ? `last failures: ${serveLog.lastFailures.join("; ")}` : null, serveLog.lastReport ? `last pass: deleted ${serveLog.lastReport.deleted} in ${serveLog.lastReport.batches} batch(es), cutoff ${serveLog.lastReport.cutoff ?? "unknown"}${serveLog.lastReport.backlogRemains ? ", backlog remains" : ""}` : null].filter(Boolean).join(" | ") || undefined }); /* census-discovery §120: the owner's 30-day TESTING retention for public.recommendations (3501); like storyRetention it must SUCCEED to read healthy, and a failed or disabled purge is failing. On this line so no cited line of this file moves. */ const layoverAudit = getLayoverAuditRetentionStatus(); reports.push({ job: "layoverAuditRetention", status: classify({ lastRunAt: layoverAudit.lastAttemptAt, lastSuccessAt: layoverAudit.lastSuccessAt, consecutiveFailures: layoverAudit.consecutiveFailures }), lastRunAt: layoverAudit.lastAttemptAt, lastSuccessAt: layoverAudit.lastSuccessAt, consecutiveFailures: layoverAudit.consecutiveFailures, detail: layoverAudit.lastOutcome ? `last pass: ${layoverAudit.lastOutcome}${layoverAudit.lastReason ? ` (${layoverAudit.lastReason})` : ""}, deleted ${layoverAudit.lastDeleted}${layoverAudit.lastPostSession ? ` | post-session: ${layoverAudit.lastPostSession.outcome}${layoverAudit.lastPostSession.reason ? ` (${layoverAudit.lastPostSession.reason})` : ""}, ${layoverAudit.lastPostSession.sessions} session(s) pseudonymised, ${layoverAudit.lastPostSession.failedSessions} failed, ${layoverAudit.lastPostSession.parked} parked dead letter(s)` : ""}` : undefined }); /* census-layover L163: OD-MAP-4's "then delete it" for pseudonymised layover_events (3621). A sweep that stopped would keep rows past 12 months with nothing to say so; schema_absent (3621 not applied) is neither a success nor a failure. Same line, same reason. */ const redrive = getMemoryDeletionRedriveStatus(); reports.push({ job: "memoryDeletionRedrive", status: classify({ lastRunAt: redrive.lastAttemptAt, lastSuccessAt: redrive.lastSuccessAt, consecutiveFailures: redrive.consecutiveFailures, requiresSuccess: true }), lastRunAt: redrive.lastAttemptAt, lastSuccessAt: redrive.lastSuccessAt, consecutiveFailures: redrive.consecutiveFailures, detail: redriveHealthDetail(redrive) }); /* census-highlights-memories §AV (H193): the Memory deletion redrive (3670, flag seeded FALSE) reports here so it does not join the jobs whose stopping leaves no trace; OFF is not failing, a pass that could not run or could not read/close a letter is. On this line so no cited line of this file moves. */ const hlExpiry = getHighlightExpiryStatus(); reports.push({ job: "highlightExpiryEvents", status: classify({ lastRunAt: hlExpiry.lastAttemptAt, lastSuccessAt: hlExpiry.lastSuccessAt, consecutiveFailures: hlExpiry.consecutiveFailures, requiresSuccess: true }), lastRunAt: hlExpiry.lastAttemptAt, lastSuccessAt: hlExpiry.lastSuccessAt, consecutiveFailures: hlExpiry.consecutiveFailures, detail: highlightExpiryHealthDetail(hlExpiry) }); /* census H157 (3677): highlight.expired from the clock; OFF is not failing. Same line, same reason. */ const tgOutbox = getTelegraphOutboxDrainStatus(); reports.push({ job: "telegraphOutboxDrain", status: classify({ lastRunAt: tgOutbox.lastAttemptAt, lastSuccessAt: tgOutbox.lastSuccessAt, consecutiveFailures: tgOutbox.consecutiveFailures, requiresSuccess: true }), lastRunAt: tgOutbox.lastAttemptAt, lastSuccessAt: tgOutbox.lastSuccessAt, consecutiveFailures: tgOutbox.consecutiveFailures, detail: tgOutbox.lastResult ? (tgOutbox.lastResult.outcome === "off" ? "telegraph_outbox_fanout_enabled (3655, seeded FALSE) or telegraph_message_kernel_enabled is OFF: nothing is claimed and the send route publishes directly" : `last pass: ${tgOutbox.lastResult.outcome}${tgOutbox.lastResult.reason ? ` (${tgOutbox.lastResult.reason})` : ""}, claimed ${tgOutbox.lastResult.claimed}, fanned out ${tgOutbox.lastResult.fannedOut}, route-direct ${tgOutbox.lastResult.routeDirect}, absent ${tgOutbox.lastResult.absent}, expired ${tgOutbox.lastResult.expired}, failed ${tgOutbox.lastResult.failed}`) : undefined }); /* census-telegraph T154: the §13.3 outbox drainer (3655). OFF is not failing; a claim/ack failure or a row it could not consume is. Same line, same reason. */ const mmParts = getMessagePartsSweepStatus(); reports.push({ job: "messageMediaPartsSweep", status: classify({ lastRunAt: mmParts.lastAttemptAt, lastSuccessAt: mmParts.lastSuccessAt, consecutiveFailures: mmParts.consecutiveFailures, requiresSuccess: true }), lastRunAt: mmParts.lastAttemptAt, lastSuccessAt: mmParts.lastSuccessAt, consecutiveFailures: mmParts.consecutiveFailures, detail: mmParts.lastResult ? `last pass: ${mmParts.lastResult.outcome}, ${mmParts.lastResult.usersScanned} owner folder(s), removed ${mmParts.lastResult.uploadsRemoved} abandoned upload(s) / ${mmParts.lastResult.partsRemoved} raw part(s) (${mmParts.lastResult.ownerGone} of deleted accounts), kept ${mmParts.lastResult.kept} live, ${mmParts.lastResult.failures} failure(s)` : undefined }); /* census-telegraph T223 (3656): raw, unprocessed message-media parts must not outlive their cutoff; a pass that could not list or remove is failing. Same line, same reason. */ const compaction = getLayoverSnapshotCompactionStatus(); reports.push({ job: "layoverSnapshotCompaction", status: classify({ lastRunAt: compaction.lastAttemptAt, lastSuccessAt: compaction.lastSuccessAt, consecutiveFailures: compaction.consecutiveFailures, requiresSuccess: true }), lastRunAt: compaction.lastAttemptAt, lastSuccessAt: compaction.lastSuccessAt, consecutiveFailures: compaction.consecutiveFailures, detail: snapshotCompactionHealthDetail(compaction) }); /* census-layover L261: the flag-gated snapshot compaction (3624) DELETES when ON, so it reports here and writes job_health; OFF reads healthy with a "disabled" detail. Same line, same reason. */ const sosRedrive = getSafetySignalRedriveStatus(); reports.push({ job: "safetySignalRedrive", status: classify({ lastRunAt: sosRedrive.lastAttemptAt, lastSuccessAt: sosRedrive.lastSuccessAt, consecutiveFailures: sosRedrive.consecutiveFailures, requiresSuccess: true }), lastRunAt: sosRedrive.lastAttemptAt, lastSuccessAt: sosRedrive.lastSuccessAt, consecutiveFailures: sosRedrive.consecutiveFailures, detail: safetySignalRedriveHealthDetail(sosRedrive) }); /* Fable pass 3 §1.1: the durable re-drive of a help request the door could not tell (Telegraph §19 P0); ungated, a failed window scan is failing, a help request given up on is in the detail. Same line, same reason. */ const placeSweep = getPlaceCollectionsSweepStatus(); reports.push({ job: "placeCollectionsStaleSweep", status: classify({ lastRunAt: placeSweep.lastAttemptAt, lastSuccessAt: placeSweep.lastSuccessAt, consecutiveFailures: placeSweep.consecutiveFailures, requiresSuccess: true }), lastRunAt: placeSweep.lastAttemptAt, lastSuccessAt: placeSweep.lastSuccessAt, consecutiveFailures: placeSweep.consecutiveFailures, detail: placeCollectionsSweepHealthDetail(placeSweep) }); /* owner ruling 2026-10-17: the place stale sweep reports backlog, max wait and failures. Same line, same reason. */ const dbgPurge = getDebugSamplePurgeStatus(); reports.push({ job: "rankingDebugSamplePurge", status: classify({ lastRunAt: dbgPurge.lastAttemptAt, lastSuccessAt: dbgPurge.lastSuccessAt, consecutiveFailures: dbgPurge.consecutiveFailures, requiresSuccess: true }), lastRunAt: dbgPurge.lastAttemptAt, lastSuccessAt: dbgPurge.lastSuccessAt, consecutiveFailures: dbgPurge.consecutiveFailures, detail: debugSamplePurgeHealthDetail(dbgPurge) }); /* census-discovery §133 (DV-52): the debug-sample purge (3922, seeded FALSE); OFF and an absent flag delete nothing and are not failing, a purge that errored is. Same line, same reason. */ return reports;
 }
 
-router.get("/healthz/schedulers", (_req, res) => {
+router.get("/healthz/schedulers", asyncHandler(async (_req, res) => { await schedulerHeartbeatReady(); // the request that wakes a sleeping container must see the stop the boot read measures
   const jobs = schedulerReports();
 
   const failing = jobs.filter((j) => j.status === "failing");
@@ -604,7 +604,8 @@ router.get("/healthz/schedulers", (_req, res) => {
     unknownCount: unknown.length,
     jobs,
   });
-});
+}));
 
 export default router;
 import { getLayoverMetricsStatus } from '../lib/layoverMetricsScheduler.js';
+import { schedulerHeartbeatReady, schedulerHeartbeatReport } from "../lib/schedulerHeartbeat.js";
