@@ -168,7 +168,7 @@ export function UnifiedPostComposer({
   onSuccess,
   openCameraOnMount = false,
   initialPlace = null,
-  initialBucket = null,
+  initialBucket = null, tripId = null,
 }: {
   onClose: () => void;
   onSuccess?: () => void;
@@ -177,7 +177,7 @@ export function UnifiedPostComposer({
   /** Pre-selected place (e.g. when opened from a place page CTA). */
   initialPlace?: Place | null;
   /** Bucket hint passed from a place-page bucket CTA (e.g. 'night'). */
-  initialBucket?: string | null;
+  initialBucket?: string | null; /** Post TO this trip (the trip page's Add Post): sent as `tripId`, so the post lands in the trip's own list. The server keeps trip posts out of the public feeds, and the composer says so. */ tripId?: string | null;
 }) {
   const insets = useSafeAreaInsets();
   const { create, submitting } = usePostActions();
@@ -423,7 +423,7 @@ export function UnifiedPostComposer({
       const res = await create({
         content,
         visibility: vis,
-        mediaUrls: mediaUrl ? [mediaUrl] : [], ...(mediaThumbnailUrl ? { mediaThumbnailUrl } : {}), // the video's poster, so the post has a still to show
+        mediaUrls: mediaUrl ? [mediaUrl] : [], ...(mediaThumbnailUrl ? { mediaThumbnailUrl } : {}), ...(tripId ? { tripId } : {}), // the video's poster, so the post has a still to show; the trip it was posted to (members only — the server refuses anyone else)
         ...(mediaType ? { mediaType } : {}),
         addToPassport: autoPassport || addToPassport,
         ...locationFields,
@@ -486,6 +486,7 @@ export function UnifiedPostComposer({
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
+            {tripId ? <View style={uc.tripNote} testID="post-composer-trip-note"><Text style={uc.tripNoteTitle}>Posting to this trip</Text><Text style={uc.tripNoteSub}>It shows in the trip's Trip Posts, not in the public feeds.</Text></View> : null}
             {/* When a type is selected show a compact chip; otherwise show the full 2-col grid.
                 This keeps the form fields visible even when the keyboard is open. */}
             {selectedType ? (
@@ -508,7 +509,7 @@ export function UnifiedPostComposer({
               })()
             ) : (
               <View style={uc.grid}>
-                {POST_TYPES.map(({ id, label, sub, icon: Icon, iconColor }) => (
+                {POST_TYPES.filter(({ id }) => !tripId || !DEDICATED_COMPOSERS[id]).map(({ id, label, sub, icon: Icon, iconColor }) => ( // a Highlight has its own composer, which cannot post to a trip
                   <Pressable
                     key={id}
                     style={uc.typeCard}
@@ -860,6 +861,9 @@ const uc = StyleSheet.create({
   headTitle: { ...t.heading, color: color.ink, flex: 1 },
   closeBtn: { width: avatar.s32, height: avatar.s32, borderRadius: avatar.s32 / 2, alignItems: 'center', justifyContent: 'center', backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze },
   scroll: { paddingHorizontal: space.lg, paddingTop: space.md, paddingBottom: space.lg },
+  tripNote: { borderRadius: radius.md, borderWidth: 1, borderColor: color.deep + '40', backgroundColor: color.deep + '0D', paddingHorizontal: 12, paddingVertical: 10, marginBottom: space.md, gap: 2 },
+  tripNoteTitle: { ...t.small, fontWeight: '700', color: color.deep },
+  tripNoteSub: { ...t.small, color: color.mute },
 
   /* selected-type compact chip (replaces full grid once a type is picked) */
   typeChip: {

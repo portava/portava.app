@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import { router } from 'expo-router';
 import { AppHeader } from '../src/components/ui/AppHeader';
+import { ErrorState } from '../src/components/ui/ErrorState';
 import { Avatar } from '../src/components/ui/Avatar';
 import { getRestrictList, unrestrictUser, type RestrictedUser } from '../src/services/restrict';
 import { color, space, radius, type as t } from '../src/theme/tokens';
@@ -12,22 +13,27 @@ export default function RestrictedUsersScreen() {
   const [restricted, setRestricted] = useState<RestrictedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [unrestricting, setUnrestricting] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const navBarScrollHandler = useNavBarScrollHandler();
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      const res = await getRestrictList();
-      setLoading(false);
-      if (res.ok && res.data) setRestricted(res.data);
-    })();
+  // A failed read used to say "No restricted accounts", and a failed
+  // Unrestrict left the row with no word: both now say what happened.
+  const load = useCallback(async () => {
+    setLoading(true);
+    const res = await getRestrictList();
+    if (res.ok && res.data) setRestricted(res.data);
+    setLoadFailed(!res.ok);
+    setLoading(false);
   }, []);
+
+  useEffect(() => { void load(); }, [load]);
 
   async function handleUnrestrict(userId: string) {
     setUnrestricting(userId);
     const res = await unrestrictUser(userId);
     setUnrestricting(null);
     if (res.ok) setRestricted((prev) => prev.filter((u) => u.id !== userId));
+    else Alert.alert('Could not unrestrict', 'This account is still restricted. Please try again.');
   }
 
   return (
@@ -36,6 +42,10 @@ export default function RestrictedUsersScreen() {
       <View style={s.content}>
         {loading ? (
           <ActivityIndicator color={color.signal} style={{ marginTop: space.xl }} />
+        ) : loadFailed && restricted.length === 0 ? (
+          <View testID="restricted-users-load-error">
+            <ErrorState message="Your restricted accounts could not be loaded. Everyone you restricted is still restricted." onRetry={() => { void load(); }} />
+          </View>
         ) : restricted.length === 0 ? (
           <View style={{ alignItems: 'center' }}>
             <Text style={s.empty}>No restricted accounts</Text>

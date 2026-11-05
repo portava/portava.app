@@ -229,7 +229,8 @@ function gateSentence(gate: LayoverBuddySafetyGate | null): string {
  *
  *   failed read (503 / offline)   say so, with the server's sentence
  *   safety gate refused           say why, from the certified verdict
- *   marketplace switched off      say so
+ *   marketplace switched off      nothing (as every other surface does while
+ *                                 rent_buddy_enabled is off)
  *   degraded with nobody shown    say that it is not a count
  *
  * A MEASURED empty list renders nothing and claims nothing: the route serves
@@ -244,8 +245,11 @@ function BuddiesNotice({ answer }: { answer: LayoverBuddiesAnswer | null }) {
     id = 'layover-buddies-unavailable';
     text = answer.message;
   } else if (answer.refusal === 'rent_buddy_not_enabled') {
-    id = 'layover-buddies-off';
-    text = "Booking a local buddy isn't switched on yet.";
+    // Rent-a-Buddy is off for launch. Explore, the AI tab and Compass
+    // preferences draw nothing for it while rent_buddy_enabled is off; a
+    // "not switched on yet" line on every layover dashboard advertised a
+    // feature nobody can use. Nothing is claimed about who is here.
+    return null;
   } else if (answer.refusal) {
     id = 'layover-buddies-gate';
     text = gateSentence(answer.safetyGate);

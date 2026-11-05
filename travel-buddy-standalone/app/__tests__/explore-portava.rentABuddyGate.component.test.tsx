@@ -5,6 +5,8 @@
  * badge) that opened only the (rent-a-buddy) layout's COMING SOON gate.
  *   E1  flag off → no Rent a Buddy row; the rest of Services is still listed;
  *   E2  flag on → the row, and it opens /(rent-a-buddy).
+ * Discover › Become a Local Guide follows `local_guides_enabled` the same way:
+ *   G1  flag off → no row;  G2  flag on → the row, and it opens /gems/become-guide.
  *
  * The real SectionList virtualises (only ~10 rows commit under Jest's 0-height window — see
  * explore-portava.liveRoutes), so it is replaced by a flat list that draws every section the screen passes it:
@@ -38,6 +40,12 @@ jest.mock('../../src/hooks/useRentABuddyFlag', () => ({
   useRentABuddyFlag: () => ({ enabled: mockRab.enabled, loading: false }),
 }));
 
+const mockFlags = { localGuides: false };
+// NOTE: intentionally exhaustive — the flag is the input under test; the real provider fetches /api/feature-flags.
+jest.mock('../../src/context/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ isEnabled: (k: string) => k === 'local_guides_enabled' && mockFlags.localGuides }),
+}));
+
 const mockPush = jest.fn();
 // NOTE: intentionally exhaustive — expo-router needs a NavigationContainer; the screen uses `router` only.
 jest.mock('expo-router', () => ({
@@ -54,7 +62,7 @@ jest.mock('../../src/hooks/useBottomInset', () => ({ useBottomInset: () => 0 }))
 
 import ExplorePortavaScreen from '../explore-portava.tsx';
 
-beforeEach(() => { mockRab.enabled = false; mockPush.mockClear(); });
+beforeEach(() => { mockRab.enabled = false; mockFlags.localGuides = false; mockPush.mockClear(); });
 
 describe('Explore Portava — rent_buddy_enabled gate', () => {
   it('E1: flag off → no Rent a Buddy row; the rest of Services is still listed', async () => {
@@ -69,5 +77,20 @@ describe('Explore Portava — rent_buddy_enabled gate', () => {
     await render(<ExplorePortavaScreen />);
     await fireEvent.press(screen.getByLabelText('Rent a Buddy'));
     expect(mockPush).toHaveBeenCalledWith('/(rent-a-buddy)');
+  });
+});
+
+describe('Explore Portava — local_guides_enabled gate', () => {
+  it('G1: flag off → no Become a Local Guide row', async () => {
+    await render(<ExplorePortavaScreen />);
+    expect(screen.getByText('DISCOVER')).toBeTruthy();
+    expect(screen.queryByLabelText('Become a Local Guide')).toBeNull();
+  });
+
+  it('G2: flag on → the row, and it opens the application', async () => {
+    mockFlags.localGuides = true;
+    await render(<ExplorePortavaScreen />);
+    await fireEvent.press(screen.getByLabelText('Become a Local Guide'));
+    expect(mockPush).toHaveBeenCalledWith('/gems/become-guide');
   });
 });

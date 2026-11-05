@@ -16,14 +16,16 @@ interface AvailabilityContextValue {
   setOpenToMeet: (v: boolean) => void;
   addTripWindow: (w: TripWindow) => void;
   removeTripWindow: (id: string) => void;
-  save: () => Promise<void>;
+  /** Answers whether the server accepted the write (saveError carries why not). */
+  save: () => Promise<boolean>;
   /** Re-fetch availability from the backend — call on screen focus to stay fresh. */
   refresh: () => Promise<void>;
   saveError: string | null;
   saving: boolean;
   quickStatus: QuickStatus | null;
   quickStatusExpiresAt: string | null;
-  setQuickStatus: (status: QuickStatus) => Promise<void>;
+  /** Answers whether the server accepted the status. */
+  setQuickStatus: (status: QuickStatus) => Promise<boolean>;
 }
 
 const AvailabilityContext = createContext<AvailabilityContextValue | null>(null);
@@ -114,7 +116,7 @@ export function AvailabilityProvider({ children }: { children: React.ReactNode }
     setAvailability((prev) => ({ ...prev, trips: prev.trips.filter((t) => t.id !== id) }));
   }, []);
 
-  const save = useCallback(async () => {
+  const save = useCallback(async (): Promise<boolean> => {
     setSaving(true);
     setSaveError(null);
     // Snapshot the last server-confirmed value so we can roll back to it if
@@ -132,21 +134,24 @@ export function AvailabilityProvider({ children }: { children: React.ReactNode }
         setSaveError(res.message ?? 'Save failed');
         // Revert in-memory state to the server-confirmed value so the chip stays honest.
         setAvailability((prev) => ({ ...prev, openToMeet: snapshotOpenToMeet }));
-      } else {
-        // Save succeeded — advance the confirmed baseline.
-        confirmedOpenToMeet.current = availability.openToMeet;
+        return false;
       }
+      // Save succeeded — advance the confirmed baseline.
+      confirmedOpenToMeet.current = availability.openToMeet;
+      return true;
     } finally {
       setSaving(false);
     }
   }, [availability]);
 
-  const setQuickStatus = useCallback(async (status: QuickStatus) => {
+  const setQuickStatus = useCallback(async (status: QuickStatus): Promise<boolean> => {
     const res = await patchMyQuickStatus(status);
     if (res.ok && res.data) {
       setQuickStatusState(res.data.status as QuickStatus);
       setQuickStatusExpiresAt(res.data.expiresAt);
+      return true;
     }
+    return false;
   }, []);
 
   /** Re-fetch availability from backend — call on screen focus to stay fresh. */
@@ -194,8 +199,8 @@ export function useAvailabilityStore(): AvailabilityContextValue {
       availability: EMPTY,
       toggleBlock: () => {}, applyWeekly: () => {}, clearWeekly: () => {},
       setOpenToMeet: () => {}, addTripWindow: () => {}, removeTripWindow: () => {},
-      save: async () => {}, refresh: async () => {}, saveError: null, saving: false,
-      quickStatus: null, quickStatusExpiresAt: null, setQuickStatus: async () => {},
+      save: async () => false, refresh: async () => {}, saveError: null, saving: false,
+      quickStatus: null, quickStatusExpiresAt: null, setQuickStatus: async () => false,
     };
   }
   return ctx;

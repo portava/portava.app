@@ -5,7 +5,7 @@ import { router } from 'expo-router';
 import { CalendarDays, MapPin, X, Sparkles, ImagePlus } from 'lucide-react-native';
 import { AppHeader } from '../../src/components/ui/AppHeader';
 import { useSession } from '../../src/context/SessionContext';
-import { createTrip } from '../../src/services/trips';
+import { createTrip, updateTrip } from '../../src/services/trips'; import { tripDestinationGeo } from '../../src/lib/tripDestinationGeo.ts';
 import { draftTripFromText } from '../../src/services/tripIntel';
 import { GlobalCalendarPicker } from '../../src/components/selectors/GlobalCalendarPicker';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
@@ -308,12 +308,29 @@ export default function NewTrip() {
         }
       }
 
+      // The create route stores only the city and country, so the destination's
+      // point, canonical id and zone go in a follow-up PATCH; without it the trip
+      // is never on the map (lib/tripDestinationGeo.ts). The trip exists either
+      // way, so a failure here is said once the trip is open, like a lost stop.
+      const geo = primaryCity
+        ? tripDestinationGeo({ lat: primaryCity.lat, lng: primaryCity.lng, canonicalId: primaryCity.placeId })
+        : tripDestinationGeo(destBinding, place);
+      let geoSaved = true;
+      if (geo) {
+        try { geoSaved = (await updateTrip(trip.id, geo)) !== null; } catch { geoSaved = false; }
+      }
+
       checkForNewStamps(2000);
       router.replace(`/trip/${trip.id}`);
       if (unsavedStops.length > 0) {
         Alert.alert(
           'Some stops were not saved',
           `Your trip was created, but ${unsavedStops.join(', ')} could not be added. Add ${unsavedStops.length === 1 ? 'it' : 'them'} from Edit trip.`,
+        );
+      } else if (!geoSaved) {
+        Alert.alert(
+          'Map pin not saved',
+          'Your trip was created, but its place on the map was not saved. Pick the destination again in Edit trip.',
         );
       }
     } catch (e: any) {

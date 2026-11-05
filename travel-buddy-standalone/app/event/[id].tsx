@@ -53,6 +53,7 @@ import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useEventRsvp } from '../../src/hooks/useEventRsvp';
 import { EventPassportShareCard } from '../../src/features/passport/EventPassportShareCard';
 import { HostDashboardPanel } from '../../src/components/HostDashboardPanel';
+import { EventComposerSheet } from '../../src/components/EventComposerSheet';
 import { EventVoiceRoomCard } from '../../src/components/events/EventVoiceRoomCard.tsx'; import { EventCheckInCard } from '../../src/components/events/EventCheckInCard.tsx'; import { EventCommunitySection } from '../../src/components/events/EventCommunitySection.tsx'; import { EventMemoryCard } from '../../src/components/events/EventMemoryCard.tsx'; import { SharedEventLinkPreview } from '../../src/components/events/SharedEventLinkPreview.tsx'; import { isEventParticipant } from '../../src/lib/eventCommunity.ts';
 import { StampButton } from '../../src/components/stamps/StampButton';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
@@ -160,6 +161,7 @@ export default function EventDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showDashboard, setShowDashboard] = useState(false);
+  const [showEditor, setShowEditor] = useState(false);
   const [showRsvpMenu, setShowRsvpMenu] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
@@ -1364,6 +1366,17 @@ export default function EventDetailScreen() {
           event={event}
           onDismiss={() => setShowDashboard(false)}
           onRefresh={refreshLoad}
+          onEdit={() => { setShowDashboard(false); setShowEditor(true); }}
+        />
+      )}
+
+      {/* Event editor (host) — the composer in edit mode */}
+      {showEditor && event && (
+        <EventComposerSheet
+          initialEvent={event}
+          onDismiss={() => setShowEditor(false)}
+          onCreated={() => setShowEditor(false)}
+          onUpdated={() => { setShowEditor(false); refreshLoad(); }}
         />
       )}
 

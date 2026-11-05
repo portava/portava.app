@@ -108,6 +108,8 @@ export interface PassportMockOverrides {
   lastLoadedAt?: MutableRefObject<number>;
   /** §28.11 — the Memories read FAILED. Defaults to false (it was read). */
   memoriesUnreadable?: boolean;
+  /** The same for Postcards. Defaults to false (they were read). */
+  postcardsUnreadable?: boolean;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-function
@@ -123,6 +125,7 @@ export function makePassportMock(overrides: PassportMockOverrides = {}): Passpor
     // read. A test that wants the failed-read state must ask for it, because
     // the two are different facts and must not share a default.
     memoriesUnreadable: overrides.memoriesUnreadable ?? false,
+    postcardsUnreadable: overrides.postcardsUnreadable ?? false,
     suggestions:  overrides.suggestions  ?? [],
     loading:      overrides.loading      ?? false,
     error:        overrides.error        ?? null,

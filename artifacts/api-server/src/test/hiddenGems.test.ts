@@ -1167,6 +1167,36 @@ describe("Hidden Gems — admin actions", () => {
     assert.ok(updatedGems.length > 0, "should update hidden_gems status");
   });
 
+  it("approving a pending gem tells its submitter; re-approving a live gem does not", async () => {
+    // The submit screen promises "Once approved it'll appear for the community";
+    // hidden_gems.place_approved had a template and no producer.
+    const settle = () => new Promise((r) => setTimeout(r, 50));
+    const notifs = (c: any) => c._inserted.filter((i: any) => i.table === "notifications" && i.row?.event_type === "hidden_gems.place_approved");
+
+    const pending = makeFakeClient(
+      { featureFlags: { hidden_gems_enabled: true }, gems: [makeActiveGem({ status: "pending" })], profiles: [{ id: ADMIN_ID, role: "admin" }], gemVerifications: [] },
+      ADMIN_ID,
+    );
+    _setTestClient(pending, true);
+    _setTestServiceClient(pending);
+    assert.equal((await req("POST", `/api/admin/hidden-gems/${GEM_ID}/verify`, { result: "approved" }, "admin-token")).status, 200);
+    await settle();
+    const [n] = notifs(pending);
+    assert.ok(n, "the submitter is notified");
+    assert.equal(n.row.user_id, makeActiveGem().submitted_by);
+    assert.equal(n.row.action_url, `/gems/${GEM_ID}`);
+
+    const live = makeFakeClient(
+      { featureFlags: { hidden_gems_enabled: true }, gems: [makeActiveGem()], profiles: [{ id: ADMIN_ID, role: "admin" }], gemVerifications: [] },
+      ADMIN_ID,
+    );
+    _setTestClient(live, true);
+    _setTestServiceClient(live);
+    assert.equal((await req("POST", `/api/admin/hidden-gems/${GEM_ID}/verify`, { result: "approved" }, "admin-token")).status, 200);
+    await settle();
+    assert.equal(notifs(live).length, 0, "an already-live gem is not announced again");
+  });
+
   it("admin can mark a gem sensitive", async () => {
     const client = makeFakeClient(
       {

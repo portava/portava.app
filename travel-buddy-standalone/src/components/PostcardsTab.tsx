@@ -6,20 +6,20 @@ import {
 import { CachedImage, withStorageParams } from './CachedImage.tsx';
 import { useHydratedMedia } from '../services/mediaUrl.ts';
 import { router } from 'expo-router';
-import { MapPin, Pin, MoreHorizontal, Plus, Clock, AlertCircle, Layers, ChevronDown, Lock, Ban, EyeOff, Image as ImageIcon } from 'lucide-react-native';
+import { MapPin, Pin, MoreHorizontal, Plus, Clock, AlertCircle, Layers, ChevronDown, Lock, Ban, EyeOff, CloudOff, Image as ImageIcon } from 'lucide-react-native';
 import type { PassportPostcard } from '../types/models.ts';
 import { MediaStampOverlay } from './StampOverlayBadge.tsx';
 import { MediaCard } from './cards/MediaCard.tsx';
 import { MediaGridSkeleton } from './loading/MediaGridSkeleton.tsx';
 import { EmptyState } from './ui/EmptyState.tsx';
 import type { usePostcardActions } from '../hooks/usePostcardActions.ts';
-import type { PostcardsSentinel } from '../services/profile.ts';
+import type { PostcardsWallNotice } from '../services/profile.ts';
 import { color, space, radius, type as t, avatar, icon } from '../theme/tokens.ts';
 
 /* ────────────────────────────────────────────────────────── */
 /* Sentinel state views (private / blocked / unavailable)     */
 /* ────────────────────────────────────────────────────────── */
-const SENTINEL_COPY: Record<PostcardsSentinel, { Icon: React.ComponentType<any>; title: string; body: string }> = {
+const SENTINEL_COPY: Record<PostcardsWallNotice, { Icon: React.ComponentType<any>; title: string; body: string }> = {
   private: {
     Icon: Lock,
     title: 'Private passport',
@@ -35,9 +35,10 @@ const SENTINEL_COPY: Record<PostcardsSentinel, { Icon: React.ComponentType<any>;
     title: 'Account unavailable',
     body: 'This account is no longer available.',
   },
+  load_failed: { Icon: CloudOff, title: "Postcards didn't load", body: 'Something went wrong loading these postcards. Open this passport again to retry.' },
 };
 
-function PostcardSentinelView({ kind }: { kind: PostcardsSentinel }) {
+function PostcardSentinelView({ kind }: { kind: PostcardsWallNotice }) {
   const { Icon, title, body } = SENTINEL_COPY[kind];
   return (
     <View style={sv.root} accessibilityRole="text" accessibilityLabel={title}>
@@ -345,7 +346,7 @@ export function PostcardsTab({
   actions?: Actions;
   onAddPostcard?: () => void;
   /** Sentinel returned by the postcards endpoint — renders a graceful state instead of the grid. */
-  sentinel?: PostcardsSentinel;
+  sentinel?: PostcardsWallNotice;
   /** When true, renders a MediaGridSkeleton placeholder instead of the grid. */
   loading?: boolean;
 }) {

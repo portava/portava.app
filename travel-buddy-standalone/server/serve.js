@@ -294,7 +294,7 @@ function readAppJson(getter) {
 }
 
 /** Deep-link path prefixes — keep in sync with app.json android.intentFilters. */
-const APP_LINK_PATHS = ["/passport", "/passport/*", "/u", "/u/*"];
+const APP_LINK_PATHS = ["/passport", "/passport/*", "/u", "/u/*", "/invite/*"];
 
 function serveAppleAppSiteAssociation(res) {
   const teamId = (process.env.APPLE_APP_ID_PREFIX || "").trim();

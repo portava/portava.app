@@ -441,7 +441,7 @@ So: internal sharing writes server-side for 3 of ~10 entity types, and even with
 | `src/components/__tests__/DiscoveryShareSheet.dualSection.component.test.tsx` | ″ |
 | `src/components/__tests__/DiscoveryShareSheet.debounceCleanup.component.test.tsx` | ″ |
 | `src/components/__tests__/DiscoveryShareSheet.debounceCleanupMulti.component.test.tsx` | ″ |
-| `src/components/__tests__/GemDetailShare.reasonModal.component.test.tsx` | **see below** |
+| `src/components/__tests__/GemDetailShare.threadPicker.component.test.tsx` (was `GemDetailShare.reasonModal`) | **see below** |
 | `src/components/share/__tests__/PortavaShareButton.component.test.tsx` | button chrome, hitSlop, a11y, disabled state |
 | `src/components/icons/__tests__/PortavaShareIcon.component.test.tsx` | icon render |
 | `src/components/__tests__/StampShareCard.component.test.tsx` | stamp share card rendering |
@@ -456,7 +456,9 @@ One of the 9 files that were **unparseable by eslint** until the `<T,>` fix comm
 
 What it covers, per its own header: the gem Share action originally used `Alert.prompt`, **an iOS-only API that is a silent no-op on Android and web**. The test asserts the replacement — `ReasonPromptModal` — collects the thread ID and that `shareGemToTelegraph` is called with it. It also documents the React 19 act() strategy used across this suite (bare `fireEvent` + `waitFor`, never `await act(async () => {})`, to avoid overlapping-act warnings).
 
-The test locks in a workaround, not a good design: **the user is asked to type a raw thread UUID**. Replacing that with the real recipient picker is exactly what §1a #24 proposes, and this test will need rewriting when it happens.
+The test locked in a workaround, not a good design: **the user was asked to type a raw thread UUID**. Replacing that with the real recipient picker is exactly what §1a #24 proposes, and this test needed rewriting when it happened.
+
+**Resolved 2026-11-04.** The gem Share action now opens `src/components/ThreadPickerSheet.tsx`, which lists the traveller's chats from `GET /api/me/threads` (archived and booking threads left out) and shares to the one tapped. The test was renamed `GemDetailShare.threadPicker.component.test.tsx` and asserts the picker, the share call, and that a double tap on a chat shares once.
 
 ---
 

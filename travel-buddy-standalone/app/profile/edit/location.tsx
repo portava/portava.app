@@ -408,10 +408,16 @@ function LocationAvailabilityScreenInner() {
               value={prefs.trustedCircleShare}
               onValueChange={(v) => save({ trustedCircleShare: v })}
             />
+            {/* This said "Trusted circle management coming soon", but /circle
+                (MyCircleMembersPanel) already invites and removes circle members. */}
+            <SettingsDivider />
+            <SettingsRow
+              icon={<Users size={18} color={PP.ink} />}
+              title="Manage your trusted circle"
+              subtitle="See, invite, or remove the people in your circle"
+              onPress={() => router.push('/circle' as any)}
+            />
           </SettingsSection>
-          {prefs.trustedCircleShare && (
-            <Text style={sx.note}>Trusted circle management coming soon</Text>
-          )}
 
           <Text style={sx.note}>
             Your exact GPS coordinates are never shared publicly. All public surfaces show only city,

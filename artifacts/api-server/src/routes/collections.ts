@@ -27,7 +27,7 @@ import { decideHighlightViewAccessMany } from "./highlights.js";
 import { canViewEvent, checkEventEligibility } from "./events.js";
 import { canReadPost, isPostPublished, needsFollowerCheck, needsTripMembershipCheck } from "../lib/postVisibility.js";
 import { isAcceptedTripMember } from "../lib/http.js";
-import { canViewTrip } from "../domain/trips/policies/tripPolicy.js";
+import { canViewTrip } from "../domain/trips/policies/tripPolicy.js"; import { removeFromOwnCollections } from "../lib/collectionUnfile.js";
 
 const router = Router();
 
@@ -772,27 +772,14 @@ router.delete("/saves", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // Find all user's collection ids
-  const { data: cols } = await sc
-    .from("collections")
-    .select("id")
-    .eq("owner_id", user.id);
-
-  const colIds = (cols ?? []).map((c: any) => c.id as string);
-
-  if (colIds.length > 0) {
-    const { error } = await sc
-      .from("collection_items")
-      .delete()
-      .in("collection_id", colIds)
-      .eq("entity_type", entity_type)
-      .eq("entity_id", entity_id);
-
-    if (error) {
-      req.log.error({ err: error }, "unsave item failed");
-      sendError(res, "db_error", error.message);
-      return;
-    }
+  // From every collection the caller owns. The collections read is bound
+  // (lib/collectionUnfile.ts): unbound, a failed read removed nothing and still
+  // answered saved:false.
+  const unfiled = await removeFromOwnCollections(sc, user.id, entity_type, entity_id);
+  if (!unfiled.ok) {
+    req.log.error({ err: unfiled.error }, "unsave item failed");
+    sendError(res, "db_error", unfiled.error);
+    return;
   }
 
   res.json({ saved: false, entityType: entity_type, entityId: entity_id });

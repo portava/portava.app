@@ -4,7 +4,9 @@
  *
  * Two entry paths:
  *   • author   — an `observationId` from a just-sent Quick Signal. The author
- *                proposes it as a claim (candidate) and approves it (active).
+ *                proposes it as a claim (candidate). Making it live (active) is
+ *                a reviewer's step, or the automatic promotion pass; only a
+ *                caller the server says may approve sees the approve button.
  *   • confirm  — a `claimId` for an existing live claim, to agree / disagree /
  *                unsure, or to suggest a correction that supersedes it.
  *
@@ -56,6 +58,13 @@ export default function MomentScreen() {
   // succeed, on a step the screen said was theirs to take. The claim IS proposed;
   // what it waits for is a reviewer, and the screen now says so.
   const [inReview, setInReview] = useState(false);
+  // PRODUCT CALL (2026-11-04): approval stays with reviewers and the automatic
+  // promotion pass (lib/intelPromotionScheduler), never the author — a claim
+  // that publishes itself is the gaming path the gate exists to close. So a
+  // traveller's flow is ONE step: propose, then "waiting for a reviewer". The
+  // propose answer says whether this caller may approve (canApprove), and only
+  // then is step 2 a button.
+  const [canApprove, setCanApprove] = useState(false);
   const [busy, setBusy] = useState<null | 'propose' | 'approve'>(null);
   const [authorError, setAuthorError] = useState<string | null>(null);
 
@@ -65,8 +74,11 @@ export default function MomentScreen() {
     setBusy('propose');
     const res = await proposeClaim(observationId);
     setBusy(null);
-    if (res.ok && res.claim?.id) setClaimId(res.claim.id);
-    else setAuthorError(intelWriteErrorCopy(res, 'propose').message);
+    if (res.ok && res.claim?.id) {
+      setClaimId(res.claim.id);
+      setCanApprove(res.canApprove === true);
+      if (res.canApprove !== true) setInReview(true);
+    } else setAuthorError(intelWriteErrorCopy(res, 'propose').message);
   }, [observationId]);
 
   const approve = useCallback(async () => {
@@ -94,8 +106,8 @@ export default function MomentScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Publish this Moment</Text>
             <Text style={styles.sectionBody}>
-              Turn your report{subjectName ? ` at ${subjectName}` : ''} into a structured Moment others can rely on. Two
-              quick steps — propose, then approve.
+              Turn your report{subjectName ? ` at ${subjectName}` : ''} into a structured Moment others can rely on.
+              Propose it, and Portava checks it before it goes live.
             </Text>
 
             <StepRow
@@ -114,7 +126,7 @@ export default function MomentScreen() {
 
             <StepRow
               index={2}
-              title={inReview ? 'Waiting for a reviewer' : 'Approve & make it live'}
+              title={inReview ? 'Waiting for a reviewer' : canApprove ? 'Approve & make it live' : 'Portava makes it live'}
               state={approved ? 'done' : inReview ? 'blocked' : busy === 'approve' ? 'busy' : claimId ? 'todo' : 'blocked'}
             />
             {inReview ? (
@@ -125,7 +137,7 @@ export default function MomentScreen() {
                 </Text>
               </View>
             ) : null}
-            {claimId && !approved && !inReview ? (
+            {claimId && canApprove && !approved && !inReview ? (
               <TravelButton label="Approve & publish" variant="primary" icon={<Check size={16} color={color.onInk} />} onPress={approve} />
             ) : null}
 

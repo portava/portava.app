@@ -8,7 +8,10 @@ import { supabase } from '../../src/lib/supabase';
 import { color, space, type as t, radius, layout, icon, dot } from '../../src/theme/tokens';
 import { updateTelegraphChatSettings, getTelegraphChatSettings } from '../../src/services/telegraphChat';
 import { fetchPreferences, patchPreferences, resetLearnedPreferences } from '../../src/services/intelligence';
-import { deactivateAccount, requestAccountDeletion, reactivateAccount } from '../../src/services/profile';
+import {
+  deactivateAccount, requestAccountDeletion, reactivateAccount,
+  getAccountDeletionRequest, cancelAccountDeletion,
+} from '../../src/services/profile';
 import { resolveAccountButton, applyReactivateResult } from '../../src/screens/settings/settings.machine';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
@@ -19,6 +22,9 @@ export default function Settings() {
   const { signOut, isAuthed, configured } = useSession();
   const [isAdmin, setIsAdmin] = useState(false);
   const [accountStatus, setAccountStatus] = useState<string | null>(null);
+  // A pending deletion request: the account is hidden and is deleted on this
+  // date unless cancelled. Read from the server so it survives a restart.
+  const [deletionScheduledAt, setDeletionScheduledAt] = useState<string | null>(null);
   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
   const [killSwitchCount, setKillSwitchCount] = useState(0);
 
@@ -29,6 +35,9 @@ export default function Settings() {
       supabase.from('profiles').select('role, account_status').eq('id', userId).maybeSingle().then(({ data: p }) => {
         if ((p as any)?.role === 'admin') setIsAdmin(true);
         setAccountStatus((p as any)?.account_status ?? null);
+      });
+      getAccountDeletionRequest().then((r) => {
+        if (r.ok && r.data?.pending) setDeletionScheduledAt(r.data.scheduledAt ?? '');
       });
     });
   }, []);
@@ -159,9 +168,39 @@ export default function Settings() {
           onPress: async () => {
             const res = await requestAccountDeletion();
             if (res.ok) {
-              Alert.alert('Request submitted', 'We will contact you to confirm. Your account will be deleted within 30 days.');
+              const scheduledAt = res.data?.scheduledAt ?? null;
+              // The server hides the account while the deletion is pending.
+              setAccountStatus('deactivated');
+              setDeletionScheduledAt(scheduledAt ?? '');
+              Alert.alert(
+                'Deletion scheduled',
+                `Your account is hidden now and will be deleted${scheduledAt ? ` on ${formatDeletionDate(scheduledAt)}` : ' within 30 days'}. You can cancel any time before then here in Settings.`,
+              );
             } else {
               Alert.alert('Error', res.message ?? 'Could not submit request. Try again.');
+            }
+          },
+        },
+      ],
+    );
+  }
+
+  async function handleCancelDeletion() {
+    Alert.alert(
+      'Cancel account deletion?',
+      'Your account will stay, and your profile will be visible to other users again.',
+      [
+        { text: 'Keep deletion', style: 'cancel' },
+        {
+          text: 'Cancel deletion',
+          onPress: async () => {
+            const res = await cancelAccountDeletion();
+            if (res.ok) {
+              setDeletionScheduledAt(null);
+              setAccountStatus('active');
+              Alert.alert('Deletion cancelled', 'Your account is active again.');
+            } else {
+              Alert.alert('Error', res.message ?? 'Could not cancel the deletion. Try again.');
             }
           },
         },
@@ -593,7 +632,7 @@ export default function Settings() {
 
           {(configured && isAuthed) && (
             <>
-              {resolveAccountButton(accountStatus) === 'reactivate' && (
+              {deletionScheduledAt === null && resolveAccountButton(accountStatus) === 'reactivate' && (
                 <Pressable
                   style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
                   onPress={handleReactivate}
@@ -601,7 +640,7 @@ export default function Settings() {
                   <Text style={[styles.item, { color: color.success }]}>Reactivate account</Text>
                 </Pressable>
               )}
-              {resolveAccountButton(accountStatus) === 'deactivate' && (
+              {deletionScheduledAt === null && resolveAccountButton(accountStatus) === 'deactivate' && (
                 <Pressable
                   style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
                   onPress={handleDeactivate}
@@ -609,12 +648,28 @@ export default function Settings() {
                   <Text style={[styles.item, { color: color.mute }]}>Deactivate account</Text>
                 </Pressable>
               )}
-              <Pressable
-                style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
-                onPress={handleRequestDeletion}
-              >
-                <Text style={[styles.item, { color: color.signal }]}>Delete account</Text>
-              </Pressable>
+              {deletionScheduledAt !== null ? (
+                <Pressable
+                  style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
+                  onPress={handleCancelDeletion}
+                  accessibilityRole="button"
+                  accessibilityLabel="Cancel account deletion"
+                >
+                  <Text style={[styles.item, { color: color.success }]}>Cancel account deletion</Text>
+                  <Text style={styles.sectionDesc}>
+                    {deletionScheduledAt
+                      ? `Your account is hidden and will be deleted on ${formatDeletionDate(deletionScheduledAt)}.`
+                      : 'Your account is hidden and scheduled for deletion.'}
+                  </Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
+                  onPress={handleRequestDeletion}
+                >
+                  <Text style={[styles.item, { color: color.signal }]}>Delete account</Text>
+                </Pressable>
+              )}
               <Pressable
                 style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
                 onPress={() => onItem('Log out')}
@@ -627,6 +682,12 @@ export default function Settings() {
       </ScrollView>
     </View>
   );
+}
+
+function formatDeletionDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return 'the scheduled date';
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
 const styles = StyleSheet.create({

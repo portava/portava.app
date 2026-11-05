@@ -17,6 +17,7 @@ import { render, act, waitFor, screen, fireEvent } from '@testing-library/react-
 import PassportManagerScreen from '../../../app/profile/edit/passports.tsx';
 import {
   listMyPassports,
+  readMyPassports,
   addPassport,
   deletePassport,
 } from '../../services/entryRequirements.ts';
@@ -49,14 +50,20 @@ jest.mock('../DatePickerField', () => {
 
 // NOTE: intentionally exhaustive — the service imports supabase/fetch internals
 // that fail under jest when pulled via requireActual.
-jest.mock('../../services/entryRequirements', () => ({
-  listMyPassports: jest.fn(),
-  addPassport: jest.fn(),
-  updatePassport: jest.fn(),
-  deletePassport: jest.fn(),
-  setTripPassport: jest.fn(),
-  fetchTripEntryRequirements: jest.fn(),
-}));
+jest.mock('../../services/entryRequirements', () => {
+  // The screen reads readMyPassports(); by default it answers what the
+  // listMyPassports mock is set to, so each case below sets one list.
+  const list = jest.fn();
+  return {
+    listMyPassports: list,
+    readMyPassports: jest.fn(async () => ({ ok: true, data: await list() })),
+    addPassport: jest.fn(),
+    updatePassport: jest.fn(),
+    deletePassport: jest.fn(),
+    setTripPassport: jest.fn(),
+    fetchTripEntryRequirements: jest.fn(),
+  };
+});
 
 // ── Typed mock refs ───────────────────────────────────────────────────────────
 
@@ -96,6 +103,21 @@ describe('PassportManagerScreen', () => {
   });
 
   // ── 1. Empty state ──────────────────────────────────────────────────────────
+
+  it('a failed read is said, not shown as "No passports yet", and Try again loads', async () => {
+    (readMyPassports as jest.Mock).mockResolvedValueOnce({ ok: false, data: [] });
+    mockList.mockResolvedValue([US_PASSPORT]);
+
+    await mountScreen();
+
+    await waitFor(() => expect(screen.getByTestId('passports-load-error')).toBeTruthy());
+    expect(screen.getByText('Your passports could not be loaded')).toBeTruthy();
+    expect(screen.queryByText('No passports yet')).toBeNull();
+
+    await act(async () => { fireEvent.press(screen.getByText('Try again')); });
+    await waitFor(() => expect(screen.queryByTestId('passports-load-error')).toBeNull());
+    expect(readMyPassports).toHaveBeenCalledTimes(2);
+  });
 
   it('shows empty state when there are no passports', async () => {
     mockList.mockResolvedValue([]);

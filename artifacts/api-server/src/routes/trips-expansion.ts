@@ -174,11 +174,17 @@ router.get("/trips/me", async (req, res) => {
 
   const tripIds = (memberRows as any[]).map((r) => r.trip_id as string);
 
+  // Archived trips are left out: DELETE /trips/:id and POST …/archive both
+  // write status 'archived', and the app tells the traveller a deleted or
+  // archived trip leaves their lists. The Trips tab, the passport Plans tab,
+  // Travel History and the trip pickers all read this list, so a deleted trip
+  // used to stay in every one of them.
   const { data: trips, error: tripsErr } = await sc
     .from("trips")
     .select("*")
     .in("id", tripIds)
     .not("status", "is", null)
+    .neq("status", "archived")
     .order("created_at", { ascending: false });
 
   if (tripsErr) { sendError(res, "db_error", tripsErr.message); return; }

@@ -12,7 +12,8 @@
  *   5. Age/Trust     — min age, max age, trust score, verified-only, safety notes
  *   6. Privacy       — visibility, circle/trip context
  *   7. Tickets       — free vs external link
- *   8. Invite people — (coming soon stub)
+ *   8. Invite people — pick travellers; the invites go out once the event is
+ *                       published (a draft has no event id to invite against)
  *   9. Preview       — summary + Publish / Save as draft
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -241,8 +242,11 @@ export default function CreateEventScreen() {
   const [inviteQuery, setInviteQuery] = useState('');
   const [inviteResults, setInviteResults] = useState<TravelerSearchResult[]>([]);
   const [inviteSearching, setInviteSearching] = useState(false); const [inviteOutcome, setInviteOutcome] = useState<'idle' | 'ok' | 'failed'>('idle'); const inviteSeqRef = useRef(0); // census-discovery §106 (tm-people): what the latest invite search came to; its generation
-  const [invitedIds, setInvitedIds] = useState<Set<string>>(new Set());
-  const [inviteSending, setInviteSending] = useState<string | null>(null);
+  // Travellers picked on this step. POST /events/:id/invite checks the caller
+  // against `events`, and a wizard draft lives in `event_drafts`, so an invite
+  // sent before publish always answered 403. They are sent after publish.
+  const [invitees, setInvitees] = useState<TravelerSearchResult[]>([]);
+  const invitedIds = new Set(invitees.map((u) => u.id));
   const inviteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const stepIndex = STEPS.indexOf(step);
@@ -422,29 +426,20 @@ export default function CreateEventScreen() {
     }, 400);
   }
 
-  async function handleSendInvite(user: TravelerSearchResult) {
-    if (!draftId) {
-      // Need a draft first so we have an event id to invite against
-      setInviteSending(user.id);
-      const payload = buildPayload();
-      const res = await createDraft(payload);
-      if (!res.ok || !res.data) {
-        setInviteSending(null);
-        Alert.alert('Save draft first', res.message ?? 'Could not create draft to send invite.');
-        return;
-      }
-      setDraftId(res.data.id);
-      const invRes = await inviteUserToEvent(res.data.id, user.id);
-      setInviteSending(null);
-      if (invRes.ok) setInvitedIds((prev) => new Set([...prev, user.id]));
-      else Alert.alert('Error', invRes.message ?? 'Could not send invite');
-      return;
+  function handleToggleInvitee(user: TravelerSearchResult) {
+    setInvitees((prev) => (prev.some((u) => u.id === user.id)
+      ? prev.filter((u) => u.id !== user.id)
+      : [...prev, user]));
+  }
+
+  /** Sends the picked invites against the published event; answers how many failed. */
+  async function sendPendingInvites(eventId: string): Promise<number> {
+    let failed = 0;
+    for (const u of invitees) {
+      const r = await inviteUserToEvent(eventId, u.id);
+      if (!r.ok) failed += 1;
     }
-    setInviteSending(user.id);
-    const invRes = await inviteUserToEvent(draftId, user.id);
-    setInviteSending(null);
-    if (invRes.ok) setInvitedIds((prev) => new Set([...prev, user.id]));
-    else Alert.alert('Error', invRes.message ?? 'Could not send invite');
+    return failed;
   }
 
   function buildPayload() {
@@ -553,7 +548,10 @@ export default function CreateEventScreen() {
     }
     setDrafting(false);
     if (ok) {
-      Alert.alert('Draft saved', 'You can resume this draft from the Events tab.', [
+      const inviteNote = invitees.length > 0
+        ? ' The people you picked to invite are not kept with the draft, so pick them again before you publish.'
+        : '';
+      Alert.alert('Draft saved', `You can resume this draft from My Events in your Passport menu.${inviteNote}`, [
         { text: 'OK', onPress: () => router.back() },
       ]);
     }
@@ -617,8 +615,15 @@ export default function CreateEventScreen() {
       eventId = res.data.id;
     }
 
+    const failedInvites = eventId && invitees.length > 0 ? await sendPendingInvites(eventId) : 0;
     setSaving(false);
     reportServedTask(served, 'event_created', true); router.replace(`/event/${eventId}` as any); // §45 G320: a no-op without outcome-learning consent
+    if (failedInvites > 0) {
+      Alert.alert(
+        'Some invites were not sent',
+        `${failedInvites} of ${invitees.length} invite${invitees.length !== 1 ? 's' : ''} could not be sent. You can invite people again from the event's host controls.`,
+      );
+    }
   }
 
   function handleDiscard() {
@@ -1367,7 +1372,7 @@ export default function CreateEventScreen() {
           {step === 'invite' && (
             <View style={styles.inviteStep}>
               <Text style={styles.label}>Invite friends</Text>
-              <Text style={styles.hint}>Search by name or handle. You can also invite more after publishing.</Text>
+              <Text style={styles.hint}>Search by name or handle. Invites go out when you publish, and you can invite more from the event afterwards.</Text>
               <TextInput
                 style={[styles.input, { marginTop: space.sm }]}
                 placeholder="Search travellers…"
@@ -1383,8 +1388,7 @@ export default function CreateEventScreen() {
               {inviteResults.length > 0 && (
                 <View style={styles.inviteResults}>
                   {inviteResults.map((u) => {
-                    const sent = invitedIds.has(u.id);
-                    const sending = inviteSending === u.id;
+                    const picked = invitedIds.has(u.id);
                     return (
                       <View key={u.id} style={styles.inviteRow}>
                         <Avatar uri={u.avatarUrl ?? ''} size={36} />
@@ -1397,24 +1401,25 @@ export default function CreateEventScreen() {
                           )}
                         </View>
                         <Pressable
-                          style={[styles.inviteBtn, sent && styles.inviteBtnSent]}
-                          onPress={() => !sent && handleSendInvite(u)}
-                          disabled={sent || sending}
+                          style={[styles.inviteBtn, picked && styles.inviteBtnSent]}
+                          onPress={() => handleToggleInvitee(u)}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: picked }}
+                          accessibilityLabel={picked ? `Remove ${u.displayName ?? u.username ?? 'traveller'} from invites` : `Invite ${u.displayName ?? u.username ?? 'traveller'}`}
                         >
-                          {sending
-                            ? <ActivityIndicator size="small" color={color.onInk} />
-                            : <Text style={styles.inviteBtnText}>{sent ? 'Invited ✓' : 'Invite'}</Text>}
+                          <Text style={[styles.inviteBtnText, picked && { color: color.ink }]}>{picked ? 'Added ✓' : 'Invite'}</Text>
                         </Pressable>
                       </View>
                     );
                   })}
                 </View>
               )}
-              {invitedIds.size > 0 && (
+              {invitees.length > 0 && (
                 <View style={styles.infoBox}>
                   <UserPlus size={14} color={color.success} />
-                  <Text style={[styles.infoText, { color: color.success }]}>
-                    {invitedIds.size} invite{invitedIds.size !== 1 ? 's' : ''} sent
+                  <Text style={[styles.infoText, { color: color.success, flex: 1 }]}>
+                    {invitees.length} {invitees.length !== 1 ? 'people' : 'person'} will be invited when you publish:{' '}
+                    {invitees.map((u) => u.displayName ?? (u.username ? `@${u.username}` : 'traveller')).join(', ')}
                   </Text>
                 </View>
               )}

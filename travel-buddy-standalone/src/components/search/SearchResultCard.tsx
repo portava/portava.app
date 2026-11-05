@@ -22,6 +22,8 @@ import type { UnifiedSearchResult } from '../../services/discovery.ts';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
 import { TypeIcon, resolveRoute } from './searchNav.tsx';
+// Straight from the pure module: component tests stub searchNav with resolveRoute only.
+import { taxonomySearchTerm } from './searchRoute.ts';
 
 export type { UnifiedSearchResult };
 
@@ -171,9 +173,15 @@ function InitialsFallback({ initials, size }: { initials: string; size: number }
 interface Props {
   result: UnifiedSearchResult;
   onActionStateChange?: (resultId: string, updates: Record<string, boolean>) => void;
+  /**
+   * Runs a search in place. A language / interest / vibe row has no screen of
+   * its own; with this set it searches for its word here instead of pushing a
+   * second search screen on top of this one.
+   */
+  onSearchTerm?: (term: string) => void;
 }
 
-export function SearchResultCard({ result, onActionStateChange }: Props) {
+export function SearchResultCard({ result, onActionStateChange, onSearchTerm }: Props) {
   const route = resolveRoute(result);
   const isPrivate = result.privacyState?.isPrivate ?? false;
   const canAccess = result.accessState?.canAccess ?? true;
@@ -227,6 +235,8 @@ export function SearchResultCard({ result, onActionStateChange }: Props) {
 
   function navigate() {
     if (!route) return;
+    const term = onSearchTerm ? taxonomySearchTerm(result) : null;
+    if (term && onSearchTerm) { onSearchTerm(term); return; }
     router.push(route as any);
   }
 

@@ -16,6 +16,9 @@ import type { Place } from '../src/lib/location/placeTypes';
  *   placeId    — canonical place id to pre-tag on the post
  *   placeName  — display name for the place (shown in the location chip)
  *   bucket     — bucket hint from the place page (e.g. 'night')
+ *   tripId     — post TO this trip (the trip page's Add Post). Without it a
+ *                post made from the trip page was a standalone post, and the
+ *                trip's own Trip Posts list never showed it.
  */
 export default function Create() {
   // Once-guard: the composer may invoke both onSuccess and onClose for a
@@ -33,10 +36,11 @@ export default function Create() {
     }
   }
 
-  const { placeId, placeName, bucket } = useLocalSearchParams<{
+  const { placeId, placeName, bucket, tripId } = useLocalSearchParams<{
     placeId?: string;
     placeName?: string;
     bucket?: string;
+    tripId?: string;
   }>();
 
   // Build a minimal Place snapshot from the query params so the composer
@@ -68,6 +72,7 @@ export default function Create() {
       openCameraOnMount={!initialPlace}
       initialPlace={initialPlace}
       initialBucket={bucket ?? null}
+      tripId={typeof tripId === 'string' && tripId ? tripId : null}
     />
   );
 }

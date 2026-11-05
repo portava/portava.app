@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, ChevronRight, CalendarDays, UsersRound } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -21,6 +21,9 @@ export default function PlaceDayScreen() {
   const placeId = Array.isArray(id) ? id[0] : id;
   const [day, setDay] = useState<PlaceDay | null | undefined>(undefined);
   const [items, setItems] = useState<PlaceDayFeedItem[]>([]);
+  // getPlaceDay / getPlaceDayFeed answer null for a failed read. That used to
+  // read as "No Place Day yet" and "Nothing shared here yet".
+  const [loadError, setLoadError] = useState<'day' | 'feed' | null>(null);
   const [selectedDate, setSelectedDate] = useState(Array.isArray(initialDate) ? initialDate[0] : initialDate);
   const [navigation, setNavigation] = useState<{ previousDate: string | null; nextDate: string | null }>({ previousDate: null, nextDate: null });
   const { isLivePlacesEnabled } = useFeatureFlags();
@@ -30,11 +33,14 @@ export default function PlaceDayScreen() {
   const load = useCallback(async () => {
     if (!placeId) return;
     setDay(undefined);
+    setLoadError(null);
     const lookup = await getPlaceDay(placeId, selectedDate);
-    setDay(lookup?.day ?? null);
-    setNavigation(lookup?.navigation ?? { previousDate: null, nextDate: null });
-    if (lookup?.day) {
+    if (!lookup) { setLoadError('day'); setItems([]); setDay(null); return; }
+    setDay(lookup.day ?? null);
+    setNavigation(lookup.navigation ?? { previousDate: null, nextDate: null });
+    if (lookup.day) {
       const feed = await getPlaceDayFeed(placeId, lookup.day.localDate);
+      if (!feed) setLoadError('feed');
       setItems(feed?.items ?? []);
     } else setItems([]);
   }, [placeId, selectedDate]);
@@ -50,14 +56,16 @@ export default function PlaceDayScreen() {
         <View style={styles.dateTitle}><CalendarDays size={16} color={color.deep} /><Text style={styles.dateText}>{activeDate}</Text></View>
         <Pressable testID="place-day-next" disabled={!navigation.nextDate} onPress={() => navigation.nextDate && setSelectedDate(navigation.nextDate)}><ChevronRight color={navigation.nextDate ? color.deep : color.haze} /></Pressable>
       </View>
-      {day === undefined ? <View style={styles.center}><ActivityIndicator color={color.signal} /></View> : !day ? (
+      {day === undefined ? <View style={styles.center}><ActivityIndicator color={color.signal} /></View> : loadError === 'day' ? (
+        <View style={styles.center} testID="place-day-error"><Text style={styles.emptyTitle}>Couldn’t load this day</Text><Text style={styles.emptyBody}>Check your connection and try again.</Text><Pressable onPress={() => void load()} accessibilityRole="button" hitSlop={8}><Text style={styles.retry}>Try again</Text></Pressable></View>
+      ) : !day ? (
         <View style={styles.center}><Text style={styles.emptyTitle}>No Place Day yet</Text><Text style={styles.emptyBody}>There’s no eligible activity for this local date.</Text></View>
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
           <Text style={styles.status}>{day.status === 'active' ? 'Happening today' : day.status === 'closing' ? 'Day is closing' : 'Archived day'}</Text>
-          {recapsEnabled && day.status !== 'active' ? <Pressable testID="create-place-recap" style={styles.recap} onPress={async () => { const result = await createPlaceDayRecap(day.id); if (result?.recap?.id) router.push(`/recaps/${result.recap.id}` as any); }}><Text style={styles.recapText}>Create travel recap</Text></Pressable> : null}
+          {recapsEnabled && day.status !== 'active' ? <Pressable testID="create-place-recap" style={styles.recap} onPress={async () => { const result = await createPlaceDayRecap(day.id); if (result?.recap?.id) router.push(`/recaps/${result.recap.id}` as any); else Alert.alert('Recap not created', 'The travel recap could not be made right now. Try again.'); }}><Text style={styles.recapText}>Create travel recap</Text></Pressable> : null}
            {momentsEnabled ? <Pressable testID="open-shared-moments" style={styles.moments} onPress={() => router.push({ pathname: '/place/[id]/moments', params: { id: placeId, placeDayId: day.id } } as any)}><UsersRound size={16} color={color.deep} /><Text style={styles.momentsText}>Shared Moments</Text></Pressable> : null}
-          {items.length === 0 ? <View style={styles.empty}><Text style={styles.emptyTitle}>Nothing shared here yet</Text><Text style={styles.emptyBody}>Posts appear here only when they’re already visible to you.</Text></View> : items.map((item) => <DayPost key={item.id} item={item} timezone={day.timezone} />)}
+          {loadError === 'feed' ? <View style={styles.empty} testID="place-day-feed-error"><Text style={styles.emptyTitle}>Couldn’t load what was shared</Text><Pressable onPress={() => void load()} accessibilityRole="button" hitSlop={8}><Text style={styles.retry}>Try again</Text></Pressable></View> : items.length === 0 ? <View style={styles.empty}><Text style={styles.emptyTitle}>Nothing shared here yet</Text><Text style={styles.emptyBody}>Posts appear here only when they’re already visible to you.</Text></View> : items.map((item) => <DayPost key={item.id} item={item} timezone={day.timezone} />)}
         </ScrollView>
       )}
     </SafeAreaView>
@@ -74,6 +82,7 @@ function DayPost({ item, timezone }: { item: PlaceDayFeedItem; timezone: string 
 }
 
 const styles = StyleSheet.create({
+  retry: { ...t.bodyStrong, color: color.signal, marginTop: space.sm },
   safe: { flex: 1, backgroundColor: color.paper },
   dateBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: space.md, borderBottomWidth: 1, borderBottomColor: color.haze },
   dateTitle: { flexDirection: 'row', alignItems: 'center', gap: space.sm },

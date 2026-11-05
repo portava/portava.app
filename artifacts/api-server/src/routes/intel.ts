@@ -19,7 +19,7 @@
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { requireUser, sendError, type ApiErrorCode } from "../lib/http.js";
-import { requireAdmin } from "../lib/requireAdmin.js";
+import { requireAdmin, isAdmin } from "../lib/requireAdmin.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js";
 import {
@@ -272,7 +272,7 @@ const handleProposeClaim = asyncHandler(async (req: Request, res: Response) => {
     return sendError(res, "db_error", out.reason ?? "propose failed");
   }
   // Idempotent (2274): a replay returns the stored candidate, 200 not 201.
-  res.status(out.deduped ? 200 : 201).json({ claim: out.claim, deduped: out.deduped });
+  res.status(out.deduped ? 200 : 201).json({ claim: out.claim, deduped: out.deduped, canApprove: await isAdmin(sc, auth.user.id).catch(() => false) }); // canApprove: may THIS caller take step 2 (approve is requireAdmin)? The screen offers the approve button only when true, so a traveller is never shown a step only a reviewer can take; isAdmin fails closed
 });
 
 // APPROVAL IS THE TRUST GATE OF THE LIFECYCLE (candidate → active → publishable).

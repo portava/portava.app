@@ -291,7 +291,7 @@ const LITERALS: Readonly<Record<string, number>> = {
   "domain/trips/projections/TripPostTripProjections.ts": 2,
   "lib/database.types.ts": 2,
   "lib/deletionDispositions.ts": 1,
-  "lib/locationPurposes.ts": 1,
+  "lib/locationPurposes.ts": 1, "lib/personalDataExport.ts": 1,
   "lib/stamps/criteria/metrics.ts": 2,
   "lib/stamps/generationWorker.ts": 3,
   "lib/stamps/reconcileStampCatalog.ts": 6,
@@ -321,7 +321,7 @@ const LITERALS: Readonly<Record<string, number>> = {
 const LITERAL_ONLY_WHY: Readonly<Record<string, string>> = {
   "lib/database.types.ts": "generated types",
   "lib/deletionDispositions.ts": "deletion fate registry",
-  "lib/locationPurposes.ts": "location-purpose registry",
+  "lib/locationPurposes.ts": "location-purpose registry", "lib/personalDataExport.ts": "the person's own data export (GET /api/me/export): their stored rows, revoked and unevidenced ones included, returned only to them and labelled as stored records; a copy of the record like admin_raw, not a display that places anybody",
   "lib/stamps/xxCatalogRepair.ts": "XX-country catalog repair: updates catalog_id/country on ownership rows (operator)",
   "scripts/fix-demo-stamps.ts": "one-time demo data patch (operator script)",
   "scripts/rlsDispositions.ts": "RLS disposition registry",

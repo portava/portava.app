@@ -290,7 +290,10 @@ describe('Trip Detail — WP-10 surfaces', () => {
     await act(async () => {});
     await act(async () => { fireEvent.press(screen.getByText('Share Trip')); });
     await act(async () => {});
-    expect(shareSpy).toHaveBeenCalledWith(expect.objectContaining({ url: 'travelbuddy://invite/tok123' }));
+    // A web link (universal link, or a page with an Open in Portava button), not travelbuddy://.
+    const { canonicalUrl } = require('../../../src/constants/canonicalUrl');
+    expect(shareSpy).toHaveBeenCalledWith(expect.objectContaining({ url: canonicalUrl('/invite/tok123') }));
+    expect(canonicalUrl('/invite/tok123')).toMatch(/^https:\/\/[^/]+\/invite\/tok123$/);
     shareSpy.mockRestore();
   });
 

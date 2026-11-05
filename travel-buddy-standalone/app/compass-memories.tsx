@@ -25,6 +25,7 @@ import { PlainBottomFiller } from '../src/hooks/useBottomInset';
 export default function CompassMemoriesScreen() {
   const [memories, setMemories] = useState<CompassMemory[]>([]);
   const [loading, setLoading]   = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [teaching, setTeaching] = useState(false);
   const [scope, setScope]       = useState<CompassMemoryScope | null>(null);
   const [circles, setCircles]   = useState<CompassCircleOption[]>([]);
@@ -40,7 +41,10 @@ export default function CompassMemoriesScreen() {
     setLoading(true);
     const r = await fetchCompassMemories(s ?? undefined);
     if (seq !== loadSeq.current) return;
-    if (r.ok) setMemories(r.data ?? []);
+    // A failed read is said as one, not shown as "Nothing remembered", and the
+    // previous scope's rows do not stay up under the new scope's tab.
+    setMemories(r.ok ? (r.data ?? []) : []);
+    setLoadError(!r.ok);
     setLoading(false);
   }, []);
 
@@ -125,6 +129,8 @@ export default function CompassMemoriesScreen() {
           onScopeChange={handleScopeChange}
           circles={circles}
           teachConfirmation={teachConfirmation}
+          loadError={loadError}
+          onRetry={() => load(scope)}
           onTeach={handleTeach}
           onEdit={handleEdit}
           onForget={handleForget}

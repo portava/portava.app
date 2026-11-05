@@ -5,7 +5,7 @@
  * Shows full gem info, GPS check-in, save/unsave, share to Telegraph,
  * add to trip plan, and report.
  */
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { RouteBuilderSheet } from '../../src/components/RouteBuilderSheet';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, Pressable,
@@ -32,7 +32,7 @@ import { GemMapPreview } from '../../src/components/discovery/GemMapPreview';
 import { useSession } from '../../src/context/SessionContext';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
-import { ReasonPromptModal } from '../../src/components/ReasonPromptModal';
+import { ThreadPickerSheet } from '../../src/components/ThreadPickerSheet';
 import { StampButton } from '../../src/components/stamps/StampButton';
 import * as Sentry from '@sentry/react-native';
 import { icon } from '../../src/theme/tokens';
@@ -293,8 +293,8 @@ export default function GemDetailScreen() {
     setPlanPickerVisible(true);
   }, [gem]);
 
-  // Cross-platform Thread-ID prompt (Alert.prompt is iOS-only — a silent
-  // no-op on Android/web).
+  // Pick one of your chats to share the gem into (it used to ask for a raw
+  // Thread ID, which nobody knows).
   const [showShare, setShowShare] = useState(false);
 
   const handleShare = useCallback(() => {
@@ -302,16 +302,21 @@ export default function GemDetailScreen() {
     setShowShare(true);
   }, [gem, sharing]);
 
+  // A ref, not the `sharing` state, guards a double tap on a chat row: both
+  // taps can land before the re-render that would show sharing = true.
+  const sharingRef = useRef(false);
   const submitShare = useCallback(async (threadId: string) => {
     setShowShare(false);
-    if (!gem || !threadId || sharing) return;
+    if (!gem || !threadId || sharingRef.current) return;
+    sharingRef.current = true;
     setSharing(true);
     try {
       await shareGemToTelegraph(gem.id, threadId);
-      Alert.alert('Shared!', `${gem.name} shared to your Telegraph thread.`);
+      Alert.alert('Shared', `${gem.name} was shared to the chat.`);
     } catch (e: any) {
       Alert.alert('Error', e.message ?? 'Failed to share');
     } finally {
+      sharingRef.current = false;
       setSharing(false);
     }
   }, [gem]);
@@ -632,21 +637,18 @@ export default function GemDetailScreen() {
         gemId={gem.id}
         onClose={() => setShowReport(false)}
       />
-      <ReasonPromptModal
+      <ThreadPickerSheet
         visible={showShare}
-        title="Share to Telegraph"
-        message="Enter the Thread ID to share this gem into:"
-        placeholder="Thread ID"
-        confirmLabel="Share"
+        title="Share to a chat"
         onCancel={() => setShowShare(false)}
-        onSubmit={submitShare}
+        onPick={submitShare}
       />
 
       {/* Route builder — pre-seeds this gem as the first stop */}
       <RouteBuilderSheet
         visible={builderVisible}
         onClose={() => setBuilderVisible(false)}
-        onRouteCreated={() => setBuilderVisible(false)}
+        onRouteCreated={(route) => { setBuilderVisible(false); router.push(`/route/${route.plan.id}` as any); }} // open it, as Discovery and the trip plan do
         initialStops={gem ? [{
           id:         gem.id,
           title:      gem.name,
