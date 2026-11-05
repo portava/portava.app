@@ -14,9 +14,10 @@
  * shows a clear error screen instead of the app.
  *
  *   - Each address is mapped to a KNOWN deployment when it names one
- *     (production: Supabase ref ajrurzioarfkagpuxfnb, host portava.replit.app;
- *     beta: ref emfpckykpzfturllshly, host portava-beta.replit.app). Addresses
- *     that name neither (a dev server, localhost, a test origin) are not judged.
+ *     (production: Supabase ref ajrurzioarfkagpuxfnb, hosts portava.replit.app
+ *     and rumazi.com, the public domain in front of the same deployment since
+ *     2026-11; beta: ref emfpckykpzfturllshly, host portava-beta.replit.app).
+ *     Addresses that name none (a dev server, localhost, a test origin) are not judged.
  *     The publishable key is mapped the same way (production's is the one
  *     .replit commits, beta's the one eas.json's `beta` profile carries; both are
  *     public by design). An unknown key — a rotated one — is not judged, so a
@@ -34,14 +35,15 @@
 export interface KnownDeployment {
   name: 'production' | 'beta';
   supabaseRef: string;
-  apiHost: string;
+  /** Every host the deployment's API / web origin answers on. The first is the Replit name; the rest are custom domains. */
+  apiHosts: readonly string[];
   /** The project's PUBLISHABLE key (public by design). src/lib/__tests__/deploymentConsistency.test.ts pins both to their sources. */
   publishableKey: string;
 }
 
 export const KNOWN_DEPLOYMENTS: readonly KnownDeployment[] = [
-  { name: 'production', supabaseRef: 'ajrurzioarfkagpuxfnb', apiHost: 'portava.replit.app', publishableKey: 'sb_publishable_xp3JiB50mBYHn1S_XjzOAg_rIoEqZKS' },
-  { name: 'beta', supabaseRef: 'emfpckykpzfturllshly', apiHost: 'portava-beta.replit.app', publishableKey: 'sb_publishable_7yEaIX8v9uM34PbbPOHM6Q_YeoIBLZC' },
+  { name: 'production', supabaseRef: 'ajrurzioarfkagpuxfnb', apiHosts: ['portava.replit.app', 'rumazi.com'], publishableKey: 'sb_publishable_xp3JiB50mBYHn1S_XjzOAg_rIoEqZKS' },
+  { name: 'beta', supabaseRef: 'emfpckykpzfturllshly', apiHosts: ['portava-beta.replit.app'], publishableKey: 'sb_publishable_7yEaIX8v9uM34PbbPOHM6Q_YeoIBLZC' },
 ];
 
 export interface DeploymentAddresses {
@@ -57,6 +59,12 @@ export interface DeploymentAddresses {
  * a path, port or trailing slash (verifier N7): the host `<ref>.supabase.co`
  * decides, not the URL's exact spelling. Anything else → null (not judged).
  */
+/** The known deployment a Supabase URL belongs to, by project ref; null when it is neither (not judged). */
+export function knownDeploymentFor(supabaseUrl: string | undefined): KnownDeployment | null {
+  const ref = supabaseRef(supabaseUrl);
+  return ref ? KNOWN_DEPLOYMENTS.find((d) => d.supabaseRef === ref) ?? null : null;
+}
+
 function supabaseRef(url: string | undefined): string | null {
   const host = hostOf(url);
   const m = host ? /^([a-z0-9]+)\.supabase\.co$/.exec(host) : null;
@@ -81,8 +89,8 @@ export function deploymentConsistencyProblem(a: DeploymentAddresses): string | n
   const apiHost = hostOf(a.apiBaseUrl);
   const webHost = hostOf(a.webOrigin);
   const byRef = KNOWN_DEPLOYMENTS.find((d) => d.supabaseRef === ref)?.name ?? null;
-  const byApi = KNOWN_DEPLOYMENTS.find((d) => d.apiHost === apiHost)?.name ?? null;
-  const byWeb = KNOWN_DEPLOYMENTS.find((d) => d.apiHost === webHost)?.name ?? null;
+  const byApi = apiHost === null ? null : KNOWN_DEPLOYMENTS.find((d) => d.apiHosts.includes(apiHost))?.name ?? null;
+  const byWeb = webHost === null ? null : KNOWN_DEPLOYMENTS.find((d) => d.apiHosts.includes(webHost))?.name ?? null;
   const key = (a.publishableKey ?? '').trim();
   const byKey = key ? KNOWN_DEPLOYMENTS.find((d) => d.publishableKey === key)?.name ?? null : null;
 

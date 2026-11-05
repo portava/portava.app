@@ -118,7 +118,7 @@ confirming, I say so.
 | Key storage | `src/lib/secureStore.ts` (158 ln) | expo-secure-store, `~14.0.1` installed |
 | MLS session mgmt | `src/lib/mlsSession.ts` (223 ln) | Present — `initGroupAsInitiator/Recipient`, `encryptForThread`, `decryptFromThread`, `deriveSafetyNumberForThread` |
 | Local encrypted store | `src/lib/localMessageDb.ts` (225 ln) | SQLCipher via `@op-engineering/op-sqlite ^17.1.2` (installed). FTS5 referenced. |
-| Crypto bootstrap | `src/hooks/useCryptoInit.ts` | **Mounted** — called at `app/_layout.tsx:88`, so identity generation + device registration run on every launch today |
+| Crypto bootstrap | `src/hooks/useCryptoInit.ts` | **Mounted** — called at `app/_layout.tsx:89`, so identity generation + device registration run on every launch today |
 | Safety numbers UI | `src/screens/SafetyNumberScreen.tsx` (259 ln), `src/components/ThreadSafetySheet.tsx` (307 ln) | Present, and `SafetyNumberScreen` is the **only** production caller of `mlsSession` — ⚠️ **stale 2026-08-29:** `src/lib/e2ee/realPort.ts:16` is a second importer, and it is the one the send/receive path runs through |
 | Server: devices | `migrations/20260801_e2ee_devices.sql` | **Live** |
 | Server: KeyPackage pool | `migrations/20260802_e2ee_key_packages.sql` + `routes/keyPackages.ts` | **Live.** 3 endpoints: publish, inventory, one-shot consume |
