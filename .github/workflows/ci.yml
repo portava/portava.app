@@ -232,6 +232,21 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:writerless-reads
 
+      # check:undeclared-production-objects — what production holds that NO
+      # migration declares: the reverse of check:production-drift, which only
+      # asks whether the tree's tables reach production. The 2026-10-24
+      # capability refresh found a chunked-upload store, a deletion lease and a
+      # never-merged journey-shadow programme in production by hand, with rows
+      # in them, and not one check had gone red. This diffs the committed,
+      # digest-verified capture against the tree's declarations, so like its
+      # siblings it needs no database and cannot be starved; its ratchet names
+      # each known object with the owner decision that governs it. See
+      # src/scripts/checkUndeclaredProductionObjects.ts.
+      - name: 'check:undeclared-production-objects (static; no DB, cannot be starved)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:undeclared-production-objects
+
       # check:doc-citations — the documentation half of the same idea.
       # docs/discovery/ROADMAP.md carries its own rule, "maintain this table in
       # the same PR as the work", and the 2026-09-05 reconciliation exists

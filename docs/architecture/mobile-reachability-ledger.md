@@ -163,7 +163,7 @@ component, as above.
 `src/context/AvailabilityStore.tsx` seeded `useState` from `mockAvailability`
 (`src/__fixtures__/events.ts`, re-exported through `src/data/events.ts`, whose header
 reads "not live user data. Do not use as primary data source in authenticated flows").
-`AvailabilityProvider` is mounted app-wide at `app/_layout.tsx:249`, so that seed was the
+`AvailabilityProvider` is mounted app-wide at `app/_layout.tsx:250`, so that seed was the
 live value for:
 
 - **signed-out viewers**, permanently - the mount fetch is gated on `isAuthed`

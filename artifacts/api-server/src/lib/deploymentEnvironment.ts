@@ -110,8 +110,16 @@ export function supabaseRefOf(url: string | undefined): string | null {
   return m ? m[1] : null;
 }
 
-/** Production's API / web origin host. A beta process must not carry it anywhere in its environment either. */
+/** Production's Replit API / web origin host. A beta process must not carry it anywhere in its environment either. */
 export const PRODUCTION_API_HOST = "portava.replit.app";
+
+/**
+ * Every host production answers on: the Replit name and the public domain in front of the same deployment
+ * (rumazi.com, since 2026-11; travel-buddy-standalone/eas.json's production profile and .replit name it). Kept
+ * identical to scripts/deployment-env-guard.sh's host alternation and to KNOWN_DEPLOYMENTS in
+ * travel-buddy-standalone/src/lib/deploymentConsistency.ts (scripts/src/beta-deployment-guard.test.ts).
+ */
+export const PRODUCTION_API_HOSTS: readonly string[] = [PRODUCTION_API_HOST, "rumazi.com"];
 
 /** The beta API / web origin host (the expected name of the Replit fork; docs/ops/beta-runtime-runbook.md). */
 export const BETA_API_HOST = "portava-beta.replit.app";
@@ -172,17 +180,22 @@ export function replitDomainsNameBeta(env: NodeJS.ProcessEnv): boolean {
   return new RegExp(`(^|[^a-z0-9-])${BETA_API_HOST.replace(/\./g, "\\.")}(?![a-z0-9-])`).test(v);
 }
 
+/** Does `value` carry `host` as a host: preceded by start, `/`, `.`, `@` or any other non-hostname character, and not continued by one (so `portava-beta.replit.app` is not `portava.replit.app`, and `notrumazi.com` is not `rumazi.com`)? Lower-case both. */
+function namesHost(value: string, host: string): boolean {
+  return new RegExp(`(^|[^a-z0-9-])${host.replace(/\./g, "\\.")}(?![a-z0-9-])`).test(value);
+}
+
 /**
  * Does `value` name production — its Supabase project ref anywhere in the text, its publishable key anywhere in the
- * text, or its API origin's host as a host (preceded by start, `/`, `.`, `@` or any other non-hostname character, so
- * `portava-beta.replit.app` does not match)? Case-insensitive: hostnames and refs are case-insensitive in practice,
- * and an upper-cased copy reaches the same project.
+ * text, or one of its API origin hosts as a host (PRODUCTION_API_HOSTS; `portava-beta.replit.app` does not match)?
+ * Case-insensitive: hostnames and refs are case-insensitive in practice, and an upper-cased copy reaches the same
+ * project.
  */
 export function namesProduction(value: string): boolean {
   const v = value.toLowerCase();
   if (v.includes(PRODUCTION_SUPABASE_REF)) return true;
   if (v.includes(PRODUCTION_PUBLISHABLE_KEY.toLowerCase())) return true;
-  return new RegExp(`(^|[^a-z0-9-])${PRODUCTION_API_HOST.replace(/\./g, "\\.")}(?![a-z0-9-])`).test(v);
+  return PRODUCTION_API_HOSTS.some((host) => namesHost(v, host));
 }
 
 /** The names (never the values) of environment variables whose value names production (see namesProduction). */
@@ -221,7 +234,7 @@ export function deploymentEnvironmentRefusal(env: NodeJS.ProcessEnv = process.en
     const naming = variablesNamingProduction(env);
     if (naming.length > 0) {
       return (
-        `${DEPLOYMENT_ENV_VAR}=beta but these variables name production (its project ref, ${PRODUCTION_API_HOST} or its publishable key): ${naming.join(", ")}. ` +
+        `${DEPLOYMENT_ENV_VAR}=beta but these variables name production (its project ref, ${PRODUCTION_API_HOSTS.join(" / ")} or its publishable key): ${naming.join(", ")}. ` +
         "Replace each with its portava-beta value (values are not printed)."
       );
     }

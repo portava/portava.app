@@ -58,6 +58,29 @@ jest.mock('../../../src/services/profile', () => ({
   getMyProfile: jest.fn().mockResolvedValue({ ok: true, data: { displayName: 'Test', username: 'test' } }),
 }));
 
+// ── Provider availability (build + backend) ───────────────────────────────────
+// The real getAuthProviderAvailability reads GET /auth/v1/settings; the real
+// buildCanSignInWithApple reads expo-constants. Both are swapped per test below.
+jest.mock('../../../src/services/authProviders', () => ({
+  ...jest.requireActual('../../../src/services/authProviders'),
+  getAuthProviderAvailability: jest.fn().mockResolvedValue({ apple: true, google: true, email: true }),
+}));
+jest.mock('../../../src/lib/buildCapabilities', () => ({
+  ...jest.requireActual('../../../src/lib/buildCapabilities'),
+  buildCanSignInWithApple: jest.fn().mockReturnValue(true),
+  // Store build by default: no diagnostics line. The real one reads expo-constants and the inlined env.
+  testBuildDiagnosticsLine: jest.fn().mockReturnValue(null),
+  // Store build by default: a Google browser session that closes without returning says nothing.
+  testBuildBrowserSignInClosedLine: jest.fn().mockReturnValue(null),
+}));
+
+// ── Browser / native sign-in (Google, Apple) ──────────────────────────────────
+// The real signInWithGoogle opens a browser session; each test below says how it ended.
+jest.mock('../../../src/services/ssoAuth', () => ({
+  ...jest.requireActual('../../../src/services/ssoAuth'),
+  signInWithGoogle: jest.fn().mockResolvedValue({ userId: null, error: null, cancelled: true }),
+}));
+
 // ── react-native-svg (simplified stub for test renderer) ─────────────────────
 jest.mock('react-native-svg', () => {
   const React = require('react');
@@ -116,6 +139,9 @@ jest.mock('../../../constants/loginBackgrounds', () => ({
 // ─────────────────────────────────────────────────────────────────────────────
 
 import SignIn from '../sign-in';
+import * as authProviders from '../../../src/services/authProviders';
+import * as buildCapabilities from '../../../src/lib/buildCapabilities';
+import * as ssoAuth from '../../../src/services/ssoAuth';
 
 describe('SignIn screen — redesign smoke test', () => {
   it('renders PortavaLogoMark', async () => {
@@ -222,5 +248,105 @@ describe('SignIn screen — invite-only sign-up', () => {
     await fireEvent.changeText(screen.getByLabelText('Password'), 'long-enough');
     await fireEvent.press(screen.getByText('Create Account'));
     expect(auth.signUp).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('SignIn screen — social buttons follow what the build and the backend can do', () => {
+  const availability = authProviders.getAuthProviderAvailability as jest.Mock;
+  const buildApple = buildCapabilities.buildCanSignInWithApple as jest.Mock;
+
+  beforeEach(() => {
+    availability.mockReset().mockResolvedValue({ apple: true, google: true, email: true });
+    buildApple.mockReset().mockReturnValue(true);
+  });
+
+  it('Apple off in Supabase (production on 2026-11-04): no Apple button, Google stays', async () => {
+    availability.mockResolvedValue({ apple: false, google: true, email: true });
+    await render(<SignIn />);
+    expect(await screen.findByLabelText('Continue with Google')).toBeTruthy();
+    expect(screen.queryByLabelText('Continue with Apple')).toBeNull();
+  });
+
+  it('Google off in Supabase: no Google button, Apple stays', async () => {
+    availability.mockResolvedValue({ apple: true, google: false, email: true });
+    await render(<SignIn />);
+    expect(await screen.findByLabelText('Continue with Apple')).toBeTruthy();
+    expect(screen.queryByLabelText('Continue with Google')).toBeNull();
+  });
+
+  it('a build without the Apple entitlement (Personal Team): no Apple button even with the backend on', async () => {
+    buildApple.mockReturnValue(false);
+    await render(<SignIn />);
+    expect(await screen.findByLabelText('Continue with Google')).toBeTruthy();
+    expect(screen.queryByLabelText('Continue with Apple')).toBeNull();
+  });
+
+  it('no answer from the backend (fail-open): both buttons', async () => {
+    availability.mockResolvedValue(null);
+    await render(<SignIn />);
+    expect(await screen.findByLabelText('Continue with Apple')).toBeTruthy();
+    expect(screen.getByLabelText('Continue with Google')).toBeTruthy();
+  });
+});
+
+describe('SignIn screen — a test build names its backend; a store build shows nothing', () => {
+  const diagnostics = buildCapabilities.testBuildDiagnosticsLine as jest.Mock;
+
+  afterEach(() => {
+    diagnostics.mockReset().mockReturnValue(null);
+  });
+
+  it('store build: no diagnostics line', async () => {
+    await render(<SignIn />);
+    expect(screen.queryByLabelText('Test build diagnostics')).toBeNull();
+    expect(screen.queryByText(/Test build/)).toBeNull();
+  });
+
+  it('Personal Team build: the line says which deployment and API host the binary talks to', async () => {
+    diagnostics.mockReturnValue('Test build v1.4.2 · backend production (ajrurzioarfkagpuxfnb) · API rumazi.com');
+    await render(<SignIn />);
+    expect(await screen.findByLabelText('Test build diagnostics')).toBeTruthy();
+    expect(screen.getByText('Test build v1.4.2 · backend production (ajrurzioarfkagpuxfnb) · API rumazi.com')).toBeTruthy();
+  });
+});
+
+describe('SignIn screen — a Google browser session that closes without returning to the app', () => {
+  const google = ssoAuth.signInWithGoogle as jest.Mock;
+  const closedLine = buildCapabilities.testBuildBrowserSignInClosedLine as jest.Mock;
+  const closed = { userId: null, error: null, cancelled: true, browserOutcome: 'cancel', redirectTo: 'travelbuddy://auth/callback' };
+  const line =
+    'Google sign-in closed without returning to the app (browser result: cancel). ' +
+    "If the sheet showed the website instead of coming back here, the backend's redirect allow-list is missing travelbuddy://auth/callback.";
+
+  afterEach(() => {
+    google.mockReset().mockResolvedValue({ userId: null, error: null, cancelled: true });
+    closedLine.mockReset().mockReturnValue(null);
+  });
+
+  it('store build: a cancel stays silent, no error and no notice', async () => {
+    google.mockResolvedValue(closed);
+    await render(<SignIn />);
+    await fireEvent.press(await screen.findByLabelText('Continue with Google'));
+    expect(await screen.findByLabelText('Continue with Google')).toBeTruthy();
+    expect(screen.queryByText(/sign-in closed/)).toBeNull();
+    expect(screen.queryByText(/failed/)).toBeNull();
+    expect(closedLine).toHaveBeenCalledWith('Google', 'cancel', 'travelbuddy://auth/callback');
+  });
+
+  it('Personal Team build: the notice names the browser result and the return address, not an error', async () => {
+    google.mockResolvedValue(closed);
+    closedLine.mockReturnValue(line);
+    await render(<SignIn />);
+    await fireEvent.press(await screen.findByLabelText('Continue with Google'));
+    expect(await screen.findByText(line)).toBeTruthy();
+    expect(screen.queryByText(/failed/)).toBeNull();
+  });
+
+  it('a cancel without browser details (Apple-style result) still asks the build with the defaults', async () => {
+    google.mockResolvedValue({ userId: null, error: null, cancelled: true });
+    await render(<SignIn />);
+    await fireEvent.press(await screen.findByLabelText('Continue with Google'));
+    expect(await screen.findByLabelText('Continue with Google')).toBeTruthy();
+    expect(closedLine).toHaveBeenCalledWith('Google', 'cancel', 'travelbuddy://auth/callback');
   });
 });

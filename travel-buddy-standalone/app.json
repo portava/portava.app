@@ -136,6 +136,7 @@
       "@maplibre/maplibre-react-native",
       "@livekit/react-native-expo-plugin",
       "./plugins/withPortavaNSE",
+      "./plugins/withPodDeploymentTargetFloor",
       "@sentry/react-native"
     ],
     "experiments": {
