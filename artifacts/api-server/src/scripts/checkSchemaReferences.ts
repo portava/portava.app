@@ -60,6 +60,7 @@ import {
   isModelled,
   type CanonicalSchema,
 } from "./lib/canonicalSchema.js";
+import { undeclaredProductionColumns } from "./checkUndeclaredProductionObjects.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const API_ROOT = resolve(__dir, "../..");
@@ -84,28 +85,21 @@ const VERBOSE = process.argv.includes("--verbose");
 
 /**
  * Columns that EXIST in the live database but are declared by no migration in
- * this repository — out-of-band DDL. Verified against production on 2026-09-04.
+ * this repository — out-of-band DDL. Until 2026-11-04 this was a second
+ * hand-kept list of nine names, verified against production on 2026-09-04 and
+ * consulted only when tree code referenced one of them, so it could never notice
+ * a tenth. It is now DERIVED from check:undeclared-production-objects' ratchet,
+ * which compares the committed production capture against the tree in the
+ * other direction and fails the day any entry is codified, dropped or joined by
+ * a new one. One list, two readers.
  *
  * These are listed so the static check does not fail on a reference to a column
  * that genuinely exists. That is a concession to reality, not approval: each one
- * is schema the repo cannot reproduce from its own migrations, which is exactly
- * what `audit:schema` exists to flag. The right fix is a migration recording the
- * DDL, after which the entry here should be deleted.
- *
- * This list must SHRINK. A new entry means someone applied DDL out of band
- * again.
+ * is schema the repo cannot reproduce from its own migrations. The right fix is
+ * a migration recording the DDL, after which the ratchet entry goes and this set
+ * shrinks with it.
  */
-const UNDECLARED_LIVE_COLUMNS = new Set<string>([
-  "location_sessions.journey_purpose",
-  "user_deletion_requests.execution_lease_expires_at",
-  "user_deletion_requests.execution_started_at",
-  "user_deletion_requests.execution_token",
-  "user_location_preferences.journey_consent_granted_at",
-  "user_location_preferences.journey_consent_revoked_at",
-  "user_location_preferences.journey_consent_scope",
-  "user_location_preferences.journey_consent_version",
-  "user_location_preferences.journey_observation_enabled",
-]);
+const UNDECLARED_LIVE_COLUMNS: ReadonlySet<string> = undeclaredProductionColumns();
 
 /**
  * Dead references that ALREADY EXISTED when this check was written — a RATCHET,

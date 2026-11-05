@@ -54,6 +54,9 @@ import { signInWithApple, signInWithGoogle } from '../../src/services/ssoAuth';
 import { getMyProfile } from '../../src/services/profile';
 import { useSession } from '../../src/context/SessionContext';
 import { isSupabaseConfigured } from '../../src/lib/supabase';
+import { getAuthProviderAvailability, type AuthProviderAvailability } from '../../src/services/authProviders';
+import { visibleSignInProviders } from '../../src/lib/signInProviders';
+import { buildCanSignInWithApple, testBuildBrowserSignInClosedLine, testBuildDiagnosticsLine } from '../../src/lib/buildCapabilities';
 import { PortavaLogoMark, PortavaWordmark } from '../../src/components/brand/PortavaLogo';
 import { postAuthDestination } from '../../src/lib/postAuthRedirect.ts';
 import {
@@ -186,6 +189,9 @@ export default function SignIn() {
   // ── New visual state ────────────────────────────────────────────────────────
   // TODO: wire rememberMe to a persistent session preference when auth supports it
   const [rememberMe, setRememberMe] = useState(false);
+  // Which social providers Supabase has switched on: null until answered, and
+  // null hides nothing (src/services/authProviders.ts is fail-open).
+  const [backendProviders, setBackendProviders] = useState<AuthProviderAvailability | null>(null);
 
   // Background rotation
   const bgCurrentRef  = useRef(0);
@@ -213,6 +219,14 @@ export default function SignIn() {
     });
     return () => { alive = false; };
   }, [mode]);
+
+  // Ask Supabase which sign-in providers are enabled (once per process), so the
+  // screen never offers a button the backend would refuse.
+  useEffect(() => {
+    let alive = true;
+    getAuthProviderAvailability().then((p) => { if (alive) setBackendProviders(p); });
+    return () => { alive = false; };
+  }, []);
 
   // Honour ?mode=forgot-password deep links (e.g. from the expired reset screen)
   useEffect(() => {
@@ -405,7 +419,15 @@ export default function SignIn() {
     setOauthBusy('google');
     try {
       const result = await signInWithGoogle();
-      if (result.cancelled) return;   // user dismissed — silent
+      if (result.cancelled) {
+        // Store builds stay silent, as before: a cancel is the person's own choice.
+        // A test build says how the browser session ended, because a redirect the
+        // backend refuses (return address not on its allow-list) shows the website
+        // in the sheet and ends exactly here, with nothing to report.
+        const closed = testBuildBrowserSignInClosedLine('Google', result.browserOutcome ?? 'cancel', result.redirectTo ?? 'travelbuddy://auth/callback');
+        if (closed) setNotice(closed);
+        return;
+      }
       if (!result.userId || result.error) {
         setError(result.error ?? 'Google sign-in failed. Please try again.');
         return;
@@ -420,6 +442,10 @@ export default function SignIn() {
 
   const isForgot    = mode === 'forgot-password' || mode === 'forgot-username';
   const isSignin    = mode === 'signin';
+  // Platform, build and backend must all be able to: src/lib/signInProviders.ts
+  const socialProviders = visibleSignInProviders({ platform: Platform.OS, buildCanSignInWithApple: buildCanSignInWithApple(), backend: backendProviders });
+  // Test builds only (Personal Team): which backend this binary talks to, so a report from a phone can say.
+  const buildDiagnostics = testBuildDiagnosticsLine();
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -537,10 +563,10 @@ export default function SignIn() {
             {/* Social buttons — signin only */}
             {isSignin && (
               <>
-                {/* Apple sign-in — iOS only
-                    Android: Apple web OAuth not implemented; button hidden.
-                    See completion report for why and how to add it later. */}
-                {Platform.OS === 'ios' && (
+                {/* Apple sign-in — iOS only, and only when this build carries the
+                    entitlement and Supabase has the provider on (socialProviders).
+                    Android: Apple web OAuth not implemented; button hidden. */}
+                {socialProviders.apple && (
                   <Pressable
                     style={[s.socialBtn, (busy || !!oauthBusy) && s.socialBtnDisabled]}
                     onPress={handleAppleSignIn}
@@ -557,21 +583,23 @@ export default function SignIn() {
                   </Pressable>
                 )}
 
-                {/* Google sign-in — iOS and Android */}
-                <Pressable
-                  style={[s.socialBtn, (busy || !!oauthBusy) && s.socialBtnDisabled]}
-                  onPress={handleGoogleSignIn}
-                  disabled={busy || !!oauthBusy}
-                  accessibilityRole="button"
-                  accessibilityLabel="Continue with Google"
-                  accessibilityState={{ busy: oauthBusy === 'google' }}
-                >
-                  {oauthBusy === 'google'
-                    ? <ActivityIndicator size="small" color="#4285F4" style={{ width: 20, height: 20 }} />
-                    : <View style={s.googleG}><Text style={s.googleGText}>G</Text></View>
-                  }
-                  <Text style={s.socialBtnText}>Continue with Google</Text>
-                </Pressable>
+                {/* Google sign-in — iOS and Android, while Supabase has the provider on */}
+                {socialProviders.google && (
+                  <Pressable
+                    style={[s.socialBtn, (busy || !!oauthBusy) && s.socialBtnDisabled]}
+                    onPress={handleGoogleSignIn}
+                    disabled={busy || !!oauthBusy}
+                    accessibilityRole="button"
+                    accessibilityLabel="Continue with Google"
+                    accessibilityState={{ busy: oauthBusy === 'google' }}
+                  >
+                    {oauthBusy === 'google'
+                      ? <ActivityIndicator size="small" color="#4285F4" style={{ width: 20, height: 20 }} />
+                      : <View style={s.googleG}><Text style={s.googleGText}>G</Text></View>
+                    }
+                    <Text style={s.socialBtnText}>Continue with Google</Text>
+                  </Pressable>
+                )}
 
                 {/* OR divider */}
                 <View style={s.orRow}>
@@ -730,6 +758,9 @@ export default function SignIn() {
                 <Shield size={12} color="rgba(255,255,255,0.35)" />
                 <Text style={s.privacyText}>Your data is private and secure</Text>
               </View>
+            )}
+            {buildDiagnostics && (
+              <Text style={s.diagnosticsText} accessibilityLabel="Test build diagnostics">{buildDiagnostics}</Text>
             )}
           </View>
 
@@ -1057,6 +1088,13 @@ const s = StyleSheet.create({
   privacyText: {
     fontSize: 12,
     color: 'rgba(255,255,255,0.35)',
+  },
+  // Test-build diagnostics line (never rendered in store builds)
+  diagnosticsText: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.35)',
+    textAlign: 'center',
+    marginTop: 6,
   },
 
   // ── New to Portava card

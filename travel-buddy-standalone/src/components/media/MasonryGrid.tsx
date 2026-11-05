@@ -16,8 +16,18 @@
  *
  * Video autoplay: each tile's y offset within the ScrollView is computed
  * deterministically from the layout algorithm. Combined with the current
- * scroll offset and screen height, isVisible is derived per-tile (≥50 %
- * in viewport) and passed down so video tiles autoplay while in view.
+ * scroll offset and the ScrollView's own height, isVisible is derived per-tile
+ * (≥50 % in viewport) and passed down so video tiles autoplay while in view.
+ *
+ * Sizing: column width comes from the width the grid is actually given
+ * (onLayout), not the window. On a tablet or the web the tabs sit beside a
+ * 220 px sidebar in a content column capped at 720 px, so window-width columns
+ * ran past the right edge and the second column was cut off. Until the first
+ * layout the window width stands in, which is exact on a phone.
+ *
+ * Bottom clearance: the content ends above the floating tab pill (and the
+ * layover pill when one is showing), the same inset the Roam tab's FAB uses,
+ * so the last row can be scrolled fully into view.
  */
 
 import React, {
@@ -33,10 +43,13 @@ import {
   StyleSheet,
   RefreshControl,
   useWindowDimensions,
+  type LayoutChangeEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
 import { GridTile } from './GridTile.tsx';
+import { ShimmerBox } from '../ui/ShimmerBox.tsx';
+import { useLayoverAwareBottomInset } from '../../hooks/useBottomInset.ts';
 import type { MediaGridItem } from '../../types/media.ts';
 import { color } from '../../theme/tokens.ts';
 
@@ -75,6 +88,30 @@ function tileHeight(item: MediaGridItem, colWidth: number): number {
   return Math.round(Math.max(MIN_TILE_H, Math.min(MAX_TILE_H, colWidth * 1.25)));
 }
 
+/** Column width for a grid `width` px wide: GUTTER at both edges and between columns. */
+function columnWidth(width: number): number {
+  return Math.max(0, Math.floor((width - GUTTER * (NUM_COLS + 1)) / NUM_COLS));
+}
+
+/**
+ * The grid's own laid-out size. Width falls back to the window width and
+ * height to the window height until the first onLayout.
+ */
+function useGridBox() {
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const [box, setBox] = useState<{ width: number; height: number } | null>(null);
+  const onLayout = useCallback((e: LayoutChangeEvent) => {
+    const width = Math.round(e.nativeEvent.layout.width);
+    const height = Math.round(e.nativeEvent.layout.height);
+    setBox((prev) => (prev && prev.width === width && prev.height === height ? prev : { width, height }));
+  }, []);
+  return {
+    width: box?.width || windowWidth,
+    height: box?.height || windowHeight,
+    onLayout,
+  };
+}
+
 /** Returns true when at least 50 % of the tile is within the visible viewport. */
 function isTileVisible(tileY: number, tileH: number, scrollY: number, viewportH: number): boolean {
   const visibleTop = Math.max(tileY, scrollY);
@@ -90,10 +127,9 @@ export const MasonryGrid = forwardRef<MasonryGridHandle, MasonryGridProps>(
     { items, refreshing, onRefresh, onLoadMore, onTilePress, onScrollOffsetChange },
     ref,
   ) {
-    const { width: screenWidth, height: screenHeight } = useWindowDimensions();
-    const colWidth = Math.floor(
-      (screenWidth - GUTTER * (NUM_COLS + 1)) / NUM_COLS,
-    );
+    const { width: gridWidth, height: viewportHeight, onLayout } = useGridBox();
+    const colWidth = columnWidth(gridWidth);
+    const bottomInset = useLayoverAwareBottomInset();
 
     const scrollViewRef = useRef<ScrollView>(null);
 
@@ -170,9 +206,11 @@ export const MasonryGrid = forwardRef<MasonryGridHandle, MasonryGridProps>(
       <ScrollView
         ref={scrollViewRef}
         style={st.scroll}
+        testID="masonry-grid-scroll"
+        onLayout={onLayout}
         contentContainerStyle={[
           st.content,
-          { paddingHorizontal: GUTTER },
+          { paddingHorizontal: GUTTER, paddingBottom: bottomInset },
         ]}
         showsVerticalScrollIndicator={false}
         onScroll={handleScroll}
@@ -200,7 +238,7 @@ export const MasonryGrid = forwardRef<MasonryGridHandle, MasonryGridProps>(
                     cellWidth={colWidth}
                     cellHeight={h}
                     onPress={onTilePress}
-                    isVisible={isTileVisible(tileY, h, scrollY, screenHeight)}
+                    isVisible={isTileVisible(tileY, h, scrollY, viewportHeight)}
                   />
                 </View>
               ))}
@@ -212,16 +250,65 @@ export const MasonryGrid = forwardRef<MasonryGridHandle, MasonryGridProps>(
   },
 );
 
+// ── Loading skeleton ──────────────────────────────────────────────────────────
+
+// Tile heights as a share of the column width: a mix of the 4:5 fallback,
+// squares and landscape, staggered so the two columns don't line up.
+const SKELETON_RATIOS: number[][] = [
+  [1.25, 0.8, 1.25, 1],
+  [1, 1.25, 0.8, 1.25],
+];
+
+/**
+ * Loading placeholder drawn with the grid's own geometry (same gutter, column
+ * width and tile proportions), so the real tiles land where the placeholders
+ * were instead of the screen jumping from a padded, gapped grid of short
+ * landscape boxes to an edge-to-edge masonry.
+ */
+export function MasonryGridSkeleton() {
+  const { width, onLayout } = useGridBox();
+  const colWidth = columnWidth(width);
+  return (
+    <View
+      style={[st.skeleton, { paddingHorizontal: GUTTER }]}
+      onLayout={onLayout}
+      accessibilityLabel="Loading posts"
+      testID="masonry-grid-skeleton"
+    >
+      <View style={st.row}>
+        {SKELETON_RATIOS.map((ratios, c) => (
+          <View key={c} style={[st.col, { width: colWidth }]}>
+            {ratios.map((r, i) => (
+              <ShimmerBox
+                key={i}
+                width={colWidth}
+                height={Math.round(Math.max(MIN_TILE_H, Math.min(MAX_TILE_H, colWidth * r)))}
+                borderRadius={2}
+                style={{ marginBottom: GUTTER }}
+              />
+            ))}
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const st = StyleSheet.create({
+  skeleton: {
+    flex: 1,
+    overflow: 'hidden',
+    paddingTop: GUTTER,
+    backgroundColor: color.paper,
+  },
   scroll: {
     flex: 1,
     backgroundColor: color.paper,
   },
   content: {
     paddingTop: GUTTER,
-    paddingBottom: 24,
   },
   row: {
     flexDirection: 'row',

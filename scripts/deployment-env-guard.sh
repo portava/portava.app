@@ -15,9 +15,9 @@
 #   PORTAVA_DEPLOYMENT_ENV=beta       → EXPO_PUBLIC_SUPABASE_URL AND SUPABASE_URL must be
 #                                       exactly https://emfpckykpzfturllshly.supabase.co
 #                                       (optional trailing slash), and no variable may
-#                                       name production — its ref, its API host
-#                                       portava.replit.app (case-insensitively) or its
-#                                       publishable key (the one .replit commits) — or
+#                                       name production — its ref, one of its API hosts
+#                                       portava.replit.app / rumazi.com (case-insensitively)
+#                                       or its publishable key (the one .replit commits) — or
 #                                       hold a LIVE-mode provider credential (Stripe
 #                                       sk_live_/rk_live_/pk_live_, Persona
 #                                       persona_production_, a Sumsub prd: app token);
@@ -92,10 +92,11 @@ if [ "$LABEL" = "beta" ]; then
     [ -n "$name" ] || continue
     value="$(printenv "$name" 2>/dev/null)" || continue
     # Case-insensitive, like the API rule (namesProduction): production's ref
-    # or publishable key anywhere, or production's API host as a host
-    # (portava-beta.replit.app is not it). grep -E, so the boundary is the same
-    # expression in both places.
-    if printf '%s' "$value" | tr 'A-Z' 'a-z' | grep -qE "$PROD_REF|$PROD_KEY_LC|(^|[^a-z0-9-])portava\.replit\.app([^a-z0-9-]|\$)"; then
+    # or publishable key anywhere, or one of production's API hosts as a host
+    # (portava-beta.replit.app is not it, nor notrumazi.com). grep -E, so the
+    # boundary is the same expression in both places; the host list is
+    # PRODUCTION_API_HOSTS in lib/deploymentEnvironment.ts.
+    if printf '%s' "$value" | tr 'A-Z' 'a-z' | grep -qE "$PROD_REF|$PROD_KEY_LC|(^|[^a-z0-9-])(portava\.replit\.app|rumazi\.com)([^a-z0-9-]|\$)"; then
       NAMING="${NAMING:+$NAMING, }$name"
     fi
     # Case-SENSITIVE, like the API rule (holdsLiveCredential): documented live prefixes.
@@ -109,7 +110,7 @@ if [ "$LABEL" = "beta" ]; then
   done <<EOF
 $(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | sort -u)
 EOF
-  [ -z "$NAMING" ] || refuse "$VAR=beta but these variables name production (its project ref, portava.replit.app or its publishable key): $NAMING. Replace each with its portava-beta value (values are not printed)."
+  [ -z "$NAMING" ] || refuse "$VAR=beta but these variables name production (its project ref, portava.replit.app / rumazi.com or its publishable key): $NAMING. Replace each with its portava-beta value (values are not printed)."
   case "${PAYMENTS_ALLOW_LIVE-}" in
     ""|false) ;;
     *) case ", $LIVE," in *", PAYMENTS_ALLOW_LIVE,"*) ;; *) LIVE="${LIVE:+$LIVE, }PAYMENTS_ALLOW_LIVE" ;; esac ;;

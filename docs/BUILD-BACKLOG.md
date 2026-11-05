@@ -92,7 +92,7 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
 
   CORRECTED 2026-10-03, twice over. **The premise sentence "no embedding backend
   exists in this repository" is wrong as written**: an OpenAI client IS a
-  production dependency of this exact package — `artifacts/api-server/package.json:293`
+  production dependency of this exact package — `artifacts/api-server/package.json:294`
   (`"openai": "^6.44.0"`, under `dependencies`) — with a shared singleton at
   `artifacts/api-server/src/lib/openai.ts` (29 lines) and live callers at
   `services/compass/CompassIntentClassifier.ts:26`,
@@ -262,7 +262,7 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
   entry implied, and nothing is owed to §6.4 here. (2) "No speech-to-text
   provider configured in or reachable from this tree" is wrong as written, for
   the same reason as the `SearchEmbedding` entry above: an OpenAI client is a
-  production dependency (`artifacts/api-server/package.json:293`, singleton at
+  production dependency (`artifacts/api-server/package.json:294`, singleton at
   `src/lib/openai.ts`, three live callers). The narrower truths: no
   `.audio.transcriptions` call exists anywhere in the tree; the gateway named by
   `AI_INTEGRATIONS_OPENAI_BASE_URL` is documented as NOT OpenAI

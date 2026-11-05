@@ -32,10 +32,12 @@ function configPlugins(): ConfigPlugins {
  *   - push notifications        (aps-environment, which expo-notifications'
  *                                autolinked plugin adds without being listed)
  *
- * The app already treats each as unavailable at runtime: ssoAuth.ts returns an
- * error from a failed Apple sign-in, usePushToken.ts swallows a failed token
- * registration. Read at config time only and never set in EAS, so store builds
- * are unaffected. Usage: docs/eas-runbook.md ("Local build with a Personal Team").
+ * The app treats each as unavailable at runtime: the sign-in screen hides the
+ * Apple button when `extra.signInWithApple` is false (src/lib/buildCapabilities.ts),
+ * usePushToken.ts swallows a failed token registration, and universal links
+ * simply open the website. Read at config time only and never set in EAS, so
+ * store builds are unaffected. Usage: docs/eas-runbook.md ("Local build with a
+ * Personal Team").
  */
 export const PERSONAL_TEAM_ENV = 'PORTAVA_PERSONAL_TEAM';
 const PERSONAL_TEAM_PLUGINS_DROPPED: ReadonlySet<string> = new Set(['expo-apple-authentication']);
@@ -57,7 +59,14 @@ function pluginName(entry: NonNullable<ExpoConfig['plugins']>[number]): string {
 export function withPersonalTeam(config: ExpoConfig): ExpoConfig {
   const { associatedDomains: _dropped, ...ios } = config.ios ?? {};
   const plugins = (config.plugins ?? []).filter((entry) => !PERSONAL_TEAM_PLUGINS_DROPPED.has(pluginName(entry)));
-  const stripped: ExpoConfig = { ...config, ios: { ...ios, usesAppleSignIn: false }, plugins };
+  const stripped: ExpoConfig = {
+    ...config,
+    ios: { ...ios, usesAppleSignIn: false },
+    plugins,
+    // Read by src/lib/buildCapabilities.ts: this binary cannot show the Apple
+    // sheet, and it is a test build (the sign-in screen names its backend).
+    extra: { ...config.extra, signInWithApple: false, personalTeam: true },
+  };
   // Belt and braces for the entitlement a plugin writes rather than the config declares (aps-environment).
   return configPlugins().withEntitlementsPlist(stripped, (c) => {
     for (const key of PERSONAL_TEAM_ENTITLEMENTS_DROPPED) delete c.modResults[key];

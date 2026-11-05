@@ -3503,7 +3503,7 @@ rules; the fifth is the one that matters — the count of entries that are NOT
 `scripts/TELEGRAPH_CERTIFICATION_BASELINE.json:11` and may only shrink. A
 future change cannot make a red case green by reclassifying it. Wired at
 `scripts/run-all-checks.sh:390` and declared in
-`scripts/guardRegistry.ts:906-919`, with an inspection proof so a pass says how
+`scripts/guardRegistry.ts:924-937`, with an inspection proof so a pass says how
 much it looked at.
 
 **The share-authorization gate.** §26's private-Memory case and §29's Memory
@@ -14162,7 +14162,7 @@ re-checked, when, and what is not.
   (`travel-buddy-standalone/src/components/MessageMediaBubble.tsx:134#openMessageVideo({ mediaRef: mediaUrl`).
   `travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:186#<SharedVideoPlayer` renders it,
   and the root layout mounts the host once, AFTER the Stack and outside every screen and list
-  (`travel-buddy-standalone/app/_layout.tsx:435#<CallSurface /><CompactPlaybackHost />` — line-neutral, import at the
+  (`travel-buddy-standalone/app/_layout.tsx:433#<CallSurface /><CompactPlaybackHost />` — line-neutral, import at the
   foot), the pattern the shipped call pill already uses. §82 declared the root layout NOT-GRADED for this census, and
   that declaration is left standing: T62's verdict is pinned instead by a scoped suite that READS the layout and fails
   if the mount is removed or moved inside the Stack (90.3), so a change that breaks the mount fails CI rather than
