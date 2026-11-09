@@ -80,10 +80,11 @@ const kept = (t: string, op: Op, role: Role) => KEPT.find((k) => k.t === t && k.
  * alone. They name NO role (PUBLIC): a narrowing that named `authenticated` is what 3390's postcondition reads as a
  * deny on a kept path, which made R7's re-application of 3390 fail in CI's local-db job.
  */
-const NARROWED: Array<{ t: Table; policy: string }> = [
-  { t: "trails", policy: "trails_review_visible" },
-  { t: "content_trails", policy: "content_trails_review_visible" },
-  { t: "trail_edges", policy: "trail_edges_review_visible" },
+const NARROWED: Array<{ t: Table; policy: string; predicate: RegExp }> = [
+  { t: "discovery_places", policy: "discovery_places_canonical_moderation", predicate: /submitted_by.*auth\.uid\(\).*OR discovery_place_is_visible\(id, canonical_location_id, osm_id\)/s },
+  { t: "trails", policy: "trails_review_visible", predicate: /review_state = 'approved'|trail_review_visible/ },
+  { t: "content_trails", policy: "content_trails_review_visible", predicate: /review_state = 'approved'|trail_review_visible/ },
+  { t: "trail_edges", policy: "trail_edges_review_visible", predicate: /review_state = 'approved'|trail_review_visible/ },
 ];
 const SERVICE_ONLY: Table[] = TABLES.filter((t) => !KEPT.some((k) => k.t === t));
 
@@ -241,7 +242,7 @@ describe("census-discovery DV-71 — 3390: every Discovery table defines all fou
       const p = pol.find((x) => x.tbl === n.t && x.polname === n.policy);
       if (!p) { failures.push(`${n.t}: narrowing ${n.policy} missing`); continue; }
       if (p.permissive || p.cmd !== "r" || p.roles.join(",") !== "PUBLIC") failures.push(`${n.t}: ${n.policy} is not a restrictive SELECT for every role (${p.permissive} ${p.cmd} ${p.roles})`);
-      if (!/review_state = 'approved'|trail_review_visible/.test(p.qual ?? "")) failures.push(`${n.t}: ${n.policy} does not read the review state (${p.qual})`);
+      if (!n.predicate.test(p.qual ?? "")) failures.push(`${n.t}: ${n.policy} lacks its declared visibility check (${p.qual})`);
     }
     assert.deepEqual(failures, [], failures.join("\n"));
   });

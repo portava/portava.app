@@ -73,16 +73,22 @@ function psqlClient(): any {
     from(table: string) {
       ident(table);
       let cols = "*";
+      let limit: number | undefined;
+      let exactCount = false;
       const where: string[] = [];
       const run = async (single: boolean) => {
-        const sql = `SELECT ${cols} FROM public.${table}${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
-        const r = psql(`\\set VERBOSITY verbose\nSET LOCAL ROLE service_role;\nSELECT COALESCE(json_agg(t.*), '[]'::json)::text FROM (${sql}) t;`, { single: true });
+        const matched = `SELECT ${cols} FROM public.${table}${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
+        const query = `WITH matched AS (${matched}) SELECT json_build_object(
+          'data', (SELECT COALESCE(json_agg(t.*), '[]'::json) FROM (SELECT * FROM matched ${limit === undefined ? "" : "LIMIT " + limit}) t),
+          'count', ${exactCount ? "(SELECT count(*) FROM matched)" : "NULL"})::text`;
+        const r = psql(`\\set VERBOSITY verbose\nSET LOCAL ROLE service_role;\n${query};`, { single: true });
         if (r.status !== 0) return { data: null, error: pgError(r.stderr) };
-        const out = JSON.parse(r.stdout.trim() || "[]") as unknown[];
-        return single ? { data: out[0] ?? null, error: null } : { data: out, error: null };
+        const result = JSON.parse(r.stdout.trim()) as { data: unknown[]; count: number | null };
+        return { data: single ? result.data[0] ?? null : result.data, count: result.count, error: null };
       };
       const b: any = {
-        select(c: string) { cols = c.split(",").map((x) => ident(x.trim())).join(", "); return b; },
+        select(c: string, options?: { count: string }) { cols = c.split(",").map((x) => ident(x.trim())).join(", "); exactCount = options?.count === "exact"; return b; },
+        limit(n: number) { assert.ok(Number.isSafeInteger(n) && n >= 0); limit = n; return b; },
         eq(c: string, v: unknown) { where.push(`${ident(c)} = ${lit(v)}`); return b; },
         neq(c: string, v: unknown) { where.push(`${ident(c)} <> ${lit(v)}`); return b; },
         in(c: string, vs: unknown[]) { where.push(vs.length ? `${ident(c)} IN (${vs.map(lit).join(", ")})` : "false"); return b; },
@@ -361,10 +367,20 @@ describe("census-discovery §133 — 3920: the v2 trend producer keys the places
   it("C9. re-applied, 3920 is a no-op that keeps the flag's value; the rollback refuses while it is TRUE and touches only 3920", () => {
     const before = NEW_FNS.map(md5Of);
     const originals = ORIGINALS.map(md5Of);
-    const r = psql(readFileSync(MIG_3920, "utf8"));
-    assert.equal(r.status, 0, r.stderr);
-    assert.deepEqual(NEW_FNS.map(md5Of), before, "the same five definitions");
-    assert.equal(scalar(`SELECT enabled FROM public.feature_flags WHERE flag = '${FLAG}'`), "t", "ON CONFLICT DO NOTHING: an operator's TRUE survives a re-apply");
+    // 4009 deliberately replaced the first function with a governed context.
+    // Rehearse 3920 twice *inside* a rolled-back transaction. Its own definitions
+    // are idempotent and no later place visibility check is removed from this DB.
+    const migration = readFileSync(MIG_3920, "utf8").replace(/^BEGIN;\s*$/m, "").replace(/^COMMIT;\s*$/m, "");
+    const snapshot = `SELECT 'FNS' || json_agg(md5(pg_get_functiondef(f::regprocedure)) ORDER BY ord)::text
+      FROM unnest(ARRAY[${inList(NEW_FNS)}]) WITH ORDINALITY AS funcs(f, ord);`;
+    const repeats = exec(`BEGIN;\n${migration}\n${snapshot}\n${migration}\n${snapshot}\n
+      SELECT 'FLAG' || enabled::text FROM public.feature_flags WHERE flag = '${FLAG}';\nROLLBACK;`);
+    const hashes = repeats.filter(line => line.startsWith("FNS")).map(line => JSON.parse(line.slice(3)) as string[]);
+    assert.equal(hashes.length, 2);
+    assert.deepEqual(hashes[0], hashes[1], "3920 produces its own five definitions on each application");
+    assert.deepEqual(hashes[0]!.slice(1), before.slice(1), "the other four functions still match the current chain");
+    assert.ok(repeats.includes("FLAGtrue"), "ON CONFLICT DO NOTHING preserves the operator's value");
+    assert.deepEqual(NEW_FNS.map(md5Of), before, "the rehearsal preserves the governed, current context");
     const rb = readFileSync(RB_3920, "utf8");
     const refused = psql(rb);
     assert.notEqual(refused.status, 0, "the rollback must refuse while the flag is TRUE");

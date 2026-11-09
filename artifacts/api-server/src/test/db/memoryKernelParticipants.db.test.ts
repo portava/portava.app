@@ -36,7 +36,7 @@
  *   P3  POST /trips/:tripId/memory: the crew tagged and TRIP typed by the kernel's transaction
  *   P4  PATCH /memories/:id memoryType: the type written by UPDATE_MEMORY itself; other events keep 2711's refs shape
  *   P5  POST /me/memory-drafts, kernel ON: CREATE_MEMORY, no direct insert
- *   P6  POST /me/memory-drafts, kernel OFF: the legacy insert, and no event claimed
+ *   P6  POST /me/memory-drafts, kernel OFF: refusal, no draft, source, or save
  *   P7  POST /memories/:id/items/from-post: the source link in the kernel's own INSERT
  *   P8  a source post that is not the owner's: 3999's guard refuses inside the kernel and NOTHING is written
  *   P9  a malformed participant list is refused by name before any write
@@ -305,21 +305,21 @@ describe("§17: a Memory's participants, type, occurrence text and source post a
     assert.equal(xminOf("memories", `id = '${id}'`), xminOf(EVENTS, `memory_id = '${id}'`));
     assert.equal(scalar(`SELECT count(*) FROM public.memory_command_receipts WHERE memory_id = '${id}' AND command_type = 'CREATE_MEMORY'`), "1");
     assert.equal(scalar(`SELECT count(*) FROM public.${OUTBOX} o JOIN public.${EVENTS} e ON e.event_id = o.event_id WHERE e.memory_id = '${id}'`), "1");
-    assertOnlyTheKernelWroteTheMemory("P5");
+    assertOnlyTheKernelWroteTheMemory("P5", /^SELECT json_build_array\(public\.telegraph_memory_draft_execute\(/);
+    assert.equal(xminOf("telegraph_memory_sources", `memory_id = '${id}' AND message_id = '${msg}'`), xminOf("memories", `id = '${id}'`), "the verified source and draft commit in the same transaction");
     assert.equal(scalar(`SELECT count(*) FROM public.saved_messages WHERE user_id = '${owner}' AND message_id = '${msg}'`), "1", "the save is still recorded");
   });
 
-  test("P6 POST /me/memory-drafts with the kernel OFF: the legacy insert runs, and no event is claimed for it", async () => {
+  test("P6 a message-sourced draft refuses when its atomic kernel is offline, leaving no source, save or draft", async () => {
     flags = { ...PROD_FLAGS, memory_kernel_enabled: false }; install();
-    const msg = seedMessage(`${TAG} legacy draft`);
+    const msg = seedMessage(`${TAG} unavailable draft`);
     const res = await call("POST", "/api/me/memory-drafts", { messageId: msg });
-    assert.equal(res.status, 201, JSON.stringify(res.body));
-    const id = String(res.body.draft.id);
-    assert.equal(scalar(`SELECT state || '/' || visibility FROM public.memories WHERE id = '${id}'`), "draft/only_me");
-    assert.equal(scalar(`SELECT count(*) FROM public.${EVENTS} WHERE memory_id = '${id}'`), "0");
-    const w = writes();
-    assert.equal(w.filter((s) => KERNEL_RPC.test(s)).length, 0, "no kernel call with the kernel off");
-    assert.equal(w.filter((s) => /^WITH w AS \(INSERT INTO public\.memories /.test(s)).length, 1, "the original direct insert, once");
+    assert.equal(res.status, 503, JSON.stringify(res.body));
+    assert.equal(res.body.error, "degraded_unavailable");
+    assert.equal(res.body.retryable, true);
+    assert.deepEqual(writes().filter(s => CANONICAL_WRITE.test(s) || /public\.(memory_kernel_execute|telegraph_memory_draft_execute)\(/.test(s)), []);
+    assert.equal(scalar(`SELECT count(*) FROM public.telegraph_memory_sources WHERE message_id = '${msg}'`), "0");
+    assert.equal(scalar(`SELECT count(*) FROM public.saved_messages WHERE user_id = '${owner}' AND message_id = '${msg}'`), "0");
   });
 
   test("P12 a refusal on the kernel path keeps its own answer: an over-long Idempotency-Key is 400 and writes nothing", async () => {

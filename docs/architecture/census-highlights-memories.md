@@ -10099,3 +10099,5 @@ No row, total, scope-coverage floor or citation threshold is promoted by this re
 ### November 9 release evidence
 
 Shared posts in a Memory or Highlight resolve the current wrapper, original text, author, attachments and source audience for the requesting viewer. A private, withdrawn, blocked or moderated source no longer contributes its media. The public destination remains separately permission-checked. Attached media and viewer tests strengthen this boundary. A whole-spec grade requires a fresh measurement.
+
+Migration 4021 gives the Highlight a dedicated deferred trigger (`artifacts/api-server/src/migrations/4021_reference_guard_and_place_policy.sql:36#CREATE CONSTRAINT TRIGGER highlight_post_reference_guard`). Ordinary Highlight inserts can complete without privileges on private Memory items. A post-reference Highlight must still match a reference row for its owner, destination and URI. The Memory constraint remains in place. The current Telegraph message-to-Memory command commits its source and draft together. With the required kernel unavailable it returns a retryable refusal and leaves no draft or saved-message record.
