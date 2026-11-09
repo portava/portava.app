@@ -42,6 +42,8 @@
  * swallowed rather than failing the booking.
  */
 import { logger } from "./logger.js";
+import { RENT_BUDDY_LEDGER_ESTIMATE } from "./capability/registry.js";
+import { probeSchemaReadiness } from "./capability/schemaCapability.js";
 import { buildBookingEntries, fromMinor, reconstructBalances } from "./creatorLedgerEntries.js";
 import { RENT_BUDDY_FEE_RULE_VERSION, toEarningsEntryRow } from "./creatorLedgerRows.js";
 import {
@@ -77,6 +79,7 @@ export type LedgerWriteResult =
    * genuinely free booking.
    */
   | { status: "amount_unpriceable"; detail: string }
+  | { status: "schema_unavailable"; reason: "missing" | "unknown" }
   | { status: "entries_refused"; reason: string; detail: string }
   | { status: "entries_write_failed"; detail: string }
   | { status: "write_failed"; detail: string };
@@ -126,7 +129,7 @@ export async function createEarningsLedgerEntry(
 
   // M4 (mismatch half). The schedule amount now reads BOTH fee columns, so an
   // admin-set `_pct` is no longer invisible. Whether it is applied is gated:
-  // while `rent_buddy_enabled` is off — which it is in production — the
+  // while `rent_buddy_enabled` is off, the
   // recorded amount is 0, exactly as it is today. Charging travellers is
   // Stage 4 and requires ruling R1; see travelerServiceFeeIsChargeable.
   const scheduledTravelerFee = travelerServiceFeeUsdFor(total, rule);
@@ -169,6 +172,17 @@ export async function createEarningsLedgerEntry(
       "earnings entries NOT written: the priced breakdown is not a bookable entry set",
     );
     return { status: "entries_refused", reason: built.reason, detail: built.detail };
+  }
+
+  // The append-only entries and their estimate require the same exact rate.
+  // Check the summary schema before either write on partially migrated databases.
+  const readiness = await probeSchemaReadiness(svc, RENT_BUDDY_LEDGER_ESTIMATE);
+  if (readiness.state !== "ready") {
+    logger.error(
+      { bookingId: booking.id, readiness, migrations: RENT_BUDDY_LEDGER_ESTIMATE.providedBy },
+      "Booking earnings estimate unavailable: commission schema is not ready",
+    );
+    return { status: "schema_unavailable", reason: readiness.state };
   }
 
   const { error: entriesErr } = await svc

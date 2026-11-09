@@ -13,7 +13,7 @@ import type { TelegraphShareProjection } from './shareApi.ts';
 export function SharedMessageMedia({projection, messageId}: {projection: TelegraphShareProjection; messageId?: string | null}) {
   const controls = useThreadSharePlayer();
   const [open, setOpen] = useState(false);
-  const [paused, setPaused] = useState(false);
+  const paused = Boolean(messageId && controls?.paused.has(messageId));
   const position = useRef(0);
   const media = projection.media?.find(item => (item.type === 'image' || item.type === 'video') && messageTreeMediaOrNull(item.uri));
   const original = messageTreeMediaOrNull(media?.uri);
@@ -45,7 +45,7 @@ export function SharedMessageMedia({projection, messageId}: {projection: Telegra
     {video && selected && controls ? <Pressable accessibilityRole="button" accessibilityLabel={controls.muted ? 'Unmute shared video' : 'Mute shared video'} onPress={() => controls.setMuted(!controls.muted)} style={[s.pause, {right: 52}]}>
       {controls.muted ? <VolumeX color="#fff" size={18} /> : <Volume2 color="#fff" size={18} />}
     </Pressable> : null}
-    {video && selected ? <Pressable accessibilityRole="button" accessibilityLabel={paused ? 'Resume shared video' : 'Pause shared video'} onPress={() => setPaused(value => !value)} style={s.pause}>
+    {video && selected ? <Pressable accessibilityRole="button" accessibilityLabel={paused ? 'Resume shared video' : 'Pause shared video'} onPress={() => { if (messageId) controls?.togglePause(messageId); }} style={s.pause}>
       {paused ? <Play color="#fff" size={18} /> : <Pause color="#fff" size={18} />}
     </Pressable> : null}
     {open && isPost ? <PostTakeover postId={projection.objectId} initialMediaUri={original ?? undefined} initialPositionMillis={position.current} onPositionChange={value => { position.current = value; }} onClose={() => setOpen(false)} /> : null}

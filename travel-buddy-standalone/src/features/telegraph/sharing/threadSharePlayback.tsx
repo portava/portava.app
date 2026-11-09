@@ -7,6 +7,8 @@ import { getCompactPlayback, subscribeCompactPlayback } from '../media/compactPl
 interface ThreadSharePlayback {
   playing: string | null;
   muted: boolean;
+  paused: ReadonlySet<string>;
+  togglePause: (id: string) => void;
   setMuted: (muted: boolean) => void;
   register: (id: string, video: boolean) => void;
   expand: (id: string | null) => void;
@@ -18,6 +20,12 @@ export function useThreadSharePlayback(enabled: boolean) {
   const [visible, setVisible] = useState<string[]>([]);
   const [videos, setVideos] = useState<Set<string>>(() => new Set());
   const [muted, setMuted] = useState(true);
+  const [paused, setPaused] = useState<ReadonlySet<string>>(() => new Set());
+  const togglePause = useCallback((id: string) => setPaused(previous => {
+    const next = new Set(previous);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  }), []);
   const [expanded, expand] = useState<string | null>(null);
   const compact = useSyncExternalStore(subscribeCompactPlayback, getCompactPlayback, getCompactPlayback);
   const activity = useMediaSurfaceActivity(() => expand(null));
@@ -35,7 +43,7 @@ export function useThreadSharePlayback(enabled: boolean) {
     setVisible(ids.map((id, index) => ({id, distance: Math.abs(index - midpoint)})).sort((a, b) => a.distance - b.distance).map(item => item.id));
   }, []);
   const playing = enabled && activity.active && !reduceMotion && !compact && !expanded ? visible.find(id => videos.has(id)) ?? null : null;
-  const playback = useMemo(() => ({playing, register, expand, muted, setMuted}), [playing, register, muted]);
+  const playback = useMemo(() => ({playing, register, expand, muted, setMuted, paused, togglePause}), [playing, register, muted, paused, togglePause]);
   return {playback, onViewableItemsChanged};
 }
 export const SHARED_MEDIA_VIEWABILITY = { itemVisiblePercentThreshold: 65, minimumViewTime: 200 };

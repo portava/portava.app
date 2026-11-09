@@ -11,12 +11,9 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react-
 let mockUserId: string | null = 'me';
 let mockFlags: Record<string, boolean> = {};
 
-jest.mock('react-native', () => {
-  const actual = jest.requireActual('react-native');
-  const react = jest.requireActual('react');
-  const modal = ({ visible, children }: { visible: boolean; children: React.ReactNode }) => (visible ? react.createElement(actual.View, null, children) : null);
-  return new Proxy(actual, { get(target, property, receiver) { return property === 'Modal' ? modal : Reflect.get(target, property, receiver); } });
-});
+// NOTE: deliver the native iOS dismissal event before starting an action from the overflow sheet.
+jest.mock('react-native', () => require('../../../src/__fixtures__/modalDismissal.ts').withModalDismissal(jest.requireActual('react-native')));
+
 jest.mock('react-native-safe-area-context', () => ({
   ...jest.requireActual('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),

@@ -75,7 +75,7 @@ const BASELINE_DIR = join(API_SERVER_ROOT, "baseline");
  * stale silently on the next refresh, which is how two cases in
  * productionDriftExtraction.test.ts came to assert the opposite of the truth.
  */
-export const PRODUCTION_SNAPSHOT = "20261104_production_tables.txt"; // 2026-11-04 refresh after release 2 (the header of that file)
+export const PRODUCTION_SNAPSHOT = "20261109_production_tables.txt";
 
 /**
  * `unmerged-pr` HAS NO MEMBERS AS OF 2026-09-15, AND IS KEPT — ruling, with the
@@ -132,21 +132,6 @@ interface Gap {
  * legacy-root renames.
  */
 export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
-  // Approved 2026-11-05 release; CI applied, production rollout still pending.
-  post_destination_operations: { classification: "unapplied", note: "4007_post_reference_destinations.sql: approved matching backend release, pending production apply." },
-  recording_capture_stamps: { classification: "unapplied", note: "4019_recording_capture_stamps.sql: new scoped recording-stamp release, pending apply." },
-  post_destination_references: { classification: "unapplied", note: "4007_post_reference_destinations.sql: approved matching backend release, pending production apply." },
-  map_navigation_contributions: { classification: "unapplied", note: "4008_map_private_controls.sql: approved matching backend release, pending production apply." },
-  map_personal_protected_places: { classification: "unapplied", note: "4008_map_private_controls.sql: approved matching backend release, pending production apply." },
-  place_governance_actions: { classification: "unapplied", note: "4009_canonical_place_governance.sql: approved matching backend release, pending production apply." },
-  official_post_media_commands: { classification: "unapplied", note: "4010_official_post_media_registration.sql: approved matching backend release, pending production apply." },
-  trip_nearby_epochs: { classification: "unapplied", note: "4013_trip_nearby_checkpoints.sql: approved matching backend release, pending production apply." },
-  trip_nearby_revocations: { classification: "unapplied", note: "4013_trip_nearby_checkpoints.sql: approved matching backend release, pending production apply." },
-  trip_nearby_observations: { classification: "unapplied", note: "4013_trip_nearby_checkpoints.sql: approved matching backend release, pending production apply." },
-  trip_nearby_sessions: { classification: "unapplied", note: "4013_trip_nearby_checkpoints.sql: approved matching backend release, pending production apply." },
-  telegraph_memory_sources: { classification: "unapplied", note: "4015_telegraph_memory_sources.sql: approved matching backend release, pending production apply." },
-  telegraph_forward_media_jobs: { classification: "unapplied", note: "4016_telegraph_attachment_forwards.sql: approved matching backend release, pending production apply." },
-  telegraph_outcome_feedback: { classification: "unapplied", note: "4017_telegraph_outcome_feedback.sql: approved matching backend release, pending production apply." },
   // ── STRUCK OFF 2026-09-17: the twenty-six this ratchet was largest for ─────
   // Twenty-one Trips tables (2760-2794) and five that were not Trips at all —
   // map_telemetry_events, map_telemetry_drops (2202/2222), media_intent_signals

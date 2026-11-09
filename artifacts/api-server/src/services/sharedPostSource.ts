@@ -1,10 +1,10 @@
-import { ACCOUNT_STATE_GATE_SELECT, pickRestriction } from '../lib/accountStateGate.js';
+import { pickRestriction } from '../lib/accountStateGate.js';
 import { readPairDirections } from '../lib/exclusionSet.js';
 import { excludePrivateAuthorPosts } from '../lib/privacyFilter.js';
 import { isPostgrestBackedClient } from '../lib/supabase.js';
 import { projectSharedPostMedia, type SharedPostMedia } from './sharedPostMedia.js';
 
-export const SHARED_AUTHOR_SELECT = 'id,handle,is_private,' + ACCOUNT_STATE_GATE_SELECT;
+export const SHARED_AUTHOR_SELECT = 'id,handle,is_private,account_status,user_account_states!user_account_states_user_id_fkey(state, expires_at)';
 type Result = {available: false; reason: 'not_found' | 'deleted' | 'unauthorized' | 'private'} |
   {available: true; postId: string; text: string; author: string; version: string | null; media: SharedPostMedia[]};
 

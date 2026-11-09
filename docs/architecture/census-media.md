@@ -50,7 +50,7 @@ and the §32 Compass viewer affordances. Meanwhile the Media tab's mode set is s
 `MEDIA_VIEW_MODE_FULLSCREEN_ENABLED = true` (`2037_media_tab_flags.sql:17-20`) and the
 store's default mode is `'watch'` (`src/stores/mediaStore.ts:104,145`) — a full-screen
 vertical autoplaying video feed (`src/components/media/WatchFeed.tsx:1-8`,
-`WatchVideoCell.tsx:88#shouldPlay = isActive` `shouldPlay={isActive}`) with a Stamp/comment/save counter rail
+`WatchVideoCell.tsx:96#shouldPlay = isActive` `shouldPlay={isActive}`) with a Stamp/comment/save counter rail
 (`WatchItemOverlay.tsx:403-437`). §46.2 forbids exactly that, twice.
 
 **3. I disagree with `media-v2-certification.md` on two of its eight properties and on its
@@ -288,7 +288,7 @@ left untouched and additive, not the new primary."* Both halves are true. But §
 list of what **Media** must not be, not a list of what the newest shell must not be, and
 the surface a user reaches is `app/(tabs)/media.tsx:55-58` with `defaultMode = 'watch'`
 (`src/stores/mediaStore.ts:104,145`) — `WatchFeed.tsx:1-8` *"full-screen vertical video
-feed … renders a paging list"*, autoplaying on viewability (`WatchVideoCell.tsx:88#shouldPlay = isActive`
+feed … renders a paging list"*, autoplaying on viewability (`WatchVideoCell.tsx:96#shouldPlay = isActive`
 `shouldPlay={isActive}`; `WatchFeedList.tsx:529` drives `isActive` from viewability
 tracking), with a Stamp / comment / save counter rail (`WatchItemOverlay.tsx:403-437`,
 `formatCompactCount` at `:134`). That is four §46.2 anti-patterns implemented and working:
@@ -779,17 +779,17 @@ over `travel-buddy-standalone/src`, `travel-buddy-standalone/app` and
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| MD275 | Thumbnail generation | **W** | Server-side thumbnails exist for **images only**: `lib/mediaProcessing.ts:15-16,18-22` — *"Dimensions, thumbnails and pHash remain image-only."* `media_assets.thumbnail_path` exists for video and no writer fills it; `WatchVideoCell.tsx:185#buffering` shows a poster *"while buffering"* from a client-supplied URL. |
+| MD275 | Thumbnail generation | **W** | Server-side thumbnails exist for **images only**: `lib/mediaProcessing.ts:15-16,18-22` — *"Dimensions, thumbnails and pHash remain image-only."* `media_assets.thumbnail_path` exists for video and no writer fills it; `WatchVideoCell.tsx:202#buffering` shows a poster *"while buffering"* from a client-supplied URL. |
 | MD276 | Duration metadata | **W** | `0191:23` `duration_ms` exists and is client-declared — the server never probes a video (no ffmpeg, `mediaProcessing.ts:18-19`), so duration is whatever the uploader said. `2089_media_assets_ready_requires_dimensions.sql` constrains dimensions, not duration. |
-| MD277 | Adaptive playback | **N** | No HLS/DASH anywhere. `WatchVideoCell.tsx:170#<Video` plays a single progressive `videoUrl` through `expo-av`. |
-| MD278 | Mute state | **C** | `WatchFeedList.tsx:467` holds `isMuted` (defaulting muted), passed to `WatchVideoCell.tsx:178#isMuted={isMuted`; `SharedVideoPlayer.tsx:197-199#const next = !isMuted;` `setStatusAsync({ isMuted })` with an accessible label at `:326`. |
+| MD277 | Adaptive playback | **N** | No HLS/DASH anywhere. `WatchVideoCell.tsx:179#<Video` plays a single progressive `videoUrl` through `expo-av`. |
+| MD278 | Mute state | **C** | `WatchFeedList.tsx:467` holds `isMuted` (defaulting muted), passed to `WatchVideoCell.tsx:195#isMuted={isMuted`; `SharedVideoPlayer.tsx:205-207#const next = !isMuted;` `setStatusAsync({ isMuted })` with an accessible label at `:326`. |
 | MD279 | Seek | **C** | `WatchFeedList.tsx:10` progress bar with pan-to-seek; `:299` throttles seeks to ≈12 fps and `:311` issues a final exact seek. |
 | MD280 | Captions | **N** | No caption/subtitle/`textTrack` anywhere in the client. |
 | MD281 | Upload resume / retry | **N** | `src/services/media.ts:153` `uploadMedia` is a single `fetch` POST to `/api/media/upload` (`:197`) with no chunking, no range, no resume token and no retry loop. The postcard transport (`lib/mediaPipeline.ts:12-17`) gives progress and cancellation, not resume. |
 | MD282 | Compression / transcoding | **N** | `lib/mediaProcessing.ts:18-19` — *"Videos are NOT transcoded here (no ffmpeg in this tier) — they are sniffed and size-capped only; that limitation is documented, not hidden."* Images are re-encoded and capped; video is not. |
 | MD283 | Moderation | **C** | `media_assets.moderation_status`, `post_media_moderation_ledger`, `routes/adminMedia.ts` — the same pipeline for video as for images. |
 | MD284 | Background upload | **N** | No background task, no `expo-task-manager` upload registration, no queue. `uploadMedia` runs in the foreground and dies with the screen. |
-| MD285 | Playback recovery | **C** | `WatchVideoCell.tsx:107-117#React to isActive changes` reacts to activity changes and holds a `hasHardFailed` latch so a permanently broken source stops retrying; `:198#isBuffering` distinguishes buffering from failure. |
+| MD285 | Playback recovery | **C** | `WatchVideoCell.tsx:115-125#React to isActive changes` reacts to activity changes and holds a `hasHardFailed` latch so a permanently broken source stops retrying; `:215#isBuffering` distinguishes buffering from failure. |
 | MD286 | Do not make endless vertical autoplay the primary Media IA | **W** | It is the primary Media IA. `src/stores/mediaStore.ts:104,145` `defaultMode='watch'`; `2037_media_tab_flags.sql:17-20` seeds `MEDIA_VIEW_MODE_FULLSCREEN_ENABLED = true`; `WatchFeedList.tsx:529` drives autoplay from viewability. The compliant alternative exists and is dark. |
 
 ### §38 Search
@@ -1002,7 +1002,7 @@ and this line dropped every one of them … the funnel simply read zero."*
 | MD422 | No Facebook-style newsfeed cards | **C** | The newsfeed card pattern lives in the Wall, not Media; the media surfaces are feed/mosaic/mosaic. |
 | MD423 | No follower/view counts dominating Media | **C** | Follower and view counts are absent from the media overlays — `WatchItemOverlay.tsx` shows stamp/comment/save, not followers or views. |
 | MD424 | No Heart/Like as primary hierarchy | **W** | Built. `WatchItemOverlay.tsx:403-411` — the Stamp control sits in `s.heartGroup`, is the first and largest item in the action rail, and carries a compact count. It is the primary hierarchy on the default surface. |
-| MD425 | No autoplay as primary navigation | **W** | Built. `WatchFeedList.tsx:529` sets `isActive` from viewability and `WatchVideoCell.tsx:88#shouldPlay = isActive` `shouldPlay={isActive}` — advancing the feed *is* the play control. |
+| MD425 | No autoplay as primary navigation | **W** | Built. `WatchFeedList.tsx:529` sets `isActive` from viewability and `WatchVideoCell.tsx:96#shouldPlay = isActive` `shouldPlay={isActive}` — advancing the feed *is* the play control. |
 | MD426 | No random engagement-ranked viral feed | **C** | Ranking is not random and not virality-driven: `portavaRank.ts:182-201` weights recency, geo, taste and actionability above `socialProof 0.25`, and `LOCAL_MOMENTUM_MAX_CONTRIBUTION` is capped by ruling (`:143-150`) so momentum *"cannot lift a place over one the viewer's taste prefers by even a single interest tag."* This one the tree gets right on purpose. |
 | MD427 | No full-screen stranger video immediately on Media open | **W** | Built. Opening the Media tab with the seeded flags lands directly in `WatchFeed`, full-screen, autoplaying, with no place or context first. |
 
@@ -1420,11 +1420,11 @@ Both halves are wrong. At `3eaf2436f`, `post_hides` had **one writer and three r
 
 | | Where |
 | --- | --- |
-| WRITER | `POST /api/posts/:postId/hide` — `artifacts/api-server/src/routes/posts.ts:2664#router.post("/posts/:postId/hide"`, an idempotent upsert on the same conflict target §9 later duplicated |
-| READER | the following feed — `artifacts/api-server/src/routes/posts.ts:1258#.from("post_hides")` |
-| READER | the global feed — `artifacts/api-server/src/routes/posts.ts:1400#.from("post_hides")` |
+| WRITER | `POST /api/posts/:postId/hide` — `artifacts/api-server/src/routes/posts.ts:2676#router.post("/posts/:postId/hide"`, an idempotent upsert on the same conflict target §9 later duplicated |
+| READER | the following feed — `artifacts/api-server/src/routes/posts.ts:1270#.from("post_hides")` |
+| READER | the global feed — `artifacts/api-server/src/routes/posts.ts:1412#.from("post_hides")` |
 | READER | Pulse — `artifacts/api-server/src/routes/pulse.ts:159#const { data: hiddenRows } = await sc` |
-| CLIENT | `travel-buddy-standalone/src/services/posts.ts:654#export async function hidePost` , called from `travel-buddy-standalone/src/components/PulseFeedCard.tsx:146#const ok = await hidePost(item.id);` |
+| CLIENT | `travel-buddy-standalone/src/services/posts.ts:661#export async function hidePost` , called from `travel-buddy-standalone/src/components/PulseFeedCard.tsx:147#const ok = await hidePost(item.id);` |
 | TEST | `artifacts/api-server/src/test/postHide.test.ts:5#- Authenticated user can hide a post (upserts into post_hides, returns { hidden: true })` |
 
 ### 10.1 How the error was made, because the method is the point
@@ -1491,7 +1491,7 @@ had already put two different moderation deny-lists in two files (§9.3).
 
 So this section extracts `artifacts/api-server/src/lib/postHide.ts:58#{ onConflict: "user_id,post_id", ignoreDuplicates: true },`
 and routes **both** callers through it —
-`artifacts/api-server/src/routes/posts.ts:2682#const hidden = await hidePostForViewer(sc, user.id, postId);`
+`artifacts/api-server/src/routes/posts.ts:2694#const hidden = await hidePostForViewer(sc, user.id, postId);`
 and `artifacts/api-server/src/routes/mediaFeed.ts:1193#const hidden = await hidePostForViewer(sc, user.id, id);`.
 **Two routes reach the hide, by choice; one writer, in one file.** A new case,
 `the media hide "writes through the SAME idempotency contract as POST /posts/:postId/hide"`,
@@ -1677,7 +1677,7 @@ Executed: `public.tags` is created by
 `artifacts/api-server/src/migrations/0044_tags_hashtags.sql:15#CREATE TABLE IF NOT EXISTS tags (`,
 is in the committed production baseline (`baseline/20260907_production_tables.txt`),
 and is **written on the post-create path** —
-`artifacts/api-server/src/routes/posts.ts:897#sourceType: 'post',` hands the new
+`artifacts/api-server/src/routes/posts.ts:909#sourceType: 'post',` hands the new
 post's id to `processTagging`, which upserts at
 `artifacts/api-server/src/services/tagging/TaggingService.ts:392#.from('tags')`
 after the tag-permission, block and rate checks. The bucket reported zero over a
@@ -2664,7 +2664,7 @@ decision with a cost, not a code change, and should be recorded as such.
 | --- | --- |
 | MD275 | A writer filling `media_assets.thumbnail_path` for video. The column exists. |
 | MD276 | A server-side probe of the container. Duration is whatever the uploader declared. |
-| MD277 | An HLS/DASH manifest. `WatchVideoCell.tsx:170#<Video` plays one progressive URL. |
+| MD277 | An HLS/DASH manifest. `WatchVideoCell.tsx:179#<Video` plays one progressive URL. |
 | MD280 | A caption/subtitle track on the asset and a `textTrack` on the player. |
 | MD281 · MD284 | A chunked/resumable upload with a resume token, and a background task registration. `uploadMedia` is a single foreground `fetch`. |
 | MD282 | Transcoding. Images are already re-encoded and capped; video is not. |
@@ -3283,14 +3283,14 @@ the document's `head_commit`, because it re-reads fifty-odd rows, not 450.
 | MD25 · MD329 · MD416 · MD405 | §4/§21 Media Map screen + `state/mediaMapStore`: counts from `GET /media/map`, positions ONLY from canonical place objects the Map gateway serves; an unpositioned cluster is listed, never placed; an APPROXIMATE gem is a filled, contoured AREA (never a pin) | `travel-buddy-standalone/src/features/media/screens/MediaMapScreen.tsx:70#export function MediaMapScreen(` · `travel-buddy-standalone/src/features/media/state/mediaMapStore.ts:135#export function joinClustersToPositions(` · `travel-buddy-standalone/src/features/media/state/mediaMapStore.ts:165#export function gemMapTreatment(` · `travel-buddy-standalone/src/features/media/state/mediaMapStore.ts:313#export function mediaMapReducer(` · zone layer `travel-buddy-standalone/src/features/media/components/MediaMapCanvas.tsx:80#<GeoJSONSource id="media-gem-zones" data={zoneData}>` · gateway `travel-buddy-standalone/src/features/media/hooks/useMediaMap.ts:70#: fetchMapProjection({` |
 | MD35 · MD449 · MD30 · MD31 · MD32 | Every lens Map mode is that one Media Map — NOW, PLACES, EXPERIENCES, HIDDEN GEMS and MY WORLD (the owner's own places, published + tagged only) | `travel-buddy-standalone/src/features/media/screens/MediaWorldScreen.tsx:81#<MediaMapScreen` · `travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:91#<MediaMapScreen` · `travel-buddy-standalone/src/features/media/screens/MediaExperiencesScreen.tsx:64#return <ExperiencesMap placeKey={placeKey}` · `travel-buddy-standalone/src/features/media/screens/MyWorldMediaScreen.tsx:128#<MediaMapScreen` |
 | MD26 | §4 Media Timeline / Time Rail screen: the place-scoped (or world) §17 rail plus the OBSERVED Earlier perspectives; NOW and PLACES Time modes mount it | `travel-buddy-standalone/src/features/media/screens/MediaTimelineScreen.tsx:43#export function MediaTimelineScreen(` · `travel-buddy-standalone/src/features/media/screens/MediaWorldScreen.tsx:53#return <MediaTimelineScreen onOpenMedia={onOpenMedia} />;` · `travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:227#<MediaTimelineScreen placeId={placeId}` |
-| MD27 · MD331 · MD228 · MD294 · MD287 · MD290 · MD291 · MD292 | §4/§38 Media Search screen over `state/mediaFilterStore` (the ONLY builder of the query; criteria-free asks nothing); all seven result kinds; "Search my world" inside My World; the city as its own criterion; "Search within this trip" | `travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:70#export function MediaSearchScreen(` · `travel-buddy-standalone/src/features/media/state/mediaFilterStore.ts:127#export function toSearchQueryString(` · `travel-buddy-standalone/src/features/media/screens/MyWorldMediaScreen.tsx:90#<MediaSearchScreen initialScope="me" fixedScope` · `travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:110#if (cityDraft.trim()) dispatch({ type: 'set_city', city: cityDraft });` · `travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:290#dispatch({ type: 'set_scope', scope: 'trip', tripId: t.id });` · header `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:114#onSearch={() => router.push('/media-search' as never)}` |
+| MD27 · MD331 · MD228 · MD294 · MD287 · MD290 · MD291 · MD292 | §4/§38 Media Search screen over `state/mediaFilterStore` (the ONLY builder of the query; criteria-free asks nothing); all seven result kinds; "Search my world" inside My World; the city as its own criterion; "Search within this trip" | `travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:70#export function MediaSearchScreen(` · `travel-buddy-standalone/src/features/media/state/mediaFilterStore.ts:127#export function toSearchQueryString(` · `travel-buddy-standalone/src/features/media/screens/MyWorldMediaScreen.tsx:90#<MediaSearchScreen initialScope="me" fixedScope` · `travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:110#if (cityDraft.trim()) dispatch({ type: 'set_city', city: cityDraft });` · `travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:290#dispatch({ type: 'set_scope', scope: 'trip', tripId: t.id });` · header `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:116#onSearch={() => router.push('/media-search' as never)}` |
 | MD294 (server) | Events and Trips found BY TITLE in the canonical tables, each passed through the same `resolveExperience` gate `GET /media/experiences/:id` uses; an unreadable table is `undetermined`, never "none"; only for `scope=all` | `artifacts/api-server/src/services/media/MediaSearchService.ts:486#export async function searchCanonicalEventsAndTrips(` · gate `artifacts/api-server/src/services/media/MediaSearchService.ts:532#exp = await resolveExperience(sc, viewer, id, nowMs);` · served `artifacts/api-server/src/routes/mediaWorld.ts:347#withCanonicalKinds(results, await searchCanonicalEventsAndTrips(` |
 | MD332 | `state/myMediaStore`: §30 bucket order, a selection that falls back rather than pointing at nothing, search as state not a route | `travel-buddy-standalone/src/features/media/state/myMediaStore.ts:62#export function myMediaReducer(` |
 | MD28 · MD316 | §4 Media Contribution: a current perspective of ONE canonical place through the app's existing `uploadMedia` → `createPost` (no second ingest path); the post is bound to the VENUE's public name and coordinates, the device fix travels only as the private verification pair; precision maps onto `locationPrivacyMode` incl. §34 "after I leave"; a failed SAVE retries the save, never the upload; a held-back post says so | `travel-buddy-standalone/src/features/media/screens/MediaContributionScreen.tsx:53#export function MediaContributionScreen(` · `travel-buddy-standalone/src/features/media/components/MediaContributionSheet.tsx:40#export function MediaContributionSheet(` · `travel-buddy-standalone/src/features/media/state/mediaContribution.ts:143#locationLat: place.coordinates.lat,` · `travel-buddy-standalone/src/features/media/state/mediaContribution.ts:148#locationPrivacyMode: PRECISION_TO_PRIVACY_MODE[d.precision],` · entry `travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:198#{onContribute && UUID_RE.test(placeId) ? (` |
 | MD314 | §7 context sheet on the viewer's `•••`: only the edges the server resolved (the §28 Shared Moment edge included), each linking home; "Where was this taken?" | `travel-buddy-standalone/src/features/media/components/MediaContextSheet.tsx:44#export function MediaContextSheet(` · `travel-buddy-standalone/src/features/media/state/mediaContextGraph.ts:99#export function buildContextGraph(` · `travel-buddy-standalone/src/features/media/state/mediaContextGraph.ts:165#export function whereTakenHref(` · `travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:255#testID="perspective-viewer-context"` |
 | MD89 · MD90 · MD91 · MD92 | The four missing §14 entry-context producers, as pure builders + openers: Event and Trip (kind from the projection, never guessed), People (that contributor only), Map (the cluster's canonical place, read through the gated place view, staged with kind `map`); the viewer's collection filter honours the new kinds | `travel-buddy-standalone/src/features/media/state/entryContextHandoffs.ts:97#export function experienceHandoff(` · `travel-buddy-standalone/src/features/media/state/entryContextHandoffs.ts:123#export function personHandoff(` · `travel-buddy-standalone/src/features/media/state/entryContextHandoffs.ts:58#export function mapClusterHandoff(` · `travel-buddy-standalone/src/features/media/services/perspectiveOpeners.ts:58#export async function openClusterPerspectives(` · `travel-buddy-standalone/src/features/media/state/perspectiveViewer.ts:100#if (kind === 'people') {` |
-| MD14 (finding) · MD89 · MD91 | The EXPERIENCES lens is handed real ids: deep-linked first, then the viewer's own events and trips, then nearby events; UUIDs only, capped | `travel-buddy-standalone/src/features/media/state/experienceSources.ts:32#export function experienceIdsFrom(` · `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:171#experienceIds={experienceIds}` |
-| MD87 (shell half only) | A NOW "Changing now" card opens that PLACE's perspectives (§14 Place) instead of the generic single-item viewer | `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:132#if (item.placeId) void openPlaceByIdPerspectives(item.placeId, hero ?? null);` · `travel-buddy-standalone/src/features/media/services/perspectiveOpeners.ts:70#export async function openPlaceByIdPerspectives(` |
+| MD14 (finding) · MD89 · MD91 | The EXPERIENCES lens is handed real ids: deep-linked first, then the viewer's own events and trips, then nearby events; UUIDs only, capped | `travel-buddy-standalone/src/features/media/state/experienceSources.ts:32#export function experienceIdsFrom(` · `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:173#experienceIds={experienceIds}` |
+| MD87 (shell half only) | A NOW "Changing now" card opens that PLACE's perspectives (§14 Place) instead of the generic single-item viewer | `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:134#if (item.placeId) void openPlaceByIdPerspectives(item.placeId, hero ?? null);` · `travel-buddy-standalone/src/features/media/services/perspectiveOpeners.ts:70#export async function openPlaceByIdPerspectives(` |
 | MD12 (finding) | The World request sends the coarse `city` LABEL the route parses | `travel-buddy-standalone/src/features/media/services/mediaProjection.ts:1094#if (params.city) qs.set('city', params.city);` |
 
 **Tests, all in the tree.** Client node (`src/**/*.test.ts`, run by
@@ -3351,7 +3351,7 @@ under the letter is now true; before this pass, in each case, it was not.
 | Row | Was | Now | What was wrong, and what backs it now |
 | --- | --- | --- | --- |
 | MD12 | **C** | **C** | The NOW lens was never city-scoped. The client sent `cityId`; `GET /media/world` parses `city` — so every request fell through to the unscoped path. Now `travel-buddy-standalone/src/features/media/services/mediaProjection.ts:1094#if (params.city) qs.set('city', params.city);`. TESTED: `searchAndStores.test.ts` "fetchGems / fetchMediaMap / fetchWorld send the coarse `city` LABEL the routes actually parse". RED: C3. |
-| MD14 | **C** | **C** | The EXPERIENCES lens was handed a constant empty id list by the shell, so on every open it could only render its empty state; the `C` rested on a screen that could not show an experience. Now `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:171#experienceIds={experienceIds}` from the viewer's own events and trips. TESTED and RED as MD89 (C20). |
+| MD14 | **C** | **C** | The EXPERIENCES lens was handed a constant empty id list by the shell, so on every open it could only render its empty state; the `C` rested on a screen that could not show an experience. Now `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:173#experienceIds={experienceIds}` from the viewer's own events and trips. TESTED and RED as MD89 (C20). |
 | MD30 | **C** | **C** | NOW's Map mode was a placeholder paragraph (*"The Media Map … arrives in a later phase"*) when this was graded `C`. Now `travel-buddy-standalone/src/features/media/screens/MediaWorldScreen.tsx:81#<MediaMapScreen`. TESTED: `MediaWorldShell.component.test.tsx` "NOW → Map is the one Media Map and NOW → Time is the Media Timeline screen". RED: C39. |
 | MD31 | **C** | **C** | PLACES' Map mode was a placeholder (*"…arrive with the Media Map phase"*). Now `travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:91#<MediaMapScreen`. TESTED: "PLACES → Map and EXPERIENCES → Map are the one Media Map…". RED: C49. |
 | MD32 | **C** | **C** | EXPERIENCES' Map mode was a placeholder (*"Geographic experience clusters arrive with the Media Map phase."*). Now `travel-buddy-standalone/src/features/media/screens/MediaExperiencesScreen.tsx:64#return <ExperiencesMap placeKey={placeKey}`. RED: C50. |
@@ -3430,13 +3430,13 @@ and each says which.
 | MD29 | **W** | The dashboard is built; it is not the default page. | F1, as MD1. | As MD1. |
 | MD87 | **W** | Inside the shell every open is now an entry context — this pass closed the last generic open, NOW's "Changing now" cards (mC58/mC59). The viewer a user reaches is still the shipped `/media-viewer/[id]` from the Watch feed. | F1, and Watch-feed opens routed through an entry context rather than the paging player. | Integration owner + owner decision (Watch is the shipped surface). |
 | MD286 | **W** | Vertical autoplay is the seeded default (`artifacts/api-server/src/migrations/2037_media_tab_flags.sql:17#'MEDIA_VIEW_MODE_FULLSCREEN_ENABLED',`, seeded true). | That seed off or the default not `'watch'`, evidenced by the seed row and the store default. | Integration owner + owner decision. |
-| MD408 | **W** | The shipped overlay renders Stamp/comment/save counts as its primary rail (`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:416#formatCompactCount(item.stampItCount!)`). Removing them changes the LIVE surface, which is a product decision, not a lane's. | The count rail no longer primary on the shipped overlay, or F1. | Owner decision, then the client lane. |
+| MD408 | **W** | The shipped overlay renders Stamp/comment/save counts as its primary rail (`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:419#formatCompactCount(item.stampItCount!)`). Removing them changes the LIVE surface, which is a product decision, not a lane's. | The count rail no longer primary on the shipped overlay, or F1. | Owner decision, then the client lane. |
 | MD412 | **W** | Compass is a primary control in the dark rail and absent from the shipped overlay. | Compass primary on the surface that ships, or F1. | Owner decision + client lane. |
 | MD419 | **W** | F2 — the forbidden feed is built and is the default. | The full-screen paging feed is not the seeded default mode. | Integration owner + owner decision. |
 | MD424 | **W** | F2 — Stamp is the first and largest control on the default surface. | The Stamp/count rail is not the primary overlay. | Owner decision + client lane. |
-| MD425 | **W** | F2 — advancing the feed is the play control (`travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:88#const shouldPlay = isActive && playbackEligible;`). | Autoplay-on-viewability is not the primary navigation of the default surface. | Owner decision + client lane. |
+| MD425 | **W** | F2 — advancing the feed is the play control (`travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:96#const shouldPlay = isActive && playbackEligible && layer.allowed`). | Autoplay-on-viewability is not the primary navigation of the default surface. | Owner decision + client lane. |
 | MD427 | **W** | F2 — opening the tab lands in the full-screen feed. | The tab opens on a context-first surface. | Integration owner + owner decision. |
-| MD428 | **W** | The sheet is right and its content is not §47's. `GET /media/world` emits no `whyThis` at all, so the shell now offers "Why this?" ONLY where the server supplied a reason (`travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:139#if (item.whyThis) setWhy({ visible: true, explanation: item.whyThis });`) — the sheet's generic fallback sentence was an invented explanation. | A §47 explanation on World items built from the five named reasons, two of which (MD184, MD185) are not ranking inputs today. The client already renders it the moment it is served. | Lane C (ranking + explanation), then nothing further here. |
+| MD428 | **W** | The sheet is right and its content is not §47's. `GET /media/world` emits no `whyThis` at all, so the shell now offers "Why this?" ONLY where the server supplied a reason (`travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:141#if (item.whyThis) setWhy({ visible: true, explanation: item.whyThis });`) — the sheet's generic fallback sentence was an invented explanation. | A §47 explanation on World items built from the five named reasons, two of which (MD184, MD185) are not ranking inputs today. The client already renders it the moment it is served. | Lane C (ranking + explanation), then nothing further here. |
 | MD82–MD85 | **N** ×4 | No column stores a vantage (`artifacts/api-server/src/services/media/MediaPerspectiveService.ts:6#There is no perspective COLUMN in the schema today`). The contribution sheet built here offers NO vantage on purpose (`travel-buddy-standalone/src/features/media/state/mediaContribution.ts:16#What it deliberately does NOT offer: the §12 physical VANTAGES`) — a choice with nowhere to be stored would be dropped on the floor. | A migration adds a vantage column with a CHECK over the §12 vocabularies, the post write accepts it, `MediaPerspectiveService` groups by it, and the sheet offers it. | Owner (schema), Lane B (grouping), the posts-route owner (write), then this lane (picker). |
 | MD444 | **W** | Phase 4's perspective GROUPS are MD82–MD85. | As MD82–MD85. | As MD82–MD85. |
 | MD288 | **W** | Askable (city + term + the gem kind), but "near" is city-coarse by design (`artifacts/api-server/src/services/media/MediaSearchService.ts:72#search is city-coarse; the canonical Map owns proximity`), and the Map that owns proximity is dark in production. | Search accepts a radius resolved through the canonical Map, OR the owner rules that city-coarse satisfies "near". | Owner decision; else the server search owner + Map lane. |
@@ -3580,7 +3580,7 @@ Each was checked against the object, not the sentence.
 | MD43 | **The override binds the SERVED item, not only the bytes, and means what it says.** `artifacts/api-server/src/lib/mediaVisibility.ts:81#export async function mayViewUnderOverride(` is now the ONE audience rule, used by the byte path and by `prepareCanonicalRows`. Two semantic defects fixed: `inherit` DENIED every non-owner (`artifacts/api-server/src/lib/mediaVisibility.ts:93#case "inherit":` — an explicit "same as the post" attachment was owner-only), and `shared_moment` resolved as TRIP CREW; it is now the Moment's accepted members through an APPROVED contribution (`artifacts/api-server/src/lib/mediaVisibility.ts:175#async function isSharedMomentAudience(`). A withheld attachment also clears the row's legacy branches (`artifacts/api-server/src/services/media/MediaProjectionService.ts:1730#out.push({ ...row, canonical_media: kept, post_media: [], media_urls: [] });`), because `post_media` can hold the very file the override just withheld. Migration 3320 CHECKs the override to NULL, `inherit` or a §33 audience (`artifacts/api-server/src/migrations/3320_media_canonical_contract_constraints.sql:111#ADD CONSTRAINT media_attachments_visibility_override_check`). |
 | MD38 | **`version` is an aggregate version.** Migration 3320's trigger (`artifacts/api-server/src/migrations/3320_media_canonical_contract_constraints.sql:144#CREATE TRIGGER media_assets_version_bump`) sets `NEW.version = OLD.version + 1` on every UPDATE, whoever issues it, and overrides a rewind. `artifacts/api-server/src/lib/mediaAssets.ts:995#export async function casUpdateMediaAsset(` is the compare-and-set every read-modify-write uses — the provenance edit path (`artifacts/api-server/src/lib/mediaAssets.ts:675#const written = await casUpdateMediaAsset(sc, assetId, row.version, {`), retried with a re-read by `artifacts/api-server/src/lib/mediaAssets.ts:1025#export async function recordMediaEditWithRetry(` so a raced edit is recorded AFTER the other instead of erasing it, and the moderation service (MD351). |
 | MD41 | Migration 3320 CHECKs `media_attachments.entity_type` to the §6.1 nine (`artifacts/api-server/src/migrations/3320_media_canonical_contract_constraints.sql:99#ADD CONSTRAINT media_attachments_entity_type_check`) — the table itself, for every writer, not only the ones that go through `artifacts/api-server/src/lib/mediaAssets.ts:722#export const ATTACHMENT_ENTITY_TYPES = [`. |
-| MD44 | **The post joins its file's ONE asset.** `artifacts/api-server/src/lib/mediaAssets.ts:1075#export async function recordPostMediaAttachments(`, called from post creation (`artifacts/api-server/src/routes/posts.ts:693#void recordPostMediaAttachments(msc,`), links each storage-backed file to the post by `recordEntityMedia`, which REUSES the asset at that storage key and now refuses a key someone else owns (`artifacts/api-server/src/lib/mediaAssets.ts:850#if ((existing as any).owner_user_id !== input.ownerUserId) return NONE;`) and refuses rather than forks on an unreadable lookup. Gated on `media_canonical_enabled` AND the schema probe, so it cannot write where the canonical writer cannot. The postcard, memory, gem and Moment paths already attached; the post — the object most files are uploaded for — did not. |
+| MD44 | **The post joins its file's ONE asset.** `artifacts/api-server/src/lib/mediaAssets.ts:1075#export async function recordPostMediaAttachments(`, called from post creation (`artifacts/api-server/src/routes/posts.ts:705#void recordPostMediaAttachments(msc,`), links each storage-backed file to the post by `recordEntityMedia`, which REUSES the asset at that storage key and now refuses a key someone else owns (`artifacts/api-server/src/lib/mediaAssets.ts:850#if ((existing as any).owner_user_id !== input.ownerUserId) return NONE;`) and refuses rather than forks on an unreadable lookup. Gated on `media_canonical_enabled` AND the schema probe, so it cannot write where the canonical writer cannot. The postcard, memory, gem and Moment paths already attached; the post — the object most files are uploaded for — did not. |
 | MD57 · MD60 · MD343 | **Every served media object carries the §8 provenance layer.** `artifacts/api-server/src/lib/media/mediaProvenanceLayer.ts:109#export function buildProvenanceLayer(` — source, capture clock, edit lineage by §35 class (never the parameters), §10 location basis and confidence, §36 moderation, and the Trust flags already projected — attached at `artifacts/api-server/src/lib/media/mediaProjection.ts:352#...projectionLayers(row, media, nowMs),`. A canonical item carries the asset's DECLARED provenance; a legacy item says `basis: "legacy"` / `sourceType: "undeclared"` rather than inventing one, and 0191's default `user` is served as `undeclared` because it records the absence of a declaration. The location half is withheld whenever the choke point hides the location (`artifacts/api-server/src/lib/media/mediaProjection.ts:396#withholdLocation(p.provenance)`). By responsibility (§41, merged modules as MD341 already allows) the MediaProvenanceService is: capture (`artifacts/api-server/src/lib/mediaAssets.ts:363#const provenance = initProvenance({`), lineage (the CAS edit path above), classification (lib/media/mediaEvidenceEligibility) and serving (the layer). |
 | MD73 | **locationConfidence distinguishes how the place was established.** `artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:255#export function locationBasisFromPost(` reads only the post's `location_source` enum and the two booleans the SERVER decides (`location_verified`, `geotag_verified`) — never a coordinate — and `artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:238#export const LOCATION_CONFIDENCE_BY_BASIS` scores verified GPS 0.9, GPS 0.7, a typed place 0.3, none 0.2 (the old `hasLocation` values are the `gps` and `none` rungs, so older rows read identically). The projection selects those three post columns (`artifacts/api-server/src/lib/media/mediaProjection.ts:42#location_source, location_verified, geotag_verified`); the basis is folded into the §10 evaluation at READ, per (asset, post) pair, and never written onto the asset — the same file tagged by a GPS fix in one post and a typed venue in another is not equally well located. |
 | MD75 · MD76 · MD78 | **The operational lifetime is stamped, enforced and served.** `artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:419#export const INTELLIGENCE_OPERATIONAL_WINDOW_MS = RECENT_WINDOW_MS;` — capture + 24 h, the instant `freshnessClass` turns `historical`, stamped by `artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:426#export function operationalExpiresAt(` on ELIGIBLE assets only. It is enforced where a current claim's evidence is decided (`artifacts/api-server/src/lib/media/mediaEvidenceLink.ts:265#if (isOperationalEvidenceAt(a, now)) return true;`), while `eligible` itself stays time-independent because PresenceVerifier asks it about receipts inside historical observation windows. `artifacts/api-server/src/lib/media/mediaTemporalState.ts:45#export interface MediaTemporalState {` is §11's contract, resolved by `artifacts/api-server/src/lib/media/mediaTemporalState.ts:71#export function resolveMediaTemporalState(` and served on every projection (`artifacts/api-server/src/lib/media/mediaProjection.ts:100#export interface MediaProjection extends MediaProjectionLayers {`). The earlier design note — "intel expiry belongs to the observation/claim" — conflated two expiries: a claim's TTL (Live Intelligence's, untouched) and the moment a photograph stops being a picture of "now" (Media's). |
@@ -3853,7 +3853,7 @@ renders only ids it knows and silently hid every other one (see §21.6):
 `travel-buddy-standalone/src/features/media/services/mediaActions.ts:673#export async function openDirectionsForPlace(` opens directions and calls back ONLY after the maps app opened, where the
 rail records Directions started and Media → Route `travel-buddy-standalone/src/features/media/components/MediaActionRail.tsx:243#void openRailDirections(exec.placeId, () => {`; the tap-time
 emission skips it `travel-buddy-standalone/src/features/media/components/MediaActionRail.tsx:159#if (emitsNorthStarOnTap(action.id)) emitMediaNorthStar(record, action.id, northStarCtx);`; `travel-buddy-standalone/src/features/media/telemetry/mediaTelemetry.ts:251#export const NORTH_STAR_ON_COMPLETION`. The Telegraph share goes through
-the existing share sheet as an object REFERENCE `travel-buddy-standalone/src/features/media/components/MediaActionRail.tsx:442#<TelegraphObjectShareSheet mediaId={mediaId} object={shareObject}`, `travel-buddy-standalone/src/components/ShareSheet.tsx:424#? await shareObjectIntoThread(selectedId`. Do This
+the existing share sheet as an object REFERENCE `travel-buddy-standalone/src/features/media/components/MediaActionRail.tsx:442#<TelegraphObjectShareSheet mediaId={mediaId} object={shareObject}`, `travel-buddy-standalone/src/components/ShareSheet.tsx:261#return shareObjectIntoThread(threadId, reference.objectType`. Do This
 Experience shows the compiled plan and writes TENTATIVE items into one trip the
 user picks, only a trip the server named `travel-buddy-standalone/src/features/media/components/MediaActionPanels.tsx:142#export function TripChoicePanel(props:`, `travel-buddy-standalone/src/features/media/services/mediaActions.ts:774#export function planItemsFromCompiledPlan(`, `travel-buddy-standalone/src/features/media/services/mediaActions.ts:797#export async function applyCompiledPlan(`.
 Save Route completes each coordinate-free stop through the canonical place record,
@@ -3880,9 +3880,9 @@ saved from media `artifacts/api-server/src/routes/routePlan.ts:304#recordMediaEv
 emitted where the viewer did the thing, through `travel-buddy-standalone/src/features/media/telemetry/mediaTelemetry.ts:318#export function emitMediaSignal(` (forbidden-key
 guard included) and a non-hook sender `travel-buddy-standalone/src/services/mediaInteractions.ts:123#export async function recordMediaSignal(`: Comment only on a comment the
 server ACCEPTED, and only from the media comment sheet `travel-buddy-standalone/src/components/media/MediaCommentSheet.tsx:38#onCommentPosted={() => emitMediaSignal(mediaSignalRecorder, 'comment'`; Profile open
-`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:220#'profile_open'` and Place open `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:227#'place_open'` from the Watch overlay;
+`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:222#'profile_open'` and Place open `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:229#'place_open'` from the Watch overlay;
 Hidden Gem opened `travel-buddy-standalone/src/components/media/GemsFeed.tsx:211#'gem_open'`; Visual opportunity opened from the NOW lens's
-three card kinds `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:127#'visual_opportunity_open', { surface: 'now_zone' }`. Tests: `src/test/mediaOutcomeSignals.test.ts`
+three card kinds `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:129#'visual_opportunity_open', { surface: 'now_zone' }`. Tests: `src/test/mediaOutcomeSignals.test.ts`
 (15 cases, route-level where the route could be mounted) and the client suite.
 
 **E. §16.1 DUPLICATE CHECK and OUTCOME.** The duplicate scan was real — `artifacts/api-server/src/lib/inputAssistance/creation.ts:303#await scanDuplicateGems(`
@@ -4195,12 +4195,12 @@ The fixtures are six real ffmpeg 6.0 files (MP4 with moov-after-mdat, a
 portrait clip coded 64×48 with a 90° matrix, a faststart QuickTime file, VP8
 WebM, a fragmented MP4 whose `mvhd` says 0, audio-only M4A).
 `POST /media/upload` probes the raw bytes
-(`artifacts/api-server/src/routes/posts.ts:160#probeVideoContainer(rawBody)`),
+(`artifacts/api-server/src/routes/posts.ts:161#probeVideoContainer(rawBody)`),
 returns the measured duration
-(`artifacts/api-server/src/routes/posts.ts:299#durationSeconds: probedDurationSeconds(videoProbe)`)
+(`artifacts/api-server/src/routes/posts.ts:311#durationSeconds: probedDurationSeconds(videoProbe)`)
 and writes it onto the canonical row as `media_assets.duration_ms`, a column
 originally filled by the helper below; the current §52 upload writes it in the initial canonical payload
-(`artifacts/api-server/src/routes/posts.ts:287#durationMs: videoProbe?.durationMs == null ? null : Math.round(videoProbe.durationMs),`,
+(`artifacts/api-server/src/routes/posts.ts:299#durationMs: videoProbe?.durationMs == null ? null : Math.round(videoProbe.durationMs),`,
 `artifacts/api-server/src/lib/mediaVideoPoster.ts:175#export async function recordMeasuredDuration(` is the historical helper, no longer called by this upload path).
 The postcard `/complete` stores the measured duration and size over what the
 client declared
@@ -4246,13 +4246,13 @@ the client-writable `memories/` and `stories/` prefixes (the out-of-band storage
 grant `scripts/auditStagingBoundaryGrant.ts` documents), because the server
 never EXIF-stripped those objects. The client sends its frame to the derived
 route
-(`travel-buddy-standalone/src/services/media.ts:257#extractAndUploadVideoThumbnail(media.uri, token, (body as any)?.path ?? null)`,
+(`travel-buddy-standalone/src/services/media.ts:250#thumbnailUrl = await extractAndUploadVideoThumbnail(media.uri, token, (body as any)?.path ?? null,`,
 `travel-buddy-standalone/src/services/media/generalVideoPoster.ts:53#export async function attachVideoPoster(`).
 It falls back to the previous behaviour, a plain image upload, only against an
 API that lacks the route. Two helpers post to `/api/media/upload` without going
 through `uploadMedia`, so their videos had no frame at all. They now attach the
 poster in the background, with no image fallback, because they never had one:
-stories at `travel-buddy-standalone/src/services/stories.ts:116#attachPosterInBackground(json?.path, localUri, token)`
+stories at `travel-buddy-standalone/src/services/stories.ts:117#attachPosterInBackground(json?.path, localUri, token)`
 and memories at `travel-buddy-standalone/src/services/memories.ts:316#attachPosterInBackground(json?.path, localUri, token)`. The postcard composer uploads a poster before
 `/complete`
 (`travel-buddy-standalone/src/components/PostcardComposer.tsx:359#await uploadVideoPoster(postId, mediaId, upload.uri)`).
@@ -4344,9 +4344,9 @@ divergence is recorded, not hidden.
   words the post composer shows
   (`travel-buddy-standalone/src/services/media/mediaPrivacy.ts:141#export function locationPrivacyHint(`),
   its choices and its request fields are all derived from that table
-  (`travel-buddy-standalone/src/components/PulseCreate.tsx:704#{LOCATION_CHOICES.map(`,
-  `travel-buddy-standalone/src/components/PulseCreate.tsx:717#locationPrivacyHint(locationPrivacyMode`,
-  `travel-buddy-standalone/src/components/PulseCreate.tsx:435#...locationRequestFields(locationPrivacyMode, scheduledTime),`).
+  (`travel-buddy-standalone/src/components/PulseCreate.tsx:738#{LOCATION_CHOICES.map(`,
+  `travel-buddy-standalone/src/components/PulseCreate.tsx:751#locationPrivacyHint(locationPrivacyMode`,
+  `travel-buddy-standalone/src/components/PulseCreate.tsx:461#...locationRequestFields(locationPrivacyMode, scheduledTime),`).
   `artifacts/api-server/src/test/mediaPrivacyClientParity.test.ts` runs the
   table against the server's own `mapPublicPost`,
   `locationPrivacyModeToCeiling` and the create route's default, for every
@@ -4473,7 +4473,7 @@ can serve, and it was not previously true for video.
    where you are" was shown while no audience sees the place. "Now" published
    nothing now: the composer omits the field for `none`, and the create route's
    default for a tagged post is after-exit
-   (`artifacts/api-server/src/routes/posts.ts:594#const privacyMode: LocationPrivacyMode = reqPrivacyMode ?? defaultPrivacyMode(locationSource, sens);`).
+   (`artifacts/api-server/src/routes/posts.ts:606#const privacyMode: LocationPrivacyMode = reqPrivacyMode ?? defaultPrivacyMode(locationSource, sens);`).
    The words are now true (MD321). **The labels "Now", "Hidden" and "Trusted
    circle" are an owner decision and were not changed.** So is whether "Now"
    should send `none` explicitly: that would publish a tagged place at once,
@@ -4796,8 +4796,8 @@ shell, which is seeded off.
   - the thumbnail, in `thumbnail_storage_path` / `thumbnail_url`.
 - The server writes them only under the uploader's own folder:
   - `artifacts/api-server/src/routes/postcards.ts:776#const candidatePath =` (`<storage_path>.feed.jpg`)
-  - `artifacts/api-server/src/routes/posts.ts:239#thumbnailPath =` (`<uid>/<ms>.thumb.jpg`)
-  - `artifacts/api-server/src/routes/posts.ts:256#feedPath =` (`<uid>/<ms>.feed.jpg`)
+  - `artifacts/api-server/src/routes/posts.ts:251#thumbnailPath =` (`<uid>/<ms>.thumb.jpg`)
+  - `artifacts/api-server/src/routes/posts.ts:268#feedPath =` (`<uid>/<ms>.feed.jpg`)
 - Branch 3a of the byte gate matched `post_media.storage_path` exactly, and no later branch names a variant. A non-owner's request for one therefore ended in §4's deny.
 - The client asks for the variant first: `travel-buddy-standalone/src/components/PostcardTile.tsx:39#source={{ uri: post.media[0].feedUrl ?? post.media[0].url }}`. A refused sign is final for `CachedImage`: it renders its fallback and does not retry with `url`.
 - So every non-owner saw a placeholder where a postcard with a feed variant should have been.
@@ -5032,7 +5032,7 @@ the one the Map's own pipeline would publish for it:
   It is not called. Search reads `places` BY ID, and only the places a result
   already names. That is the narrower read Discovery's search takes, for the
   reason Discovery gives
-  (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:1263#WHY IT DOES NOT CALL`):
+  (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:1264#WHY IT DOES NOT CALL`):
   search is not a projection, has no viewport, and serves no MapObject. The
   guard suite still passes with no approval added.
 - **The zone model.** It is the gateway's alone
@@ -5265,7 +5265,7 @@ implement it.
 The row's statements about the CLIENT still hold, and the client code was not
 changed:
 - The card offers "Why this?" only when a reason is served: `travel-buddy-standalone/src/features/media/components/ChangingNowCard.tsx:84#{item.whyThis && onWhyThis ? (`.
-- The shell opens the sheet with exactly that reason: `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:139#if (item.whyThis) setWhy({ visible: true, explanation: item.whyThis });`.
+- The shell opens the sheet with exactly that reason: `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:141#if (item.whyThis) setWhy({ visible: true, explanation: item.whyThis });`.
 - The changing-now mapper already reads the field: `travel-buddy-standalone/src/features/media/services/mediaProjection.ts:448#whyThis: asString(raw.whyThis),`.
 
 The missing piece was on the server: nothing sent a reason.
@@ -5377,7 +5377,7 @@ not say anything the ranking did not use.
 - `artifacts/api-server/src/test/mediaRankingObjectives.test.ts:893#describe("MD428 — GET /media/world serves`: runs the real loader, ranker and World builder over a fake database. One case goes over HTTP: `GET /api/media/world` with the router mounted.
 
 **Client test.** One case,
-`travel-buddy-standalone/src/features/media/__tests__/MediaWorldShell.component.test.tsx:282#it('NOW: "Why this?" opens the §47 reasons the SERVER derived`.
+`travel-buddy-standalone/src/features/media/__tests__/MediaWorldShell.component.test.tsx:302#it('NOW: "Why this?" opens the §47 reasons the SERVER derived`.
 A zone in the served shape shows its reasons word for word in the sheet. A zone
 served without one offers no "Why this?".
 
@@ -5484,7 +5484,7 @@ integrator places it.
 | --- | --- | --- | --- |
 | MD152 | **C** | **C** | **The old `C` was overstated, and it is now proven.** The spec asks for it wherever reports disagree (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:210#When reports disagree, surface uncertainty`). The server emits the line on the place projection (`artifacts/api-server/src/services/media/MediaProjectionService.ts:960#consensus: buildVisualConsensus(media, currentState.claims, nowMs, {`) and on every world zone (`artifacts/api-server/src/services/media/MediaProjectionService.ts:833#consensus: buildVisualConsensus(z.items, current.claims, nowMs, {`). The client rendered it on the place view only. Both zone mappers dropped it, so the NOW lens's city pulse, its "Changing now" cards and the Places lens's zone list showed a disputed zone exactly like one whose reports agreed. The "Changing now" card is the case that matters. It is filtered to zones WITH a live claim (`artifacts/api-server/src/services/media/MediaProjectionService.ts:841#const changingNow = cityVisualState.filter((z) => z.liveClaims.length > 0);`), and those are the only zones whose claims can conflict. Its crowd label is the plurality value even under a material conflict (`artifacts/api-server/src/services/media/MediaProjectionService.ts:741#crowdLabel = typeof level === "string" && level.length > 0 ? level : null;`). So a disputed zone showed a confident state and nothing else. **Now:** both mappers keep the line (`travel-buddy-standalone/src/features/media/services/mediaProjection.ts:399#uncertaintyLabel: zoneUncertainty(raw.consensus),` and `travel-buddy-standalone/src/features/media/services/mediaProjection.ts:450#placeId: asString(raw.placeId), uncertaintyLabel: zoneUncertainty(raw.consensus),`). They use the place view's rule, which never invents a line and never drops one (`travel-buddy-standalone/src/features/media/services/mediaProjection.ts:1413#function zoneUncertainty(rawConsensus: unknown): string | null {`). Three surfaces render it: the city pulse (`travel-buddy-standalone/src/features/media/components/CityVisualPulse.tsx:81#<Text style={styles.uncertainty} accessibilityRole="alert"`), the changing-now card (`travel-buddy-standalone/src/features/media/components/ChangingNowCard.tsx:78#<Text style={styles.uncertainty} accessibilityRole="alert"`) and the Places zone list (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:124#<ZoneUncertainty zone={z} />`). Tests: `travel-buddy-standalone/src/features/media/__tests__/worldZoneUncertainty.component.test.tsx:69#it('a mixed zone carries the line on the city pulse AND on its changing-now card`, `travel-buddy-standalone/src/features/media/__tests__/worldZoneUncertainty.component.test.tsx:75#it('never invents one`, `travel-buddy-standalone/src/features/media/__tests__/worldZoneUncertainty.component.test.tsx:89#it('NOW lens: under the disputed zone`, `travel-buddy-standalone/src/features/media/__tests__/worldZoneUncertainty.component.test.tsx:102#it('Places lens overview: under the disputed zone in the list`. Mutations u1–u6, each seen red (§26.2). Dark: all three surfaces are in the World shell. |
 | MD153 | **C** | **C** | **Re-proven, and one earlier finding is corrected.** §22.6 item 3 said the prompt was "mounted nowhere". That is false. It has been mounted since #305 on the place detail screen (`travel-buddy-standalone/app/place/[id].tsx:426#<RequestAViewPrompt placeId={canonicalPlace.id} city={city} />`), but only on the classic fallback branch. That branch renders when `live_places_enabled` is off or the living read returns nothing (`travel-buddy-standalone/app/place/[id].tsx:386#if (canonicalPlace !== null && living !== null) {`). What was actually wrong is below. **The spec's prompt** (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:212#Last visual update 28m agoShow what's happening?Is the entrance still busy?[Quiet] [Moderate] [Busy] [Take Photo]`) is a MISSION: the viewer who is there shows what is happening. Request a View, which asks OTHER people, is the next sentence and its own row, MD154. The component had only the Request-a-View half. It was absent from the Media place view (§13), and the §18 flag the server says routes to it (`artifacts/api-server/src/services/media/MediaConsensusService.ts:132#requestAnotherObservation: boolean;`) reached nothing. **Now** it is mounted on the Places lens's place view, both when the view is ready (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:264#</View><PlaceMissionPrompt`) and when a place has no picture yet (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:245#{state.status === 'empty' ? <PlaceMissionPrompt`). It mounts only for a canonical place (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:399#if (!UUID_RE.test(placeId)) return null;`). §18 is routed to it (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:405#requestAnotherObservation={consensus?.requestAnotherObservation === true}`). It shows on a stale or absent picture, or on a dispute, but never on a coverage that could not be read (`travel-buddy-standalone/src/features/media/components/RequestAViewPrompt.tsx:313#return flagEnabled && coverage !== null && requestAnotherObservation === true;`). The mission actions are: [Take Photo] opens this lens's existing §4 contribution (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:406#onTakePhoto={onContribute ? () => onContribute(placeId) : undefined}`), and [Quiet] [Moderate] [Busy] opens the existing Quick Signal composer for this place in its `arrival` context (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:409#pathname: '/intel/quick-signal',`). The answer chip keeps Intelligence Gathering's own gates, its flag and no Safe Return (`travel-buddy-standalone/src/features/media/components/RequestAViewPrompt.tsx:71#const captureGate = enabled && Boolean(onAnswerNow) && isEnabled(INTEL_FLAGS.quickSignal);`, `travel-buddy-standalone/src/features/media/components/RequestAViewPrompt.tsx:73#const canAnswer = captureGate && !safeReturn.active && !safeReturn.loading;`). Those are the same two the Living page's "Share a signal" uses (`travel-buddy-standalone/src/components/place/living/LivingDestinationPage.tsx:377#const showShare = captureEnabled && !safeReturnActive;`). **Same job, different shape**, stated rather than hidden: the answer is one tap into the composer, whose options are dead / quiet / good energy / busy / packed. It is not three inline chips. The composer keeps its own consent gate and private default, and no write happens from the Media card. The place detail mount is unchanged, with the Request-a-View half only. Tests: `travel-buddy-standalone/src/features/media/__tests__/requestAViewMission.component.test.tsx:108#it('flag on and coverage stale`, plus eleven more cases in that file (`travel-buddy-standalone/src/features/media/__tests__/requestAViewMission.component.test.tsx:107#describe('MD153`). Mutations m1–m11, each seen red (§26.2). **RED WHEN** the Quick Signal composer stops accepting `subjectId` with `context: 'arrival'`, the answer chip shows while `intel_capture_quick_signal` is off or Safe Return is active, or a place view renders without the prompt while the flag is on and its coverage is stale. |
-| MD262 | **C** | **W** | **The `C` rested on a protection, not on a choice.** In the spec, "Show neighborhood only" is one of the five §34 Delayed Publishing options a person picks when they post (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:313#Show neighborhood only`). The row cited line 98 of mediaLocationVisibility.ts, which is stale; the case is at `artifacts/api-server/src/lib/mediaLocationVisibility.ts:110#case "approximate":`. That is `gemSensitivityToCeiling`: a Hidden Gem's sensitivity capping media NEAR the gem. Nobody posting media can choose it. **FALSIFIER, measured:** (1) The owner's post modes have no neighbourhood mode (`artifacts/api-server/src/lib/mediaLocationVisibility.ts:385#export const POST_LOCATION_PRIVACY_MODES = [`), and the mode-to-ceiling map sends every restrictive mode to `city` (`artifacts/api-server/src/lib/mediaLocationVisibility.ts:412#export function locationPrivacyModeToCeiling(`). (2) The canonical writer never sends `media_assets.location_visibility` (`artifacts/api-server/src/lib/mediaAssets.ts:24#(location_visibility is never sent by this writer)`), and the legacy feed read defaults a post to `place` (`artifacts/api-server/src/routes/mediaFeed.ts:230#locationVisibility: (row as any).location_visibility ?? "place",`). (3) One per-post `neighborhood` input exists: `POST /posts` accepts it (`artifacts/api-server/src/lib/postSchemas.ts:243#locationVisibility: pulseLocationVisibility.optional(),`) and hands it only to the Pulse geo-tag writer (`artifacts/api-server/src/routes/posts.ts:879#locationVisibilityOverride: (locationVisibility ?? null) as any,`). No client sends it: `grep -rn locationVisibility` over the client's composers and post service returns nothing. No Media route reads `pulse_geo_tags`. The client's four-way selector, whose third option is `neighborhood` (`travel-buddy-standalone/src/components/selectors/LocationPrivacySelector.tsx:23#{ value: 'neighborhood', label: 'Area', sub: 'Neighborhood', Icon: MapPin },`), is mounted nowhere. **Not built here, because it is a privacy and product change.** The options are a new post location mode that Media's disclosure honours, or making Media honour `pulse_geo_tags`. Either one widens what a poster can publish, and the owner decides. **RED WHEN** a person posting media can choose neighbourhood-only, and every Media read discloses that post at no finer than `neighborhood`. **Blocker: owner decision.** |
+| MD262 | **C** | **W** | **The `C` rested on a protection, not on a choice.** In the spec, "Show neighborhood only" is one of the five §34 Delayed Publishing options a person picks when they post (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:313#Show neighborhood only`). The row cited line 98 of mediaLocationVisibility.ts, which is stale; the case is at `artifacts/api-server/src/lib/mediaLocationVisibility.ts:110#case "approximate":`. That is `gemSensitivityToCeiling`: a Hidden Gem's sensitivity capping media NEAR the gem. Nobody posting media can choose it. **FALSIFIER, measured:** (1) The owner's post modes have no neighbourhood mode (`artifacts/api-server/src/lib/mediaLocationVisibility.ts:385#export const POST_LOCATION_PRIVACY_MODES = [`), and the mode-to-ceiling map sends every restrictive mode to `city` (`artifacts/api-server/src/lib/mediaLocationVisibility.ts:412#export function locationPrivacyModeToCeiling(`). (2) The canonical writer never sends `media_assets.location_visibility` (`artifacts/api-server/src/lib/mediaAssets.ts:24#(location_visibility is never sent by this writer)`), and the legacy feed read defaults a post to `place` (`artifacts/api-server/src/routes/mediaFeed.ts:230#locationVisibility: (row as any).location_visibility ?? "place",`). (3) One per-post `neighborhood` input exists: `POST /posts` accepts it (`artifacts/api-server/src/lib/postSchemas.ts:243#locationVisibility: pulseLocationVisibility.optional(),`) and hands it only to the Pulse geo-tag writer (`artifacts/api-server/src/routes/posts.ts:891#locationVisibilityOverride: (locationVisibility ?? null) as any,`). No client sends it: `grep -rn locationVisibility` over the client's composers and post service returns nothing. No Media route reads `pulse_geo_tags`. The client's four-way selector, whose third option is `neighborhood` (`travel-buddy-standalone/src/components/selectors/LocationPrivacySelector.tsx:23#{ value: 'neighborhood', label: 'Area', sub: 'Neighborhood', Icon: MapPin },`), is mounted nowhere. **Not built here, because it is a privacy and product change.** The options are a new post location mode that Media's disclosure honours, or making Media honour `pulse_geo_tags`. Either one widens what a poster can publish, and the owner decides. **RED WHEN** a person posting media can choose neighbourhood-only, and every Media read discloses that post at no finer than `neighborhood`. **Blocker: owner decision.** |
 
 **Headline.** It is not restated here. MD262's move leaves the rows one `C`
 lower and one `W` higher than §23.6 states, so `check:census-integrity` reports
@@ -5521,7 +5521,7 @@ m4 went red partly by crashing: the prompt rendered before its coverage was read
 
 Lane D changed what `uploadMedia` stores as a message video's thumbnail. It is
 now the poster the server writes at the video's derived path. The upload route
-returns the video as its relay path (`artifacts/api-server/src/routes/posts.ts:268#const mediaRelayUrl =`),
+returns the video as its relay path (`artifacts/api-server/src/routes/posts.ts:280#const mediaRelayUrl =`),
 and the poster route returns `post-media/<video>.poster.jpg`. The byte gate decides
 a poster as its video (`artifacts/api-server/src/lib/mediaAccess.ts:371#{ const posterOf = derivedPosterBase(path); if (posterOf !== null) return decide(sc, viewerId, bucket, posterOf); }`),
 and a video carried by a message is decided in branch 3c
@@ -5834,8 +5834,8 @@ deliverable as the audit, and states no ordering between phases.
    - MD153's C does not rest on the false sentence, so no row is re-graded.
 2. **`/media/upload` buffers the whole body before it authenticates, and sets
    no ceiling while it reads.**
-   - Every chunk was kept, and authentication ran only after the stream ended. **Fixed in §28.7:** the caller is authenticated first (`artifacts/api-server/src/routes/posts.ts:90#async (req, res, next) => { const auth = await requireUser(req, res); if (!auth) return;`),
-     then the body is read bounded (`artifacts/api-server/src/routes/posts.ts:91#collectBody(Math.max(...Object.values(MEDIA_SIZE_LIMITS))),`).
+   - Every chunk was kept, and authentication ran only after the stream ended. **Fixed in §28.7:** the caller is authenticated first (`artifacts/api-server/src/routes/posts.ts:91#async (req, res, next) => { const auth = await requireUser(req, res); if (!auth) return;`),
+     then the body is read bounded (`artifacts/api-server/src/routes/posts.ts:92#collectBody(Math.max(...Object.values(MEDIA_SIZE_LIMITS))),`).
    - A bounded collector already exists, and the poster routes use it: `artifacts/api-server/src/routes/postcardMediaTransport.ts:136#export function collectBody(limitBytes: number) {`.
 3. **An owner's retry parks an asset in `queued`, and nothing claims queued
    work.**
@@ -5979,7 +5979,7 @@ Its "location" is an active trip's destination, never GPS
 **The fix.** The sheet takes an optional `footnote`. The default is
 unchanged, so Watch and Gems read as before. The World shell passes the
 footnote that is true of its list
-(`travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:207#footnote={WORLD_WHY_FOOTNOTE}`).
+(`travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:209#footnote={WORLD_WHY_FOOTNOTE}`).
 Every edit is line-neutral, and §25's citation of the default text
 (`WhyThisSheet.tsx:81`) still resolves.
 
@@ -6071,15 +6071,15 @@ could therefore make the server hold an arbitrarily large body in memory.
 
 **The fix.**
 - The caller is now authenticated before a byte is read:
-  `artifacts/api-server/src/routes/posts.ts:90#async (req, res, next) => { const auth = await requireUser(req, res); if (!auth) return;`.
+  `artifacts/api-server/src/routes/posts.ts:91#async (req, res, next) => { const auth = await requireUser(req, res); if (!auth) return;`.
 - The body is then read through the bounded collector the poster routes
   already use, capped at the largest per-kind ceiling:
-  `artifacts/api-server/src/routes/posts.ts:91#collectBody(Math.max(...Object.values(MEDIA_SIZE_LIMITS))),`.
+  `artifacts/api-server/src/routes/posts.ts:92#collectBody(Math.max(...Object.values(MEDIA_SIZE_LIMITS))),`.
 - `verifyUploadedBytes` still applies the real kind's own ceiling after that.
 - The edits are line-neutral, and the new imports sit at the file's tail.
 
 **Test and mutation.**
-- `artifacts/api-server/src/test/mediaUploadHardening.test.ts:280#it("authenticates BEFORE reading the body`
+- `artifacts/api-server/src/test/mediaUploadHardening.test.ts:282#it("authenticates BEFORE reading the body`
   declares a 200 MB body, sends 16 bytes and never ends the body. It gets a
   401 at once. Against the old route it gets no answer and fails ("no answer
   within 3 s").
@@ -6189,11 +6189,11 @@ one the route never accepts.
 **The fix.**
 - All three are now decided after authentication and before the first byte is
   read:
-  `artifacts/api-server/src/routes/posts.ts:90#if (!(await admitUploadBeforeBody(req, res, auth.user.id))) return;`,
+  `artifacts/api-server/src/routes/posts.ts:91#if (!(await admitUploadBeforeBody(req, res, auth.user.id))) return;`,
   through the helper at the tail
-  (`artifacts/api-server/src/routes/posts.ts:3692#async function admitUploadBeforeBody(req: any, res: any, userId: string): Promise<boolean> {`).
+  (`artifacts/api-server/src/routes/posts.ts:3704#async function admitUploadBeforeBody(req: any, res: any, userId: string): Promise<boolean> {`).
 - The budget is charged once. The handler reads the stored result
-  (`artifacts/api-server/src/routes/posts.ts:105#(req as any).uploadGuard;`);
+  (`artifacts/api-server/src/routes/posts.ts:106#(req as any).uploadGuard;`);
   it does not call `guardUploadRequest` a second time. The old call is kept in
   a comment at the end of that same line, so the §49 audit's citation of it
   still reads.
@@ -6204,7 +6204,7 @@ budget, because the budget is decided before the size is known. Before, it
 was refused by the bounded collector without being charged.
 
 **Tests and mutations.** The tests are
-`artifacts/api-server/src/test/mediaUploadHardening.test.ts:813#describe("census-media §28.10 — /media/upload refuses before reading the body"`.
+`artifacts/api-server/src/test/mediaUploadHardening.test.ts:815#describe("census-media §28.10 — /media/upload refuses before reading the body"`.
 Each refusal case declares 200 MB, sends 16 bytes and never ends the body, so
 only a route that decides without the bytes can answer it.
 
@@ -6245,7 +6245,7 @@ index.
 
 **What failed.** The CI node:test suite on `0f0ecde26` passed 26,502 of
 26,503 tests. The one failure was §28.7's
-`artifacts/api-server/src/test/mediaUploadHardening.test.ts:280#it("authenticates BEFORE reading the body`,
+`artifacts/api-server/src/test/mediaUploadHardening.test.ts:282#it("authenticates BEFORE reading the body`,
 which got no answer within 3 s. It had never run to completion in CI before,
 because the run on `f31d94812` was cancelled by the next push. It passes
 locally on Node 22 and Node 24, with CI's environment variables, and under
@@ -6652,11 +6652,11 @@ to register with.
 ### 30.4 What "processing" means for a stored asset, and the limits
 
 The upload route processes bytes it is **holding**:
-- `verifyUploadedBytes` (`artifacts/api-server/src/routes/posts.ts:139#const verified = verifyUploadedBytes(rawBody, declaredInfo.mediaType);`);
+- `verifyUploadedBytes` (`artifacts/api-server/src/routes/posts.ts:140#const verified = verifyUploadedBytes(rawBody, declaredInfo.mediaType);`);
 - for a still, `processImage`, which auto-orients, caps, re-encodes (dropping
-  all EXIF) and measures (`artifacts/api-server/src/routes/posts.ts:165#const img = await processImage(rawBody, sniffed);`);
-- for a video, the fail-closed location scrub (`artifacts/api-server/src/routes/posts.ts:212#const scrub = stripVideoLocationMetadata(rawBody, sniffed);`)
-  and the container probe (`artifacts/api-server/src/routes/posts.ts:160#probeVideoContainer(rawBody)`).
+  all EXIF) and measures (`artifacts/api-server/src/routes/posts.ts:166#const img = await processImage(rawBody, sniffed);`);
+- for a video, the fail-closed location scrub (`artifacts/api-server/src/routes/posts.ts:213#const scrub = stripVideoLocationMetadata(rawBody, sniffed);`)
+  and the container probe (`artifacts/api-server/src/routes/posts.ts:161#probeVideoContainer(rawBody)`).
 
 A row with both dimensions is written `ready`, and a row without them
 `processing`
@@ -6771,7 +6771,7 @@ records it.
 - The owner's delete routes take a post or a hidden-gem id and soft-delete that
   row
   (`artifacts/api-server/src/routes/mediaFeed.ts:2563#router.delete("/media/:id", asyncHandler(async (req, res) => {`,
-  `artifacts/api-server/src/routes/posts.ts:2390#router.delete("/posts/:postId", async (req, res) => {`).
+  `artifacts/api-server/src/routes/posts.ts:2402#router.delete("/posts/:postId", async (req, res) => {`).
 - `softDeleteMediaAsset` still has no non-test caller.
 
 **The spec does not require an asset-level delete.**
@@ -6788,9 +6788,9 @@ records it.
   (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:318#const paths = [...new Set([asset.storage_path, asset.thumbnail_path]`,
   `artifacts/api-server/src/services/media/MediaLifecycleService.ts:319#const { error: storageError } = await sc.storage.from(asset.storage_bucket).remove(paths);`).
 - The upload stores ONE object. The canonical row records it
-  (`artifacts/api-server/src/routes/posts.ts:274#storagePath: path,`), and the
+  (`artifacts/api-server/src/routes/posts.ts:286#storagePath: path,`), and the
   client is handed the same path to keep on the post
-  (`artifacts/api-server/src/routes/posts.ts:299#url: mediaRelayUrl, path,`).
+  (`artifacts/api-server/src/routes/posts.ts:311#url: mediaRelayUrl, path,`).
 - `recordEntityMedia` records assets over the existing files of memories, gems
   and postcards.
 - So an asset-level purge removes the bytes from under every legacy row and
@@ -7398,14 +7398,14 @@ own formulas, and the test then measured each chosen value independently.
 
 | Surface | Line | Chosen | Tightest pair: before → after |
 | --- | --- | --- | --- |
-| Backing under the left column (name, handle, follow, caption, hashtags, chips, audio, featured badge, verified mark, quick actions) | `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:498#paddingRight: space.sm, padding: space.sm, borderRadius: radius.md, backgroundColor: 'rgba(17,17,15,0.71)',` | 0.71 | 12 pairs, each at 1.00 before; tightest after: featured badge 4.54 |
-| Backing under the action rail; idle stamp icon white (it was the shared StampIcon's `mute`) | `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:621#backgroundColor: 'rgba(17,17,15,0.80)',`, `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:406#color={stampVisualIsStamped ? color.signal : '#fff'}` | 0.80 | 6 pairs at 1.00 before; tightest after: saved bookmark (`signal`) 3.11 |
-| Create button: a light wash became ink | `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:605#backgroundColor: 'rgba(17,17,15,0.58)',` | 0.58 | 1.00 → 4.62 |
-| Video cell failure overlay | `travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:224#backgroundColor: 'rgba(17,17,15,0.71)',` | 0.71 | 3.34 → 4.59 |
-| Video cell buffering spinner on a badge | `travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:200#<View style={tailStyles.spinnerBadge}>`, `travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:240#spinnerBadge: { padding: 10, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.52)' },` | 0.52 | 1.00 → 3.04 |
-| Feed progress track: a light wash became an ink track | `travel-buddy-standalone/src/components/media/WatchFeedList.tsx:664#backgroundColor: 'rgba(17,17,15,0.80)',` | 0.80 | fill 1.00 → 3.11 |
-| Backing under the pause mark | `travel-buddy-standalone/src/components/media/WatchFeedList.tsx:696#width: 44, borderRadius: radius.md, backgroundColor: 'rgba(17,17,15,0.57)',` | 0.57 | 1.00 → 3.08 |
-| Swipe hint | `travel-buddy-standalone/src/components/media/WatchFeedList.tsx:728#backgroundColor: 'rgba(0,0,0,0.59)',` | 0.59 | 2.49 → 4.53 |
+| Backing under the left column (name, handle, follow, caption, hashtags, chips, audio, featured badge, verified mark, quick actions) | `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:501#paddingRight: space.sm, padding: space.sm, borderRadius: radius.md, backgroundColor: 'rgba(17,17,15,0.71)',` | 0.71 | 12 pairs, each at 1.00 before; tightest after: featured badge 4.54 |
+| Backing under the action rail; idle stamp icon white (it was the shared StampIcon's `mute`) | `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:624#backgroundColor: 'rgba(17,17,15,0.80)',`, `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:409#color={stampVisualIsStamped ? color.signal : '#fff'}` | 0.80 | 6 pairs at 1.00 before; tightest after: saved bookmark (`signal`) 3.11 |
+| Create button: a light wash became ink | `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:608#backgroundColor: 'rgba(17,17,15,0.58)',` | 0.58 | 1.00 → 4.62 |
+| Video cell failure overlay | `travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:241#backgroundColor: 'rgba(17,17,15,0.71)',` | 0.71 | 3.34 → 4.59 |
+| Video cell buffering spinner on a badge | `travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:217#<View style={tailStyles.spinnerBadge}>`, `travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:257#spinnerBadge: { padding: 10, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.52)' },` | 0.52 | 1.00 → 3.04 |
+| Feed progress track: a light wash became an ink track | `travel-buddy-standalone/src/components/media/WatchFeedList.tsx:665#backgroundColor: 'rgba(17,17,15,0.80)',` | 0.80 | fill 1.00 → 3.11 |
+| Backing under the pause mark | `travel-buddy-standalone/src/components/media/WatchFeedList.tsx:697#width: 44, borderRadius: radius.md, backgroundColor: 'rgba(17,17,15,0.57)',` | 0.57 | 1.00 → 3.08 |
+| Swipe hint | `travel-buddy-standalone/src/components/media/WatchFeedList.tsx:729#backgroundColor: 'rgba(0,0,0,0.59)',` | 0.59 | 2.49 → 4.53 |
 | Backing under the For You / Following toggle | `travel-buddy-standalone/src/components/media/WatchFeed.tsx:125#backgroundColor: 'rgba(17,17,15,0.71)',` | 0.71 | 1.00 → 4.55 |
 | Mode selector row (Watch, Gems) | `travel-buddy-standalone/src/components/media/MediaModeSelector.tsx:128#backgroundColor: 'rgba(0,0,0,0.66)',` | 0.66 | inactive label 1.68 → 4.50 |
 | Mode selector, selected (Watch, Gems): an opaque onInk pill, ink label | `travel-buddy-standalone/src/components/media/MediaModeSelector.tsx:145#backgroundColor: color.onInk,` | opaque | fill 1.18 → 6.90; label 1.70 → 17.95 |
@@ -7809,17 +7809,17 @@ The lines §31.12 cites in these files are unchanged:
 
 It is measured under the same rules. It is fixed in its own file, and
 through the StampButton tone
-(`travel-buddy-standalone/app/media-viewer/[id].tsx:311#iconSize={28} tone="onDark"`).
+(`travel-buddy-standalone/app/media-viewer/[id].tsx:313#iconSize={28} tone="onDark"`).
 Every line cited elsewhere in it keeps its place: this census cites two of
 its lines, and the share audit cites two more.
 
 | Surface | Line | Chosen | Tightest pair: before → after |
 | --- | --- | --- | --- |
-| Ink backing under the left column (name, handle, caption, place chip, quick actions, loading spinner) | `travel-buddy-standalone/app/media-viewer/[id].tsx:391#paddingRight: space.sm, padding: space.sm, borderRadius: radius.md, backgroundColor: 'rgba(17,17,15,0.71)',` | 0.71 | 6 pairs at 1.00 before; tightest after: handle in onInkMute 4.55 |
-| Ink backing under the action column (stamp, comment, save, creator stamps, share, actions) | `travel-buddy-standalone/app/media-viewer/[id].tsx:443#backgroundColor: 'rgba(17,17,15,0.80)',` | 0.80 | 11 pairs at 1.00 before; tightest after: saved bookmark and stamped icon in `signal` 3.11 |
-| Page spinner on an ink badge | `travel-buddy-standalone/app/media-viewer/[id].tsx:504#<View style={tailStyles.spinnerBadge}>`, `travel-buddy-standalone/app/media-viewer/[id].tsx:891#spinnerBadge: { padding: 10, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.47)' },` | 0.47 | 1.00 → 3.07 |
-| Page dots on an ink pill | `travel-buddy-standalone/app/media-viewer/[id].tsx:826#<View style={tailStyles.dotsPill}>`, `travel-buddy-standalone/app/media-viewer/[id].tsx:892#backgroundColor: 'rgba(17,17,15,0.87)'` | 0.87 | inactive dot 1.00 → 3.01; active dot 13.23 |
-| Main image's error fallback now uses an `ink` ground (2026-11-05) | `travel-buddy-standalone/app/media-viewer/[id].tsx:531#fallbackBg={color.ink}` | `ink` | Prior mute-ground measurement 1.19 → 5.27 is historical; the new ground was not remeasured here |
+| Ink backing under the left column (name, handle, caption, place chip, quick actions, loading spinner) | `travel-buddy-standalone/app/media-viewer/[id].tsx:393#paddingRight: space.sm, padding: space.sm, borderRadius: radius.md, backgroundColor: 'rgba(17,17,15,0.71)',` | 0.71 | 6 pairs at 1.00 before; tightest after: handle in onInkMute 4.55 |
+| Ink backing under the action column (stamp, comment, save, creator stamps, share, actions) | `travel-buddy-standalone/app/media-viewer/[id].tsx:445#backgroundColor: 'rgba(17,17,15,0.80)',` | 0.80 | 11 pairs at 1.00 before; tightest after: saved bookmark and stamped icon in `signal` 3.11 |
+| Page spinner on an ink badge | `travel-buddy-standalone/app/media-viewer/[id].tsx:506#<View style={tailStyles.spinnerBadge}>`, `travel-buddy-standalone/app/media-viewer/[id].tsx:893#spinnerBadge: { padding: 10, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.47)' },` | 0.47 | 1.00 → 3.07 |
+| Page dots on an ink pill | `travel-buddy-standalone/app/media-viewer/[id].tsx:828#<View style={tailStyles.dotsPill}>`, `travel-buddy-standalone/app/media-viewer/[id].tsx:894#backgroundColor: 'rgba(17,17,15,0.87)'` | 0.87 | inactive dot 1.00 → 3.01; active dot 13.23 |
+| Main image's error fallback now uses an `ink` ground (2026-11-05) | `travel-buddy-standalone/app/media-viewer/[id].tsx:533#fallbackBg={color.ink}` | `ink` | Prior mute-ground measurement 1.19 → 5.27 is historical; the new ground was not remeasured here |
 
 **Needed no change:**
 - the back and mute buttons on their 0.55 ink discs, at 4.17;
@@ -8417,7 +8417,7 @@ re-checks each one in memory (`isEntityMediaSweepRow`):
   (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:464#.eq("size_bytes", 0)`).
   This is what keeps the upload route's rows out. The upload route records the
   stored buffer's length
-  (`artifacts/api-server/src/routes/posts.ts:278#sizeBytes: uploadBuf.length,`),
+  (`artifacts/api-server/src/routes/posts.ts:290#sizeBytes: uploadBuf.length,`),
   and its verifier refuses an empty body
   (`artifacts/api-server/src/lib/mediaPipeline.ts:188#if (!buf || buf.length === 0) {`).
   So the upload route's dimensionless videos, which this tier has no decoder
@@ -9017,12 +9017,12 @@ carries the checkable anchors.
 | census-trips | §69.1, lines 7778 and 7784 | "Of the 181, 168 are absent from [the ledger] and 13 are 2420 itself, which IS applied", and "anyone can re-derive the three numbers (181 / 168 / 13)". Measured 2026-09-15; true then. | Line 7778: the 168 are no longer absent. Re-run over the same 181 references, all 168 are recorded as applied. They name 24 migrations, 2760 to 2794, stamped 2026-09-16 between 20:14 and 21:01 UTC. The rows stay W on the two flags. Line 7784: "Re-run on 2026-09-27, the same loop yields 181 / 0 / 13." | Re-derived here from §68.2's table. Taking the distinct migration numbers in each row, range endpoints included, gives exactly 181 references and exactly 13 of 2420, so that is the rule §69.1 used. None of the other 168 is absent today. `artifacts/api-server/src/lib/capability/production-applied-migrations.json:307#2760_trip_stages` (version 20260916201420) to `:443#2794_trip_meeting_checkpoints` (20260916210038). |
 | census-trips | §73.1, line 8583 | "parsed in full it carries 34 migrations at or above 2410, and not one of 2760-2795 is among them. 2450, 2500 and 2590 are absent too". Written 2026-09-15; true then. | Today the file carries 101 migrations at or above 2410, including every one of 2760–2795, stamped 2026-09-16 between 20:14 and 21:01 UTC. 2450, 2500 and 2590 were applied the same evening, and the 2796 repair at 2026-09-17 03:10. The apply that the paragraph says the branch may not perform has been performed, and those rows now wait on the two flags. No verdict moves and no class is re-derived. | Counted: at d7bab3f6e, the commit that wrote the sentence, the file has 51 entries, 34 of them at or above 2410; at HEAD it has 129 and 101. `artifacts/api-server/src/lib/capability/production-applied-migrations.json:447#2795_trip_kernel_write_guards` (20260916210136), `:451#2796_trip_reservation_history_security_definer` (20260917031001). |
 | census-trips | §74.1, line 8836 | "not one of 2760-2795 appears in it". Written 2026-09-16 at a97bfdac0; true there. | "true at a97bfdac0: every one of 2760–2795 now appears in that file, stamped 2026-09-16 between 20:14 and 21:01 UTC, and 2796 at 2026-09-17 03:10 … the two flags, both FALSE …, are what the W rows wait on. No verdict moves." | The file at a97bfdac0 holds none of 2760–2796, and none of 2450, 2500 or 2590. At HEAD all 37 of 2760–2796 are present. |
-| census-input-intelligence | G359, line 1055, in §52's table. G359's last statement is line 3057 (W), which was not edited. | "the one new duplicate inside the platform is still there: compassPrompt.ts re-implements the Compass starter set client-side under the same name as the server's buildCompassStarters (projection.ts line 258), and app/(tabs)/ai.tsx line 399 calls the client one." | A dated correction after that sentence, in italics. The clause was true when first written, on 2026-09-09. It has been false since e0d858f28 (2026-09-20, census-compass CG-01), and was already false when 2c95647f1 re-verified it on 2026-09-21. The client module keeps only an adapter over the server's rows. The screen feeds CompassStarters from the gateway at ai.tsx line 413, and line 399 is a closing bracket. The server's builder is now at projection.ts line 346. The W never rested on the duplicate alone: the unmigrated engines G6 names and the missing ratchet both still hold. | `travel-buddy-standalone/src/platform/input-assistance/compass/compassPrompt.ts:33#export function startersFromSuggestions` is the module's first function, and the module has no builder; its own suite asserts that the source does not contain buildCompassStarters. The call site is `travel-buddy-standalone/app/(tabs)/ai.tsx:413#starters={startersFromSuggestions(starterAssist.suggestions)}`. At 42aeac38e, ai.tsx line 399 read starters={buildCompassStarters(…)}. For the W: useGooglePlacesAutocomplete, usePlaceSearch and MentionInput still exist outside the platform, and no check in the server's or the client's scripts fails on a new engine (the two input scripts there measure and report). |
+| census-input-intelligence | G359, line 1055, in §52's table. G359's last statement is line 3057 (W), which was not edited. | "the one new duplicate inside the platform is still there: compassPrompt.ts re-implements the Compass starter set client-side under the same name as the server's buildCompassStarters (projection.ts line 258), and app/(tabs)/ai.tsx line 399 calls the client one." | A dated correction after that sentence, in italics. The clause was true when first written, on 2026-09-09. It has been false since e0d858f28 (2026-09-20, census-compass CG-01), and was already false when 2c95647f1 re-verified it on 2026-09-21. The client module keeps only an adapter over the server's rows. The screen feeds CompassStarters from the gateway at ai.tsx line 413, and line 399 is a closing bracket. The server's builder is now at projection.ts line 346. The W never rested on the duplicate alone: the unmigrated engines G6 names and the missing ratchet both still hold. | `travel-buddy-standalone/src/platform/input-assistance/compass/compassPrompt.ts:33#export function startersFromSuggestions` is the module's first function, and the module has no builder; its own suite asserts that the source does not contain buildCompassStarters. The call site is `travel-buddy-standalone/app/(tabs)/ai.tsx:404#starters={startersFromSuggestions(starterAssist.suggestions)}`. At 42aeac38e, ai.tsx line 399 read starters={buildCompassStarters(…)}. For the W: useGooglePlacesAutocomplete, usePlaceSearch and MentionInput still exist outside the platform, and no check in the server's or the client's scripts fails on a new engine (the two input scripts there measure and report). |
 | census-sensing | §22.1 (S92), line 4835 | "the scheduler is started from [index.ts line 58, anchor 'import']". Right when written on 2026-09-26 at d7312709d. | The citation now reads index.ts line 59, anchored on startMemoryProjectionScheduler (its import), and adds the call at line 185. The old anchor stays in a "was" note, which says that dbf804b9f added a line above it the same day, and that line 58 is now registerScopedTrustApplier's import. | `artifacts/api-server/src/index.ts:63#startMemoryProjectionScheduler`, `:191#startMemoryProjectionScheduler();`. At d7312709d the import was at line 58; at dbf804b9f it is at 59. See §38.3 for why the anchor names the import. |
 | census-discovery | §37.1 (the travel term's provenance), lines 4908 and 4913 | "landsideLeg is the port; LAYOVER_TRAVEL_TIME_PROVIDER is noRoutedProvider, so every answer is { minutes: null, source: "unmeasured", reason: "NO_ROUTED_PROVIDER" } at zero I/O cost." Written 2026-09-15; true then. | Line 4908 marks the clause "true when written; corrected 2026-09-27 at the end of this paragraph". Line 4913: since 74890f906 (2026-09-22) the constant is corridorTravelTimeProvider(googleRoutesCorridorProvider). The corridor provider refuses before it builds any request unless LAYOVER_ROUTED_CORRIDOR_ENABLED is affirmative and GOOGLE_MAPS_API_KEY is present. The adapter reports that refusal as NO_ROUTED_PROVIDER, so with either switch unset every answer is still the unmeasured one, plus a detail field. This correction read the code, not any deployment's environment. | `artifacts/api-server/src/services/airport/LayoverTravelTime.ts:83#export const LAYOVER_TRAVEL_TIME_PROVIDER: TravelTimeProvider = corridorTravelTimeProvider(googleRoutesCorridorProvider);`. The two gates come in this order, before the request body: `artifacts/api-server/src/lib/providers/googleRoutesCorridorProvider.ts:286#const notEnabled` then `:288#noKey`. The refusal's mapping is at `artifacts/api-server/src/lib/providers/corridorTravelTimeAdapter.ts:128#PROVIDER_NOT_ENABLED: "NO_ROUTED_PROVIDER",`. landsideLeg passes the reason and detail through unchanged. |
 | census-discovery | A14 row, line 4966, A14's last statement (W) | "because LAYOVER_TRAVEL_TIME_PROVIDER is noRoutedProvider and no dwell source exists for a place nobody has planned." Written 2026-09-15; true then. | A dated correction after that sentence, in italics, verdict unmoved. Since 74890f906 the constant is the corridor adapter. It answers NO_ROUTED_PROVIDER unless both switches are set, so with either unset the admitted set is unchanged. And with no dwell source either way, a place nobody has planned still cannot be admitted. | `artifacts/api-server/src/services/airport/LayoverTravelTime.ts:83#export const LAYOVER_TRAVEL_TIME_PROVIDER`. The dwell half was re-checked: §37.1's grep for typicalDuration, visit_duration, dwell_minutes and expectedDuration still finds nothing under the server's src. The clause's conclusion, that unplanned places are not admitted, holds on the dwell source alone. |
-| census-passport | P87 row, line 348 | "app/(tabs)/ai.tsx lines 98-104 consumes prefillMessage and sends it." Right at 42aeac38e. | "(corrected 2026-09-27, verdict unmoved: 98–104 was right at 42aeac38e; e0d858f28 moved the effect 14 lines down, to [ai.tsx lines 112-118])" | `travel-buddy-standalone/app/(tabs)/ai.tsx:112-118#if (!prefillMessage`. Line 112 is the guard and line 118 is the send. At 42aeac38e the same two lines were 98 and 104. |
-| census-passport | P168 row, line 516 | "Compass (SharedContextScreen.tsx line 217 → app/(tabs)/ai.tsx line 104)" | "…, now [ai.tsx line 118] after e0d858f28 moved it 14 lines down; corrected 2026-09-27, verdict unmoved" | `travel-buddy-standalone/app/(tabs)/ai.tsx:118#send(prefillMessage,`. |
+| census-passport | P87 row, line 348 | "app/(tabs)/ai.tsx lines 98-104 consumes prefillMessage and sends it." Right at 42aeac38e. | "(corrected 2026-09-27, verdict unmoved: 98–104 was right at 42aeac38e; e0d858f28 moved the effect 14 lines down, to [ai.tsx lines 112-118])" | `travel-buddy-standalone/app/(tabs)/ai.tsx:113-119#if (!prefillMessage`. Line 112 is the guard and line 118 is the send. At 42aeac38e the same two lines were 98 and 104. |
+| census-passport | P168 row, line 516 | "Compass (SharedContextScreen.tsx line 217 → app/(tabs)/ai.tsx line 104)" | "…, now [ai.tsx line 118] after e0d858f28 moved it 14 lines down; corrected 2026-09-27, verdict unmoved" | `travel-buddy-standalone/app/(tabs)/ai.tsx:119#send(prefillMessage,`. |
 | census-wall | W118 row, line 380 | "(imported 41-45)" | "; corrected 2026-09-27, verdict unmoved: the block is at [WallCandidateLoaders.ts lines 42-46] and closes at [line 46], where it already was at 42aeac38e, the earliest commit this row exists at" | `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:42-46#import {` and `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:46#} from "../media/MediaProjectionService.js";`. So 41–45 was one line off at every commit this row can be read at; it did not drift. loadVideoMediaCandidates (line 538) still calls resolveViewer, loadEligibleCandidates and projectCandidatesProtected, so the C holds. |
 | census-passport | §19.3, line 1887 | "Whether the ruling moves P45 from W is a re-measurement, and a re-measurement is not what a correction section may do." Wrong when written: §16.1 had recorded C since 2026-09-14. | "(Corrected 2026-09-27, no letter moved: this sentence lags its own census. P45's last statement is §16.1's row, which records C, moved W → C on 2026-09-14 and corrected in place on 2026-09-22 with the verdict unmoved, so the ruling had no W to move P45 from. It made P45's explainability clause stricter; P50 and P154 stay W on the band.)" | census-passport line 1406 is P45's last statement. The integrity dump reads it as C there, and reads P50 (line 1447) and P154 (line 1454) as W. §32.15's P45 paragraph says the same. The 2026-09-22 passport ledger note lags in the same way; the ledger was not edited. |
 
@@ -9470,7 +9470,7 @@ part that needs no choice:
 
 | Writer | What it writes | Stated source |
 | --- | --- | --- |
-| upload route (`recordMediaAssetDetailed` after §52; formerly the `recordMediaAsset` wrapper) | the uploaded file; same original canonical write, now returns its version | undeclared — `artifacts/api-server/src/routes/posts.ts:272#ownerUserId: user.id, sourceType: MEDIA_SOURCE_UNDECLARED,` |
+| upload route (`recordMediaAssetDetailed` after §52; formerly the `recordMediaAsset` wrapper) | the uploaded file; same original canonical write, now returns its version | undeclared — `artifacts/api-server/src/routes/posts.ts:284#ownerUserId: user.id, sourceType: MEDIA_SOURCE_UNDECLARED,` |
 | postcard auto-create | the post's first ready file | undeclared — `artifacts/api-server/src/routes/postcards.ts:1127#isCover: true, sourceType: MEDIA_SOURCE_UNDECLARED,` |
 | memory create | the memory's photo | undeclared — `artifacts/api-server/src/services/passport/PassportMemoryService.ts:142#isCover: true, sourceType: MEDIA_SOURCE_UNDECLARED,` |
 | post attachments | each file of a new post | undeclared — `artifacts/api-server/src/lib/mediaAssets.ts:1093#isCover: i === 0, sourceType: MEDIA_SOURCE_UNDECLARED,` |
@@ -9614,7 +9614,7 @@ branch of MD71.
 to the photo re-identifies the contributor.
 - The canonical asset carries `owner_user_id`.
 - The storage key carries the account id in its first segment
-  (`artifacts/api-server/src/routes/posts.ts:224#const basePath =`).
+  (`artifacts/api-server/src/routes/posts.ts:226#let basePath = `).
 - So `intel_evidence.media_asset_id` or a storage-key `reference` turns a
   tokenised observation back into an account. By extension it does the same
   for every observation that account made under the same weekly token.
@@ -9845,10 +9845,10 @@ seeded FALSE and no database was touched.**
 | ID | Was | Now | Evidence and what remains |
 | --- | --- | --- | --- |
 | MD63 | N | **N** | IMPLEMENTATION, done up to the vendor. The EVIDENCE EXTRACTION stage now has an output type and exactly one constructor, `artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:187#export function deriveVisualEvidenceCandidates(`. It keeps a signal only for a media id the caller asked about, only in a closed vocabulary, and only with a confidence in [0, 1]. It stamps `verified: false` and `eligibleAsObservation: false` as literals, so no provider can promote an inference (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:173#verified: false;`). Its production caller is §38's "looks social" filter (MD289 below). The provider is the refusing default (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:122#export const REFUSING_VISION_PROVIDER`), and the table of implemented adapters is empty (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:130#export const IMPLEMENTED_VISION_PROVIDERS`). It stays N because no configuration of this tree reads a pixel for meaning: the seam is where an extractor goes, not an extractor. ACTIVATION: `media_vision_provider_enabled` (3355). EXTERNAL: a vision provider that returns a per-image scene or crowd estimate with a confidence, chosen and cleared by the owner (sending photographs to a model is a cost and data-protection decision); for video, a video-capable model or the stored poster frame. BLOCKER: no vision vendor chosen, so `MEDIA_VISION_PROVIDER` names nothing. |
-| MD269 | W | **W** | IMPLEMENTATION, mostly done. The §36 stage now has a decider, `artifacts/api-server/src/lib/media/vendors/mediaModerationClassifier.ts:165#export async function decidePreDistribution(`. With the stage on, every answer that is not a valid classifier verdict HOLDS the file: no classifier, an unsupported kind, a refusal, a throw, a timeout, or a malformed answer. The decider is wired at three points. **Postcard `/complete`:** `artifacts/api-server/src/routes/postcards.ts:978#await preDistributionPostMediaStatus(` — with the stage off it writes `approved` exactly as before, and a hold is `flagged`, never `pending`, because a READY `pending` row passes the post_media readers. **The canonical row of a `/media/upload`:** through MediaModerationService, from `artifacts/api-server/src/routes/posts.ts:288#await runMediaVendorIngest(sc,` into `artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:124#export async function runMediaVendorIngest(`. There the row is HELD before the classifier is asked (`artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:147#HOLD FIRST, then decide.`), so it is not distributable while a classifier decides. One residual window is left: lib/mediaAssets writes the row as `processing`, and the hold lands one round trip later. Closing it means the canonical writer choosing the initial state, a change for activation. **A general video's poster:** see MD283. With 3356 ON and no classifier, this IS the staffed hold the row offers as its operator alternative. New postcard files complete `flagged` and new canonical rows go `limited`, and the existing `POST /admin/media/:id/moderate` approve releases them. It stays W because two paths still distribute undecided. (a) A general (Pulse) post's legacy read path gates on `posts.post_status`, which an upload-time stage cannot reach. A hold there has to be composed with the delayed-publish states (`pending_location_exit`, `pending_delay`), and that needs an owner rule, not a guess. (b) `artifacts/api-server/src/routes/postcards.ts:196#.filter((r: any) => r.processing_status === 'ready')` counts a held file in `media_count` and can make it the passport cover URL (§37.6 item 1). ACTIVATION: 3356, the owner's decision that every new upload waits for a person until a classifier exists. EXTERNAL: a classifier vendor, or staffed review capacity. BLOCKER: (a) and (b), plus no classifier and no decision to staff a hold. |
+| MD269 | W | **W** | IMPLEMENTATION, mostly done. The §36 stage now has a decider, `artifacts/api-server/src/lib/media/vendors/mediaModerationClassifier.ts:165#export async function decidePreDistribution(`. With the stage on, every answer that is not a valid classifier verdict HOLDS the file: no classifier, an unsupported kind, a refusal, a throw, a timeout, or a malformed answer. The decider is wired at three points. **Postcard `/complete`:** `artifacts/api-server/src/routes/postcards.ts:978#await preDistributionPostMediaStatus(` — with the stage off it writes `approved` exactly as before, and a hold is `flagged`, never `pending`, because a READY `pending` row passes the post_media readers. **The canonical row of a `/media/upload`:** through MediaModerationService, from `artifacts/api-server/src/routes/posts.ts:300#await runMediaVendorIngest(sc,` into `artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:124#export async function runMediaVendorIngest(`. There the row is HELD before the classifier is asked (`artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:147#HOLD FIRST, then decide.`), so it is not distributable while a classifier decides. One residual window is left: lib/mediaAssets writes the row as `processing`, and the hold lands one round trip later. Closing it means the canonical writer choosing the initial state, a change for activation. **A general video's poster:** see MD283. With 3356 ON and no classifier, this IS the staffed hold the row offers as its operator alternative. New postcard files complete `flagged` and new canonical rows go `limited`, and the existing `POST /admin/media/:id/moderate` approve releases them. It stays W because two paths still distribute undecided. (a) A general (Pulse) post's legacy read path gates on `posts.post_status`, which an upload-time stage cannot reach. A hold there has to be composed with the delayed-publish states (`pending_location_exit`, `pending_delay`), and that needs an owner rule, not a guess. (b) `artifacts/api-server/src/routes/postcards.ts:196#.filter((r: any) => r.processing_status === 'ready')` counts a held file in `media_count` and can make it the passport cover URL (§37.6 item 1). ACTIVATION: 3356, the owner's decision that every new upload waits for a person until a classifier exists. EXTERNAL: a classifier vendor, or staffed review capacity. BLOCKER: (a) and (b), plus no classifier and no decision to staff a hold. |
 | MD277 | N | **N** | IMPLEMENTATION, done up to the vendor. The transcoder seam's refusing default is `artifacts/api-server/src/lib/media/vendors/mediaTranscoder.ts:84#export const REFUSING_TRANSCODER`. Each new video is submitted at ingestion (`artifacts/api-server/src/lib/media/vendors/mediaTranscoder.ts:142#export async function submitForTranscode(`). What "a ladder" must be before anything is served as adaptive is stated as code, `artifacts/api-server/src/lib/media/vendors/mediaTranscoder.ts:111#export function validateRenditionLadder(`: an https `.m3u8` or `.mpd` matching the claimed protocol, and at least two distinct rungs. NOT built, on purpose: the playback API and the player's source switch. How a private clip's manifest and segments are authorised is the vendor's model (signed per-viewer URLs, signed cookies, or segments proxied through mediaAccess), and a consumer built before its producer is the writerless-read pattern this repo's own ratchets forbid. The player half needs no ABR code: AVPlayer and ExoPlayer choose rungs from a master playlist. ACTIVATION: 3357. EXTERNAL: a transcoder (a hosted service, or an ffmpeg worker tier) whose playback authorisation keeps private video private; then a device run showing a rung switch under a throttled network. BLOCKER: no transcoder chosen or funded. |
 | MD280 | N | **N** | IMPLEMENTATION, done up to the source. The ASR seam's refusing default is `artifacts/api-server/src/lib/media/vendors/mediaCaptionSource.ts:168#export const REFUSING_CAPTION_SOURCE`. Its validated call is `artifacts/api-server/src/lib/media/vendors/mediaCaptionSource.ts:189#export async function captionTrackFor(`. Every track must pass `artifacts/api-server/src/lib/media/vendors/mediaCaptionSource.ts:92#export function parseWebVtt(` WHOLE, whether an ASR vendor produced it or a person typed it, and it is refused if it runs past the measured duration. A kept track is stored at a path derived from the video (`artifacts/api-server/src/lib/media/vendors/mediaCaptionSource.ts:149#export function captionTrackPathFor(`), with `upsert: false`. NOT built, on purpose: serving (lib/mediaAccess deciding `<path>.captions.vtt` as its video, the way posters are decided) and the player's cue renderer. Both are consumers of a track that no configuration can produce yet. §15.9 stands. ACTIVATION: 3358. EXTERNAL: an ASR vendor with a data-processing agreement covering users' speech, OR an owner decision for an authored-WebVTT flow. BLOCKER: the caption source is undecided. |
-| MD282 | N | **N** | IMPLEMENTATION, done up to the native module. The JS seam is `travel-buddy-standalone/src/services/media/videoCompression.ts:122#export async function compressVideoForUpload`. It looks for ONE module by name through `requireOptionalNativeModule` (`travel-buddy-standalone/src/services/media/videoCompression.ts:88#requireOptionalNativeModule(name)`), which returns null, not an error, when the binary lacks it. Absent, or switched off, the video passes through as the SAME object. It uses a copy only if the module returns a smaller file with its size and display dimensions. It is wired at all four client upload paths: the postcard composer (`travel-buddy-standalone/src/components/PostcardComposer.tsx:401#compressVideoForUpload(picked)`), `uploadMedia` (`travel-buddy-standalone/src/services/media.ts:190#videoUriForUpload(media.uri`), stories (`travel-buddy-standalone/src/services/stories.ts:103#videoUriForUpload(localUri`) and memories (`travel-buddy-standalone/src/services/memories.ts:303#videoUriForUpload(localUri`). The native contract the module must implement is written in the file's header. It stays N because no build that exists re-encodes a byte. ACTIVATION: `DEFAULT_ENABLED` (`travel-buddy-standalone/src/services/media/videoCompression.ts:51#const DEFAULT_ENABLED = false;`), flipped in the same build that adds the module, after a device run. EXTERNAL: a native encoder module implementing that contract (§37.4), a native build (§37.3), and a device run showing a smaller clip that uploads, keeps its orientation and duration, and plays. BLOCKER: no native module in the client package.json (an infra or owner decision), and no build access. |
+| MD282 | N | **N** | IMPLEMENTATION, done up to the native module. The JS seam is `travel-buddy-standalone/src/services/media/videoCompression.ts:122#export async function compressVideoForUpload`. It looks for ONE module by name through `requireOptionalNativeModule` (`travel-buddy-standalone/src/services/media/videoCompression.ts:88#requireOptionalNativeModule(name)`), which returns null, not an error, when the binary lacks it. Absent, or switched off, the video passes through as the SAME object. It uses a copy only if the module returns a smaller file with its size and display dimensions. It is wired at all four client upload paths: the postcard composer (`travel-buddy-standalone/src/components/PostcardComposer.tsx:401#compressVideoForUpload(picked)`), `uploadMedia` (`travel-buddy-standalone/src/services/media.ts:200#const uploadUri = recording ? media.uri : await videoUriForUpload(`), stories (`travel-buddy-standalone/src/services/stories.ts:104#videoUriForUpload(localUri`) and memories (`travel-buddy-standalone/src/services/memories.ts:303#videoUriForUpload(localUri`). The native contract the module must implement is written in the file's header. It stays N because no build that exists re-encodes a byte. ACTIVATION: `DEFAULT_ENABLED` (`travel-buddy-standalone/src/services/media/videoCompression.ts:51#const DEFAULT_ENABLED = false;`), flipped in the same build that adds the module, after a device run. EXTERNAL: a native encoder module implementing that contract (§37.4), a native build (§37.3), and a device run showing a smaller clip that uploads, keeps its orientation and duration, and plays. BLOCKER: no native module in the client package.json (an infra or owner decision), and no build access. |
 | MD283 | W | **W** | IMPLEMENTATION, done up to the vendor. Video has its own rules in the same decider. A video-capable classifier reads the whole clip and may approve it. A frame-only classifier may REJECT or HOLD a clip, never approve it: one poster is one instant of a clip that can be minutes long (`artifacts/api-server/src/lib/media/vendors/mediaModerationClassifier.ts:112#export const FRAME_ALLOW_CLEARS_VIDEO = false;`). A general video's frame arrives after its upload, so the poster route gives the classifier its look there, and that look can only tighten (`artifacts/api-server/src/routes/mediaVideoPoster.ts:115#void moderateVideoOnFrame(sc,`, `artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:319#export async function moderateVideoOnFrame(`). Postcard `/complete` hands over the slot's own poster path. ACTIVATION: 3356. EXTERNAL: a classifier with async VIDEO moderation. With only an image classifier, every video waits for a person. BLOCKER: no classifier chosen; MD269's (a) and (b). |
 | MD284 | W | **W** | IMPLEMENTATION, JS half done. EVERY missing part is now handed to the OS at once. Every part's byte range is staged into its own cache file one at a time, to bound JS memory, and then every upload task is created and STARTED before any is awaited (`travel-buddy-standalone/src/services/media/backgroundTransfer.ts:205#export async function putPartsInBackground(`). The background transport offers the batch (`travel-buddy-standalone/src/services/media/backgroundTransfer.ts:97#putParts: (parts, contentType, onSent)`), and the resumable uploader uses it whenever it can (`travel-buddy-standalone/src/services/media/resumableUpload.ts:170#if (transport.putParts && pending.length > 1) {`). A part the batch did not deliver is never counted as sent: no answer, 408/425/429 or 5xx fall back to the one-at-a-time retries after one wait, and 400/401/403 get a fresh session. Still NOT shown: that iOS finishes the handed-over tasks while the app is suspended, and relaunches it to report them. expo-file-system registers the app-delegate hook for that, but only a device can show it happens. Android is unchanged: expo-file-system's legacy module uploads through OkHttp inside the app process and never reads the session type, so a backgrounded or killed Android process loses its parts until a foreground service keeps it alive, and that service needs a native module (§37.4). ACTIVATION: `DEFAULT_ENABLED` (`travel-buddy-standalone/src/services/media/uploadTransportFlag.ts:19#DEFAULT_ENABLED = false`), unchanged. EXTERNAL: an iOS device build and run (background → a multi-part upload completes → assemble); an Android foreground-service module plus `FOREGROUND_SERVICE_DATA_SYNC` in the manifest (absent from the prebuilt manifest, §37.3); a device matrix run (§37.3). BLOCKER: no macOS or EAS access for iOS; no Android SDK; no device; no foreground-service module. |
 | MD289 | W | **W** | IMPLEMENTATION, done up to the vendor and the owner's threshold. `looksSocial=true` is a real criterion (`artifacts/api-server/src/services/media/MediaSearchService.ts:948#export async function searchMediaVisual(`, reached from `artifacts/api-server/src/routes/mediaWorld.ts:331#searchMediaVisual(`). It is APPLIED through MD63's candidates or REFUSED BY NAME with an empty answer (`artifacts/api-server/src/services/media/MediaSearchService.ts:968#if (!stageOn) return refuse("stage_off", null);`). It is never dropped: before this, "Nightlife that looks social tonight" could only be asked as "nightlife tonight". An event found by name is not served beside it (`artifacts/api-server/src/routes/mediaWorld.ts:347#results.visual ? null : str(req.query.q)`). What counts as "looks social" is a stated owner value: `busy` or `social` at a confidence of at least 0.6 (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:75#export const LOOKS_SOCIAL_LEVELS`). ACTIVATION: 3355. EXTERNAL: a vision provider (MD63). OWNER: ratify or replace the threshold. BLOCKER: no vision provider; the threshold is unratified. |
@@ -10207,7 +10207,7 @@ missing parts, and they go at the first sweep after the job ends.
 #### 37.8.4 The canonical row is born held while the stage is on (MD269 (c))
 
 With 3356 ON, `/media/upload`'s canonical row is written ONCE, already `limited`
-(`artifacts/api-server/src/routes/posts.ts:271#canonicalModerationAtBirth(sc).then((atBirth) => recordMediaAssetDetailed(sc, { ...atBirth,`,
+(`artifacts/api-server/src/routes/posts.ts:283#canonicalModerationAtBirth(sc).then((atBirth) => recordMediaAssetDetailed(sc, { ...atBirth,`,
 `artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:353#export async function canonicalModerationAtBirth(`,
 `artifacts/api-server/src/lib/mediaAssets.ts:392#...(input.moderationStatus ? { moderation_status: input.moderationStatus } : {})`).
 No canonical reader distributes `limited`, so the one-round-trip window is
@@ -11446,7 +11446,7 @@ showed.
   - TagPreviewSheet's report link was drawn at `opacity: 0.6`
     (`travel-buddy-standalone/src/components/TagPreviewSheet.tsx:410#opacity: 1, // was 0.6`).
   - MediaSourceSheet's denied rows were drawn at `opacity: 0.7`
-    (`travel-buddy-standalone/src/components/ui/MediaSourceSheet.tsx:407#opacity: 1, // was 0.7`).
+    (`travel-buddy-standalone/src/components/ui/MediaSourceSheet.tsx:411#opacity: 1, // was 0.7`).
   - Both are active controls: one reports a hashtag, one opens Settings. So
     WCAG 1.4.3's inactive-component exemption does not apply to them, and
     the opacity took their text to 1.8–3.0:1.
@@ -11690,31 +11690,31 @@ server reads the fourth through `isFlagEnabled`.
 **F2 overlay: `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` (3341).**
 - *Unbuilt before:* Watch had one overlay. Its Stamp is the first and largest
   control and carries counts,
-  `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:416#formatCompactCount(item.stampItCount!)`.
+  `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:419#formatCompactCount(item.stampItCount!)`.
   It had no Compass control.
 - *Built:* the flag is read once per overlay,
-  `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:179#const contextFirst = useMediaSurfaceDecisions().contextOverlay;`.
+  `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:181#const contextFirst = useMediaSurfaceDecisions().contextOverlay;`.
   When it is on:
   - Ask Compass is the first rail control and the largest, a 52 pt onInk disc
     with a label,
-    `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:401#{contextFirst ? <ContextCompassButton item={item} /> : null}`.
+    `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:404#{contextFirst ? <ContextCompassButton item={item} /> : null}`.
     It hands the media id and the §15 rail's prompt to Compass, exactly as the
     rail does.
   - Stamp, comment and save keep their controls and lose their counts,
-    `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:407#count={contextFirst ? undefined : stampVisualCount}`.
+    `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:410#count={contextFirst ? undefined : stampVisualCount}`.
     The Stamp It count is not drawn:
-    `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:413#{!contextFirst && (item.stampItCount ?? 0) > 0 ? (`.
+    `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:416#{!contextFirst && (item.stampItCount ?? 0) > 0 ? (`.
   - The left column opens on the place, ahead of the creator:
-    `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:273#{contextFirst ? <ContextPlaceHeader item={item} /> : null}`.
+    `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:275#{contextFirst ? <ContextPlaceHeader item={item} /> : null}`.
     Tapping it opens that place's perspectives through the §14 entry context,
     on this perspective, falling back to the place screen when there is nothing
     to stage:
-    `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:710#void openPlaceByIdPerspectives(placeId,`.
+    `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:713#void openPlaceByIdPerspectives(placeId,`.
 
 **F2 autoplay: `MEDIA_WATCH_TAP_TO_PLAY_ENABLED` (3342).**
 - *Unbuilt before:* two paths play a cell with no tap. Viewability makes a
   cell active and the cell plays,
-  `travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:88#const shouldPlay = isActive && playbackEligible;`.
+  `travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:96#const shouldPlay = isActive && playbackEligible && layer.allowed`.
   Separately, the playback manager calls `playAsync` on whichever item becomes
   active, on refocus, and on foreground.
 - *Built:*
@@ -11723,9 +11723,9 @@ server reads the fourth through `isFlagEnabled`.
     `travel-buddy-standalone/src/components/media/WatchFeedList.tsx:96#const [playbackState, setPlaybackState] = useState({`.
     The single tap that pauses today is what starts it.
   - The manager is told not to autoplay,
-    `travel-buddy-standalone/src/components/media/WatchFeedList.tsx:491#const tapToPlay = useMediaSurfaceDecisions().tapToPlay; const playback = useWatchPlayback({ autoplay: !tapToPlay });`,
+    `travel-buddy-standalone/src/components/media/WatchFeedList.tsx:499#const playback = useWatchPlayback({ autoplay: !tapToPlay, cellOwnsPlayback: autoplayOnView });`,
     and honours it:
-    `travel-buddy-standalone/src/hooks/useWatchPlayback.ts:136#if (id && focusedRef.current && eligibleRef.current && autoplayRef.current) {`.
+    `travel-buddy-standalone/src/hooks/useWatchPlayback.ts:137#if (id && focusedRef.current && foregroundRef.current && eligibleRef.current && autoplayRef.current) {`.
   - Leaving the tab or the app returns a started cell to "Tap to play". With
     autoplay off nothing resumes the cell, so the state shown must match the
     player's state.
@@ -11903,12 +11903,12 @@ done for every row, and MD435 keeps an owner definition that no flag settles.
 | MD3 | W | **W** | IMPLEMENTATION done: the tab can open on a surface with no infinite feed. **ACTIVATION: as MD1, owner decision F1.** |
 | MD11 | W | **W** | IMPLEMENTATION done: the reached surface can be the outcome-ranked shell (F1), and Watch itself can be ranked by the §24 stage, which reads no watch time (`artifacts/api-server/src/routes/mediaFeed.ts:1572#const capped = watchStage24 ? await orderWatchCandidatesByStage24(`). **ACTIVATION: `MEDIA_TAB_WORLD_DEFAULT_ENABLED` = true with `MEDIA_WORLD_SHELL_ENABLED` = true, owner decision F1; for the Watch half, `MEDIA_WATCH_STAGE24_RANKING_ENABLED` = true, owner decision F2.** |
 | MD29 | W | **W** | IMPLEMENTATION done: the dashboard is the tab's opening page when F1 is on (`travel-buddy-standalone/src/features/media/screens/MediaWorldTabSurface.tsx:39#headerAccessory={modeSwitcher}`). **ACTIVATION: as MD1, owner decision F1.** |
-| MD87 | W | **W** | IMPLEMENTATION done: under F1 every open is a §14 entry context; under the F2 overlay a Watch place open goes through the entry context (`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:710#void openPlaceByIdPerspectives(placeId,`). **ACTIVATION: F1 flags as MD1, and `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` = true, owner decisions F1 and F2.** The Grid tile's `/media-viewer/[id]` is untouched; it gains the §15 rail only with the shell flag (§19.6). |
+| MD87 | W | **W** | IMPLEMENTATION done: under F1 every open is a §14 entry context; under the F2 overlay a Watch place open goes through the entry context (`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:713#void openPlaceByIdPerspectives(placeId,`). **ACTIVATION: F1 flags as MD1, and `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` = true, owner decisions F1 and F2.** The Grid tile's `/media-viewer/[id]` is untouched; it gains the §15 rail only with the shell flag (§19.6). |
 | MD215 | W | **W** | IMPLEMENTATION done: the watch multipliers are replaced by the §24 stage behind a flag, and the count rail is demoted behind a flag. **ACTIVATION: `MEDIA_WATCH_STAGE24_RANKING_ENABLED` = true AND `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` = true, owner decision F2.** |
 | MD286 | W | **W** | IMPLEMENTATION done: the default can be not-Watch (F1). **ACTIVATION: `MEDIA_TAB_WORLD_DEFAULT_ENABLED` = true with `MEDIA_WORLD_SHELL_ENABLED` = true (owner decision F1), or `MEDIA_VIEW_MODE_FULLSCREEN_ENABLED` = false (owner decision F2).** The RED WHEN reads "that seed off or the default not 'watch'", and either satisfies it. |
 | MD402 | W | **W** | IMPLEMENTATION done: the reached surface can optimise neither minutes, scroll depth nor autoplay (F1), and Watch itself can drop all three (F2 ranker and autoplay flags). **ACTIVATION: F1 flags as MD1, owner decision F1; for Watch, `MEDIA_WATCH_STAGE24_RANKING_ENABLED` = true and `MEDIA_WATCH_TAP_TO_PLAY_ENABLED` = true, owner decision F2.** |
-| MD408 | W | **W** | IMPLEMENTATION done: an overlay with no Stamp, comment, save or Stamp It count (`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:407#count={contextFirst ? undefined : stampVisualCount}`). **ACTIVATION: `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` = true (owner decision F2), or the F1 flags.** |
-| MD412 | W | **W** | IMPLEMENTATION done: Compass is the first and largest Watch control (`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:401#{contextFirst ? <ContextCompassButton item={item} /> : null}`). **ACTIVATION: `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` = true (owner decision F2), or the F1 flags.** |
+| MD408 | W | **W** | IMPLEMENTATION done: an overlay with no Stamp, comment, save or Stamp It count (`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:410#count={contextFirst ? undefined : stampVisualCount}`). **ACTIVATION: `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` = true (owner decision F2), or the F1 flags.** |
+| MD412 | W | **W** | IMPLEMENTATION done: Compass is the first and largest Watch control (`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:404#{contextFirst ? <ContextCompassButton item={item} /> : null}`). **ACTIVATION: `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` = true (owner decision F2), or the F1 flags.** |
 | MD419 | W | **W** | IMPLEMENTATION done: the paging feed need not be the default mode. **ACTIVATION: F1 flags as MD1 (owner decision F1). Strict reading (no such feed at all): `MEDIA_VIEW_MODE_FULLSCREEN_ENABLED` = false, existing flag, no code, owner decision F2.** |
 | MD424 | W | **W** | IMPLEMENTATION done: Stamp is neither first nor largest, and carries no count, on the context overlay. **ACTIVATION: `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` = true, owner decision F2.** |
 | MD425 | W | **W** | IMPLEMENTATION done: no cell plays without a tap (`travel-buddy-standalone/src/components/media/WatchFeedList.tsx:96#const [playbackState, setPlaybackState] = useState({`), and the default surface can be the shell, which has no autoplay. **ACTIVATION: `MEDIA_WATCH_TAP_TO_PLAY_ENABLED` = true (owner decision F2), or the F1 flags.** |
@@ -12039,9 +12039,9 @@ is a construction verdict, like every other in this census.
 
 | ID | Was | Now | Evidence |
 | --- | --- | --- | --- |
-| MD262 | **W** | **C** | §34 lists five choices, and "Show neighborhood only" is one of them (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:313#Show neighborhood only`). It is now a post location mode: migration 3350 adds the value (`artifacts/api-server/src/migrations/3350_media_neighborhood_only_location_mode.sql:54#ALTER TYPE public.post_location_privacy_mode ADD VALUE IF NOT EXISTS 'neighborhood_only';`). Its ceiling is §33 neighborhood (`artifacts/api-server/src/lib/mediaLocationVisibility.ts:416#if (mode === "neighborhood_only") return "neighborhood";`). **The RED WHEN's second half needed privacy fixes, and they are in.** The Watch feed, the grid and `GET /media/:id` never read the owner's mode. They now select it and resolve through the place-disclosure choke point (`artifacts/api-server/src/routes/mediaFeed.ts:154#location_verified, location_privacy_mode, published_at, " +`, `artifacts/api-server/src/routes/mediaFeed.ts:218#return resolveMediaPlaceDisclosure(`). A place page and a place-scoped timeline no longer list a post whose place the choke point withheld (`artifacts/api-server/src/services/media/MediaProjectionService.ts:939#const media = keepDisclosedAtPlace(await rankAndProject(sc, viewer, candidates, nowMs), placeId);`). mapPublicPost withholds the venue for this mode and for any mode it does not know (`artifacts/api-server/src/lib/postSchemas.ts:185#&& row.post_status === "published") return row;`). **The choice is gated:** both writes refuse it until `media_neighborhood_only_mode_enabled` (`artifacts/api-server/src/routes/posts.ts:590#neighborhoodOnlyModePermitted(flagSc, reqPrivacyMode)`, `artifacts/api-server/src/routes/posts.ts:2050#neighborhoodOnlyModePermitted(getServiceClient(), newMode)`). The composer offers it only then (`travel-buddy-standalone/src/components/PulseCreate.tsx:218#locationChoices({ neighborhoodOnly: isEnabled(NEIGHBORHOOD_ONLY_MODE_FLAG) })`), and so does the Media Contribution sheet (`travel-buddy-standalone/src/features/media/screens/MediaContributionScreen.tsx:155#neighborhoodOffered={isEnabled(NEIGHBORHOOD_ONLY_MODE_FLAG)}`). **TESTED:** `artifacts/api-server/src/test/mediaNeighborhoodOnlyMode.test.ts:233#describe("C. a non-owner sees no more than before` checks every mode × status × gem state. The other suites are D (the three Watch routes), E (place pages), F (the writes), plus the client composer and sheet suites. **RED WHEN** is met on the branch. Activation is §36.7. |
+| MD262 | **W** | **C** | §34 lists five choices, and "Show neighborhood only" is one of them (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:313#Show neighborhood only`). It is now a post location mode: migration 3350 adds the value (`artifacts/api-server/src/migrations/3350_media_neighborhood_only_location_mode.sql:54#ALTER TYPE public.post_location_privacy_mode ADD VALUE IF NOT EXISTS 'neighborhood_only';`). Its ceiling is §33 neighborhood (`artifacts/api-server/src/lib/mediaLocationVisibility.ts:416#if (mode === "neighborhood_only") return "neighborhood";`). **The RED WHEN's second half needed privacy fixes, and they are in.** The Watch feed, the grid and `GET /media/:id` never read the owner's mode. They now select it and resolve through the place-disclosure choke point (`artifacts/api-server/src/routes/mediaFeed.ts:154#location_verified, location_privacy_mode, published_at, " +`, `artifacts/api-server/src/routes/mediaFeed.ts:218#return resolveMediaPlaceDisclosure(`). A place page and a place-scoped timeline no longer list a post whose place the choke point withheld (`artifacts/api-server/src/services/media/MediaProjectionService.ts:939#const media = keepDisclosedAtPlace(await rankAndProject(sc, viewer, candidates, nowMs), placeId);`). mapPublicPost withholds the venue for this mode and for any mode it does not know (`artifacts/api-server/src/lib/postSchemas.ts:185#&& row.post_status === "published") return row;`). **The choice is gated:** both writes refuse it until `media_neighborhood_only_mode_enabled` (`artifacts/api-server/src/routes/posts.ts:602#neighborhoodOnlyModePermitted(flagSc, reqPrivacyMode)`, `artifacts/api-server/src/routes/posts.ts:2062#neighborhoodOnlyModePermitted(getServiceClient(), newMode)`). The composer offers it only then (`travel-buddy-standalone/src/components/PulseCreate.tsx:227#locationChoices({ neighborhoodOnly: isEnabled(NEIGHBORHOOD_ONLY_MODE_FLAG) })`), and so does the Media Contribution sheet (`travel-buddy-standalone/src/features/media/screens/MediaContributionScreen.tsx:155#neighborhoodOffered={isEnabled(NEIGHBORHOOD_ONLY_MODE_FLAG)}`). **TESTED:** `artifacts/api-server/src/test/mediaNeighborhoodOnlyMode.test.ts:233#describe("C. a non-owner sees no more than before` checks every mode × status × gem state. The other suites are D (the three Watch routes), E (place pages), F (the writes), plus the client composer and sheet suites. **RED WHEN** is met on the branch. Activation is §36.7. |
 | MD101 | **W** | **C** | §15 lists "Find Similar / Cheaper / Quieter / Busier" (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:170#Find Similar / Cheaper / Quieter / Busier`). §32's "Find a quieter or cheaper version." (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:303#Find a quieter or cheaper version.`) is one of nine example Compass questions, not a limit on §15's actions, so the two sections do not conflict. The busy-ness signal already existed: Quieter compares on `crowd.level`, and Busier is the other direction of that reading (`artifacts/api-server/src/compass/CompassMediaContext.ts:83#busier: "crowd.level",`). The Compass context reports the axis only while `media_find_busier_enabled` (`artifacts/api-server/src/compass/CompassMediaContext.ts:314#await comparatorAxesFor(sc)`). The rail offers Find Busier right after Find Cheaper, under Find Quieter's own conditions plus the flag (`artifacts/api-server/src/services/media/MediaActionResolver.ts:1246#if (!compassOn` — Compass on and a disclosable place). The client dispatches it to Compass (`travel-buddy-standalone/src/features/media/services/mediaActions.ts:367#case 'find_cheaper': case 'find_busier': {`). **TESTED:** `artifacts/api-server/src/test/mediaFindBusier.test.ts:145#describe("C. the rail offers Find Busier only with the flag, Compass, and a disclosable place"`. With the flag off, the context is exactly §32's two axes (`artifacts/api-server/src/test/mediaFindBusier.test.ts:132#describe("B. flag OFF: §32's two axes, exactly as before"`). **RED WHEN** ("a busier comparator axis in COMPARATOR_AXIS_CLAIM and a Find Busier rail action") is met on the branch. |
-| MD82–MD85 | **N** ×4 | **C** ×4 | §12 gives four vocabularies word for word (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:138#Entrance · Queue · Street · Main Room`, `docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:140#Main Gate · Stage A · Stage B`, `docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:142#Water · Crowd · Weather`, `docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:144#Exterior · Entrance · Seating`). A test reads them back out of the spec file (`artifacts/api-server/src/test/mediaPerspectiveVantage.test.ts:61#describe("A. the vocabularies are §12's own words"`). **Each part of the RED WHEN:** (1) a migration adds a column with a CHECK over their union (`artifacts/api-server/src/migrations/3352_media_perspective_vantage.sql:58#ALTER TABLE public.posts ADD CONSTRAINT posts_perspective_vantage_check CHECK (`); (2) the post write accepts it (`artifacts/api-server/src/routes/posts.ts:663#perspective_vantage: vantageDecision.write,`); (3) MediaPerspectiveService groups by it (`artifacts/api-server/src/services/media/MediaPerspectiveService.ts:156#const k = perspectiveGroupKey(m);`); (4) the sheet offers it (`travel-buddy-standalone/src/features/media/components/MediaContributionSheet.tsx:81#{contributionVantages(draft.category, { offered: vantageOffered }).length > 0 ? (`). All of it sits behind `media_perspective_vantage_enabled`, seeded OFF. A vantage rides the place: it is attached only when the choke point kept the place id (`artifacts/api-server/src/lib/media/perspectiveVantage.ts:188#if (!v`). **TESTED:** `artifacts/api-server/src/test/mediaPerspectiveVantage.test.ts:309#describe("D. a vantage rides the place"`. Three choices the spec does not make are in §36.3.3, for the owner to overrule. |
+| MD82–MD85 | **N** ×4 | **C** ×4 | §12 gives four vocabularies word for word (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:138#Entrance · Queue · Street · Main Room`, `docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:140#Main Gate · Stage A · Stage B`, `docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:142#Water · Crowd · Weather`, `docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:144#Exterior · Entrance · Seating`). A test reads them back out of the spec file (`artifacts/api-server/src/test/mediaPerspectiveVantage.test.ts:61#describe("A. the vocabularies are §12's own words"`). **Each part of the RED WHEN:** (1) a migration adds a column with a CHECK over their union (`artifacts/api-server/src/migrations/3352_media_perspective_vantage.sql:58#ALTER TABLE public.posts ADD CONSTRAINT posts_perspective_vantage_check CHECK (`); (2) the post write accepts it (`artifacts/api-server/src/routes/posts.ts:675#perspective_vantage: vantageDecision.write,`); (3) MediaPerspectiveService groups by it (`artifacts/api-server/src/services/media/MediaPerspectiveService.ts:156#const k = perspectiveGroupKey(m);`); (4) the sheet offers it (`travel-buddy-standalone/src/features/media/components/MediaContributionSheet.tsx:81#{contributionVantages(draft.category, { offered: vantageOffered }).length > 0 ? (`). All of it sits behind `media_perspective_vantage_enabled`, seeded OFF. A vantage rides the place: it is attached only when the choke point kept the place id (`artifacts/api-server/src/lib/media/perspectiveVantage.ts:188#if (!v`). **TESTED:** `artifacts/api-server/src/test/mediaPerspectiveVantage.test.ts:309#describe("D. a vantage rides the place"`. Three choices the spec does not make are in §36.3.3, for the owner to overrule. |
 | MD444 | **W** | **C** | Phase 4's fourth part, perspective GROUPS, is MD82–MD85 above. The other three were already delivered (mosaics, current picture, freshness). |
 
 **The headline is not restated here.** The integrator restates it once, from
@@ -12493,10 +12493,10 @@ base, `e9e0b0404`. Geometry is in CSS px at 390×844 (§40.4).
   post.
 - **Fix.** The dots get a slot of their own under the columns:
   - they sit on the columns' old baseline
-    (`travel-buddy-standalone/app/media-viewer/[id].tsx:823#bottom: overlayBaseline(insets.bottom)`);
+    (`travel-buddy-standalone/app/media-viewer/[id].tsx:825#bottom: overlayBaseline(insets.bottom)`);
   - when they show, the columns rise by the pill's height plus a gap
-    (`travel-buddy-standalone/app/media-viewer/[id].tsx:226#paddingBottom: overlayBaseline(insets.bottom) + (pageDots ? PAGE_DOTS_SLOT : 0)`,
-    `travel-buddy-standalone/app/media-viewer/[id].tsx:902#const PAGE_DOTS_SLOT = 2 * 6 + dot.s5 + space.sm;`).
+    (`travel-buddy-standalone/app/media-viewer/[id].tsx:227#paddingBottom: overlayBaseline(insets.bottom) + (pageDots ? PAGE_DOTS_SLOT : 0)`,
+    `travel-buddy-standalone/app/media-viewer/[id].tsx:904#const PAGE_DOTS_SLOT = 2 * 6 + dot.s5 + space.sm;`).
 - **Why a slot, and not a new fixed height.** Neither element depends on how
   tall the left column is, so no caption, place chip or loading row can reach
   the dots. With one item there are no dots and no slot.
@@ -12658,7 +12658,7 @@ BUILT ON BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED.
 | --- | --- |
 | `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:368#zIndex: 2` | The rail's layer and its FAB-relative bottom. Line-neutral, with one constant appended. |
 | `travel-buddy-standalone/src/components/media/GridTile.tsx:283#bottom: 28,` | The disc's slot. Line-neutral. |
-| `travel-buddy-standalone/app/media-viewer/[id].tsx:902#const PAGE_DOTS_SLOT` | The dots' slot. Line-neutral, with a constant and a helper appended. |
+| `travel-buddy-standalone/app/media-viewer/[id].tsx:904#const PAGE_DOTS_SLOT` | The dots' slot. Line-neutral, with a constant and a helper appended. |
 | the three test suites in §40.3 | new |
 | `artifacts/api-server/src/scripts/checkCensusFreshness.ts` | census-media's scope widened by one file: the viewer's new suite, which the §40.3 table cites |
 
@@ -12701,13 +12701,13 @@ for it, so the H8 frames are unchanged.
 | 375×667, on | y 50–547 | y 503–555 | The same. A tap on "Ask Compass" lands on the header bar ("Watch"). |
 
 **Fix.** It is one hook, called on an existing blank line:
-`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:244#const rail = useWatchRailFit(insets.top, bottomPad, contextFirst);`.
+`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:246#const rail = useWatchRailFit(insets.top, bottomPad, contextFirst);`.
 It is applied to the rail at
-`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:401#onLayout={rail.onLayout} testID="watch-action-rail"`.
+`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:404#onLayout={rail.onLayout} testID="watch-action-rail"`.
 1. **The lift.** The rail's bottom edge now starts `space.sm` above the FAB's
    top edge. It is a `marginBottom` on the rail over the row's `bottomPad`,
    so the left column does not move:
-   `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:786#return { style: { marginBottom: railBottom - bottomPad, gap }, onLayout };`.
+   `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:789#return { style: { marginBottom: railBottom - bottomPad, gap }, onLayout };`.
    It uses the FAB's own inset hook, so insets and a layover pill lift both.
 2. **The fit.** The rail's top edge should stay below the header
    (`getOverlayHeaderTotalHeight`) and the mode selector (4 below it, 46
@@ -12715,7 +12715,7 @@ It is applied to the rail at
    - The rail is measured once through `onLayout`, gaps excluded.
    - If that height would cross the line, the gaps shrink from `space.xl`
      (24) toward `space.xs` (4):
-     `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:790#export function watchRailGap(budget: number, content: number, gaps: number): number {`.
+     `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:793#export function watchRailGap(budget: number, content: number, gaps: number): number {`.
    - Where the rail fits, the gap stays 24, as today.
 
 **After.** Every control is tappable at its centre in every case.
@@ -12783,8 +12783,8 @@ Grid's 8 tiles plus 40 more) it was 500 px wide, wider than the left column
   draw 8 dots, 100 px wide.
 - **More than nine.** The pill draws a window of 9 dots around the current
   page:
-  `travel-buddy-standalone/app/media-viewer/[id].tsx:829#pageDotWindow(i, activeIndex, items.length)`,
-  `travel-buddy-standalone/app/media-viewer/[id].tsx:916#const PAGE_DOTS_MAX = 9;`.
+  `travel-buddy-standalone/app/media-viewer/[id].tsx:831#pageDotWindow(i, activeIndex, items.length)`,
+  `travel-buddy-standalone/app/media-viewer/[id].tsx:918#const PAGE_DOTS_MAX = 9;`.
   - Once it can, the current page sits in the middle of the window.
   - A window edge with more pages beyond it draws its dot at 3 px instead
     of 5.
@@ -12924,9 +12924,9 @@ The api-server checks are in the report that carries this section.
 
 | File | Change |
 | --- | --- |
-| `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:244#const rail = useWatchRailFit` | The rail's lift and fit. Line-neutral, with a hook and a helper appended. |
+| `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:246#const rail = useWatchRailFit` | The rail's lift and fit. Line-neutral, with a hook and a helper appended. |
 | `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:101#const tabBarClearance` | The bottom content's tab-bar clearance. Line-neutral. |
-| `travel-buddy-standalone/app/media-viewer/[id].tsx:919#function pageDotWindow` | The nine-dot window. Line-neutral, with constants and a helper appended. |
+| `travel-buddy-standalone/app/media-viewer/[id].tsx:921#function pageDotWindow` | The nine-dot window. Line-neutral, with constants and a helper appended. |
 | `travel-buddy-standalone/src/components/media/GridTile.tsx:299#function verifiedStampMaxWidth` | The verified stamp's width. Line-neutral, with a constant and a helper appended. |
 | `travel-buddy-standalone/src/components/media/VerifiedLocationStamp.tsx:51#alignSelf: 'stretch'` | The stamp's lines fill it. Line-neutral. |
 | the four new suites in §40.17, and six cases added to the viewer's suite | tests |
@@ -12998,17 +12998,17 @@ this lane.
 
 **The venue is stored whatever the owner chose, and withheld only at read time.**
 - POST /posts writes the tagged venue into `posts.location_name` unconditionally
-  (`artifacts/api-server/src/routes/posts.ts:644#location_name: locationName ?? null,`).
+  (`artifacts/api-server/src/routes/posts.ts:656#location_name: locationName ?? null,`).
 - It hands the same string to Pulse's geo tag
-  (`artifacts/api-server/src/routes/posts.ts:878#venueName:                 locationName ?? null,`),
+  (`artifacts/api-server/src/routes/posts.ts:890#venueName:                 locationName ?? null,`),
   which stores it as `pulse_geo_tags.venue_name`
   (`artifacts/api-server/src/services/location/PulseGeoTagService.ts:149#venue_name:          venueName        ?? null,`).
 - It resolves a canonical place from that venue, also whatever the mode
-  (`artifacts/api-server/src/routes/posts.ts:976#if (locationName && locationLat != null && locationLng != null) {`).
+  (`artifacts/api-server/src/routes/posts.ts:988#if (locationName && locationLat != null && locationLng != null) {`).
 - "Publish now without location" sets the mode to `hidden` and nulls
   `venue_name`, the label and the coordinates
-  (`artifacts/api-server/src/routes/posts.ts:2149#location_privacy_mode: "hidden",`,
-  `artifacts/api-server/src/routes/posts.ts:2154#venue_name: null,`). It keeps
+  (`artifacts/api-server/src/routes/posts.ts:2161#location_privacy_mode: "hidden",`,
+  `artifacts/api-server/src/routes/posts.ts:2166#venue_name: null,`). It keeps
   `location_name` and the geo tag's copy.
 
 So every reader decides. The Wall's decision is mapPublicPost: pass `none`, an
@@ -13027,7 +13027,7 @@ withhold the venue for everything else, an unknown mode included.
   - The client maps `locationName` to the card's `neighborhood`
     (`travel-buddy-standalone/src/services/pulse.ts:165#neighborhood: p.locationName ?? undefined,`),
     and the card renders it as the location chip
-    (`travel-buddy-standalone/src/components/PulseFeedCard.tsx:233#const chipLabel   = item.venueName ?? item.neighborhood ?? item.city;`).
+    (`travel-buddy-standalone/src/components/PulseFeedCard.tsx:234#const chipLabel   = item.venueName ?? item.neighborhood ?? item.city;`).
     The venue reached the screen.
 - **Discovery "Live from events"** (`lib/eventPostsDiscovery.ts`). Its one
   caller is GET /discovery/feed, for a signed-in viewer only
@@ -13076,7 +13076,7 @@ whether it is a POST read that reaches a non-owner.
 | GET /api/pulse | venue name, geo-tag venue and district, place id | no | **fixed** (§42.3) |
 | Discovery "Live from events" | Path A: venue fallback, coordinates. Path B: the place name, and the listing itself | no | **fixed** (§42.3) |
 | GET /api/trips/:tripId/posts | `location_name`, `public_location_label` | no | **fixed** (§42.3) |
-| Wall: GET /posts (following, global), GET /posts/:postId | through mapPublicPost, then the gem gate (`artifacts/api-server/src/routes/posts.ts:1355#gemProtectPost(mapPublicPost(p), followingGemCtx, user.id)`) | yes | unchanged |
+| Wall: GET /posts (following, global), GET /posts/:postId | through mapPublicPost, then the gem gate (`artifacts/api-server/src/routes/posts.ts:1367#gemProtectPost(mapPublicPost(p), followingGemCtx, user.id)`) | yes | unchanged |
 | Media (Watch feed, grid, World views, rail, Compass media context) | through resolveMediaPlaceDisclosure (§36) | yes | unchanged |
 | GET /airport/pulse | city and country only | not applicable | unchanged |
 | My World memories (`MyWorldMemoryService`) | the owner's own posts only | not applicable | unchanged |
@@ -13151,7 +13151,7 @@ too, and the suite checks it over every mode × status (D1).
 **GET /api/trips/:tripId/posts**
 - mapPublicPost, the Wall's own redactor, is applied to every row but the
   viewer's own
-  (`artifacts/api-server/src/routes/posts.ts:1733#...(p.author_id === user.id ? p : withholdReleaseTiming(mapPublicPost(p), user.id)),`).
+  (`artifacts/api-server/src/routes/posts.ts:1745#...(p.author_id === user.id ? p : withholdReleaseTiming(mapPublicPost(p), user.id)),`).
 - `location_name` is nulled, and the label is rebuilt from city and country
   (`hidden`: no label).
 
@@ -13304,7 +13304,7 @@ was not fixed here.
      Wall thread was not traced to a flag.
 4. **Passport postcards copy the venue.**
    - The auto-created postcard copies `location_name` whatever the post's mode
-     (`artifacts/api-server/src/routes/posts.ts:722#location_name: locationName ?? null,`,
+     (`artifacts/api-server/src/routes/posts.ts:734#location_name: locationName ?? null,`,
      `artifacts/api-server/src/routes/postcards.ts:1101#location_name:      postData.location_name ?? null,`).
    - The passport serves the copy
      (`artifacts/api-server/src/routes/passport.ts:75#locationName: r.location_name ?? null,`).
@@ -13529,7 +13529,7 @@ A column grant cannot remove the third line. §44.7, item 1 covers it.
 | --- | --- | --- | --- | --- |
 | The app, `travel-buddy-standalone`, built on the public key (`travel-buddy-standalone/src/lib/supabase.ts:14#const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';`) | anon, or authenticated once signed in | **None.** No `.from('posts')`, no embedded posts resource, no RPC, and no realtime channel on posts; its one channel is on `generated_visuals`. None of these appears anywhere in its git history either. It reads posts only through the API. | no | unaffected |
 | The legacy root app (`app/`, `src/`) | anon or authenticated | None. It reads profiles, trips, trip_members, map_pins, user_locations and user_location_privacy. | no | unaffected |
-| The API server: 164 call sites in 60 runtime files | service_role. The one runtime client is the service client (`artifacts/api-server/src/lib/supabase.ts:20#auditedLayoverClient(createClient(supabaseUrl, serviceRoleKey,`), and requireUser hands every route that client (`artifacts/api-server/src/lib/http.ts:293#const client = (_testClient ?? getServiceClient()!) as SupabaseClient;`). | All 75, the private ones included, for example the owner's pending list (`artifacts/api-server/src/routes/posts.ts:405#const PENDING_POST_COLUMNS =`) | yes, and it keeps them | unaffected: 3362 touches no service_role privilege (G1-4) |
+| The API server: 164 call sites in 60 runtime files | service_role. The one runtime client is the service client (`artifacts/api-server/src/lib/supabase.ts:20#auditedLayoverClient(createClient(supabaseUrl, serviceRoleKey,`), and requireUser hands every route that client (`artifacts/api-server/src/lib/http.ts:293#const client = (_testClient ?? getServiceClient()!) as SupabaseClient;`). | All 75, the private ones included, for example the owner's pending list (`artifacts/api-server/src/routes/posts.ts:417#const PENDING_POST_COLUMNS =`) | yes, and it keeps them | unaffected: 3362 touches no service_role privilege (G1-4) |
 | API scripts that hold the anon key: verify-events-discovery, verify-demo-profile, verifyModerationFkE2E, auditPostMediaPublicRead, verify-buddy-live | anon | None. They sign in, or probe storage. | no | unaffected |
 | The live-DB suite's anon feed read (`artifacts/api-server/src/test/postLocationVerificationBoundary.test.ts:151#it("anon can read the public feed but cannot write"`) | anon | `id`, filtered on `status` and `visibility` | no | readable (G1-2). Its write probes still get 42501. |
 | Archived backend copies outside the pnpm workspace: posts-backend, passport-backend, portava-stamp-wave*-files, files | the service-role pattern | not deployed from this tree | no | unaffected |
@@ -13578,7 +13578,7 @@ SQL.** Not built. The reasons:
   - mapPublicPost (`artifacts/api-server/src/lib/postSchemas.ts:180#export function mapPublicPost(`)
     decides by mode and release. That part is portable to SQL.
   - For a non-owner, the API then applies the Hidden-Gem gate
-    (`artifacts/api-server/src/routes/posts.ts:457#function gemProtectPost(row: any, ctx: PostGemContext, viewerId: string): any {`).
+    (`artifacts/api-server/src/routes/posts.ts:469#function gemProtectPost(row: any, ctx: PostGemContext, viewerId: string): any {`).
     The gate reads a second table, measures proximity, and snaps coordinates to
     a seeded grid in TypeScript.
   - A SQL mask would therefore either reimplement the gate, or serve a venue the
@@ -13650,7 +13650,7 @@ service_role privilege.
 
 | Class | Columns | Why a client role may not read it |
 | --- | --- | --- |
-| Exact position and presence evidence: the §42.6 item 5 minimum | `user_gps_lat`, `user_gps_lng`, `original_lat`, `original_lng`, `geog`, `location_distance_meters`, `exited_geofence_at`, `delayed_location_reason` | No mode makes these public. Neither post column list the API serves (the public one, and the owner's pending list) includes any of the eight, and the first says why (`artifacts/api-server/src/routes/posts.ts:303#NEVER include original_lat/original_lng or`). |
+| Exact position and presence evidence: the §42.6 item 5 minimum | `user_gps_lat`, `user_gps_lng`, `original_lat`, `original_lng`, `geog`, `location_distance_meters`, `exited_geofence_at`, `delayed_location_reason` | No mode makes these public. Neither post column list the API serves (the public one, and the owner's pending list) includes any of the eight, and the first says why (`artifacts/api-server/src/routes/posts.ts:315#NEVER include original_lat/original_lng or`). |
 | The place, which the API decides row by row | `location_name`, `location_place_id`, `location_lat`, `location_lng`, `public_lat`, `public_lng`, `public_location_label`, `venue_id`, `venue_name`, `canonical_location_id`, `canonical_place_id`, `perspective_vantage` | For a non-owner, mapPublicPost withholds the venue by mode and release, and the gem gate coarsens it by a second table. A grant cannot see the row. `perspective_vantage` is served "ONLY where the viewer may be told the place" (`artifacts/api-server/src/migrations/3352_media_perspective_vantage.sql:26#a vantage is served ONLY where the viewer may be told the place.`). |
 | City and country | `location_city`, `location_country` | The API serves these only on rows it serves. RLS also admits a delayed post still pending, and there the city is where its author is now. |
 | Delayed-publication and privacy state | `location_privacy_mode`, `location_sensitivity_level`, `post_status`, `geofence_radius_meters`, `publish_after_exit`, `publish_after_time`, `publish_eligible_at`, `published_at` | They show that a place is being withheld, how, and until when. `post_status = 'pending_location_exit'` means the author has not left yet. `publish_eligible_at` is the exit time plus a fixed window (`artifacts/api-server/src/routes/location.ts:552#Sets exited_geofence_at on the post and computes publish_eligible_at =`), so it discloses the private `exited_geofence_at`. |
@@ -14618,7 +14618,7 @@ anything writes it as the caller.
 
 | Place looked | What writes pulse_geo_tags | Role |
 | --- | --- | --- |
-| API | `services/location/PulseGeoTagService`, two INSERTs (the no_location stub, and the tag at `artifacts/api-server/src/services/location/PulseGeoTagService.ts:141#const { error: tagError } = await db.from("pulse_geo_tags").insert({`). Its one caller is POST /posts, with the service client (`artifacts/api-server/src/routes/posts.ts:835#const sc = getServiceClient();`). | service_role |
+| API | `services/location/PulseGeoTagService`, two INSERTs (the no_location stub, and the tag at `artifacts/api-server/src/services/location/PulseGeoTagService.ts:141#const { error: tagError } = await db.from("pulse_geo_tags").insert({`). Its one caller is POST /posts, with the service client (`artifacts/api-server/src/routes/posts.ts:847#const sc = getServiceClient();`). | service_role |
 | App (`travel-buddy-standalone`), legacy root app, `lib/`, `packages/` | none. Two comment lines name the table; there is no `.from()`, embed, RPC or channel, and `git log -G` over their history finds none. | — |
 | Scripts, including those holding the anon key; archived copies (`files/`, `passport-backend/`); `reconciliation-staging` | none. The only history hits are documentation, and one staged, unapplied convergence file (reconciliation-staging, 2117) that itself proposed making the table server-write-only. | — |
 | Edge functions | none; the tree has no `supabase/functions`. | — |
@@ -15236,7 +15236,7 @@ kept everywhere, as mapPublicPost keeps them.
 
 **4. Passport postcards (§42.6, item 4).**
 - Served: the postcard's `location_name`, a copy of the post's venue made at
-  create (`artifacts/api-server/src/routes/posts.ts:722#location_name: locationName ?? null,`,
+  create (`artifacts/api-server/src/routes/posts.ts:734#location_name: locationName ?? null,`,
   `artifacts/api-server/src/routes/postcards.ts:1101#location_name:      postData.location_name ?? null,`),
   on the public postcard wall
   (`artifacts/api-server/src/routes/passport.ts:75#locationName: r.location_name ?? null,`).
@@ -15267,9 +15267,9 @@ kept everywhere, as mapPublicPost keeps them.
 **7. The Hidden-Gem gate on Pulse, Discovery event posts and the trip feed
 (§42.6, item 7): not added, because it is not a reusable function.**
 - The Wall's gate is `gemProtectPost`
-  (`artifacts/api-server/src/routes/posts.ts:457#function gemProtectPost(row: any, ctx: PostGemContext, viewerId: string): any {`)
+  (`artifacts/api-server/src/routes/posts.ts:469#function gemProtectPost(row: any, ctx: PostGemContext, viewerId: string): any {`)
   over `loadPostGemContext`
-  (`artifacts/api-server/src/routes/posts.ts:425#async function loadPostGemContext(`).
+  (`artifacts/api-server/src/routes/posts.ts:437#async function loadPostGemContext(`).
   Both are module-private to routes/posts.ts and take the raw snake_case row
   (`location_name`, `public_lat`, …).
 - What adding it needs, exactly:
@@ -15286,7 +15286,7 @@ kept everywhere, as mapPublicPost keeps them.
      internally;
   4. the trip feed shares the module and could call
      `gemProtectPost(mapPublicPost(p), ctx, user.id)` at
-     `artifacts/api-server/src/routes/posts.ts:1733#...(p.author_id === user.id ? p : withholdReleaseTiming(mapPublicPost(p), user.id)),`
+     `artifacts/api-server/src/routes/posts.ts:1745#...(p.author_id === user.id ? p : withholdReleaseTiming(mapPublicPost(p), user.id)),`
      after loading a context for the trip's rows.
 - Each of these coarsens `none`-mode rows near a restrictive gem, and EVERY
   non-owner row whenever the gem lookup fails (it fails closed). That is a
@@ -15682,8 +15682,8 @@ anti-pattern list. What the tree held:
 |---|---|---|---|
 | Like (heart) | `likeMedia` / `unlikeMedia`, no caller | `POST/DELETE /media/:id/like`, a compat wrapper over Stamp "until mobile clients are migrated" (`artifacts/api-server/src/routes/mediaFeed.ts:2223#// Compat wrapper`) | **Retired from the client.** This client already stamps through `/stamps`. The server wrapper stays for older clients; MD386's `C` rests on it. |
 | "Stamp It" | `reactToMediaStampIt`, no caller | `POST /media/:id/react` → `media_stamp_reactions` (`artifacts/api-server/src/routes/mediaFeed.ts:2271#router.post("/media/:id/react"`) | **Retired from the client.** A second, separately counted stamp gesture beside Stamp is two stamps and two counts for one act, against §14's single Stamp and MD408's minimal vanity metrics. The route stays for API callers. |
-| Stamp | `StampButton` in the viewer (`travel-buddy-standalone/app/media-viewer/[id].tsx:305#<StampButton`) and `useWatchStamp` in Watch | `/stamps` | **Wired** (already). |
-| Comments | `MediaCommentSheet` (`travel-buddy-standalone/app/media-viewer/[id].tsx:804#<MediaCommentSheet`) → the post comment endpoints (`travel-buddy-standalone/src/components/media/MediaCommentSheet.tsx:34#postId={mediaId}`) | `GET /media/:id/comments` (`artifacts/api-server/src/routes/mediaFeed.ts:2462#router.get("/media/:id/comments"`) is a thinner read of the same table | **Wired through the post sheet** (threading, edit, report, block handling); the media read is not wired. |
+| Stamp | `StampButton` in the viewer (`travel-buddy-standalone/app/media-viewer/[id].tsx:307#<StampButton`) and `useWatchStamp` in Watch | `/stamps` | **Wired** (already). |
+| Comments | `MediaCommentSheet` (`travel-buddy-standalone/app/media-viewer/[id].tsx:806#<MediaCommentSheet`) → the post comment endpoints (`travel-buddy-standalone/src/components/media/MediaCommentSheet.tsx:34#postId={mediaId}`) | `GET /media/:id/comments` (`artifacts/api-server/src/routes/mediaFeed.ts:2462#router.get("/media/:id/comments"`) is a thinner read of the same table | **Wired through the post sheet** (threading, edit, report, block handling); the media read is not wired. |
 
 The dead client functions are removed line-neutrally
 (`travel-buddy-standalone/src/services/mediaInteractions.ts:26#// ── Like — RETIRED`,
@@ -15874,7 +15874,7 @@ No row has code left that can be written on this branch without a decision.
   they are corrected here. Both said the Compass screen calls a client
   `buildCompassStarters`. e0d858f28 removed that builder, and the screen now
   renders the server's starters
-  (`travel-buddy-standalone/app/(tabs)/ai.tsx:413#starters={startersFromSuggestions(starterAssist.suggestions)}`).
+  (`travel-buddy-standalone/app/(tabs)/ai.tsx:404#starters={startersFromSuggestions(starterAssist.suggestions)}`).
   Neither line carries CG-01's last statement, which is §26.13, so no verdict
   moves. Each line now carries a dated note, and both edits are line-neutral.
 
@@ -16092,7 +16092,7 @@ construction of the social layer and the compat wrapper, which §47 does not cha
 - **Counters.** A save or comment write recounts with an exact HEAD count and stamps the cached
   column only when the count was read
   (`artifacts/api-server/src/lib/postCounters.ts:49#export async function recountPostCounter(`,
-  `artifacts/api-server/src/routes/posts.ts:2543#await recountPostCounter(sc, postId, "save", req.log)`);
+  `artifacts/api-server/src/routes/posts.ts:2555#await recountPostCounter(sc, postId, "save", req.log)`);
   an unread count is answered `null`, named in `failedSources`, and the cached column is left as it
   was. POST/DELETE /media/:id/save now keep `posts.save_count` and `hidden_gems.save_count` in step.
 - **Feeds.** The post feeds (global, following, trip, single post) read stamps, comments and saves
@@ -16484,7 +16484,7 @@ that goes red without it.
 
 - **F1 — the author was capped on their own feeds.** The global feed and the following feed applied the
   redactor to the caller's own posts, so a day after release the author lost their own venue. Both now
-  bypass the author (`artifacts/api-server/src/routes/posts.ts:1355#p.author_id === user.id ? p : gemProtectPost(mapPublicPost(p), followingGemCtx, user.id)`),
+  bypass the author (`artifacts/api-server/src/routes/posts.ts:1367#p.author_id === user.id ? p : gemProtectPost(mapPublicPost(p), followingGemCtx, user.id)`),
   as the trip feed and the single read already did.
   Test: `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:67#describe("F1. the author is never capped on their own feeds"`.
 - **F6 — the release instant was served to every viewer.** This was pre-existing. `routes/posts.ts`
@@ -16530,7 +16530,7 @@ that goes red without it.
 
 | ID | Was | Now | Evidence |
 | --- | --- | --- | --- |
-| MD79 | **C** | **C** | §50.1's evidence, plus F1's author bypass on the two feeds (`artifacts/api-server/src/routes/posts.ts:1536#p.author_id === user.id ? p : gemProtectPost(mapPublicPost(p), globalGemCtx, user.id)`) and the window on seven more readers (§50.7). Tests: `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:67#describe("F1.` and `artifacts/api-server/src/test/mediaLocationDisclosureLifetime.test.ts:167#describe("D. the two paths agree at every instant"`. The four closed readers show the city from release: less than the ruling allows, never more. |
+| MD79 | **C** | **C** | §50.1's evidence, plus F1's author bypass on the two feeds (`artifacts/api-server/src/routes/posts.ts:1548#p.author_id === user.id ? p : gemProtectPost(mapPublicPost(p), globalGemCtx, user.id)`) and the window on seven more readers (§50.7). Tests: `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:67#describe("F1.` and `artifacts/api-server/src/test/mediaLocationDisclosureLifetime.test.ts:167#describe("D. the two paths agree at every instant"`. The four closed readers show the city from release: less than the ruling allows, never more. |
 
 ### 50.10 One D-24c reader for Compass and Media (lead request, 2026-10-07)
 
@@ -16685,17 +16685,17 @@ The N1–N6 batch (§50.14, census-passport §34) was re-run by a fresh agent be
   Place stamp exists or the flag is on, and otherwise restores the exact original definition. An unknown
   definition, a missing index, or a missing `'place'` label is refused. 44 of 44 checks passed. This is
   not `certify:migrations`, which only CI can run.
-- **One more door, NOT fixed here: Telegraph's shared post card.** `loadPost` reads `posts.updated_at` and
-  hands it to every thread member as the card's `projectionVersion`
-  (`artifacts/api-server/src/services/telegraph/shareables.ts:331#.select("id, author_id, content, visibility, status, post_status, deleted_at, media_urls, location_privacy_mode, created_at, updated_at")`).
-  On a released "Publish after I leave" post, that is the release instant (N2). The file is Telegraph's,
-  so it belongs to lane C, and this lane has not edited it. The change needed:
-  - select `created_at` and `location_privacy_mode` as well;
-  - pass `mine ? r.updated_at : updatedAtForViewer(r, viewerId)` (from `lib/postLocationDisclosureLifetime`)
-    as the version.
+- **Telegraph shared-post version (historical finding, closed in the current source).** The reference loader evaluates the version for this viewer:
+  delayed-until-exit and unread location modes use creation time for non-authors.
+  (`artifacts/api-server/src/services/sharedPostSource.ts:16#location_privacy_mode,updated_at,created_at`).
+  The earlier implementation exposed the release instant on a delayed post. The current shared-source read
+  selects both creation time and location disclosure mode. The earlier follow-up in this section was implemented.
+  The owner sees their own update time.
+  The rule is exercised in the Telegraph share reader tests.
 
-  Until that lands, §50.6's red line is crossed on this one door. MD79 is not affected: the card carries
-  no place.
+
+  MD79 retains its historical grade; the card carries no place.
+
 
 
 ### 50.16 Corrections required by the delta verification of `509c19d80c` (N2b, D82-1, MD175-1, the Passport lows). No row moves
@@ -17170,10 +17170,10 @@ EXTERNAL column names before it can be C. **No row moves to C.**
     `artifacts/api-server/src/routes/index.ts:444#router.use(createMediaAdaptiveRouter(sc => createConfiguredAdaptiveRuntime(sc)));`.
   - Both shared players hand the master playlist to the native player
     (`travel-buddy-standalone/src/services/media/adaptive.ts:19#return { uri: result.manifestUrl, headers: { Authorization:`;
-    `travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:89#const playback = useAdaptivePlayback(captionSource ?? videoUrl, videoUrl, shouldPlay);`;
-    `travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx:132#const playback = useAdaptivePlayback(captionSource ?? uri, playbackUri);`).
+    `travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:97#const playback = useAdaptivePlayback(captionSource ?? videoUrl, videoUrl, shouldPlay);`;
+    `travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx:140#const playback = useAdaptivePlayback(captionSource ?? uri, playbackUri);`).
     AVPlayer and ExoPlayer choose the rung; a ladder failure falls back to the original
-    (`travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:127#if (playback.rejectAdaptive()) return;`).
+    (`travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:135#if (playback.rejectAdaptive()) return;`).
   - **Still wrong:**
     - `media_transcoder_enabled` (3357) is seeded OFF
       (`travel-buddy-standalone/src/hooks/useAdaptivePlayback.ts:10#const enabled = useFeatureFlags().isEnabled('media_transcoder_enabled')`);
@@ -17424,10 +17424,10 @@ re-declared. Every row not named here is unchanged.
 - **The entry.** The post detail overflow offers "Save to a Memory" only on the viewer's own post with media, and
   only while `memory_from_own_media_enabled` is on. The flag is read through `FeatureFlagsContext` like every
   other client flag, and it is seeded FALSE, so nothing shows
-  (`travel-buddy-standalone/app/post/[id].tsx:332#const { isEnabled } = useFeatureFlags();`). The server remains
+  (`travel-buddy-standalone/app/post/[id].tsx:336#const { isEnabled } = useFeatureFlags();`). The server remains
   the guard. The screen only decides what to offer.
 - **Tested:** 29 client cases in three suites
-  (`travel-buddy-standalone/app/post/__tests__/PostDetail.saveToMemory.component.test.tsx:98#flag OFF (the seeded default): nothing shows`,
+  (`travel-buddy-standalone/app/post/__tests__/PostDetail.saveToMemory.component.test.tsx:95#flag OFF (the seeded default): nothing shows`,
   `travel-buddy-standalone/src/features/memories/__tests__/SaveOwnPostToMemory.component.test.tsx:122#a copy that stopped part-way says how many made it`,
   `travel-buddy-standalone/src/services/__tests__/memoryFromPost.component.test.ts:34#names the post and the media index`).
   Red at HEAD's screen: the flag-on own-post case fails. 12 mutants, each restored and checked by sha256, all
@@ -17446,7 +17446,7 @@ re-declared. Every row not named here is unchanged.
 
 §54.3 said `enqueueConfiguredImageVariants` *"is called only by tests. No upload path enqueues an image."* That was
 false when it was written. `POST /api/media/upload` runs `runMediaVendorIngest` once the canonical row is recorded
-(`artifacts/api-server/src/routes/posts.ts:288#runMediaVendorIngest(sc,`). That stage calls
+(`artifacts/api-server/src/routes/posts.ts:300#runMediaVendorIngest(sc,`). That stage calls
 `enqueueConfiguredImageVariants` for an image whose source generation is approved
 (`artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:183#await enqueueConfiguredImageVariants(sc`). With
 the moderation stage off, that is the upload's own version. The call came in with `e1e097cfe`, an ancestor of the
@@ -17606,19 +17606,19 @@ under rows whose evidence is about other paths, and it is recorded here so that 
 **The fix, in four parts.**
 - **A — read side, one authority.** `artifacts/api-server/src/lib/media/storageBackedPostMedia.ts:204#export async function mediaUrlsFallback(`
   - It is used by the following, global and trip feeds, `withPostMedia` (pending and every mutation response) and the
-    detail endpoint (`artifacts/api-server/src/routes/posts.ts:1992#const detailFallback = await mediaUrlsFallback(`).
+    detail endpoint (`artifacts/api-server/src/routes/posts.ts:2004#const detailFallback = await mediaUrlsFallback(`).
   - When a post has NO `post_media` row at all, its storage-backed `media_urls` entries are served as items marked
     `id: null, source: "media_urls"`. The video type comes from the extension, then from the post's declared type.
   - A poster is named only when the object exists.
   - A post with any row, a rejected one included, is never synthesized for.
   - An unreadable read stays `media: null` (§47). `withPostMedia`'s old fail-open `[]` is now `null`.
-- **B — the create path.** `artifacts/api-server/src/routes/posts.ts:592#const uploadPlan = planPostMediaUploads(`
+- **B — the create path.** `artifacts/api-server/src/routes/posts.ts:604#const uploadPlan = planPostMediaUploads(`
   - An upload becomes a `post_media` row (ready, `pending` per 2098, the author's), and `media_urls` keeps external
     references only.
   - A key whose first segment is not the author's is refused 403. A key in `post_media_moderation_ledger` is refused 409.
     An unreadable ledger is refused 503. In each case nothing is written.
   - A failed row write deletes the post and answers an error
-    (`artifacts/api-server/src/routes/posts.ts:693#const rowsWrite = await insertUploadRows(`), never a 201 for a post
+    (`artifacts/api-server/src/routes/posts.ts:705#const rowsWrite = await insertUploadRows(`), never a 201 for a post
     with no media.
   - `PATCH /posts/:id` refuses an upload key after the D-82 hold (MD269's ordering is kept).
   - The photographer stamp counts `media_count > 0`, because uploads are no longer in `media_urls`.
@@ -18020,3 +18020,7 @@ MD293, MD385).
 Current canonical-place moderation is rechecked across map/media/Gem/presence consumers. Save/collection/action panels fence request lifetime and owners; Android upload lifetime and owner transport have controlled regression tests. The iOS-only compressor and mute-ground contrast claims were corrected to the new platform registration and unmeasured ink ground. These are real implementation changes, not proof of every platform codec, background OS lifetime, provider permission, moderation operation or hosted rollout.
 
 No row, total, scope-coverage floor or citation threshold is promoted by this reconciliation. The original head_commit remains the measured baseline. Source citations were relocated using unchanged source identity or exact anchors; changed claims are explicitly qualified where reconciled. The named-file acknowledgement ledger records this bounded review. Read the linked release evidence for current implementation and its remaining boundaries.
+
+### November 9 release evidence
+
+The selected original can open over the presenting screen. Eligible video playback observes viewability, app activity, user pause and mute. The normal picker preserves local video bytes through the upload transport, including a tested web/Android body path. Migration 4019 adds an opt-in, owner-bound recording receipt checked against verified stored video bytes and the current Story/post attachment. Its public ID is minted after publication. Four PostgreSQL scenarios passed with no skips. The receipt makes no claim about the depicted scene, location, identity, camera hardware or physical-device certification. See [recording stamps](../media/recording-stamps.md).

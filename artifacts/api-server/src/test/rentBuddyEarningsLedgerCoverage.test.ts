@@ -85,7 +85,7 @@ describe("every rent_buddy_bookings INSERT is accompanied by a ledger write", ()
 interface Rec { table: string; op: string; payload: any }
 
 function recordingClient(
-  opts: { buddy?: any; feeRule?: any; feeRuleError?: any; rentBuddyEnabled?: boolean } = {},
+  opts: { buddy?: any; feeRule?: any; feeRuleError?: any; rentBuddyEnabled?: boolean; ledgerReadError?: { code: string; message: string } } = {},
 ) {
   const writes: Rec[] = [];
   const table = (t: string) => ({
@@ -100,6 +100,9 @@ function recordingClient(
       if (this._t === "rent_buddy_profiles") return res({ data: opts.buddy ?? null, error: null });
       if (this._t === "rent_buddy_fee_rules") {
         return res({ data: chargeMatches(opts.feeRule ?? null), error: opts.feeRuleError ?? null });
+      }
+      if (this._t === "rent_buddy_earnings_ledger" && this._single) {
+        return res({ data: null, error: opts.ledgerReadError ?? null });
       }
       // The marketplace master switch. Absent row → isFlagEnabled() reads
       // false, which is production's actual state.
@@ -122,6 +125,20 @@ const BOOKING = {
 };
 
 describe("createEarningsLedgerEntry — the estimated breakdown", () => {
+  for (const [code, reason] of [["42703", "missing"], ["42501", "unknown"]] as const) {
+    it(`refuses both earnings writes when the marketplace is on and the ledger schema is ${reason}`, async () => {
+      const { client, writes } = recordingClient({
+        buddy: { user_id: "buddy-user-1", buddy_level: "trusted" },
+        feeRule: { platform_fee_basis_points: 1500, traveler_service_fee_usd: 3 },
+        rentBuddyEnabled: true,
+        ledgerReadError: { code, message: "rent_buddy_earnings_ledger.platform_fee_basis_points unavailable" },
+      });
+      const result = await createEarningsLedgerEntry(client, BOOKING, "buddy-prof-1");
+      assert.deepEqual(result, { status: "schema_unavailable", reason });
+      assert.deepEqual(writes, []);
+    });
+  }
+
   it("uses the buddy level's fee rule and derives gross/net from it", async () => {
     const { client, writes } = recordingClient({
       buddy: { user_id: "buddy-user-1", buddy_level: "trusted" },

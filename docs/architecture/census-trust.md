@@ -226,8 +226,8 @@ an ABSENT profile a non-buddy's Buddy row reads "Not yet rated" rather than "Not
 **Coverage — does it reach every consumer?** **Yes, by construction, for the defect it targets.**
 There is one `buildTrust`; every consumer variant is projected from the one `PassportProjection`
 (`PassportConsumerProjections.buildConsumerProjection`). So the seven call sites —
-`routes/trips.ts:468`, `routes/rentABuddy.ts:1262`, `services/passport/EventPassportService.ts:423`,
-`routes/discoverySearch.ts:600#buildConsumerProjection(sc,`, `routes/compass.ts:4978#buildConsumerProjection(sc,`, `routes/telegraph.ts:386#buildConsumerProjection(sc,`,
+`routes/trips.ts:469#} catch {}`, `routes/rentABuddy.ts:1262`, `services/passport/EventPassportService.ts:423`,
+`routes/discoverySearch.ts:600#buildConsumerProjection(sc,`, `routes/compass.ts:4979#buildConsumerProjection(sc,`, `routes/telegraph.ts:386#buildConsumerProjection(sc,`,
 `routes/safeReturn.ts:1215#buildConsumerProjection` — all inherit the fix. *(Cited as line 852 of that file until 2026-09-12; that line was never the call, which is at the `buildConsumerProjection(db, "safety", …)` site — a range-only citation that stayed green while wrong, the §37 class. Anchored now. The old number is spelled out rather than written as a citation because it went dead on 2026-09-22, when the suggest handler above it grew by 30 lines and line 852 became a closing brace.)* *(Three more repointed 2026-09-13 while acknowledging this census's staleness on `routes/discoverySearch.ts` and `routes/messaging.ts`, each re-derived by SEARCHING FOR THE CALL rather than by adding the diff's offset. Discovery search was cited at line 2087, then at line 2350 after a merge re-derived it by offset; the call is at line 2578 and has been the file's only `buildConsumerProjection(sc, "discovery_card", …)` throughout. Compass was cited at line 4225, then at line 4276 by the same offset re-derivation — and `routes/compass.ts` was BYTE-IDENTICAL between 3ca68cb06 and 75cc31d9e, the tree this sentence was measured in, so no offset was owed at all; line 4276 is a bare closing brace, a line that occurs 38 times in that file, which is not a citation. The call was at line 4393 there. **UPDATED 2026-09-13, because this sentence stopped being true four commits later and a census must not keep asserting it:** the Compass lane's `fa5d7c25d` added 184 lines to this file (census-compass §12's CP-01/CT-13 pass), so the byte-identical claim no longer reaches HEAD and is narrowed here to the window it was actually measured over. The call was re-resolved by SEARCHING FOR IT again rather than by adding that diff's offset, and is at line 4559 — still the file's only `buildConsumerProjection(sc, "discovery_card", …)`, which the anchored citation in the list above names and which resolves line-exact at HEAD. No verdict moves; the `fa5d7c25d` diff is argued hunk by hunk in this census's entry in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`. Both were already wrong at 3ca68cb06, so neither was broken by the diff being acknowledged; both, and Telegraph's, now carry a whitespace-free anchor that appears on exactly ONE line of the file it names. NOT repaired here, and still wrong, in files this census's scope shows UNCHANGED since 3ca68cb06 — so outside this acknowledgement's reach and owed a repointing pass of their own: Trips is cited at line 467, a route comment banner, for a call at line 590; Rent-a-Buddy at line 1248, a `.select()` chain, for a call at line 1386; and the variant ranges in the table below (PassportConsumerProjections 607-613, 666-672 and 770-773, plus computeTrustScore at rentABuddy line 1237) name unrelated code. No verdict rests on the numbers — every one of the seven is the same call it always was.)* But note what each actually ships:
 
 | Consumer | Variant | Carries `domains`? | Reached by the constant-50 "Established" defect? | Changed by #467? |
@@ -2968,7 +2968,7 @@ failure — a 503 as much as a 404 — into *"unavailable or has expired"*.
 
 - **The screen.** `travel-buddy-standalone/app/safe-return/[shareId].tsx:19#export default function SafeReturnLiveShareScreen() {`
   mounts the view at `travel-buddy-standalone/app/safe-return/[shareId].tsx:28#<LiveShareRecipientView shareId={id} />`,
-  registered at `travel-buddy-standalone/src/navigation/portavaRoutes.ts:2165#key: 'safe-return-live-share',`
+  registered at `travel-buddy-standalone/src/navigation/portavaRoutes.ts:2166#key: 'safe-return-live-share',`
   (on the array's closing line, so the file stays line-neutral and the entries censuses cite by line do not move).
 - **The notice (server).** Starting a share now calls
   `artifacts/api-server/src/routes/safeReturn.ts:894#const recipientNotice = await noticeLiveShareRecipient(`,
@@ -4406,7 +4406,7 @@ Buddy and group-proposal clauses (§37.2, §38.1 item 5). On `9e60178be`:
 - **Compass.** The tools' create_proposal and add_to_trip, and both confirms (plan proposal and Autopilot), go through
   one gate, and that gate is the Trips decision
   (`artifacts/api-server/src/compass/CompassTools.ts:1542#const restriction = await checkCompassActionRestriction(sc, userId, t.id, "create_proposal");`,
-  `artifacts/api-server/src/routes/compass.ts:2258#const restriction = await checkCompassActionRestriction(sc, user.id, proposal.tripId, "confirm_plan_proposal");`).
+  `artifacts/api-server/src/routes/compass.ts:2259#const restriction = await checkCompassActionRestriction(sc, user.id, proposal.tripId, "confirm_plan_proposal");`).
 - **Discovery.** Each door refuses in the restriction's own words. Under `hosting`: starting or linking a Trail.
   Under `messaging`: attaching or suggesting Trail content, submitting or contributing to a gem, and submitting a
   community place
@@ -5939,3 +5939,7 @@ Rows: none move. Headline unchanged: 90 / 15 / 1 / 2 of 108.
 HiddenGemService now respects current canonical-place moderation; ThreadSafetySheet exposes existing safety actions through the updated conversation surface. These changes do not ratify Trust scoring, grant identity-provider status, alter sanction policy, supply legal policy/contact details or establish an actual verification/stamp award. The Trust report explicitly preserves 90 C / 15 W / 1 N / 2 X as its historical measurement, not a new production certification.
 
 No row, total, scope-coverage floor or citation threshold is promoted by this reconciliation. The original head_commit remains the measured baseline. Source citations were relocated using unchanged source identity or exact anchors; changed claims are explicitly qualified where reconciled. The named-file acknowledgement ledger records this bounded review. Read the linked release evidence for current implementation and its remaining boundaries.
+
+### November 9 release evidence
+
+Request decisions respect current trip expiry and authorization. Shared media checks the author’s restrictions and original permissions. A recording receipt binds the exact stored upload to one publication and is separate from identity verification, proof of presence, or reputation scoring. Native replay/role checks provide engineering evidence for that limited boundary.

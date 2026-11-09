@@ -1,3 +1,4 @@
+import { enterPostPlaybackLayer, PostPlaybackLayer } from '../../../hooks/usePostPlaybackLayer.ts';
 /**
  * SharedVideoPlayer — unit tests (mocked expo-av).
  *
@@ -80,6 +81,34 @@ describe('SharedVideoPlayer', () => {
     expect(onPositionChange).toHaveBeenCalledWith(15000);
     await fireEvent.press(screen.getByLabelText('Close full-screen video'));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('retires every covered decoder and restores only the prior layer, position and manual pause on close', async () => {
+    const first = Symbol('post A'), second = Symbol('post B');
+    const tree = (a: boolean, b: boolean) => <>
+      <SharedVideoPlayer uri="https://example.com/feed.mp4" autoplay />
+      {a && <PostPlaybackLayer.Provider value={first}><SharedVideoPlayer uri="https://example.com/post-a.mp4" autoplay /></PostPlaybackLayer.Provider>}
+      {b && <PostPlaybackLayer.Provider value={second}><SharedVideoPlayer uri="https://example.com/post-b.mp4" autoplay /></PostPlaybackLayer.Provider>}
+    </>;
+    const view = await render(tree(false, false));
+    await act(async () => { capturedStatusCallback?.({ isLoaded: true, isPlaying: true, positionMillis: 9000, durationMillis: 30000 }); });
+    await fireEvent.press(screen.getByLabelText('Pause video'));
+    let closeA!: () => void, closeB!: () => void;
+    await act(async () => { closeA = enterPostPlaybackLayer(first); });
+    await view.rerender(tree(true, false));
+    expect(screen.getAllByTestId('mock-video')).toHaveLength(1);
+    expect(screen.getByTestId('mock-video').props.source.uri).toBe('https://example.com/post-a.mp4');
+    await act(async () => { closeB = enterPostPlaybackLayer(second); });
+    await view.rerender(tree(true, true));
+    expect(screen.getAllByTestId('mock-video')).toHaveLength(1);
+    expect(screen.getByTestId('mock-video').props.source.uri).toBe('https://example.com/post-b.mp4');
+    await act(async () => closeB());
+    await view.rerender(tree(true, false));
+    expect(screen.getByTestId('mock-video').props.source.uri).toBe('https://example.com/post-a.mp4');
+    await act(async () => closeA());
+    await view.rerender(tree(false, false));
+    expect(screen.getByTestId('mock-video').props.status.positionMillis).toBe(9000);
+    expect(screen.getByTestId('mock-video').props.shouldPlay).toBe(false);
   });
 
   it('renders the play overlay when not playing (autoplay=false)', async () => {

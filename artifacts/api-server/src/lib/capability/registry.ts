@@ -190,7 +190,21 @@ export const INTEL_REWARD_REVERSAL: CapabilityDefinition = {
     "refusing with the migration named is the difference between an operator who can act and one who cannot.",
 };
 
+export const RENT_BUDDY_LEDGER_ESTIMATE: CapabilityDefinition = {
+  flag: "rent_buddy_enabled",
+  providedBy: ["3601_rent_buddy_commission_basis_points.sql"],
+  requires: {
+    tables: {
+      rent_buddy_fee_rules: { columns: ["platform_fee_basis_points"] },
+      rent_buddy_earnings_ledger: { columns: ["platform_fee_basis_points"] },
+    },
+  },
+  consumers: ["lib/rentBuddyEarningsLedger.ts"],
+  note: "A booking can succeed without estimated earnings. The writer refuses before appending entries if the database cannot store the same rate on its summary row.",
+};
+
 export const CAPABILITIES: Readonly<Record<string, CapabilityDefinition>> = Object.freeze({
+  [RENT_BUDDY_LEDGER_ESTIMATE.flag]: RENT_BUDDY_LEDGER_ESTIMATE,
   // Registered because services/ledger/RewardReversal.ts names the flag at its
   // own read site, so scanFlagReads resolves it. The consumer is that same
   // module: it is the only path that reads or writes the reversal column.

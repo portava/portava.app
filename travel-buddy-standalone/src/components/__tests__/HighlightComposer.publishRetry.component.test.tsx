@@ -13,8 +13,10 @@ jest.mock('../../hooks/usePrivateSurfaceKey.ts', () => ({ usePrivateSurfaceKey: 
 jest.mock('../../services/messagingOwnerRequest.ts', () => ({ ...jest.requireActual('../../services/messagingOwnerRequest.ts'), captureMessagingOwnerRequest: () => mockOwner }));
 jest.mock('../../services/media.ts', () => ({ ...jest.requireActual('../../services/media.ts'), uploadMedia: jest.fn() }));
 jest.mock('../../services/highlights.ts', () => ({ ...jest.requireActual('../../services/highlights.ts'), createHighlight: jest.fn() }));
+// NOTE: replace the native source sheet so tests can return a particular camera clip without launching the camera.
 jest.mock('../ui/MediaPickerButton.tsx', () => ({ MediaPickerButton: ({ composer }: any) => { mockPick = composer.onPickResult; return null; } }));
 jest.mock('react-native-safe-area-context', () => ({ ...jest.requireActual('react-native-safe-area-context'), useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
+// NOTE: lifetime catalog reads are outside the upload/publish retry fixture.
 jest.mock('../../features/highlights/HighlightLifetimePicker.tsx', () => ({ HighlightLifetimePicker: () => null }));
 const receipt = { ok: true, url: 'post-media/me/video.mov', mediaType: 'video/quicktime', thumbnailUrl: 'post-media/me/video.poster.jpg', durationSeconds: 7 };
 const asset = { uri: 'file:///video.mov', type: 'video', mimeType: 'video/quicktime', duration: null, fileSize: 100 };

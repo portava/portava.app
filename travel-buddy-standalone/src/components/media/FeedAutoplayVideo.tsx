@@ -16,7 +16,8 @@
  * The caller mounts it only for the one card that should play and unmounts it
  * when that changes, which also stops the video and frees the decoder.
  */
-import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { usePostPlaybackLayer } from '../../hooks/usePostPlaybackLayer.ts';
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Platform, View, StyleSheet } from 'react-native';
 import { Video, ResizeMode } from 'expo-av';
 import { VolumeX } from 'lucide-react-native';
@@ -25,7 +26,19 @@ import { playbackUriState } from '../../services/playbackUri.ts';
 import { avatar } from '../../theme/tokens.ts';
 
 export interface FeedAutoplayVideoHandle { pause: () => Promise<void> }
-export const FeedAutoplayVideo = forwardRef<FeedAutoplayVideoHandle, { uri: string; muted?: boolean; initialPositionMillis?: number; onPositionChange?: (position: number) => void }>(function FeedAutoplayVideo({ uri, muted = true, initialPositionMillis = 0, onPositionChange }, ref) {
+type FeedVideoProps = { uri: string; muted?: boolean; initialPositionMillis?: number; onPositionChange?: (position: number) => void };
+export const FeedAutoplayVideo = forwardRef<FeedAutoplayVideoHandle, FeedVideoProps>(function FeedAutoplayVideo(props, ref) {
+  const layer = usePostPlaybackLayer();
+  const position = useRef({ uri: props.uri, millis: props.initialPositionMillis ?? 0 });
+  if (position.current.uri !== props.uri) position.current = { uri: props.uri, millis: props.initialPositionMillis ?? 0 };
+  const notePosition = useCallback((millis: number) => {
+    if (!layer.isCurrent() || props.uri !== position.current.uri) return;
+    position.current.millis = millis;
+    props.onPositionChange?.(millis);
+  }, [layer.isCurrent, props.uri, props.onPositionChange]);
+  return layer.allowed ? <FeedVideoDecoder key={props.uri} {...props} ref={ref} initialPositionMillis={position.current.millis} onPositionChange={notePosition} /> : null;
+});
+const FeedVideoDecoder = forwardRef<FeedAutoplayVideoHandle, FeedVideoProps>(function FeedVideoDecoder({ uri, muted = true, initialPositionMillis = 0, onPositionChange }, ref) {
   const player = useRef<Video>(null);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);

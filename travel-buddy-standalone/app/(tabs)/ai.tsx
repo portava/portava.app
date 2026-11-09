@@ -37,7 +37,7 @@ type ChatEntry =
   // Failed request (timeout, network, server error) — always offers a retry
   // of the exact prompt that failed, so a slow or stalled reply never leaves
   // the user stuck with no next step.
-  | { kind: 'ai_error'; id: string; text: string; prompt: string }
+  | { kind: 'ai_error'; id: string; text: string; prompt: string; mediaId?: string }
   // Live-streaming assistant reply — replaced by a 'rec' entry on finalize.
   | { kind: 'stream';  id: string; text: string };
 
@@ -86,6 +86,7 @@ export default function AiChat() {
   // scrolls up mid-stream; resumes once they return near the bottom.
   const followBottom = useRef(true);
   const streamingRef = useRef(false);
+  const conversationId = useRef<string | undefined>(undefined);
 
   // Pull-to-refresh — always available. On the empty chat it refreshes the
   // Compass Home surface; mid-conversation it re-syncs the live-session
@@ -141,57 +142,47 @@ export default function AiChat() {
     }
   }, []);
 
-  async function send(promptOverride?: string, mediaIdOverride?: string) {
+  async function send(promptOverride?: string, mediaIdOverride?: string, retryId?: string) {
     const text = (promptOverride ?? input).trim();
-    if (!text || loading) return;
+    if (!text || streamingRef.current) return;
+    streamingRef.current = true;
     if (!promptOverride) setInput('');
 
-    const userId = 'u_' + Date.now();
-    const typingId = 'typing_' + Date.now();
-
+    const pendingId = 'reply_' + Date.now();
     setEntries((prev) => [
-      ...prev,
-      { kind: 'user',   id: userId,   text },
-      { kind: 'typing', id: typingId },
+      ...(retryId ? prev.filter(e => e.id !== retryId) : [...prev, { kind: 'user' as const, id: 'u_' + Date.now(), text }]),
+      { kind: 'typing', id: pendingId },
     ]);
     setLoading(true);
-    followBottom.current = true;   // a fresh send always re-pins to the bottom
-    streamingRef.current = true;
+    followBottom.current = true;
     scrollToEnd();
 
-    // Stream the reply so it types out live; postCompassAskStream falls back
-    // to the plain non-streaming request on any SSE failure.
-    const streamId = 'stream_' + Date.now();
-    const result = await postCompassAskStream(text, { city: currentCity, mediaId: mediaIdOverride }, {
-      onDelta: (messageSoFar) => {
-        setEntries((prev) => {
-          const without = prev.filter((e) => e.id !== typingId && e.id !== streamId);
-          return [...without, { kind: 'stream', id: streamId, text: messageSoFar }];
-        });
-      },
-    });
-
-    setEntries((prev) => {
-      const without = prev.filter((e) => e.id !== typingId && e.id !== streamId);
-      if (!result.ok || !result.data) {
-        const isTimeout = result.error === 'timeout';
-        return [
-          ...without,
-          {
-            kind: 'ai_error',
-            id: 'err_' + Date.now(),
-            text: isTimeout
-              ? "Compass is unavailable right now — that's taking longer than it should."
-              : "Compass is unavailable right now — couldn't reach it.",
-            prompt: text,
-          },
-        ];
+    function finish(entry: ChatEntry) {
+      setEntries(prev => prev.map(e => e.id === pendingId ? entry : e));
+    }
+    try {
+      const result = await postCompassAskStream(text, { city: currentCity, mediaId: mediaIdOverride, conversationId: conversationId.current }, {
+        onDelta: (messageSoFar) => finish({ kind: 'stream', id: pendingId, text: messageSoFar }),
+      });
+      if (result.data?.conversationId) conversationId.current = result.data.conversationId;
+      if (result.ok && result.data?.message?.trim() && !result.data.fallback) {
+        finish({ kind: 'rec', id: pendingId, rec: result.data });
+      } else {
+        const message = result.data?.message || (
+          result.error === 'timeout' ? "Compass took too long to reply. Try again." :
+          result.error === 'http_401' ? "Sign in to ask Compass a question." :
+          result.error === 'http_429' ? "Compass has reached its request limit. Try again shortly." :
+          "Compass couldn't finish this reply. Try again."
+        );
+        finish({ kind: 'ai_error', id: pendingId, text: message, prompt: text, mediaId: mediaIdOverride });
       }
-      return [...without, { kind: 'rec', id: 'rec_' + Date.now(), rec: result.data }];
-    });
-    streamingRef.current = false;
-    setLoading(false);
-    if (followBottom.current) scrollToEnd();
+    } catch {
+      finish({ kind: 'ai_error', id: pendingId, text: "Compass couldn't finish this reply. Try again.", prompt: text, mediaId: mediaIdOverride });
+    } finally {
+      streamingRef.current = false;
+      setLoading(false);
+      if (followBottom.current) scrollToEnd();
+    }
   }
 
   // Phase 4: confirm/decline an add_to_trip proposal. Nothing is written to a
@@ -377,7 +368,7 @@ export default function AiChat() {
                 </View>
                 <Text style={styles.aiText}>{e.text}</Text>
                 <Pressable
-                  onPress={() => send(e.prompt)}
+                  onPress={() => send(e.prompt, e.mediaId, e.id)}
                   disabled={loading}
                   style={({ pressed }) => [styles.retryButton, pressed && { opacity: 0.7 }]}
                 >

@@ -33,7 +33,7 @@ test('anonymous clients cannot start, claim, or verify a stamp',async()=>{
  assert.equal((await fetch(`${base}/story/${target}`)).status,401);assert.equal(calls.length,0);
 });
 test('issuer hashes the credential and stored bytes itself and never accepts identity or fingerprint from the client',async()=>{
- const res=await post('/sessions',{},owner);assert.equal(res.status,201);token=(await res.json()).captureToken;
+ const res=await post('/sessions',{},owner);assert.equal(res.status,201);const opened = await res.json() as {captureToken: string}; token=opened.captureToken;
  const [id,secret]=token.split('.');assert.equal(calls[0].args.p_owner,owner);assert.equal(calls[0].args.p_hash,createHash('sha256').update(secret).digest('hex'));
  assert.equal(JSON.stringify(calls).includes(secret),false);
  const bytes=Buffer.from('verified scrubbed fixture video bytes');

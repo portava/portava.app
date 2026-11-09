@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSession } from '../../../context/SessionContext.tsx';
 import { captureMessagingOwnerRequest, type MessagingOwnerRequest } from '../../../services/messagingOwnerRequest.ts';
 import type { TravelerSearchResult } from '../../../services/follows.ts';
+import { recordSuggestionSelection } from '../../../platform/input-assistance/services/selectionRecorder.ts';
 import { useInputAssistance } from '../../../platform/input-assistance/hooks/useInputAssistance.ts';
 import { formConversationGroup, forwardThreadMessage, getMyThreads, getThreadControls, moderateThreadMember, updateMessageContentCapability, updateThreadControls, type CarryForwardSelection, type MessageContentCapability, type MsgResult, type ThreadControlState, type ThreadSummary } from '../../../services/messaging.ts';
 import { useTelegraphPalette } from '../theme/telegraphTheme.ts';
@@ -53,7 +54,7 @@ export function ConversationTools({ threadId, messageId, mode }: ConversationToo
   const searching = recipientSearch.loading;
   const searchError = recipientSearch.unavailable ? 'People could not be loaded. Try your search again.' : null;
   const people = recipientSearch.suggestions.filter((person) => person.entityType === 'user' && !!person.entityId && person.entityId !== userId && !currentThread?.otherMembers.some((member) => member.id === person.entityId))
-    .map((person) => ({ id: person.entityId!, displayName: person.label, username: null }));
+    .map((suggestion) => ({ id: suggestion.entityId!, displayName: suggestion.label, username: null, suggestion }));
   const load = useCallback(async () => {
     const owner = ownerRef.current;
     if (!owner?.isCurrent()) { setError('Sign in again to manage this conversation.'); setLoading(false); return; }
@@ -118,7 +119,10 @@ export function ConversationTools({ threadId, messageId, mode }: ConversationToo
         {searching && <ActivityIndicator accessibilityLabel="Searching people" color={p.operational} />}
         {searchError && <Text accessibilityRole="alert" style={text}>{searchError}</Text>}
         {!searching && query.trim().length >= 2 && !people.length && !searchError && <Text style={secondary}>No matching people.</Text>}
-        {people.filter((person) => !selected.some((item) => item.id === person.id)).map((person) => button(`Add ${person.displayName ?? person.username ?? 'traveler'}`, () => setSelected((items) => [...items, person]), selected.length >= 10, person.id))}
+        {people.filter((person) => !selected.some((item) => item.id === person.id)).map((person) => button(`Add ${person.displayName ?? person.username ?? 'traveler'}`, () => {
+          recordSuggestionSelection(person.suggestion, { policy: recipientSearch.policy, query });
+          setSelected(items => [...items, { id: person.id, displayName: person.displayName, username: person.username }]);
+        }, selected.length >= 10, person.id))}
         <Text style={[s.body, secondary]}>{selected.length}/10 people selected</Text>
         <CarryForwardPicker key={`${userId}:${threadId}`} threadId={threadId} owner={ownerRef.current} selected={carried} onChange={setCarried} disabled={busy} />
         {button('Create group', () => void run((owner) => formConversationGroup(threadId, { userIds: selected.map((person) => person.id), title: title.trim() || undefined, ...(carried.length ? { carryForward: carried } : {}) }, owner), (data) => router.replace({ pathname: '/messages/[id]', params: { id: data.threadId, threadType: 'group', title: title.trim() || 'Group chat' } } as never)), selected.length === 0 || !currentThread)}

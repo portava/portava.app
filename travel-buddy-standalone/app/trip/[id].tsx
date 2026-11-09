@@ -530,7 +530,7 @@ function TripDetailScreen() {
           )}
           </ScrollView>
         </View>
-        <TripHero trip={trip} />
+        <TripHero trip={trip} timezone={realTrip.timezone} />
 
         {/* Destination city overview card — shows city/country heading + any
             trip notes as a city description; tappable to open in maps */}

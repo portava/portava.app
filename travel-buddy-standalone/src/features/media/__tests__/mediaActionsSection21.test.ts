@@ -387,7 +387,10 @@ test('rail: Telegraph share sends an object reference; Save Route / plan / invit
   assert.match(panels, /<GemContributeSection gemId=\{gemId\} isAuthed originMediaId=\{mediaId\} \/>/);
   assert.match(panels, /applyCompiledPlan\(plan, tripId, \(id, item\) => createPlanItem\(id, item, request.context\), request.current\)/);
   const share = read('components/ShareSheet.tsx');
-  assert.equal((share.match(/telegraphObject\s*\n?\s*\? await shareObjectIntoThread\(/g) ?? []).length, 2, 'both in-app send paths honour the reference');
+  assert.match(share, /const reference = telegraphObject \?\?/);
+  assert.match(share, /if \(reference\) return shareObjectIntoThread\(threadId, reference\.objectType, reference\.objectId,/);
+  assert.match(share, /const msgRes = await sendToChat\(threadId,/, 'a newly opened direct message uses the reference dispatcher');
+  assert.match(share, /const res = await sendToChat\(selectedId, thread\.isE2ee\)/, 'an existing thread uses the same dispatcher');
 });
 
 test('services forward originMediaId to the endpoints that attribute it', () => {

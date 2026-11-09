@@ -128,7 +128,7 @@ shape, and each one is a reason section 5 chooses double-entry instead:
    dashboard built from `rent_buddy_bookings` still said a deposit had been taken. All five now
    answer through one producer,
    `artifacts/api-server/src/lib/rentBuddyCollectedMoney.ts:71#export function collectedInAppUsd(`:
-   - the writer — `artifacts/api-server/src/lib/rentBuddyEarningsLedger.ts:233#    in_app_amount_collected: fromMinor(0),`,
+   - the writer — `artifacts/api-server/src/lib/rentBuddyEarningsLedger.ts:247#    in_app_amount_collected: fromMinor(0),`,
      derived from entries `2901` CHECK-constrains to record no settlement;
    - `GET /rent-a-buddy/me/earnings/summary` — `completed.depositCollected` and
      `completed.inAppAmountCollected`, which answered **900** over two full-in-app bookings;

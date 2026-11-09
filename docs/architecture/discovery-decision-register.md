@@ -2016,7 +2016,7 @@ No APPROVAL REQUIRED entry is added. Arming the stop (D-W10-O-3) and gate 2 (D-W
 
 ### D-TMP-5 — `app/search.tsx` is not edited by this lane
 
-- **The question.** The brief names the global search's people section. On `main` its Travelers tab already routes a failed or refused read to the error state with "Tap to retry" (`travel-buddy-standalone/app/search.tsx:232#if (!res.ok) {`), and `GET /discovery/search` refuses an unreadable block or age set (`artifacts/api-server/src/routes/discoverySearch.ts:243#if (!blockedSet || !ageRestrictedSet) {`). What remains on `main` is the stale-answer race (same query and tab re-run; a superseded page 1 ending the newer one's loading).
+- **The question.** The brief names the global search's people section. On `main` its Travelers tab already routes a failed or refused read to the error state with "Tap to retry" (`travel-buddy-standalone/app/search.tsx:235#if (!res.ok) {`), and `GET /discovery/search` refuses an unreadable block or age set (`artifacts/api-server/src/routes/discoverySearch.ts:243#if (!blockedSet || !ageRestrictedSet) {`). What remains on `main` is the stale-answer race (same query and tab re-run; a superseded page 1 ending the newer one's loading).
 - **Decision.** Leave the file to the open branch `origin/claude/sensing-completion-20260925`, whose commit `c2221c48f` adds exactly that generation guard (D-W11X2-44) on lines this lane would have to rewrite. Editing them here would conflict with that branch and duplicate its fix.
 - **Consequence.** Until that branch lands, the race remains on `main`'s global search. Recorded in §106 as open.
 
@@ -2218,7 +2218,7 @@ No APPROVAL REQUIRED entry is added. Arming the stop (D-W10-O-3) and gate 2 (D-W
 
 ### D-OWNER1004-13 — `RENT_BUDDY_FEE_RULE_VERSION` becomes `/v2`, with `/v1` preserved — ANSWERED-AND-BEING-IMPLEMENTED
 
-- **The question.** The constant is stamped onto every earnings entry as the rule version its figure was computed under (`artifacts/api-server/src/lib/rentBuddyEarningsLedger.ts:159#ruleVersion:`). `D-OWNER1004-5`'s rate change and `-12`'s new seed change what that stamp *means*. How are entries computed before and after told apart?
+- **The question.** The constant is stamped onto every earnings entry as the rule version its figure was computed under (`artifacts/api-server/src/lib/rentBuddyEarningsLedger.ts:162#ruleVersion:`). `D-OWNER1004-5`'s rate change and `-12`'s new seed change what that stamp *means*. How are entries computed before and after told apart?
 - **The decision, verbatim.**
 
   > "Change `RENT_BUDDY_FEE_RULE_VERSION` to `/v2`. Preserve `/v1` for historical records and calculations."

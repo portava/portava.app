@@ -101,7 +101,7 @@
  * constant moves. That is the whole refresh.
  */
 /** The capture every reader should grade against. Change this on a refresh. */
-export const PRODUCTION_SNAPSHOT_FILENAME = "20261104-production-schema.json"; // REFRESH OF 2026-11-04: see the note at the end of this file
+export const PRODUCTION_SNAPSHOT_FILENAME = "20261109-production-schema.json";
 
 /** Resolved against this directory, which is where the captures live. */
 export const PRODUCTION_SNAPSHOT_URL = new URL(
@@ -110,7 +110,7 @@ export const PRODUCTION_SNAPSHOT_URL = new URL(
 );
 
 /**
- * REFRESH OF 2026-10-24 05:55 UTC, the current one, re-verified 10:40 UTC (census drive 2026-10-23, the approved
+ * REFRESH OF 2026-10-24 05:55 UTC, re-verified 10:40 UTC (census drive 2026-10-23, the approved
  * capability refresh; written at the END of this file so the lines above, which documents cite, do not move). Taken
  * after the 2026-10-21 production press (329 migrations applied through schema_migration_ledger, each row's sha256 equal
  * to this tree's file; the press also wrote a backfill row for 3974, which never ran), the 2026-10-23 backfill rows (50
@@ -139,7 +139,7 @@ export const PRODUCTION_SNAPSHOT_URL = new URL(
  */
 
 /**
- * REFRESH OF 2026-11-04 06:41 UTC, the current one (release 2, PR #811; written at the END of this file so the lines
+ * REFRESH OF 2026-11-04 06:41 UTC (release 2, PR #811; written at the END of this file so the lines
  * above do not move). Taken after 3951 (2026-10-24 12:43:48, one nullable column on layover_certified_computations and
  * one flag seeded FALSE) and release 2's 3925, 3926 and 3941 (2026-11-04 06:13:42, policies and column grants only,
  * which the capture's method does not record). 642 tables and views (624 base tables), 447 functions, 69 enums,
@@ -150,3 +150,5 @@ export const PRODUCTION_SNAPSHOT_URL = new URL(
  * and returned exactly the values the new file records. The ledger is 836 rows: this tree's 841 files minus the same
  * five (2481, 3601, 3602, 3909, 3910). The 10-24 capture was NOT overwritten.
  */
+
+/** The November 9 capture includes 638 public base tables after migrations 4004 through 4020. */

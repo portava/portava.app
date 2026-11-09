@@ -262,7 +262,8 @@ function PostDetailCard({ post, commentCount, takeover, onCommentCountChange, in
 
 export default function PostDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  return <PostDetailContent key={id} id={id} />;
+  const { userId } = useSession();
+  return <PostDetailContent key={JSON.stringify([id, userId])} id={id} />;
 }
 
 export function PostDetailContent({ id, onClose, ...playback }: { id: string; onClose?: () => void } & PlaybackOptions) {
@@ -274,6 +275,7 @@ export function PostDetailContent({ id, onClose, ...playback }: { id: string; on
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [commentCount, setCommentCount] = useState(0);
 
+  const [shareMounted, setShareMounted] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [overflowOpen, setOverflowOpen]   = useState(false);
   const [reportOpen, setReportOpen]       = useState(false);
@@ -429,13 +431,13 @@ export function PostDetailContent({ id, onClose, ...playback }: { id: string; on
           <PostOverflowSheet
             visible={overflowOpen}
             onClose={() => setOverflowOpen(false)}
-            onShare={() => { if (post.canShare) setShareOpen(true); else Alert.alert('Sharing unavailable', 'The author has restricted sharing.'); }}
+            onShare={() => { if (post.canShare) { setShareMounted(true); setShareOpen(true); } else Alert.alert('Sharing unavailable', 'The author has restricted sharing.'); }}
             onEdit={isOwnPost ? () => router.push(`/post/edit/${post.id}` as any) : undefined}
             onDelete={isOwnPost ? confirmDelete : undefined}
             onReport={!isOwnPost ? () => setReportOpen(true) : undefined}
             onWrongPlace={!isOwnPost && !!post.locationName ? () => setWrongPlaceOpen(true) : undefined} onSaveToMemory={canSaveToMemory ? () => setSaveToMemoryOpen(true) : undefined}
           />{canSaveToMemory && userId ? <SaveOwnPostToMemorySheet visible={saveToMemoryOpen} post={post} viewerId={userId} onClose={() => setSaveToMemoryOpen(false)} /> : null}
-          {shareOpen && <ShareSheet visible postId={post.id} onClose={() => setShareOpen(false)} />}
+          {shareMounted && <ShareSheet visible={shareOpen} postId={post.id} onClose={() => setShareOpen(false)} />}
           {!isOwnPost && (
             <ReportSheet
               visible={reportOpen}

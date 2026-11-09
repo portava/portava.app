@@ -17,6 +17,7 @@ import {
   View, Text, ScrollView, StyleSheet, Pressable,
 } from 'react-native';
 import { HighlightRing } from './HighlightRing.tsx';
+import { viewedHighlightIds } from '../hooks/useHighlightRingState.ts';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { color, space } from '../theme/tokens.ts';
 import type { HighlightFeedUser, HighlightErrorKind } from '../services/highlights.ts';
@@ -108,7 +109,8 @@ export function FollowingHighlightsStrip({
 
   const handleClose = () => {
     if (viewingUser) {
-      onMarkViewed(viewingUser.highlights.map((h) => h.id));
+      const watched = viewingUser.highlights.filter(h => viewedHighlightIds.has(h.id)).map(h => h.id);
+      if (watched.length) onMarkViewed(watched);
     }
     setViewingUserId(null);
     onViewerClose?.();

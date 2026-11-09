@@ -153,16 +153,36 @@ async function openLens(label: string) {
   await fireEvent.press(screen.getByLabelText(label));
 }
 
+async function chooseView(label: string) {
+  const trigger = screen.getByLabelText(/^Change view, currently /);
+  expect(trigger.props.accessibilityState.expanded).toBe(false);
+  await fireEvent.press(trigger);
+  expect(screen.getByLabelText(/^Change view, currently /).props.accessibilityState.expanded).toBe(true);
+  await fireEvent.press(screen.getByLabelText(label));
+  expect(screen.getByLabelText('Change view, currently ' + label).props.accessibilityState.expanded).toBe(false);
+}
+
 describe('MediaWorldShell', () => {
+  it('shows the location and active lens, collapsing the previous view menu when the lens changes', async () => {
+    await render(<Shell cityName="Da Nang" lat={16.05} lng={108.22} />);
+    expect(screen.getByText('Explore World')).toBeTruthy();
+    expect(screen.getByText('Da Nang · Around you now')).toBeTruthy();
+    await fireEvent.press(screen.getByLabelText(/^Change view, currently /));
+    expect(screen.getByLabelText('Map')).toBeTruthy();
+    await openLens('Places');
+    expect(screen.getByText('Da Nang · Places')).toBeTruthy();
+    expect(screen.queryByLabelText('Map')).toBeNull();
+    await chooseView('Map');
+  });
   it('HIDDEN GEMS is the §16 gem-STATE screen (not GemsFeed), scoped by the city label, honouring all three modes', async () => {
     await render(<Shell cityName="Da Nang" lat={16.05} lng={108.22} />);
     await openLens('Hidden Gems');
     await waitFor(() => expect(screen.getByTestId('gem-lens-overview')).toBeTruthy());
     expect(mockFetchGems).toHaveBeenCalledWith(expect.objectContaining({ city: 'Da Nang' }));
     expect(screen.getByTestId('hidden-gem-card-g1')).toBeTruthy();
-    await fireEvent.press(screen.getByLabelText('Visual'));
+    await chooseView('Visual');
     await waitFor(() => expect(screen.getByTestId('gem-lens-visual')).toBeTruthy());
-    await fireEvent.press(screen.getByLabelText('Map'));
+    await chooseView('Map');
     // Gems-only Media Map (the gateway is off in this fixture, so it says so).
     await waitFor(() => expect(screen.getByText('No hidden gems on the map yet')).toBeTruthy());
   });
@@ -202,9 +222,9 @@ describe('MediaWorldShell', () => {
 
   it('NOW → Map is the one Media Map and NOW → Time is the Media Timeline screen', async () => {
     await render(<Shell cityName="Da Nang" lat={16.05} lng={108.22} />);
-    await fireEvent.press(screen.getByLabelText('Map'));
+    await chooseView('Map');
     await waitFor(() => expect(screen.getByText('No perspectives on the map yet')).toBeTruthy());
-    await fireEvent.press(screen.getByLabelText('Time'));
+    await chooseView('Time');
     await waitFor(() => expect(screen.getByTestId('media-timeline-screen')).toBeTruthy());
   });
 
@@ -264,10 +284,10 @@ describe('MediaWorldShell', () => {
   it('PLACES → Map and EXPERIENCES → Map are the one Media Map (no "arrives in a later phase" placeholder)', async () => {
     await render(<Shell cityName="Da Nang" lat={16.05} lng={108.22} />);
     await openLens('Places');
-    await fireEvent.press(screen.getByLabelText('Map'));
+    await chooseView('Map');
     await waitFor(() => expect(screen.getByText('No perspectives on the map yet')).toBeTruthy());
     await openLens('Experiences');
-    await fireEvent.press(screen.getByLabelText('Map'));
+    await chooseView('Map');
     await waitFor(() => expect(screen.getByText('No experiences on the map yet')).toBeTruthy());
     expect(screen.queryByText(/arrive(s)? with the Media Map phase/)).toBeNull();
   });
@@ -275,7 +295,7 @@ describe('MediaWorldShell', () => {
   it('MY WORLD → Map is the Media Map over the owner\'s own places', async () => {
     await render(<Shell cityName="Da Nang" lat={16.05} lng={108.22} />);
     await openLens('My World');
-    await fireEvent.press(screen.getByLabelText('Map'));
+    await chooseView('Map');
     await waitFor(() => expect(screen.getByText('Your world on the map')).toBeTruthy());
   });
 

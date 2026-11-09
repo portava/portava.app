@@ -5050,7 +5050,7 @@ context is vacuous"*:
   per-subject band it derived, on the request path, before any answer exists.
 * The checker half, on BOTH branches so streamed and non-streamed answers
   cannot drift: `` `artifacts/api-server/src/routes/compass.ts:2023#groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence)` ``
-  and `` `artifacts/api-server/src/routes/compass.ts:2095#groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence)` ``.
+  and `` `artifacts/api-server/src/routes/compass.ts:2096#groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence)` ``.
   `groundCompassAnswer` merges the tool-log evidence with the context band
   and hands the union to `enforceCompassGroundingEnvelope`.
 * The proof is a REGISTERED suite, not a reading: `` `artifacts/api-server/src/test/compassGroundingLiveClaims.test.ts:99#describe("S79 part 1` ``
@@ -6654,3 +6654,7 @@ router checks are registered in the main API suite and mandatory native CI gate.
 The named paths cover atomic admission/revocation, secure device-secret extraction, erasure retry/rotation and capture holds, plus current-world/live-reference consumers and their controlled tests. The reuse map has citation-only relocation. The complete S-row reconciliation and retained grades are recorded in the Sensing completion report. These implementations do not decide consent wording, independent-device evidence, erasure policy, publication enablement or observed production retention; no collection/publication claim follows from freshness registration.
 
 No row, total, scope-coverage floor or citation threshold is promoted by this reconciliation. The original head_commit remains the measured baseline. Source citations were relocated using unchanged source identity or exact anchors; changed claims are explicitly qualified where reconciled. The named-file acknowledgement ledger records this bounded review. Read the linked release evidence for current implementation and its remaining boundaries.
+
+### November 9 release evidence
+
+The recording stamp certifies the uploaded video and its publication through a separate opt-in recording challenge. It creates no sensing observation and assigns no location, corroboration, presence, identity or trust evidence. Sensing collection and publication criteria are outside this attestation.

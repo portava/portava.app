@@ -1527,7 +1527,7 @@ router.post("/compass/ask", async (req, res) => {
     };
     if (stream) {
       res.setHeader("Content-Type",  "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Cache-Control", "no-cache, no-transform"); res.setHeader("X-Accel-Buffering", "no");
       res.setHeader("Connection",    "keep-alive");
       res.flushHeaders();
       res.write(`data: ${JSON.stringify({ error: true, ...refusal })}\n\n`);
@@ -1547,7 +1547,7 @@ router.post("/compass/ask", async (req, res) => {
     } catch { /* non-fatal */ }
     if (stream) {
       res.setHeader("Content-Type",  "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Cache-Control", "no-cache, no-transform"); res.setHeader("X-Accel-Buffering", "no");
       res.setHeader("Connection",    "keep-alive");
       res.flushHeaders();
       res.write(`data: ${JSON.stringify({ delta: message })}\n\n`);
@@ -1994,7 +1994,7 @@ router.post("/compass/ask", async (req, res) => {
   // ── SSE streaming ─────────────────────────────────────────────────────────
   if (stream) {
     res.setHeader("Content-Type",  "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Cache-Control", "no-cache, no-transform"); res.setHeader("X-Accel-Buffering", "no");
     res.setHeader("Connection",    "keep-alive");
     res.flushHeaders();
     // Client-disconnect handling: if the SSE client drops mid-answer we abort
@@ -2077,7 +2077,8 @@ router.post("/compass/ask", async (req, res) => {
         return;
       }
       req.log.error({ err, userId: user.id }, "compass/ask stream failed");
-      res.write(`data: ${JSON.stringify({ error: true, ...(await compassAiFailureFallbackWithRetrieval(partialToolLogOf(messages), () => executeCompassTool(sc, user.id, guardProfile as any, "memory_search", { query: prompt }), HONEST_FALLBACK_MESSAGE)) })}\n\n`);
+      appendSystemEvent(sc, conversationId, "assistant_unavailable", { fallbackReason: "ai_error" }).catch(() => {});
+      res.write(`data: ${JSON.stringify({ error: true, conversationId, promptVersion: COMPASS_ASK_PROMPT_VERSION, fallback: true, fallbackReason: "ai_error", ...(await compassAiFailureFallbackWithRetrieval(partialToolLogOf(messages), () => executeCompassTool(sc, user.id, guardProfile as any, "memory_search", { query: prompt }), HONEST_FALLBACK_MESSAGE)) })}\n\n`);
       res.end();
     }
     return;

@@ -51,7 +51,7 @@ function CurrentBadge({ targetType, targetId, onInspectChange }: BadgeProps) {
   if (!stamp || !activity.active) return null;
   return <View style={s.badgeWrap}><Pressable accessibilityRole="button" accessibilityLabel={`Verify Portava recording stamp ${stamp.code}`}
     accessibilityState={{ busy: checking }} onPress={() => void verify()} style={s.badge}>
-    <RecordingMark code={stamp.code} /><Text style={s.badgeText}>{stamp.code}</Text>
+    <RecordingMark code={stamp.code} /><Text style={s.badgeText}>{stamp.code.replace(/^PV-([0-9A-F]{32})$/, (_full, digits: string) => 'PV-' + digits.match(/.{1,8}/g)!.join(' '))}</Text>
   </Pressable></View>;
 }
 // Each issued code has a distinct ink pattern. Only the server read verifies it.
@@ -69,8 +69,8 @@ function RecordingMark({ code }: { code: string }) {
 const s = StyleSheet.create({
   option: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.sm },
   optionLabel: { color: color.ink, fontSize: 15 }, badgeWrap: { alignItems: 'flex-start' },
-  badge: { flexDirection: 'row', alignItems: 'center', gap: 6, padding: 8, borderRadius: 10, backgroundColor: color.deep },
+  badge: { maxWidth: '100%', flexDirection: 'row', alignItems: 'center', gap: 6, padding: 8, borderRadius: 10, backgroundColor: color.deep },
   mark: { width: 20, height: 20, flexDirection: 'row', flexWrap: 'wrap' },
   dot: { width: 4, height: 4, backgroundColor: color.onInk },
-  badgeText: { fontSize: 12, fontWeight: '700', color: color.onInk },
+  badgeText: { flexShrink: 1, fontSize: 12, fontWeight: '700', color: color.onInk },
 });

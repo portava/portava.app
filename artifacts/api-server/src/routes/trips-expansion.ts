@@ -373,11 +373,20 @@ router.get("/trips/join-requests", async (req, res) => {
   // The trips the caller HOSTS: the owner or an accepted co-host, exactly as
   // canManageJoinRequests lets them approve (it was owner-only, so a co-host
   // could act on a request and had no queue; §77.6 F06, §79). Both must answer.
-  const [{ data: ownedTrips, error: ownedTripsErr }, { data: coHosted, error: coHostedErr }] = await Promise.all([sc.from("trips").select("id").eq("owner_id", user.id), sc.from("trip_members").select("trip_id, status").eq("user_id", user.id).eq("role", "co_host")]);
+  const [{ data: ownedTrips, error: ownedTripsErr }, { data: coHosted, error: coHostedErr }] = await Promise.all([sc.from("trips").select("id, status, end_date, timezone").eq("owner_id", user.id), sc.from("trip_members").select("trip_id, status").eq("user_id", user.id).eq("role", "co_host")]);
   if (ownedTripsErr) throw readUnavailable("trips", ownedTripsErr);
   if (coHostedErr) throw readUnavailable("trip_members", coHostedErr);
   const accepted = (coHosted ?? []).filter((m: any) => m.status == null || m.status === "accepted");
-  const tripIds = [...new Set([...(ownedTrips ?? []).map((t: any) => t.id as string), ...accepted.map((m: any) => m.trip_id as string)])];
+  const windows = [...(ownedTrips ?? [])];
+  const ownedIds = new Set(windows.map(trip => trip.id));
+  const cohostIds = [...new Set<string>(accepted.map((member: any) => member.trip_id))].filter(id => !ownedIds.has(id));
+  if (cohostIds.length) {
+    const cohostTrips = await sc.from("trips").select("id, status, end_date, timezone").in("id", cohostIds);
+    if (cohostTrips.error) throw readUnavailable("trips", cohostTrips.error);
+    windows.push(...(cohostTrips.data ?? []));
+  }
+  const now = new Date();
+  const tripIds = windows.filter(trip => !tripHasEnded(trip, now)).map(trip => trip.id);
   if (tripIds.length === 0) { res.json({ requests: [] }); return; }
 
   const { data: reqs, error } = await sc

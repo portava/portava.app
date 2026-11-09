@@ -5,6 +5,7 @@ const mockInfo = jest.fn();
 const mockTask = jest.fn();
 const mockCopy = jest.fn();
 const mockDelete = jest.fn();
+// NOTE: expose only the legacy native filesystem operations so the test can inspect the exact staged file and upload options.
 jest.mock('expo-file-system/legacy', () => ({ cacheDirectory: 'file:///cache/', FileSystemUploadType: { BINARY_CONTENT: 0 },
   FileSystemSessionType: { FOREGROUND: 1 }, getInfoAsync: (...a: unknown[]) => mockInfo(...a), copyAsync: (...a: unknown[]) => mockCopy(...a),
   deleteAsync: (...a: unknown[]) => mockDelete(...a), createUploadTask: (...a: unknown[]) => mockTask(...a) }));

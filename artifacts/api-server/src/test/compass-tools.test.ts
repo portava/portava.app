@@ -692,6 +692,7 @@ describe("G2. /compass/ask SSE streaming with tool rounds", () => {
 
     // done event contract unchanged.
     assert.ok(done, "done event required");
+    assert.equal(done.message, "Try Lantaw Cafe in Busay.", "the terminal event alone renders the same final reply as history");
     assert.ok(typeof done.conversationId === "string");
     assert.ok(Array.isArray(done.pendingProposals), "pendingProposals present on done");
     assert.ok(Array.isArray(done.quickActions));

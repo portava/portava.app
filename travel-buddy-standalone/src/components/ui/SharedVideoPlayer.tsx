@@ -32,6 +32,7 @@ import {
 import Slider from '@react-native-community/slider';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { usePrivateSurfaceKey } from '../../hooks/usePrivateSurfaceKey.ts';
+import { usePostPlaybackLayer } from '../../hooks/usePostPlaybackLayer.ts';
 import { useMediaSurfaceActivity } from '../../hooks/useMediaSurfaceActivity.ts';
 import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
 import { Play, Volume2, VolumeX, Maximize2, X } from 'lucide-react-native';
@@ -104,6 +105,13 @@ function SharedVideoSession({
   const captureVideo = useCallback((video: Video | null) => { videoRef.current = video; setController(video); }, []);
   const [isPlaying, setIsPlaying] = useState(autoplay);
   const [intent, setIntent] = useState({ uri, autoplay, requested: autoplay });
+  const layer = usePostPlaybackLayer();
+  useEffect(() => {
+    if (!layer.allowed && position.current > 0) {
+      pendingResume.current = position.current;
+      setResumeStatus({ positionMillis: position.current });
+    }
+  }, [layer.allowed]);
   const activity = useMediaSurfaceActivity(() => {
     void videoRef.current?.pauseAsync().catch(() => {});
     pendingResume.current = null;
@@ -113,7 +121,7 @@ function SharedVideoSession({
     setFullscreen(false);
     if (fullscreenOnly) onClose?.();
   });
-  const playIntent = activity.active && (intent.uri === uri && intent.autoplay === autoplay ? intent.requested : autoplay);
+  const playIntent = layer.allowed && activity.active && (intent.uri === uri && intent.autoplay === autoplay ? intent.requested : autoplay);
   const waitingForWebResume = Platform.OS === 'web' && resumeStatus.positionMillis !== undefined;
   const [isMuted, setIsMuted] = useState(mutedProp || (autoplay && Platform.OS === 'web'));
   const muteCommand = useRef(0);
@@ -130,18 +138,18 @@ function SharedVideoSession({
   const sourceState = playbackUriState(uri, hydrated);
   const playbackUri = sourceState.state === 'ready' ? sourceState.uri : '';
   const playback = useAdaptivePlayback(captionSource ?? uri, playbackUri);
-  const playbackKey = JSON.stringify([playback.source, fullscreen, activity.epoch]);
+  const playbackKey = JSON.stringify([playback.source, fullscreen, activity.epoch, layer.allowed]);
   const currentPlayback = useRef({ key: playbackKey, version: 0 });
   if (currentPlayback.current.key !== playbackKey) currentPlayback.current = { key: playbackKey, version: currentPlayback.current.version + 1 };
   const playbackVersion = currentPlayback.current.version;
-  const isCurrentPlayback = useCallback(() => mounted.current && activity.isCurrent() && currentPlayback.current.version === playbackVersion, [playbackVersion, activity.isCurrent]);
+  const isCurrentPlayback = useCallback(() => mounted.current && layer.isCurrent() && activity.isCurrent() && currentPlayback.current.version === playbackVersion, [playbackVersion, activity.isCurrent, layer.isCurrent]);
   const hasError = errorSource !== null && errorSource === playbackKey;
   const posterUri = poster
     ? (typeof hydrated[poster] === 'string' ? (hydrated[poster] as string) : poster)
     : undefined;
   // Server said no: unreadable, same user-visible outcome as a decode failure.
   const unresolvable = sourceState.state === 'unavailable';
-  const dubbing = useMediaDubbingSession({ source: captionSource ?? uri, active: activity.active && !hasError && !unresolvable,
+  const dubbing = useMediaDubbingSession({ source: captionSource ?? uri, active: layer.allowed && activity.active && !hasError && !unresolvable,
     controller, controlSource: { shouldPlay: playIntent && !waitingForWebResume, isMuted, volume: 1, rate: 1 } });
   const { resizeMode, needsLetterbox, onReadyForDisplay } = useSmartVideoFit(
     containerSize.w,
@@ -299,7 +307,7 @@ function SharedVideoSession({
       }
     >
       {needsLetterbox ? <VideoBlurBackdrop uri={posterUri} /> : null}
-      {sourceState.state === 'ready' && activity.active ? (<Video key={playbackKey}
+      {sourceState.state === 'ready' && activity.active && layer.allowed ? (<Video key={playbackKey}
         ref={captureVideo}
         source={playback.source}
         style={StyleSheet.absoluteFill}

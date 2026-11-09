@@ -2,6 +2,7 @@ import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { ConversationTools } from '../ConversationTools.tsx';
 import * as api from '../../../../services/messaging.ts';
+import { recordSuggestionSelection } from '../../../../platform/input-assistance/services/selectionRecorder.ts';
 import { useInputAssistance } from '../../../../platform/input-assistance/hooks/useInputAssistance.ts';
 import { router } from 'expo-router';
 import { fetchCarryForwardPage } from '../carryForwardApi.ts';
@@ -12,8 +13,9 @@ const mockOwner = { ownerId: 'me', sessionId: 'session', isCurrent: () => mockCu
 // NOTE: intentionally isolated boundary; the real auth, native storage, routing or API module would start side effects outside this controlled fixture.
 jest.mock('../../../../services/messagingOwnerRequest.ts', () => ({ captureMessagingOwnerRequest: () => mockOwner }));
 jest.mock('../../../../context/SessionContext.tsx', () => ({ useSession: () => ({ userId: mockUserId }) }));
-jest.mock('../../../../services/discoveryViewerScope.ts', () => ({ currentDiscoveryScope: () => ({ viewer: 'u:me', revision: 1 }) }));
-jest.mock('../../../../platform/input-assistance/hooks/useInputAssistance.ts', () => ({ useInputAssistance: jest.fn() }));
+jest.mock('../../../../services/discoveryViewerScope.ts', () => ({ ...jest.requireActual('../../../../services/discoveryViewerScope.ts'), currentDiscoveryScope: () => ({ viewer: 'u:me', revision: 1 }) }));
+jest.mock('../../../../platform/input-assistance/services/selectionRecorder.ts', () => ({ ...jest.requireActual('../../../../platform/input-assistance/services/selectionRecorder.ts'), recordSuggestionSelection: jest.fn() }));
+jest.mock('../../../../platform/input-assistance/hooks/useInputAssistance.ts', () => ({ ...jest.requireActual('../../../../platform/input-assistance/hooks/useInputAssistance.ts'), useInputAssistance: jest.fn() }));
 // NOTE: intentionally isolated boundary; the real auth, native storage, routing or API module would start side effects outside this controlled fixture.
 jest.mock('../../../../services/messaging.ts', () => ({ getMyThreads: jest.fn(), getThreadControls: jest.fn(), formConversationGroup: jest.fn(), forwardThreadMessage: jest.fn(), updateMessageContentCapability: jest.fn(), updateThreadControls: jest.fn(), moderateThreadMember: jest.fn() }));
 jest.mock('../carryForwardApi.ts', () => ({ fetchCarryForwardPage: jest.fn() }));
@@ -34,7 +36,11 @@ it('creates a separate group only with explicitly selected people and never tran
   await fireEvent.changeText(screen.getByLabelText('Search people'), 'new');
   expect(useInputAssistance).toHaveBeenLastCalledWith(expect.objectContaining({ fieldId: 'telegraph.recipient', context: 'telegraph_recipient', text: 'new', enabled: true }));
   await waitFor(() => expect(screen.getByText('Add New traveler')).toBeTruthy());
+  expect(recordSuggestionSelection).not.toHaveBeenCalled();
   await fireEvent.press(screen.getByText('Add New traveler'));
+  expect(recordSuggestionSelection).toHaveBeenCalledTimes(1);
+  expect(recordSuggestionSelection).toHaveBeenCalledWith(expect.objectContaining({ entityId: 'new', entityType: 'user' }),
+    expect.objectContaining({ query: expect.any(String) }));
   await fireEvent.press(screen.getByText('Create group'));
   await waitFor(() => expect(api.formConversationGroup).toHaveBeenCalledWith('source', { userIds: ['new'], title: undefined }, mockOwner));
   expect(router.replace).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ id: 'new-group', threadType: 'group' }) }));

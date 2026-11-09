@@ -141,44 +141,87 @@ describe('postCompassAskStream', () => {
     assert.equal(r.data?.message, 'part');
   });
 
-  it('falls back to the plain request when the stream errors', async () => {
+  it('uses the grounded terminal message, including when no deltas arrive and the native connection stays open', async () => {
+    const encoder = new TextEncoder();
+    const chunks = [
+      'data: {"delta":"draft"}\r\n\r',
+      '\ndata: {"done":true,\r\ndata: "message":"Try Đà Nẵng.","conversationId":"c2"}\r\n\r\n',
+    ];
+    let readCount = 0;
+    const read = async () => {
+      if (readCount === chunks.length) throw new Error('reader remained open after done');
+      return { value: encoder.encode(chunks[readCount++]), done: false };
+    };
+    const response = sseResponse([]);
+    response.body.getReader = () => ({ read });
+    _setTestStreamFetch((async () => response) as any);
+    const withDelta = await postCompassAskStream('hi');
+    assert.equal(withDelta.data?.message, 'Try Đà Nẵng.');
+    assert.equal(withDelta.data?.conversationId, 'c2');
+    _setTestStreamFetch((async () => sseResponse(['data: {"done":true,"message":"Only final"}\n\n'])) as any);
+    assert.equal((await postCompassAskStream('hi')).data?.message, 'Only final');
+  });
+
+  it('surfaces the server refusal from the original request without posting the prompt again', async () => {
     let calls = 0;
     _setTestStreamFetch((async () => {
       calls++;
-      return sseResponse(['data: {"error":true,"message":"unavailable"}\n\n']);
+      return sseResponse(['data: {"error":true,"message":"Could not check this layover.","conversationId":"c1","fallbackReason":"layover_state_unreadable"}\n\n']);
     }) as any);
-    // The fallback path uses the GLOBAL fetch (postCompassAsk); stub it.
     const realFetch = globalThis.fetch;
-    (globalThis as any).fetch = async () => ({
-      ok: true,
-      json: async () => ({ conversationId: 'c2', message: 'fallback answer', payload: null, quickActions: [], promptVersion: 'v1' }),
-    });
+    const repost = jest.fn();
+    globalThis.fetch = repost;
     try {
       const r = await postCompassAskStream('hi');
       assert.equal(calls, 1);
-      assert.equal(r.ok, true);
-      assert.equal(r.streamed, false);
-      assert.equal(r.data?.message, 'fallback answer');
-    } finally {
-      (globalThis as any).fetch = realFetch;
-    }
+      assert.equal(repost.mock.calls.length, 0);
+      assert.equal(r.data?.message, 'Could not check this layover.');
+      assert.equal(r.data?.fallback, true);
+      assert.equal(r.data?.fallbackReason, 'layover_state_unreadable');
+      assert.equal(r.data?.conversationId, 'c1');
+    } finally { globalThis.fetch = realFetch; }
   });
 
-  it('falls back when the response has no readable stream body', async () => {
-    _setTestStreamFetch((async () => ({ ok: true, status: 200, headers: { get: () => 'text/event-stream' }, body: null })) as any);
-    const realFetch = globalThis.fetch;
-    (globalThis as any).fetch = async () => ({
-      ok: true,
-      json: async () => ({ conversationId: null, message: 'plain', payload: null, quickActions: [], promptVersion: 'v1' }),
-    });
+  it('reads the same buffered response on clients without a body reader', async () => {
+    _setTestStreamFetch((async () => ({
+      ok: true, headers: { get: () => 'text/event-stream' }, body: null,
+      text: async () => 'data: {"done":true,"message":"Buffered tip"}\n\n',
+    })) as any);
+    const result = await postCompassAskStream('hi');
+    assert.equal(result.data?.message, 'Buffered tip');
+    assert.equal(result.streamed, false);
+  });
+
+  it('renders JSON fallbacks returned before the event stream opens', async () => {
+    _setTestStreamFetch((async () => ({
+      ok: true, headers: { get: () => 'application/json; charset=utf-8' },
+      json: async () => ({ message: 'Compass is unavailable.', fallback: true, fallbackReason: 'conversation_error' }),
+    })) as any);
+    const result = await postCompassAskStream('hi');
+    assert.equal(result.data?.message, 'Compass is unavailable.');
+    assert.equal(result.data?.fallback, true);
+  });
+
+  it('turns incomplete and empty successes into visible errors without a second POST', async () => {
+    _setTestStreamFetch((async () => sseResponse(['data: {"delta":"partial"}\n\n'])) as any);
+    assert.equal((await postCompassAskStream('hi')).error, 'stream_incomplete');
+    _setTestStreamFetch((async () => sseResponse(['data: {"done":true,"message":" "}\n\n'])) as any);
+    assert.equal((await postCompassAskStream('hi')).error, 'empty_response');
+  });
+
+  it('settles on the deadline even when native reader.read ignores abort', async () => {
+    jest.useFakeTimers();
     try {
-      const r = await postCompassAskStream('hi');
-      assert.equal(r.ok, true);
-      assert.equal(r.streamed, false);
-      assert.equal(r.data?.message, 'plain');
-    } finally {
-      (globalThis as any).fetch = realFetch;
-    }
+      const response = sseResponse([]);
+      const read = jest.fn(() => new Promise(() => {}));
+      response.body.getReader = () => ({ read });
+      _setTestStreamFetch((async () => response) as any);
+      const turn = postCompassAskStream('hi');
+      await jest.advanceTimersByTimeAsync(1);
+      assert.equal(read.mock.calls.length, 1);
+      await jest.advanceTimersByTimeAsync(30_000);
+      assert.equal((await turn).error, 'timeout');
+    } finally { jest.useRealTimers(); }
   });
 
   it('does not fall back on an HTTP error status', async () => {
