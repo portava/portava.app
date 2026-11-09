@@ -155,8 +155,31 @@ describe("3941 — a member's private state is no client role's to read, on a re
   });
 
   it("PS1 the API's service role still reads every private column", () => {
-    const out = svc(`SELECT last_read_at::text || '/' || archived_at::text || '/' || muted_at::text ${bobRow()};`);
-    assert.equal(out[out.length - 1], "2026-10-24 09:15:00+00/2026-10-24 09:16:00+00/2026-10-24 09:17:00+00");
+    const out = svc(`SELECT (last_read_at, archived_at, muted_at) = (
+      '2026-10-24 09:15:00+00'::timestamptz, '2026-10-24 09:16:00+00'::timestamptz, '2026-10-24 09:17:00+00'::timestamptz
+    ) ${bobRow()};`);
+    assert.equal(out[out.length - 1], "t", "the service role reads all three exact instants");
+  });
+
+  it("sequence cutover preserves an explicit lower cursor and derives historical join and leave bounds from message time", () => {
+    const result = exec(`BEGIN;
+      UPDATE public.feature_flags SET enabled = true WHERE flag = 'telegraph_message_kernel_enabled';
+      SELECT public.telegraph_backfill_message_sequences(thread_id) FROM (SELECT DISTINCT thread_id FROM public.messages WHERE sequence IS NULL) legacy;
+      UPDATE public.feature_flags SET enabled = true WHERE flag = 'telegraph_sequence_state_enabled';
+      INSERT INTO public.messages(thread_id, sender_id, body, created_at) VALUES
+        ('${t}', '${alice}', 'first', '2026-09-10 09:00Z'),
+        ('${t}', '${alice}', 'second', '2026-09-10 10:00Z'),
+        ('${t}', '${alice}', 'third', '2026-09-10 11:00Z');
+      INSERT INTO public.message_thread_members(thread_id,user_id,role,visible_from_at,left_at)
+        VALUES ('${t}','${eve}','member','2026-09-10 09:30Z','2026-09-10 10:30Z');
+      SELECT 'window=' || visible_from_sequence || '/' || visible_until_sequence FROM public.message_thread_members WHERE thread_id='${t}' AND user_id='${eve}';
+      DELETE FROM public.message_thread_members WHERE thread_id='${t}' AND user_id='${eve}';
+      INSERT INTO public.message_thread_members(thread_id,user_id,role,visible_from_at,visible_from_sequence)
+        VALUES ('${t}','${eve}','member','2026-09-10 09:30Z',3);
+      SELECT 'explicit=' || visible_from_sequence FROM public.message_thread_members WHERE thread_id='${t}' AND user_id='${eve}';
+      ROLLBACK;`);
+    assert.ok(result.includes("window=2/2"), result.join(", "));
+    assert.ok(result.includes("explicit=3"), result.join(", "));
   });
 
   it("PS2 MUTANT: with the baseline's table-level SELECT the co-member reads them; 3941's body closes it again", () => {
