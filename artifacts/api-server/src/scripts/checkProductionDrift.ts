@@ -132,6 +132,21 @@ interface Gap {
  * legacy-root renames.
  */
 export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
+  // Approved 2026-11-05 release; CI applied, production rollout still pending.
+  post_destination_operations: { classification: "unapplied", note: "4007_post_reference_destinations.sql: approved matching backend release, pending production apply." },
+  recording_capture_stamps: { classification: "unapplied", note: "4019_recording_capture_stamps.sql: new scoped recording-stamp release, pending apply." },
+  post_destination_references: { classification: "unapplied", note: "4007_post_reference_destinations.sql: approved matching backend release, pending production apply." },
+  map_navigation_contributions: { classification: "unapplied", note: "4008_map_private_controls.sql: approved matching backend release, pending production apply." },
+  map_personal_protected_places: { classification: "unapplied", note: "4008_map_private_controls.sql: approved matching backend release, pending production apply." },
+  place_governance_actions: { classification: "unapplied", note: "4009_canonical_place_governance.sql: approved matching backend release, pending production apply." },
+  official_post_media_commands: { classification: "unapplied", note: "4010_official_post_media_registration.sql: approved matching backend release, pending production apply." },
+  trip_nearby_epochs: { classification: "unapplied", note: "4013_trip_nearby_checkpoints.sql: approved matching backend release, pending production apply." },
+  trip_nearby_revocations: { classification: "unapplied", note: "4013_trip_nearby_checkpoints.sql: approved matching backend release, pending production apply." },
+  trip_nearby_observations: { classification: "unapplied", note: "4013_trip_nearby_checkpoints.sql: approved matching backend release, pending production apply." },
+  trip_nearby_sessions: { classification: "unapplied", note: "4013_trip_nearby_checkpoints.sql: approved matching backend release, pending production apply." },
+  telegraph_memory_sources: { classification: "unapplied", note: "4015_telegraph_memory_sources.sql: approved matching backend release, pending production apply." },
+  telegraph_forward_media_jobs: { classification: "unapplied", note: "4016_telegraph_attachment_forwards.sql: approved matching backend release, pending production apply." },
+  telegraph_outcome_feedback: { classification: "unapplied", note: "4017_telegraph_outcome_feedback.sql: approved matching backend release, pending production apply." },
   // ── STRUCK OFF 2026-09-17: the twenty-six this ratchet was largest for ─────
   // Twenty-one Trips tables (2760-2794) and five that were not Trips at all —
   // map_telemetry_events, map_telemetry_drops (2202/2222), media_intent_signals
@@ -1035,13 +1050,19 @@ function readProductionSnapshot(): Set<string> {
   return new Set(names);
 }
 
+/** This snapshot covers public tables; consume qualified names before filtering. */
+export function publicTableNames(sql: string): string[] {
+  const re = /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:"?([a-z0-9_]+)"?\s*\.\s*)?"?([a-z0-9_]+)"?/gi;
+  return [...stripSqlNoise(sql).matchAll(re)]
+    .filter(m => !m[1] || m[1].toLowerCase() === "public")
+    .map(m => m[2].toLowerCase());
+}
+
 export function declaredTables(): Set<string> {
   const out = new Set<string>();
-  const re = /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:"?public"?\.)?"?([a-z0-9_]+)"?/gi;
   for (const file of readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql"))) {
-    const sql = stripSqlNoise(readFileSync(join(MIGRATIONS_DIR, file), "utf8"));
-    for (const m of sql.matchAll(re)) {
-      const name = m[1].toLowerCase();
+    const sql = readFileSync(join(MIGRATIONS_DIR, file), "utf8");
+    for (const name of publicTableNames(sql)) {
       if (!NOT_TABLE_NAMES.has(name)) out.add(name);
     }
   }
@@ -1054,11 +1075,9 @@ export function declaredTables(): Set<string> {
  */
 function declaringMigrations(): Map<string, string[]> {
   const out = new Map<string, string[]>();
-  const re = /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:"?public"?\.)?"?([a-z0-9_]+)"?/gi;
   for (const file of readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql"))) {
-    const sql = stripSqlNoise(readFileSync(join(MIGRATIONS_DIR, file), "utf8"));
-    for (const m of sql.matchAll(re)) {
-      const name = m[1].toLowerCase();
+    const sql = readFileSync(join(MIGRATIONS_DIR, file), "utf8");
+    for (const name of publicTableNames(sql)) {
       if (NOT_TABLE_NAMES.has(name)) continue;
       const list = out.get(name) ?? [];
       if (!list.includes(file)) list.push(file);

@@ -1,3 +1,4 @@
+import { captureCanUpload, type CameraRecording } from '../features/capture-stamps/recordingStamp.ts';
 /**
  * Media upload service. Uploads a picked image/video through the API server's
  * POST /api/media/upload endpoint (service-role key, bypasses Storage RLS),
@@ -11,10 +12,11 @@
  * verify identity, then uploads with the service-role key — same pattern as
  * trip / post creation.
  */
+import { postLocalBinary, LocalMediaReadError } from './media/postLocalBinary.ts';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
-import type { MessagingOwnerRequest } from './messagingOwnerRequest.ts';
+import { messagingOwnerToken, type MessagingOwnerRequest } from './messagingOwnerRequest.ts';
 import {
   VIDEO_MAX_SIZE_BYTES,
   IMAGE_MAX_SIZE_BYTES,
@@ -87,6 +89,9 @@ export interface MediaUploadResult {
   height?: number | null;
   /** True when the server has finished post-processing (thumbnails, transcoding). */
   processed?: boolean;
+  captureAccepted?: boolean;
+  /** Duration measured from the uploaded video bytes, in seconds. */
+  durationSeconds?: number | null;
 }
 
 function apiBase(): string {
@@ -94,6 +99,8 @@ function apiBase(): string {
 }
 
 export interface ValidateMediaOptions {
+  signal?: AbortSignal;
+  recording?: CameraRecording;
   /**
    * Maximum allowed video duration in seconds. Takes precedence over `surface`.
    * Kept for backwards compatibility — prefer `surface` for new callers.
@@ -171,7 +178,6 @@ export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMed
   // _testTokenProvider bypasses supabase.auth in unit tests.
   let token: string | null;
   if (owner) {
-    const { messagingOwnerToken } = await import('./messagingOwnerRequest.ts');
     token = await messagingOwnerToken(owner);
   } else if (_testTokenProvider) {
     token = await _testTokenProvider();
@@ -184,35 +190,22 @@ export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMed
 
   const mime = media.mimeType ?? (media.type === 'video' ? 'video/mp4' : 'image/jpeg');
 
-  // Read the local file URI into a Blob (Expo/web compatible).
-  let blob: Blob;
+  let apiRes: Pick<Response, 'ok' | 'status' | 'json'>;
   try {
-    const resp = await fetch(await videoUriForUpload(media.uri, media.type === 'video', media.fileSize)); // §37 MD282: media.uri itself unless a compressor module is in the binary and switched on
-    blob = await resp.blob();
-  } catch (e) {
-    return {
-      ok: false, url: null, mediaType: null, errorKind: 'read_failed',
-      message: e instanceof Error ? e.message : 'Failed to read media file',
-      detail: { uri: media.uri, mime },
-    };
+    const recording = validateOpts?.recording;
+    if (recording && (!captureCanUpload(recording, media.uri) || owner !== recording.session.owner)) {
+      throw new Error('Recording stamp expired. Record another video or turn off the stamp.');
+    }
+    // A stamped recording must send the unmodified camera file.
+    const uploadUri = recording ? media.uri : await videoUriForUpload(media.uri, media.type === 'video', media.fileSize);
+    apiRes = await postLocalBinary(`${base}/api/media/upload`, uploadUri,
+      { 'Content-Type': mime, Authorization: `Bearer ${token}`, ...(recording ? { 'X-Portava-Capture-Token': recording.session.captureToken } : {}) }, { isCurrent: owner?.isCurrent, signal: validateOpts?.signal });
+  } catch (error) {
+    if (owner && !owner.isCurrent()) return staleOwner();
+    return { ok: false, url: null, mediaType: null, errorKind: error instanceof LocalMediaReadError ? 'read_failed' : 'upload_failed',
+      message: error instanceof Error ? error.message : 'Could not upload this file.' };
   }
-
-  // POST the raw binary to the API server — it uploads with service-role key.
   if (owner && !owner.isCurrent()) return staleOwner();
-  let apiRes: Response;
-  try {
-    apiRes = await fetch(`${base}/api/media/upload`, {
-      method: 'POST',
-      headers: { 'Content-Type': mime, Authorization: `Bearer ${token}` },
-      body: blob,
-    });
-  } catch (e) {
-    return {
-      ok: false, url: null, mediaType: null, errorKind: 'upload_failed',
-      message: e instanceof Error ? e.message : 'Network error during upload',
-    };
-  }
-
   if (!apiRes.ok) {
     const body = await apiRes.json().catch(() => ({}));
     // 401 means the session is invalid (expired, revoked, or user deleted).
@@ -237,14 +230,14 @@ export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMed
     return {
       ok: false, url: null, mediaType: null, errorKind: 'upload_failed',
       message: (body as any)?.message ?? `Upload failed (HTTP ${apiRes.status})`,
-      detail: { status: apiRes.status, mimeType: mime, fileSize: media.fileSize ?? blob.size },
+      detail: { status: apiRes.status, mimeType: mime, fileSize: media.fileSize ?? null },
     };
   }
 
   const body = await apiRes.json().catch(() => ({}));
   if (owner && !owner.isCurrent()) return staleOwner();
   const url: string | null = (body as any)?.url ?? null;
-  if (!url) {
+  if (typeof url !== 'string' || !url.trim()) {
     return { ok: false, url: null, mediaType: null, errorKind: 'upload_failed', message: 'Upload succeeded but no URL returned' };
   }
 
@@ -253,8 +246,8 @@ export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMed
   // render grey. Extract a frame on-device and upload it as a normal image so
   // the post gets a real poster, same as photos get server-side.
   let thumbnailUrl: string | null = (body as any)?.thumbnailUrl ?? null;
-  if (!thumbnailUrl && media.type === 'video') {
-    thumbnailUrl = await extractAndUploadVideoThumbnail(media.uri, token, (body as any)?.path ?? null);
+  if (!thumbnailUrl && mime.startsWith('video/')) {
+    thumbnailUrl = await extractAndUploadVideoThumbnail(media.uri, token, (body as any)?.path ?? null, { isCurrent: owner?.isCurrent, signal: validateOpts?.signal });
   }
 
   if (owner && !owner.isCurrent()) return staleOwner();
@@ -263,6 +256,8 @@ export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMed
     ok: true,
     url,
     mediaType: mime,
+    captureAccepted: body.captureAccepted === true,
+    durationSeconds: typeof body.durationSeconds === 'number' && Number.isFinite(body.durationSeconds) && body.durationSeconds > 0 ? body.durationSeconds : null,
     thumbnailUrl,
     width: (body as any)?.width ?? null,
     height: (body as any)?.height ?? null,
@@ -278,7 +273,7 @@ export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMed
  * before — upload the frame as a plain image through /api/media/upload. Never
  * throws — a failed extraction just leaves thumbnailUrl null.
  */
-async function extractAndUploadVideoThumbnail(videoUri: string, token: string, videoPath: string | null): Promise<string | null> {
+async function extractAndUploadVideoThumbnail(videoUri: string, token: string, videoPath: string | null, options: Parameters<typeof postLocalBinary>[3] = {}): Promise<string | null> {
   const extract = async (uri: string): Promise<string | null> => {
     try {
       return (await VideoThumbnails.getThumbnailAsync(uri, { time: 300 })).uri;
@@ -286,7 +281,7 @@ async function extractAndUploadVideoThumbnail(videoUri: string, token: string, v
       return null;
     }
   };
-  const outcome = await attachVideoPoster(videoPath, videoUri, deviceGeneralPosterDeps(apiBase(), token, extract));
+  const outcome = await attachVideoPoster(videoPath, videoUri, deviceGeneralPosterDeps(apiBase(), token, extract, (url, uri, headers) => postLocalBinary(url, uri, headers, options)));
   return outcome.thumbnailUrl;
 }
 

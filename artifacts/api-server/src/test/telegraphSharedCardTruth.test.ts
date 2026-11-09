@@ -429,6 +429,7 @@ describe("T448 — the re-resolution is ONE batch, not one read per card", () =>
     for (const r of out.rows) assert.ok(!String(r.body).includes(SNAP));
     assert.equal(reads.places, 4, `places read ${reads.places}×`);
     assert.equal(reads.posts, 1, `posts read ${reads.posts}×`);
+    assert.equal(reads.post_media, 1, `post attachments read ${reads.post_media}×`);
     assert.equal(reads.profiles, 1, `profiles read ${reads.profiles}×`);
     assert.ok(reads.blocks <= 2, `blocks read ${reads.blocks}×`);
     assert.ok(stats.coalesced >= 40 + 10 + 10 + 20, `coalesced ${stats.coalesced}`);

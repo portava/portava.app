@@ -35,7 +35,7 @@ import {
   toPrivateTripPreview,
   toAuthorizedTripView,
 } from "../lib/privacy/tripSerializers.js";
-import { computeTripStatus } from "../domain/trips/invariants/tripStatus.js";
+import { computeTripStatus, tripStatusAtRead, tripHasEnded } from "../domain/trips/invariants/tripStatus.js";
 import {
   deriveTripLifecycle,
   TRIP_LIFECYCLE_STATES,
@@ -214,18 +214,16 @@ router.get("/trips/upcoming", async (req, res) => {
   const tripIds = (memberRows ?? []).map((r: any) => r.trip_id as string);
   if (tripIds.length === 0) { res.json({ trips: [] }); return; }
 
-  const today = new Date().toISOString().slice(0, 10);
 
   const { data: trips, error } = await sc
     .from("trips")
     .select("*")
     .in("id", tripIds)
-    .in("status", ["upcoming", "planning"])
-    .gte("start_date", today)
     .order("start_date", { ascending: true });
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  res.json({ trips: (trips ?? []).map(toAuthorizedTripView) });
+  const now = new Date();
+  res.json({ trips: (trips ?? []).filter(row => tripStatusAtRead(row, now) === "upcoming").map(toAuthorizedTripView) });
 });
 
 // ---------------------------------------------------------------------------
@@ -249,19 +247,16 @@ router.get("/trips/active", async (req, res) => {
   const tripIds = (memberRows ?? []).map((r: any) => r.trip_id as string);
   if (tripIds.length === 0) { res.json({ trips: [] }); return; }
 
-  const today = new Date().toISOString().slice(0, 10);
 
   const { data: trips, error } = await sc
     .from("trips")
     .select("*")
     .in("id", tripIds)
-    .in("status", ["active"])
-    .lte("start_date", today)
-    .gte("end_date", today)
     .order("start_date", { ascending: true });
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  res.json({ trips: (trips ?? []).map(toAuthorizedTripView) });
+  const now = new Date();
+  res.json({ trips: (trips ?? []).filter(row => tripStatusAtRead(row, now) === "active").map(toAuthorizedTripView) });
 });
 
 // ---------------------------------------------------------------------------
@@ -289,11 +284,11 @@ router.get("/trips/past", async (req, res) => {
     .from("trips")
     .select("*")
     .in("id", tripIds)
-    .in("status", ["completed", "cancelled", "archived"])
     .order("end_date", { ascending: false });
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  res.json({ trips: (trips ?? []).map(toAuthorizedTripView) });
+  const now = new Date();
+  res.json({ trips: (trips ?? []).filter(row => tripHasEnded(row, now)).map(toAuthorizedTripView) });
 });
 
 // ---------------------------------------------------------------------------
@@ -320,7 +315,7 @@ router.get("/trips/invites", async (req, res) => {
   const tripIds = (rows as any[]).map((r) => r.trip_id as string);
   const { data: trips, error: tripsErr } = await sc
     .from("trips")
-    .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, owner_id")
+    .select("id, title, destination_city, destination_country, start_date, end_date, timezone, status, cover_url, owner_id")
     .in("id", tripIds);
   if (tripsErr) throw readUnavailable("trips", tripsErr);
 
@@ -343,7 +338,7 @@ router.get("/trips/invites", async (req, res) => {
 
   const invites = (rows as any[]).map((row) => {
     const trip = tripMap[row.trip_id];
-    if (!trip) return null;
+    if (!trip || tripHasEnded(trip)) return null;
     const inviter = profileMap[trip.owner_id] ?? null;
     return {
       tripId:             trip.id,
@@ -352,6 +347,7 @@ router.get("/trips/invites", async (req, res) => {
       destinationCountry: trip.destination_country ?? null,
       startDate:          trip.start_date ?? null,
       endDate:            trip.end_date ?? null,
+      timezone:           trip.timezone ?? null,
       coverUrl:           trip.cover_url ?? null,
       invitedAt:          row.created_at,
       inviter: inviter
@@ -953,7 +949,7 @@ router.post("/trips/:tripId/join-request", async (req, res) => {
 
   const { data: trip, error: tripErr } = await sc
     .from("trips")
-    .select("owner_id, allow_join_requests, status, visibility")
+    .select("owner_id, allow_join_requests, status, visibility, end_date, timezone")
     .eq("id", tripId)
     .maybeSingle();
   if (tripErr) throw readUnavailable("trips", tripErr);
@@ -961,7 +957,7 @@ router.post("/trips/:tripId/join-request", async (req, res) => {
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const t = trip as any;
   if (!t.allow_join_requests) { sendError(res, "forbidden", "This trip does not accept join requests"); return; }
-  if (["completed","cancelled","archived"].includes(t.status)) {
+  if (tripHasEnded(t)) {
     sendError(res, "invalid_state_transition", "Cannot request to join a trip that is not active or upcoming");
     return;
   }
@@ -1059,13 +1055,15 @@ router.post("/trips/:tripId/join-requests/:requestId/approve", async (req, res) 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id, status, end_date, timezone").eq("id", tripId).maybeSingle();
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   // §6.1 host — owner or accepted co-host — as canManageJoinRequests defines
   // it and as the kernel's `host` capability (2500) re-checks it.
   const approveHost = await canManageJoinRequests(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
-  if (!approveHost.allowed) { sendTripRefusal(res, "forbidden", approveHost.reason, "Only the owner or co-host can approve join requests"); return; } if (await refuseIfTrustRestricted(res, sc, user.id, "hosting")) return; // verifier R2 (1867c97df): approving a join request adds a member — hosting, for the approver
+  if (!approveHost.allowed) { sendTripRefusal(res, "forbidden", approveHost.reason, "Only the owner or co-host can approve join requests"); return; }
+  if (tripHasEnded(trip)) { res.status(410).json({ error: "gone", message: "This trip has ended" }); return; }
+  if (await refuseIfTrustRestricted(res, sc, user.id, "hosting")) return; // verifier R2 (1867c97df): approving a join request adds a member — hosting, for the approver
 
   const { data: req_, error: req_Err } = await sc
     .from("trip_join_requests")
@@ -1314,9 +1312,10 @@ router.post("/trips/:tripId/invite-link", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id, status, end_date, timezone").eq("id", tripId).maybeSingle();
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+  if (tripHasEnded(trip)) { res.status(410).json({ error: "gone", message: "This trip has ended" }); return; }
   const createLinkAuth = await canEditTrip(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
   if (!createLinkAuth.allowed) { sendTripRefusal(res, "forbidden", createLinkAuth.reason, "Only the owner can create invite links"); return; } if (await refuseIfTrustRestricted(res, sc, user.id, "hosting")) return; // lead ruling D-24/D-24a: a join link opens the trip to others — hosting
 
@@ -1538,7 +1537,7 @@ router.get("/trips/invite-link/:token/preview", async (req, res) => {
 
   const { data: trip, error: tripErr } = await sc
     .from("trips")
-    .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, owner_id, visibility, status, max_members")
+    .select("id, title, destination_city, destination_country, start_date, end_date, timezone, cover_url, owner_id, visibility, status, max_members")
     .eq("id", lk.trip_id)
     .maybeSingle();
   if (tripErr) throw readUnavailable("trips", tripErr);
@@ -1547,14 +1546,7 @@ router.get("/trips/invite-link/:token/preview", async (req, res) => {
 
   const tripStatus = (trip as any).status as string | null;
   const endDate    = (trip as any).end_date as string | null;
-  const today      = new Date().toISOString().slice(0, 10);
-
-  // Return 410 when the trip itself is in a terminal state so the client can
-  // show "This trip is no longer active" instead of a generic link-gone message.
-  const isTerminal =
-    tripStatus === "cancelled" ||
-    tripStatus === "archived"  ||
-    (endDate != null && endDate < today);
+  const isTerminal = tripHasEnded(trip);
 
   if (isTerminal) {
     res.status(410).json({
@@ -1646,29 +1638,15 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
   const tripId = lk.trip_id as string;
 
   // Block check against owner
-  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id, status, end_date, max_members").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id, status, end_date, timezone, max_members").eq("id", tripId).maybeSingle();
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const blocked = await isBlocked(sc, user.id, (trip as any).owner_id);
   if (blocked) { sendError(res, "forbidden", "Blocked"); return; }
 
-  // Terminal-state guard: cannot join a trip that has been cancelled or archived.
-  const tripStatus = (trip as any).status as string | null;
-  if (tripStatus === "cancelled" || tripStatus === "archived") {
+  if (tripHasEnded(trip)) {
     res.status(410).json({ error: "gone", message: "This trip is no longer active" });
     return;
-  }
-
-  // Past-trip guard: cannot join a trip whose end date has already passed.
-  // end_date is stored as a YYYY-MM-DD date string; compare lexicographically
-  // to today's ISO date so no timezone ambiguity is introduced.
-  const endDate = (trip as any).end_date as string | null;
-  if (endDate) {
-    const today = new Date().toISOString().slice(0, 10);
-    if (endDate < today) {
-      res.status(410).json({ error: "gone", message: "This trip has already ended" });
-      return;
-    }
   }
 
   // Already a member?

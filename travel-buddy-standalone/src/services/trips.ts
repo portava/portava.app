@@ -351,6 +351,7 @@ export async function deleteTrip(id: string): Promise<boolean> {
 /* ---------- Trip Invites ---------- */
 
 export interface TripInvite {
+  timezone?: string | null;
   tripId: string;
   tripTitle: string;
   destinationCity: string;

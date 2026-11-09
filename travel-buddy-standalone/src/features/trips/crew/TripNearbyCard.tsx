@@ -48,4 +48,10 @@ function TripNearbyInner({tripId,hidden}:{tripId:string;hidden:boolean}){
   {peers.map(p=><Text key={p.userId} style={s.body}>@{p.handle??'traveler'} · {p.proximity==='very_close'?'Strong nearby signal':p.proximity==='nearby'?'Nearby signal':p.proximity==='within_area'?'In Bluetooth range':'Weak Bluetooth signal'}</Text>)}
  </View>;
 }
-const s=StyleSheet.create({card:{padding:space.md,gap:space.sm,borderRadius:radius.lg,borderWidth:1,borderColor:color.haze,backgroundColor:color.paperRaised},title:{...t.bodyStrong,color:color.ink},body:{...t.small,color:color.mute},button:{padding:space.md,borderWidth:1,borderColor:color.signal,borderRadius:radius.md},action:{...t.bodyStrong,color:color.signalStrong}});
+const s=StyleSheet.create({
+  card:{padding:space.md,gap:space.sm,borderRadius:radius.lg,borderWidth:1,borderColor:color.haze,backgroundColor:color.paperRaised},
+  title:{...t.bodyStrong,color:color.ink},
+  body:{...t.small,color:color.mute},
+  button:{padding:space.md,borderWidth:1,borderColor:color.signal,borderRadius:radius.md},
+  action:{...t.bodyStrong,color:color.signalStrong},
+});

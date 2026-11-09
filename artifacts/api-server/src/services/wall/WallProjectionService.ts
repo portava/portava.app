@@ -71,6 +71,7 @@ export interface WallCandidate {
   /** Experience time when it differs from publishedAt (spec §16). */
   experienceAt?: string | null;
   text?: string | null;
+  postReferenceId?: string | null;
   media?: DisplayMedia[];
   place?: PublicPlaceRef | null;
   actor?: PublicActorRef | null;
@@ -348,6 +349,7 @@ function projectOne(c: WallCandidate, viewer: ProjectViewerContext): WallProject
     visibility: mapVisibility(c.visibility),
     media: c.media && c.media.length > 0 ? c.media : undefined,
     text: c.text ?? undefined,
+    ...(c.postReferenceId ? {postReferenceId:c.postReferenceId} : {}),
     place: c.place ?? undefined,
     // Server-resolved save state (spec §2). Only post-like objects have a
     // canonical save store, so every other type omits the field rather than

@@ -10,6 +10,8 @@
  * this.
  */
 
+const calendarFormatters = new Map<string, Intl.DateTimeFormat>();
+
 /**
  * "Today" as a YYYY-MM-DD string in the given IANA timezone (UTC fallback).
  *
@@ -20,14 +22,52 @@
  * before, so every existing call site is byte-identical in behaviour.
  */
 export function todayInTimezone(timezone: string | null | undefined, now: Date = new Date()): string {
-  const opts = { year: "numeric", month: "2-digit", day: "2-digit" } as const;
+  if (!timezone || timezone === "UTC") return now.toISOString().slice(0, 10);
   try {
-    // en-CA formats as YYYY-MM-DD, directly comparable to date-column strings.
-    return new Intl.DateTimeFormat("en-CA", { timeZone: timezone ?? "UTC", ...opts }).format(now);
+    let formatter = calendarFormatters.get(timezone);
+    if (!formatter) {
+      formatter = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" });
+      if (calendarFormatters.size >= 64) calendarFormatters.clear();
+      calendarFormatters.set(timezone, formatter);
+    }
+    const parts = formatter.formatToParts(now);
+    const part = (key: string) => parts.find(p => p.type === key)?.value;
+    return [part("year"), part("month"), part("day")].join("-");
   } catch {
-    // Invalid/unknown timezone string — fall back to UTC.
-    return new Intl.DateTimeFormat("en-CA", { timeZone: "UTC", ...opts }).format(now);
+    return now.toISOString().slice(0, 10);
   }
+}
+
+/** Evaluate the stored civil dates on reads as well as writes. Terminal states
+ * are explicit; a missing end leaves the trip open through its unknown end. */
+export function tripStatusAtRead(row: { status?: string | null; start_date?: string | null; end_date?: string | null; timezone?: string | null }, now = new Date()): string {
+  const status = row.status ?? "planning";
+  if (["cancelled", "archived", "completed", "draft"].includes(status)) return status;
+  const today = todayInTimezone(row.timezone, now);
+  if (row.end_date && today > row.end_date) return "completed";
+  if (row.start_date) return today < row.start_date ? "upcoming" : "active";
+  return status;
+}
+
+export function tripHasEnded(row: Parameters<typeof tripStatusAtRead>[0], now = new Date()): boolean {
+  return ["completed", "cancelled", "archived"].includes(row.status ?? "")
+    || Boolean(row.end_date && todayInTimezone(row.timezone, now) > row.end_date);
+}
+
+/** Exact expiry instant for consumers that hold a dated result across midnight.
+ * Searching local dates handles short/long DST days without assuming 24 hours. */
+export function tripExpiryInstant(endDate?: string | null, timezone?: string | null): string | null {
+  if (!endDate || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) return null;
+  const midnight = Date.parse(endDate + "T00:00:00Z");
+  if (!Number.isFinite(midnight)) return null;
+  if (!timezone || timezone === "UTC") return new Date(midnight + 86_400_000).toISOString();
+  let lo = midnight - 86_400_000;
+  let hi = midnight + 2 * 86_400_000;
+  while (hi - lo > 1) {
+    const mid = Math.floor((hi + lo) / 2);
+    if (todayInTimezone(timezone, new Date(mid)) > endDate) hi = mid; else lo = mid;
+  }
+  return new Date(hi).toISOString();
 }
 
 /**

@@ -1,3 +1,5 @@
+import { readSharedPostSource } from "../sharedPostSource.js";
+import { postMediaStorageRef } from "../../lib/media/postMediaModerationHold.js";
 import { decodeObjectReference } from "./objectReference.js";
 /**
  * Telegraph §5 — the one share contract, §5.3's revocation, and §606's sixth
@@ -81,6 +83,7 @@ export interface TelegraphShareProjection {
   title: string;
   subtitle: string | null;
   imageUrl: string | null;
+  media?: { type: "image" | "video"; uri: string; thumbnailUri: string | null }[];
   /**
    * §5.2 — the projection is versioned, so a client can tell a re-resolution
    * apart from the snapshot it replaced. It is the source's own updated_at
@@ -326,65 +329,21 @@ function proj(
 
 /** Social — a post. Deleted or non-public degrades unless the viewer authored it. */
 const loadPost: Loader = async (client, id, viewerId) => {
-  const { data, error } = await client
-    .from("posts")
-    .select("id, author_id, content, visibility, status, post_status, deleted_at, media_urls, location_privacy_mode, created_at, updated_at")
-    .eq("id", id)
-    .maybeSingle();
-  if (error) return { state: UNAVAILABLE("unknown"), projection: null };
-  if (!data) return { state: UNAVAILABLE("not_found"), projection: null };
-  const r = data as Row;
-  // The block FIRST, before any state check (R1; see readBlockBetween).
-  {
-    const block = await readBlockBetween(client, viewerId, r.author_id);
-    if (block !== "clear") return refusedByBlock(block);
+  try {
+    const source = await readSharedPostSource(client, id, viewerId);
+    if (!source.available) return { state: UNAVAILABLE(source.reason), projection: null };
+    const media = source.media.flatMap(item => {
+      const uri = storageImageOrNull(item.uri);
+      return uri ? [{type: item.type, uri, thumbnailUri: storageImageOrNull(item.thumbnailUri)}] : [];
+    });
+    const lead = media[0];
+    const poster = lead?.thumbnailUri ?? (lead?.type === "image" ? lead.uri : null);
+    const projection = proj("POST", id, source.text.slice(0, 80) || "Post", source.author, poster,
+      source.version);
+    return { state: AVAILABLE("active"), projection: { ...projection, media } };
+  } catch {
+    return { state: UNAVAILABLE("unknown"), projection: null };
   }
-  if (r.deleted_at || r.status !== "active") return { state: UNAVAILABLE("deleted"), projection: null };
-  const mine = r.author_id === viewerId;
-  if (!mine && r.visibility !== "public") return { state: UNAVAILABLE("private"), projection: null };
-  // An UNPUBLISHED post (a draft, or a delayed post not yet released) is the
-  // author's alone — `GET /posts/:postId` answers not_found to anyone else
-  // ("!isPublished && !isAuthor"). Lane R N1 sweep, 2026-10-06: this loader
-  // never selected `post_status`, so a public draft resolved into a card.
-  if (!mine && Boolean(r.post_status) && r.post_status !== "published") {
-    return { state: UNAVAILABLE("private"), projection: null };
-  }
-  const body = typeof r.content === "string" ? r.content : "";
-  // A BLOCK, EITHER WAY, REFUSES THE POST (read first, above) — the rule every post route already
-  // applies ("Bidirectional block check — matches /stamps access control",
-  // routes/posts.ts), so this door is not the weaker one. Census-telegraph
-  // §45c (verifier finding 1): the byline below used to show a blocker's handle
-  // to the person they blocked, through a door any thread member can call with
-  // any post id on the service client. An unreadable block read is UNKNOWN,
-  // never "no block", as loadProfile treats it.
-  // The author's CURRENT public handle, read at resolve time — so a legacy post
-  // card can say whose post it is without drawing the sender's snapshot of it
-  // (census T413/T448). Only an ACTIVE account is named: loadProfile degrades a
-  // banned, suspended or deleted account, and the byline is that profile's name
-  // on another card. A failed or empty read leaves the subtitle null; it never
-  // fails the projection and never substitutes a stored name.
-  let byline: string | null = null;
-  if (typeof r.author_id === "string") {
-    const { data: author, error: authorErr } = await client
-      .from("profiles")
-      .select("handle, account_status")
-      .eq("id", r.author_id)
-      .maybeSingle();
-    const a = !authorErr && author ? (author as Row) : null;
-    const active = a !== null && ((a.account_status as string | null) ?? "active") === "active";
-    if (active && typeof a.handle === "string" && a.handle.length > 0) byline = `@${a.handle}`;
-  }
-  return {
-    state: AVAILABLE(String(r.status)),
-    projection: proj(
-      "POST",
-      id,
-      body.slice(0, 80) || "Post",
-      byline,
-      Array.isArray(r.media_urls) && r.media_urls.length > 0 ? String(r.media_urls[0]) : null,
-      mine ? ((r.updated_at as string) ?? null) : postVersionForViewer(r), // never the release instant of a "Publish after I leave" post to anyone but its author (postVersionForViewer, file foot)
-    ),
-  };
 };
 
 /**
@@ -1261,7 +1220,7 @@ const loadMedia: Loader = async (client, id, viewerId) => {
   const { data, error } = await client
     .from("media_assets")
     .select(
-      "id, owner_user_id, caption, alt_text, media_type, thumbnail_url, public_url, visibility, moderation_status, processing_status, updated_at",
+      "id, owner_user_id, caption, alt_text, media_type, storage_bucket, storage_path, thumbnail_url, public_url, visibility, moderation_status, processing_status, deleted_at, updated_at",
     )
     .eq("id", id)
     .maybeSingle();
@@ -1273,7 +1232,7 @@ const loadMedia: Loader = async (client, id, viewerId) => {
     const block = await readBlockBetween(client, viewerId, r.owner_user_id);
     if (block !== "clear") return refusedByBlock(block);
   }
-  if (r.moderation_status === "rejected") return { state: UNAVAILABLE("deleted"), projection: null };
+  if (r.deleted_at || r.moderation_status === "rejected" || r.moderation_status === "removed" || r.moderation_status === "owner_deleted") return { state: UNAVAILABLE("deleted"), projection: null };
   const processing = String(r.processing_status ?? "");
   if (processing === "removed" || processing === "expired" || processing === "rejected" || processing === "failed") {
     return { state: UNAVAILABLE("deleted"), projection: null };
@@ -1287,17 +1246,23 @@ const loadMedia: Loader = async (client, id, viewerId) => {
     // the card carried the caption and the thumbnail URL past it. Lane R N1.
   }
   if (processing !== "ready") return { state: UNAVAILABLE("unknown"), projection: null };
-  return {
-    state: AVAILABLE(String(r.media_type ?? "image")),
-    projection: proj(
-      "MEDIA",
-      id,
-      (r.caption as string) || (r.alt_text as string) || (r.media_type === "video" ? "Video" : "Photo"),
-      (r.media_type as string) ?? null,
-      ((r.thumbnail_url as string) ?? (r.public_url as string)) ?? null,
-      (r.updated_at as string) ?? null,
-    ),
+  // Return durable object references so the recipient must hydrate bytes through
+  // the media permission gate. Never relay a signed token supplied by the row.
+  const stored = (raw: unknown) => {
+    const safe = typeof raw === "string" && storageImageOrNull(raw);
+    if (!safe) return null;
+    const ref = postMediaStorageRef(safe);
+    return ref.kind === "object" && ref.bucket === "post-media" ? `${ref.bucket}/${ref.path}` : null;
   };
+  const original = stored(r.storage_path && r.storage_bucket ? `${r.storage_bucket}/${r.storage_path}` : r.public_url);
+  const type = r.media_type === "video" ? "video" : r.media_type === "image" || r.media_type === "photo" ? "image" : null;
+  const thumbnail = stored(r.thumbnail_url);
+  const author = await client.from("profiles").select("handle, account_status").eq("id", r.owner_user_id).maybeSingle();
+  const handle = !author.error && author.data?.account_status === "active" && typeof author.data.handle === "string" ? `@${author.data.handle}` : null;
+  const projection = proj("MEDIA", id, (r.caption as string) || (r.alt_text as string) || (type === "video" ? "Video" : "Photo"),
+    handle, thumbnail ?? (type === "image" ? original : null), (r.updated_at as string) ?? null);
+  return { state: AVAILABLE(String(r.media_type ?? "image")), projection: { ...projection,
+    media: original && type ? [{type, uri: original, thumbnailUri: thumbnail}] : [] } };
 };
 
 /**
@@ -1605,24 +1570,6 @@ export function parsePortavaObjectBody(body: unknown): PortavaObjectBody | null 
     caption: typeof parsed.caption === "string" ? parsed.caption : null,
     shareProjectionVersion: SHARE_PROJECTION_VERSION,
   };
-}
-
-// ── A post's version, for anyone but its author (appended so no cited line above moves) ──
-//
-// `posts.updated_at` is set by trg_posts_updated on EVERY update. On a "Publish after I leave"
-// (`delayed_until_exit`) post, the geofence-exit UPDATE and then the delayed-publish worker's
-// release UPDATE set it — so a released post's `updated_at` is the moment its author LEFT the
-// place, and `loadPost` used to hand it to every thread member as `projectionVersion`. For anyone
-// but the author such a post's version is its creation instant; so is a row whose mode was not
-// read, because an unread mode is not a known-safe one (fail closed). Every other post's
-// `updated_at` is an edit time and is served as it is. The rule is lane M's `updatedAtForViewer`
-// (lib/postLocationDisclosureLifetime.ts, PR #649), inlined until that merges; the author's own
-// card keeps `updated_at` at the call site.
-function postVersionForViewer(r: Row): string | null {
-  const mode = r.location_privacy_mode;
-  const modeUnread = typeof mode !== "string" || mode.length === 0;
-  if (modeUnread || mode === "delayed_until_exit") return typeof r.created_at === "string" ? r.created_at : null;
-  return (r.updated_at as string) ?? null;
 }
 
 // ── census-telegraph T265 (wave 5) — §20 Places: "current intelligence" ─────

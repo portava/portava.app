@@ -31,6 +31,7 @@
  * Runtime: node:test + node:assert/strict
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy node --import tsx/esm --test src/test/discoveryTripProjectionConsumer.test.ts
  */
+import { mock } from "node:test";
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -89,10 +90,10 @@ const P_TOGGLES  = "ab000000-0000-4000-a000-000000000028";
 const ME_TOK = "tok-me";
 
 /** The legacy searchTrips select, verbatim from routes/discoverySearch.ts before this lane. */
-const LEGACY_TRIPS_COLUMNS = "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at";
+const LEGACY_TRIPS_COLUMNS = "id, title, destination_city, destination_country, owner_id, cover_url, start_date, end_date, timezone, status, visibility, created_at";
 /** The legacy searchPlans parent-trip select, verbatim. */
-const LEGACY_PLAN_TRIPS_COLUMNS = "id, visibility, show_in_discovery, owner_id, status, start_date";
-const EXCLUDED_STATUS_LITERAL = '("draft","cancelled","archived")';
+const LEGACY_PLAN_TRIPS_COLUMNS = "id, visibility, show_in_discovery, owner_id, status, start_date, end_date, timezone";
+const EXCLUDED_STATUS_LITERAL = '("draft","completed","cancelled","archived")';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 function trip(over: Record<string, any>): Record<string, any> {
@@ -211,6 +212,11 @@ function makeFakeClient(state: Record<string, any[]>, override: Override = () =>
       });
       chain("or", (expr: string) => {
         const parts = expr.split(",").map((p) => p.trim().match(/^(\w+)\.(\w+)\.(.+)$/)).filter(Boolean) as RegExpMatchArray[];
+        if (expr.startsWith("end_date.is.null,end_date.gte.")) {
+          const bound = expr.slice("end_date.is.null,end_date.gte.".length);
+          filters.push(r => r.end_date == null || r.end_date >= bound);
+          return;
+        }
         filters.push((r) => parts.some((m) => {
           const cell = String(r[m[1]!] ?? "");
           if (m[2] === "ilike") return like(m[3]!).test(cell);
@@ -318,7 +324,7 @@ function assertLegacyTripsSearchRead(rec: Recorded, extra: { gte?: string; lt?: 
   ];
   if (extra.gte) expected.push(["gte", ["start_date", extra.gte]]);
   if (extra.lt)  expected.push(["lt",  ["start_date", extra.lt]]);
-  expected.push(["range", extra.range]);
+  expected.push(["or", ["end_date.is.null,end_date.gte.2026-09-07"]], ["order", ["id", { ascending: true }]], ["range", extra.range]);
   assert.deepEqual(rec.calls, expected, "the legacy trips search read, byte for byte");
 }
 
@@ -352,6 +358,8 @@ function assertExpectedPlans(body: any) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-09-07T12:00:00Z") });
+
 describe("flag OFF (the seed) — searchTrips issues the legacy read, byte-identical, and never the projection", () => {
   const PINNED_CARD = {
     id: T_PUB, type: "trips", title: "Lisbon in October", subtitle: "Lisbon, PT", avatarUrl: null,

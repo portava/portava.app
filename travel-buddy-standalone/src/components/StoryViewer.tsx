@@ -8,6 +8,8 @@
  * - Swipe-down to dismiss (via close button)
  * - Viewer list sheet for story owner
  */
+import { RecordingStampBadge } from '../features/capture-stamps/RecordingStamp.tsx';
+import { SharedVideoPlayer } from './ui/SharedVideoPlayer.tsx';
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   ActivityIndicator, Animated, Dimensions, Modal, Pressable, TextInput,
@@ -80,7 +82,7 @@ export function StoryViewer({ visible, feedUser, onClose }: Props) {
 
   useEffect(() => {
     if (!visible || !current) return;
-    if (paused) {
+    if (paused || current.media_type?.startsWith('video/')) {
       animRef.current?.stop();
     } else {
       startProgress();
@@ -201,12 +203,9 @@ export function StoryViewer({ visible, feedUser, onClose }: Props) {
           }}
         >
           <View style={{ flex: 1 }}>
-            <DisplayMediaImage
-              uri={current.media_url}
-              width={SCREEN_W}
-              height={SCREEN_H}
-              resizeMode="cover"
-            />
+            {current.media_type?.startsWith('video/') ? <SharedVideoPlayer key={current.id} uri={current.media_url}
+              autoplay={visible && !paused} onEnd={advance} style={{ flex: 1 }} /> :
+            <DisplayMediaImage uri={current.media_url} width={SCREEN_W} height={SCREEN_H} resizeMode="cover" />}
             {current.caption ? (
               <View style={s.captionBg}>
                 <Text style={s.caption}>{current.caption}</Text>
@@ -215,6 +214,7 @@ export function StoryViewer({ visible, feedUser, onClose }: Props) {
           </View>
         </TouchableWithoutFeedback>
 
+        {current.media_type?.startsWith('video/') && <RecordingStampBadge targetType="story" targetId={current.id} onInspectChange={setPaused} />}
         {/* Footer */}
         {notice ? <Text style={s.notice} accessibilityLiveRegion="polite">{notice}</Text> : null}
         {isOwner ? (

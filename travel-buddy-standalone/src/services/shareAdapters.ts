@@ -1,4 +1,4 @@
-import { POST_REFERENCE_MEDIA_TYPE } from './postDestinations.ts';
+import { POST_REFERENCE_MEDIA_TYPE } from '../constants/postReference.ts';
 /**
  * shareAdapters — normalize each shareable domain object into ShareableEntity.
  *

@@ -48,6 +48,7 @@ export interface PulsePost {
   tripId: string | null;
   content: string;
   mediaUrls: string[];
+  postReferenceId?: string | null;
   /** Structured media items from post_media — present on new Postcard-flow posts. */
   media?: import('./postcards').PostcardMediaItem[];
   visibility: string;
@@ -158,6 +159,7 @@ export function pulsePostToFeedItem(p: PulsePost): PulseFeedItem {
     mediaUrl: p.media?.[0]?.thumbnail_url ?? p.media?.[0]?.url ?? p.mediaUrls[0],
     media: p.media,
     caption: p.content,
+    postReferenceId: p.postReferenceId,
     source: 'user',
     relatedTripId: p.tripId ?? null,
     neighborhood: p.locationName ?? undefined,

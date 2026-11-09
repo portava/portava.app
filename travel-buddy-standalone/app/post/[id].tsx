@@ -1,13 +1,17 @@
+import { RecordingStampBadge } from '../../src/features/capture-stamps/RecordingStamp.tsx';
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
-  View, Text, ScrollView, Pressable, Modal, Share, StyleSheet, Alert,
+  View, Text, ScrollView, Pressable, Modal, Platform, StyleSheet, Alert,
   ActivityIndicator, useWindowDimensions,
   Keyboard,
 } from 'react-native';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
+import { PostEngagementBar } from '../../src/components/PostEngagementBar.tsx';
+import { SaveButton } from '../../src/components/SaveButton.tsx';
+import { PostSharePreview, postShareTarget } from '../../src/components/PostReferenceCard.tsx';
 import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
 import { navigateToProfile } from '../../src/lib/navigateToProfile.ts';
-import * as Linking from 'expo-linking';
+import { ShareSheet } from '../../src/components/ShareSheet.tsx';
 import {
   MoreVertical, Flag, Flag as FlagFill,
   MapPin, MessageCircle, Pencil, BookmarkPlus, Trash2,
@@ -53,29 +57,35 @@ function PostOverflowSheet({
   onEdit?: () => void;
   onWrongPlace?: () => void; /** MD385: own post with media, flag on. */ onSaveToMemory?: () => void; /** Own post only. */ onDelete?: () => void;
 }) {
+  const pending = useRef<(() => void) | null>(null);
+  const dismissWith = (action: () => void) => {
+    if (Platform.OS === 'ios') pending.current = action;
+    onClose();
+    if (Platform.OS !== 'ios') action();
+  };
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} onDismiss={() => { const action = pending.current; pending.current = null; action?.(); }}>
       <View style={ov.overlay}>
         <Pressable style={{ flex: 1 }} onPress={onClose} />
         <View style={ov.sheet}>
           <View style={ov.handle} />
           {onEdit && (
             <>
-              <Pressable style={ov.row} onPress={() => { onClose(); onEdit(); }}>
+              <Pressable style={ov.row} onPress={() => dismissWith(onEdit)}>
                 <Pencil size={20} color={color.ink} />
                 <Text style={ov.rowLabel}>Edit post</Text>
               </Pressable>
               <View style={ov.divider} />
             </>
           )}
-          <Pressable style={ov.row} onPress={() => { onClose(); onShare(); }}>
+          <Pressable style={ov.row} onPress={() => dismissWith(onShare)}>
             <PortavaShareIcon size={20} color={color.ink} />
             <Text style={ov.rowLabel}>Share post</Text>
-          </Pressable>{onSaveToMemory && (<><View style={ov.divider} /><Pressable style={ov.row} onPress={() => { onClose(); onSaveToMemory(); }} testID="overflow-save-to-memory" accessibilityRole="button"><BookmarkPlus size={20} color={color.ink} /><Text style={ov.rowLabel}>Save to a Memory</Text></Pressable></>)}
+          </Pressable>{onSaveToMemory && (<><View style={ov.divider} /><Pressable style={ov.row} onPress={() => dismissWith(onSaveToMemory)} testID="overflow-save-to-memory" accessibilityRole="button"><BookmarkPlus size={20} color={color.ink} /><Text style={ov.rowLabel}>Save to a Memory</Text></Pressable></>)}
           {onWrongPlace && (
             <>
               <View style={ov.divider} />
-              <Pressable style={ov.row} onPress={() => { onClose(); onWrongPlace(); }} testID="overflow-wrong-place">
+              <Pressable style={ov.row} onPress={() => dismissWith(onWrongPlace)} testID="overflow-wrong-place">
                 <MapPin size={20} color={color.mute} />
                 <Text style={ov.rowLabel}>Wrong place?</Text>
               </Pressable>
@@ -84,12 +94,12 @@ function PostOverflowSheet({
           {onReport && (
             <>
               <View style={ov.divider} />
-              <Pressable style={ov.row} onPress={() => { onClose(); onReport(); }}>
+              <Pressable style={ov.row} onPress={() => dismissWith(onReport)}>
                 <Flag size={20} color={color.signal} />
                 <Text style={[ov.rowLabel, { color: color.signal }]}>Report post</Text>
               </Pressable>
             </>
-          )}{onDelete && (<><View style={ov.divider} /><Pressable style={ov.row} onPress={() => { onClose(); onDelete(); }} testID="overflow-delete-post" accessibilityRole="button"><Trash2 size={20} color={color.signal} /><Text style={[ov.rowLabel, { color: color.signal }]}>Delete post</Text></Pressable></>)}
+          )}{onDelete && (<><View style={ov.divider} /><Pressable style={ov.row} onPress={() => dismissWith(onDelete)} testID="overflow-delete-post" accessibilityRole="button"><Trash2 size={20} color={color.signal} /><Text style={[ov.rowLabel, { color: color.signal }]}>Delete post</Text></Pressable></>)}
         </View>
       </View>
     </Modal>
@@ -133,15 +143,19 @@ function withRelayWidth(url: string | null, targetWidth: number): string | null 
   return url.includes('?') ? `${url}&width=${targetWidth}` : `${url}?width=${targetWidth}`;
 }
 
-function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: number }) {
+type PlaybackOptions = Pick<import('../../src/components/PostTakeover.tsx').PostTakeoverProps, 'initialPositionMillis' | 'onPositionChange' | 'initialMediaUri' | 'authorizedMedia'>;
+function PostDetailCard({ post, commentCount, takeover, onCommentCountChange, initialMediaUri, authorizedMedia, initialPositionMillis, onPositionChange }: { post: PostRow; commentCount: number; takeover: boolean; onCommentCountChange: (n: number) => void } & PlaybackOptions) {
   const { width } = useWindowDimensions(); const screenFocused = useScreenFocused(); // the video plays only while this screen is in front: a sound-on video kept talking under a profile opened from it
   const { userId: currentUserId } = useSession();
   const mediaHeight = Math.min(Math.round(width * (5 / 4)), 560);
-  const firstMediaItem = post.media?.[0] ?? null;
+  const share = postShareTarget(post.postReferenceId, post.content);
+  const firstMediaItem = post.media?.find(item => item.url === initialMediaUri) ?? post.media?.[0] ?? null;
   // Raw relay URL — used as-is for video so the relay issues a plain signed
   // URL rather than redirecting through Supabase's image transform endpoint
   // (which would break video playback).
-  const firstMedia = firstMediaItem?.url ?? post.mediaUrls[0] ?? null; const showsVideo = firstMediaItem ? firstMediaItem.media_type === 'video' : refPlaysAsVideo(firstMedia, post); // 2026-10-24: a post with no media item still plays its video file (PulseFeedCard's #776 rule, plus the post's own declared type)
+  const checkedMedia = authorizedMedia?.find(item => item.uri === initialMediaUri) ?? authorizedMedia?.[0];
+  const firstMedia = authorizedMedia ? checkedMedia?.uri ?? null : firstMediaItem?.url ?? post.mediaUrls.find(uri => uri === initialMediaUri) ?? post.mediaUrls[0] ?? null;
+  const showsVideo = authorizedMedia ? checkedMedia?.type === 'video' : firstMediaItem ? firstMediaItem.media_type === 'video' : refPlaysAsVideo(firstMedia, post); // 2026-10-24: a post with no media item still plays its video file (PulseFeedCard's #776 rule, plus the post's own declared type)
   const loc = post.locationName ?? post.locationCity ?? null;
   const authorName = primaryIdentityText(post.author ?? undefined);
   const authorAvatar = post.author?.avatarUrl ?? null;
@@ -182,13 +196,14 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
           {showsVideo ? (
             <SharedVideoPlayer
               uri={firstMedia}
-              poster={withRelayWidth(firstMediaItem ? (firstMediaItem.thumbnail_url ?? null) : (post.mediaThumbnailUrl ?? derivedVideoPosterRef(firstMedia)), 1200) ?? undefined}
+              poster={withRelayWidth(authorizedMedia ? checkedMedia?.thumbnailUri ?? null : firstMediaItem ? (firstMediaItem.thumbnail_url ?? null) : (post.mediaThumbnailUrl ?? derivedVideoPosterRef(firstMedia)), 1200) ?? undefined}
               autoplay={screenFocused} /* opening the post plays it (2026-11-04), with sound: SharedVideoPlayer starts it muted only on web, where browsers demand it; it pauses while another screen is on top and resumes on return */
               muted={false}
+              initialPositionMillis={initialPositionMillis} onPositionChange={onPositionChange}
               style={StyleSheet.absoluteFill}
             />
           ) : (
-            <FullscreenPhoto uri={firstMedia} photos={post.media?.filter(item => item.media_type !== 'video').map(item => item.url)} style={StyleSheet.absoluteFill}>
+            <FullscreenPhoto uri={firstMedia} photos={authorizedMedia ? authorizedMedia.filter(item => item.type === 'image').map(item => item.uri) : post.media?.filter(item => item.media_type !== 'video').map(item => item.url)} style={StyleSheet.absoluteFill}>
               <DisplayMediaImage
                 uri={withRelayWidth(firstMedia, 1200)}
                 width={width}
@@ -196,11 +211,11 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
                 resizeMode="cover"
                 style={StyleSheet.absoluteFill}
               />
-              <MediaStampOverlay raw={firstMediaItem?.stamp_overlay} />
+              <MediaStampOverlay raw={authorizedMedia ? undefined : firstMediaItem?.stamp_overlay} />
             </FullscreenPhoto>
           )}
         </View>
-      ) : (
+      ) : share ? null : (
         <View style={[card.media, { height: mediaHeight }, card.mediaPlaceholder]}>
           <MapPin size={28} color={color.onInk} />
           <Text style={card.mediaPlaceholderText} numberOfLines={1}>
@@ -209,7 +224,9 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
         </View>
       )}
 
-      {post.content ? (
+      {showsVideo && <RecordingStampBadge targetType="post" targetId={post.id} />}
+      {share && <PostSharePreview target={share} />}
+      {post.content && !share?.legacyPostId ? (
         <TranslatedContent entityType="post" entityId={post.id} field="content" original={post.content} style={card.content}>
           <Text style={card.content}>{post.content}</Text>
         </TranslatedContent>
@@ -222,7 +239,12 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
         </View>
       ) : null}
 
-      <View style={card.engRow}>
+      {takeover ? <PostEngagementBar postId={post.id} stampCount={post.stampCount ?? post.likeCount}
+        commentCount={commentCount} onCommentCountChange={onCommentCountChange}
+        isStampedByViewer={post.likedByMe} isOwner={currentUserId === post.authorId} saveCount={post.saveCount}
+        canStamp={post.canLike} canComment={post.canComment} canShare={post.canShare}
+        right={[{ key: 'save', node: <SaveButton entityType="post" entityId={post.id} initialSaved={post.savedByMe} /> }]} />
+        : <View style={card.engRow}>
         <View style={card.engItem}>
           <StampIcon size={14} active={false} />
            <Text style={card.engText}>{post.stampCount ?? post.likeCount}</Text>
@@ -231,7 +253,7 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
           <MessageCircle size={14} color={color.mute} />
           <Text style={card.engText}>{commentCount}</Text>
         </View>
-      </View>
+      </View>}
     </View>
   );
 }
@@ -240,6 +262,10 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
 
 export default function PostDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  return <PostDetailContent key={id} id={id} />;
+}
+
+export function PostDetailContent({ id, onClose, ...playback }: { id: string; onClose?: () => void } & PlaybackOptions) {
   const { userId } = useSession();
   const navBarScrollHandler = useNavBarScrollHandler();
 
@@ -248,6 +274,7 @@ export default function PostDetail() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [commentCount, setCommentCount] = useState(0);
 
+  const [shareOpen, setShareOpen] = useState(false);
   const [overflowOpen, setOverflowOpen]   = useState(false);
   const [reportOpen, setReportOpen]       = useState(false);
   const [wrongPlaceOpen, setWrongPlaceOpen] = useState(false);
@@ -265,10 +292,13 @@ export default function PostDetail() {
   useFocusEffect(
     useCallback(() => {
       if (!id) { setLoading(false); return; }
+      let current = true;
       setLoading(true);
+      setPost(null);
       setFetchError(null);
       getPostById(id)
         .then((result) => {
+          if (!current) return;
           if (result.ok && result.data) {
             setPost(result.data);
             setCommentCount(result.data.commentCount);
@@ -280,9 +310,10 @@ export default function PostDetail() {
             );
           }
         })
-        .catch(() => setFetchError('Could not load this post.'))
-        .finally(() => setLoading(false));
-    }, [id]),
+        .catch(() => { if (current) setFetchError('Could not load this post.'); })
+        .finally(() => { if (current) setLoading(false); });
+      return () => { current = false; };
+    }, [id, userId]),
   );
 
   useEffect(() => () => {
@@ -313,13 +344,6 @@ export default function PostDetail() {
     setUndoAvailable(false);
   }, []);
 
-  async function handleShare() {
-    if (!post) return;
-    const deepLink = Linking.createURL(`post/${post.id}`);
-    const preview = post.content ? `${post.content.slice(0, 120)}…\n\n` : '';
-    await Share.share({ message: `${preview}${deepLink}`, url: deepLink });
-  }
-
   // The owner had Edit here but no Delete, while the edit screen tells them to
   // "delete this post and create a new one" to change its media. Called as the
   // overflow sheet closes; the confirm waits out the dismissal, because an
@@ -338,7 +362,8 @@ export default function PostDetail() {
             Alert.alert('Error', 'Could not delete post. Please try again.');
             return;
           }
-          if (router.canGoBack()) router.back();
+          if (onClose) onClose();
+          else if (router.canGoBack()) router.back();
           else router.replace('/(tabs)' as any);
         },
       },
@@ -346,22 +371,12 @@ export default function PostDetail() {
     setTimeout(ask, 400);
   }
 
-  const headerRight = post ? (
-    <Pressable
-      onPress={() => setOverflowOpen(true)}
-      hitSlop={8}
-      accessibilityLabel="More options"
-    >
-      <MoreVertical size={22} color={color.ink} />
-    </Pressable>
-  ) : undefined;
-
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
       <AppHeader
-        variant="detail"
+        variant={onClose ? "modal" : "detail"}
         title="Post"
-        onBack={router.back}
+        onBack={onClose ?? router.back}
         rightActions={post ? [
           { icon: <MoreVertical size={22} color={color.ink} />, onPress: () => setOverflowOpen(true), accessibilityLabel: 'More options' },
         ] : []}
@@ -386,7 +401,7 @@ export default function PostDetail() {
               ? <ReportedBanner undoAvailable={undoAvailable} onUndo={handleUndo} />
               : (
                 <Pressable onPress={Keyboard.dismiss}>
-                  <PostDetailCard post={post} commentCount={commentCount} />
+                  <PostDetailCard post={post} commentCount={commentCount} takeover={!!onClose} onCommentCountChange={setCommentCount} {...playback} />
                 </Pressable>
               )
           ) : null}
@@ -405,7 +420,7 @@ export default function PostDetail() {
               />
             </View>
           )}
-          <NavBarFiller />
+          {!onClose && <NavBarFiller />}
         </ScrollView>
       </KeyboardSafeScrollView>
 
@@ -414,12 +429,13 @@ export default function PostDetail() {
           <PostOverflowSheet
             visible={overflowOpen}
             onClose={() => setOverflowOpen(false)}
-            onShare={handleShare}
+            onShare={() => { if (post.canShare) setShareOpen(true); else Alert.alert('Sharing unavailable', 'The author has restricted sharing.'); }}
             onEdit={isOwnPost ? () => router.push(`/post/edit/${post.id}` as any) : undefined}
             onDelete={isOwnPost ? confirmDelete : undefined}
             onReport={!isOwnPost ? () => setReportOpen(true) : undefined}
             onWrongPlace={!isOwnPost && !!post.locationName ? () => setWrongPlaceOpen(true) : undefined} onSaveToMemory={canSaveToMemory ? () => setSaveToMemoryOpen(true) : undefined}
           />{canSaveToMemory && userId ? <SaveOwnPostToMemorySheet visible={saveToMemoryOpen} post={post} viewerId={userId} onClose={() => setSaveToMemoryOpen(false)} /> : null}
+          {shareOpen && <ShareSheet visible postId={post.id} onClose={() => setShareOpen(false)} />}
           {!isOwnPost && (
             <ReportSheet
               visible={reportOpen}

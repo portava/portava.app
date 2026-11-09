@@ -563,6 +563,8 @@ export async function saveCommunityPlace(
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    const body = await res.json().catch(() => null);
+    if (typeof body !== 'object' || body === null || !('ok' in body) || body.ok !== true || !('placeId' in body) || body.placeId !== placeId) return { ok: false, error: 'This place could not be saved. Try again.' };
     return { ok: true };
   } catch {
     return { ok: false, error: 'Network error — check your connection' };

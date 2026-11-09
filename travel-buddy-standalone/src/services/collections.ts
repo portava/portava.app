@@ -75,6 +75,7 @@ export interface CollectionItem {
   id: string;
   entityType: EntityType;
   entityId: string;
+  placeId?: string | null;
   savedAt: string;
   title: string | null;
   coverUrl: string | null;

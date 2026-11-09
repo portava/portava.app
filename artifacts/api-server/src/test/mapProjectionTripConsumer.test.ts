@@ -28,6 +28,7 @@
  *   SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *     node --import tsx/esm --test src/test/mapProjectionTripConsumer.test.ts
  */
+import { mock } from "node:test";
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -328,11 +329,13 @@ async function tripLayer(state: FakeState) {
 // 0. THE CHAIN IS CLOSED — a real API reader consumes the projection
 // ═════════════════════════════════════════════════════════════════════════════
 
+mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-08-20T12:00:00Z") });
+
 describe("the chain: trip_map_projections reaches GET /api/map/projection", () => {
   it("serves a pin built from the PROJECTION, not from canonical trips", async () => {
-    // Prove the canonical table cannot be the source: it is ABSENT here, so a
-    // pin can only have come from trip_map_projections.
-    const r = await tripLayer(readyState({ trips: { absent: true } }));
+    // Only the canonical window is read. Geometry and the title must still come
+    // from the projection, even when the canonical row has no destination.
+    const r = await tripLayer(readyState({ trips: [tripRow({ destination_lat: null, destination_lng: null })] }));
     assert.equal(r.status, 200);
     assert.deepEqual(r.body.sources, ["trips"]);
     assert.equal(r.body.trips.path, "projection");
@@ -471,13 +474,7 @@ describe("cancellation and removal propagate to the wire", () => {
         trip_map_projections: [projectionRow({ source_trip_version: 8 }, { stage: "cancelled" })],
       }),
     );
-    const obj = r.body.objects.find((o: any) => o.id === "trip:t1");
-    assert.ok(obj);
-    assert.equal(
-      obj.payload.status,
-      "cancelled",
-      "the pre-cancellation stage must not be what the map shows",
-    );
+    assert.deepEqual(r.body.objects, [], "cancelled trips leave the active map");
   });
 
   it("a trip removed from the projection (ON DELETE CASCADE) is removed from the map", async () => {

@@ -60,8 +60,9 @@ export function toLegacyStamp(s: PassportStampNew): PassportStamp {
     : s.stampType === 'hidden_gem'? 'gem'
     : s.stampType === 'safe_return'? 'safe'
     : s.stampType === 'host'      ? 'host'
-    : s.definition?.category === 'safety' ? 'safe'
-    : ['social', 'community', 'trips', 'events', 'event'].includes(s.definition?.category ?? s.stampType) ? 'plan'
+    : ['safety', 'trust'].includes(s.definition?.category ?? s.stampType) ? 'safe'
+    : s.definition?.category === 'rent_buddy' || s.stampType === 'rent_buddy' ? 'host'
+    : ['social', 'community', 'trip', 'trips', 'events', 'event'].includes(s.definition?.category ?? s.stampType) ? 'plan'
     : 'city'
   ) as PassportStamp['kind'];
   const sub: string[] = [];

@@ -1,3 +1,4 @@
+import { tripHasEnded } from "../domain/trips/invariants/tripStatus.js";
 import { readCanonicalPlaceVisibility } from '../lib/places/placeGovernance.js';
 /**
  * wall — the Portava Wall API (spec §26/§27).
@@ -134,7 +135,7 @@ const CANDIDATE_FETCH = 150;
 // status='active' + post_status='pending_*'. The Wall served those pending
 // posts to every follower while the author was still at the place (§23/§37).
 const POST_COLUMNS =
-  "id, author_id, trip_id, content, visibility, status, post_status, created_at, published_at, " +
+  "id, author_id, trip_id, content, post_reference_id, visibility, status, post_status, created_at, published_at, " +
   "canonical_place_id, has_video, media_count, category, location_city, location_country, " +
   "like_count, comment_count, save_count, location_privacy_mode"; // census-media §43: the owner's mode, read with the row so a withheld place can be marked (lib/postPlaceDisclosure)
 
@@ -346,7 +347,7 @@ export async function loadViewerContext(sc: any, viewerId: string): Promise<Wall
   try {
     const { data, error } = await sc
       .from("trips")
-      .select("destination_city, status")
+      .select("destination_city, status, end_date, timezone")
       .eq("owner_id", viewerId)
       .in("status", ["planning", "upcoming", "active"])
       .limit(50);
@@ -355,6 +356,7 @@ export async function loadViewerContext(sc: any, viewerId: string): Promise<Wall
     // is genuinely harmless here — it is logged, not escalated.
     if (error) logger.warn({ err: error, viewerId }, "wall: upcoming trips read failed — no destination boost");
     for (const r of (data as any[]) ?? []) {
+      if (tripHasEnded(r)) continue;
       const c = (r as any).destination_city;
       if (c) ctx.upcomingTripCities.add(String(c).trim().toLowerCase());
     }
@@ -785,6 +787,7 @@ export async function loadCandidates(
       tripId: r.trip_id ?? null,
       publishedAt: wallPublishedAtForViewer(r, opts.viewerId), // verifier F6: a "Publish after I leave" post's release instant dates its author's exit, so others see (and page by) its creation instant
       text: r.content ?? null,
+      postReferenceId: r.post_reference_id ?? null,
       place: withPostPlaceMark(placeRef, r), // census-media §43: the same ref, marked (never serialised) when mapPublicPost withholds this post's place; wallItemsForViewer strips it for a non-owner at the response
       actor,
       authorAccountStatus: prof.account_status,

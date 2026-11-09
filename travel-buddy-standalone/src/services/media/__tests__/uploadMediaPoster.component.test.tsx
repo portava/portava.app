@@ -17,6 +17,11 @@ jest.mock('expo-video-thumbnails', () => ({
   getThumbnailAsync: (uri: string, opts: unknown) => mockGetThumbnail(uri, opts),
 }));
 
+// NOTE: these cases exercise the browser fetch transport. The native file-upload suite covers the Expo binary path.
+import { Platform } from 'react-native';
+const originalPlatform = Platform.OS;
+beforeAll(() => { Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' }); });
+afterAll(() => { Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform }); });
 import { uploadMedia, _setTestTokenProvider, _setTestConfiguredOverride } from '../../media.ts';
 
 const VIDEO_PATH = 'f0000000-0000-4000-a000-000000000001/1790000000000.mp4';

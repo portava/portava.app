@@ -1,3 +1,4 @@
+import { PostTakeover } from '../../../../components/PostTakeover.tsx';
 import { FullscreenPhoto } from '../../../../components/ui/FullscreenPhoto.tsx';
 /**
  * wallItemShared — presentational scaffolding shared by the distinct Wall object
@@ -121,13 +122,13 @@ export function resolveActionRoute(
       // §35 entry: origin is a Wall item; the vocabulary has no 'wall' member,
       // so it is stated as unknown rather than guessed.
       if (!placeId) return '/map?entry=unknown';
-      const mapParams = new URLSearchParams({ entry: 'unknown', focusId: placeId, entityTypes: 'place' });
+      const mapParams = new URLSearchParams({ focusId: placeId, entityTypes: 'place' });
       const p = projection.place;
       if (p?.placeId === placeId && Number.isFinite(p.lat) && Number.isFinite(p.lng)) {
         mapParams.set('lat', String(p.lat)); mapParams.set('lng', String(p.lng));
         mapParams.set('zoom', '15');
       }
-      return `/map?${mapParams}`;
+      return `/map?entry=unknown&${mapParams}`;
     case 'add_to_trip':
       return null; // the canonical plan picker receives the place through WallActionContext
     case 'message':
@@ -334,14 +335,16 @@ export async function runWallAction(action: WallAction, projection: WallProjecti
 // ── Media (single-image frame with a processing placeholder, spec §34) ───────
 
 export function WallImage({
-  media,
+  media, postId,
   ratio = aspect.card,
   rounded = true,
 }: {
   media?: DisplayMedia;
+  postId?: string;
   ratio?: number;
   rounded?: boolean;
 }) {
+  const [opened, setOpened] = React.useState(false);
   const uri = pickWallImageRef(media, wallImageTargetPx(useWindowDimensions())); // §33: the smallest stored variant that covers the frame — the same pick the prefetch warms
   const frameStyle = [s.mediaFrame, { aspectRatio: ratio }, rounded ? s.mediaRounded : null];
   if (media?.processing || !uri) {
@@ -360,6 +363,10 @@ export function WallImage({
   // rather than blank space (spec §34/§35). Same private-bucket concern the avatar
   // and QuickMediaRow already route through CachedImage.
   const image = <CachedImage source={{ uri }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackLabel="" />;
+  if (postId) return <>
+    <Pressable accessibilityRole="button" accessibilityLabel="Open post" style={frameStyle} onPress={() => setOpened(true)}>{image}</Pressable>
+    {opened && <PostTakeover postId={postId} initialMediaUri={media?.url ?? undefined} onClose={() => setOpened(false)} />}
+  </>;
   return media?.kind === 'image' ? <FullscreenPhoto uri={media.url ?? uri} style={frameStyle}>{image}</FullscreenPhoto>
     : <View style={frameStyle}>{image}</View>;
 }
@@ -523,18 +530,24 @@ function ContextualActionChipsForObject({ projection }: { projection: WallProjec
 
 // ── Standard social action row (keeps it enjoyable as social media, §40) ─────
 
-export function SocialActionRow({ projection, onDark = false }: { projection: WallProjection; onDark?: boolean }) {
+export function SocialActionRow({ projection, onDark = false, onOpenPost }: { projection: WallProjection; onDark?: boolean; onOpenPost?: () => void }) {
   const epoch = useInputAccountEpoch();
-  return <SocialActionRowForObject key={`${epoch}:${projection.projectionId}`} projection={projection} onDark={onDark} />;
+  return <SocialActionRowForObject key={`${epoch}:${projection.projectionId}`} projection={projection} onDark={onDark} onOpenPost={onOpenPost} />;
 }
 
-function SocialActionRowForObject({ projection, onDark }: { projection: WallProjection; onDark: boolean }) {
+function SocialActionRowForObject({ projection, onDark, onOpenPost }: { projection: WallProjection; onDark: boolean; onOpenPost?: () => void }) {
   const actionTint = onDark ? color.onInk : color.mute;
   const [shareOpen, setShareOpen] = React.useState(false);
   const [shareMounted, setShareMounted] = React.useState(false);
   const postLike = POST_SAVEABLE_TYPES.has(projection.objectType);
   const canonicalLink = !postLike ? wallShareUrl(projection) : null;
-  const open = () => runWallAction({ type: 'open_object', label: 'Open' }, projection);
+  const [postOpen, setPostOpen] = React.useState(false);
+  const open = () => {
+    if (postLike) {
+      trackAction(projection, 'tap');
+      if (onOpenPost) onOpenPost(); else setPostOpen(true);
+    } else void runWallAction({ type: 'open_object', label: 'Open' }, projection);
+  };
   // Stamp/comment measure the distinct engagement (spec §32) then open the
   // canonical object where the interaction actually happens (spec §24).
   const stamp = () => {
@@ -564,6 +577,7 @@ function SocialActionRowForObject({ projection, onDark }: { projection: WallProj
       {postLike ? <SaveButton entityType="post" entityId={projection.canonicalObjectId} initialSaved={projection.viewerSaved === true} size={icon.s20} tint={onDark ? color.onInk : undefined} recordRankOutcome={false} onSavedChange={(saved) => {
         if (saved) { trackEngagement(projection, 'save'); trackAction(projection, 'save'); }
       }} /> : null}
+      {postOpen && <PostTakeover postId={projection.canonicalObjectId} onClose={() => setPostOpen(false)} />}
       {shareMounted ? <ShareSheet visible={shareOpen} {...(postLike ? { postId: projection.canonicalObjectId, telegraphObject: { objectType: 'POST' as const, objectId: projection.canonicalObjectId } } : { canonicalLink: { url: canonicalLink!, title: 'Share moment' } })} onClose={() => setShareOpen(false)} onShareSuccess={() => {
         trackEngagement(projection, 'share'); trackAction(projection, 'share');
       }} /> : null}

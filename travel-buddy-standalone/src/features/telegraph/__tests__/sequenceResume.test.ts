@@ -105,10 +105,13 @@ describe('wiring (source assertions)', () => {
   const svc = readFileSync(join(root, 'src/services/messaging.ts'), 'utf8');
   const hook = readFileSync(join(root, 'src/hooks/useMessaging.ts'), 'utf8');
   it('T231: sendMessage sends the clientId as the idempotency key', () => {
-    assert.match(svc, /\.\.\.\(rest\.clientId \? \{ idempotencyKey: rest\.clientId \} : \{\}\)/);
+    assert.match(svc, /const clientId = rest\.clientId \?\?/);
+    assert.match(svc, /messageOutbox\.submit\(owner, \{\s*clientId, threadId,/);
+    assert.match(svc, /return \{ \.\.\.payload, \.\.\.rest, clientId, idempotencyKey: clientId \};/);
   });
   it('T231: retrySend reuses the failed message\'s clientId', () => {
-    assert.match(hook, /const res = await sendMessage\(threadId, failed\.body, \{[\s\S]{0,120}clientId,\s*\}\);/);
+    assert.match(hook, /const failed = messages\.find\(\(m\) => m\.clientId === clientId\)/);
+    assert.match(hook, /res = await sendMessage\(threadId, failed\.body, \{\s*msgType: failed\.msgType, subtype: failed\.subtype \?\? undefined,\s*clientId, replyToId: failed\.replyToId \?\? undefined, isE2ee: failed\.pendingIsE2ee === true,\s*\}\)/);
   });
   it('T233: every ordinary page asks for sequences, and the resume call names afterSequence', () => {
     assert.match(svc, /'\?withSequence=1'/);

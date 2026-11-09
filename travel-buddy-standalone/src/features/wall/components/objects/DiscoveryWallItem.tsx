@@ -49,7 +49,7 @@ export function DiscoveryWallItem({ projection }: { projection: DiscoveryProject
       ) : null}
       {media ? (
         <View style={s.media}>
-          <WallImage media={media} />
+          <WallImage media={media} postId={projection.canonicalObjectId} />
         </View>
       ) : null}
       <PlaceLine projection={projection} />

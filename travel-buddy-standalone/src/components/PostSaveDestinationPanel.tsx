@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { PostSharePreview } from './PostReferenceCard.tsx';
 import { useSession } from '../context/SessionContext.tsx';
 import type { MessagingOwnerRequest } from '../services/messagingOwnerRequest.ts';
 import type { Memory } from '../services/memories.ts';
@@ -22,7 +23,7 @@ export function PostSaveDestinationPanel({ postId, destination, active, onCancel
   const [selected, setSelected] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [note, setNote] = useState('');
-  const [publicAudience, setPublicAudience] = useState(destination === 'highlight');
+  const [publicAudience, setPublicAudience] = useState(destination !== 'memory');
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +45,7 @@ export function PostSaveDestinationPanel({ postId, destination, active, onCancel
     const abort = new AbortController(); ownerRef.current = owner;
     operation.current = null; busyRef.current = false;
     setMemories([]); setCursor(null); setSelected(null); setTitle(''); setNote(''); setError(null); setListError(null); setBusy(false);
-    setPublicAudience(destination === 'highlight'); setLoading(false);
+    setPublicAudience(destination !== 'memory'); setLoading(false);
     if (active && (!owner || owner.ownerId !== userId)) setError('Sign in again to save this post.');
     else if (owner && destination === 'memory') void load(owner, null, abort.signal);
     return () => { owner?.invalidate(); abort.abort(); if (ownerRef.current === owner) ownerRef.current = null; };
@@ -67,8 +68,9 @@ export function PostSaveDestinationPanel({ postId, destination, active, onCancel
   if (!active) return null;
   const memory = memories.find(m => m.id === selected);
   return <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.container} testID="post-save-destination-panel">
-    <Text style={s.title}>{destination === 'memory' ? 'Save to Memories' : 'Share to Highlights'}</Text>
-    <Text style={s.description}>Share a link to the original post. It remains available only while the author permits access.</Text>
+    <Text style={s.title}>{destination === 'memory' ? 'Save to Memories' : destination === 'profile' ? 'Share to my profile' : 'Share to Highlights'}</Text>
+    <Text style={s.description}>The original author controls who can see this post.</Text>
+    {destination === 'profile' && <PostSharePreview target={{ legacyPostId: postId }} />}
     {destination === 'memory' && <>
       <Pressable accessibilityRole="radio" accessibilityState={{ checked: !selected }} disabled={busy} onPress={() => setSelected(null)} style={[s.option, !selected && s.selected]}><Text style={s.label}>Create a Memory</Text></Pressable>
       {!selected && <TextInput accessibilityLabel="Memory name" placeholder="Name your Memory" value={title} onChangeText={setTitle} maxLength={120} editable={!busy} style={s.input} />}
@@ -86,8 +88,8 @@ export function PostSaveDestinationPanel({ postId, destination, active, onCancel
     </View>}
     {destination === 'highlight' && <Text style={s.description}>This Highlight lasts 24 hours. You can pin, archive, or delete it from its viewer.</Text>}
     {error && <Text accessibilityRole="alert" style={s.error}>{error}</Text>}
-    <Pressable accessibilityRole="button" accessibilityLabel={destination === 'memory' ? 'Save post to Memory' : 'Publish Highlight'} disabled={busy || !ownerRef.current?.isCurrent()} style={[s.save, busy && { opacity: .6 }]} onPress={() => void save()}>
-      {busy ? <ActivityIndicator color="white" /> : <Text style={s.saveText}>{destination === 'memory' ? 'Save to Memory' : 'Publish Highlight'}</Text>}
+    <Pressable accessibilityRole="button" accessibilityLabel={destination === 'memory' ? 'Save post to Memory' : destination === 'profile' ? 'Publish repost' : 'Publish Highlight'} disabled={busy || !ownerRef.current?.isCurrent()} style={[s.save, busy && { opacity: .6 }]} onPress={() => void save()}>
+      {busy ? <ActivityIndicator color="white" /> : <Text style={s.saveText}>{destination === 'memory' ? 'Save to Memory' : destination === 'profile' ? 'Publish repost' : 'Publish Highlight'}</Text>}
     </Pressable>
     <Pressable accessibilityRole="button" disabled={busy} onPress={onCancel} style={s.option}><Text style={s.label}>Back</Text></Pressable>
   </ScrollView>;

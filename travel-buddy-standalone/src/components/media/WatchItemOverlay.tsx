@@ -21,6 +21,7 @@
  * Cinematic gradient scrim behind the content for readability.
  */
 
+import { RecordingStampBadge } from '../../features/capture-stamps/RecordingStamp.tsx';
 import React, { useState, useCallback } from 'react';
 import Animated from 'react-native-reanimated';
 import {
@@ -142,6 +143,7 @@ function ActionBtn({ icon, count, onPress, onLongPress, label }: ActionBtnProps)
 export interface WatchItemOverlayProps {
   item: MediaFeedItem;
   currentUserId?: string;
+  showRecordingStamp?: boolean;
   isSaved: boolean;
   onComment: () => void;
   onSave: () => void;
@@ -164,7 +166,7 @@ export interface WatchItemOverlayProps {
 
 export function WatchItemOverlay({
   item,
-  currentUserId,
+  currentUserId, showRecordingStamp = false,
   isSaved,
   onComment,
   onSave,
@@ -272,6 +274,7 @@ export function WatchItemOverlay({
         {/* ── Left column ─────────────────────────────────────────────── */}
         <View style={s.leftCol} pointerEvents="box-none">{contextFirst ? <ContextPlaceHeader item={item} /> : null}
 
+          {showRecordingStamp && item.videoUrl && <RecordingStampBadge targetType="post" targetId={item.id} />}
           {/* Creator row */}
           <View style={s.creatorRow} pointerEvents="box-none">
             <Pressable onPress={goProfile} style={s.avatarWrap} hitSlop={6}>

@@ -2,7 +2,7 @@ import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { ConversationTools } from '../ConversationTools.tsx';
 import * as api from '../../../../services/messaging.ts';
-import { searchUsers } from '../../../../services/follows.ts';
+import { useInputAssistance } from '../../../../platform/input-assistance/hooks/useInputAssistance.ts';
 import { router } from 'expo-router';
 import { fetchCarryForwardPage } from '../carryForwardApi.ts';
 
@@ -13,7 +13,7 @@ const mockOwner = { ownerId: 'me', sessionId: 'session', isCurrent: () => mockCu
 jest.mock('../../../../services/messagingOwnerRequest.ts', () => ({ captureMessagingOwnerRequest: () => mockOwner }));
 jest.mock('../../../../context/SessionContext.tsx', () => ({ useSession: () => ({ userId: mockUserId }) }));
 jest.mock('../../../../services/discoveryViewerScope.ts', () => ({ currentDiscoveryScope: () => ({ viewer: 'u:me', revision: 1 }) }));
-jest.mock('../../../../services/follows.ts', () => ({ searchUsers: jest.fn() }));
+jest.mock('../../../../platform/input-assistance/hooks/useInputAssistance.ts', () => ({ useInputAssistance: jest.fn() }));
 // NOTE: intentionally isolated boundary; the real auth, native storage, routing or API module would start side effects outside this controlled fixture.
 jest.mock('../../../../services/messaging.ts', () => ({ getMyThreads: jest.fn(), getThreadControls: jest.fn(), formConversationGroup: jest.fn(), forwardThreadMessage: jest.fn(), updateMessageContentCapability: jest.fn(), updateThreadControls: jest.fn(), moderateThreadMember: jest.fn() }));
 jest.mock('../carryForwardApi.ts', () => ({ fetchCarryForwardPage: jest.fn() }));
@@ -25,13 +25,14 @@ beforeEach(() => {
   jest.clearAllMocks(); jest.mocked(fetchCarryForwardPage).mockResolvedValue({ items: [], next: null }); mockCurrent = true; mockUserId = 'me';
   jest.mocked(api.getMyThreads).mockResolvedValue({ ok: true, data: { threads: [thread as any, { ...thread, id: 'target', title: 'Destination' } as any] } });
   jest.mocked(api.getThreadControls).mockResolvedValue({ ok: true, data: settings as any });
-  jest.mocked(searchUsers).mockResolvedValue({ ok: true, data: [{ id: 'new', displayName: 'New traveler' }] as any });
+  jest.mocked(useInputAssistance).mockImplementation((opts) => ({ suggestions: opts.enabled && opts.text ? [{ entityType: 'user', entityId: 'new', label: 'New traveler' }] : [], loading: false, unavailable: false } as any));
 });
 it('creates a separate group only with explicitly selected people and never transmits direct history', async () => {
   jest.mocked(api.formConversationGroup).mockResolvedValue({ ok: true, data: { threadId: 'new-group', threadType: 'group', historyFrom: 'formation', memberUserIds: ['me', 'peer', 'new'] } });
   await render(<ConversationTools threadId="source" mode="add" />);
   await waitFor(() => expect(screen.getByLabelText('Search people')).toBeTruthy());
   await fireEvent.changeText(screen.getByLabelText('Search people'), 'new');
+  expect(useInputAssistance).toHaveBeenLastCalledWith(expect.objectContaining({ fieldId: 'telegraph.recipient', context: 'telegraph_recipient', text: 'new', enabled: true }));
   await waitFor(() => expect(screen.getByText('Add New traveler')).toBeTruthy());
   await fireEvent.press(screen.getByText('Add New traveler'));
   await fireEvent.press(screen.getByText('Create group'));

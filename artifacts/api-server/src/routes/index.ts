@@ -447,3 +447,6 @@ import reportedContentRemovalRouter from "./reportedContentRemoval.js";
 router.use(reportedContentRemovalRouter);
 import postDestinationsRouter from "./postDestinations.js";
 router.use(postDestinationsRouter);
+
+import recordingCaptureStampsRouter from "./recordingCaptureStamps.js";
+router.use(recordingCaptureStampsRouter);

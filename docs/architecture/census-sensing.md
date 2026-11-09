@@ -1,5 +1,5 @@
 # Census — Sensing + World / Experience Intelligence (v1.0, Sept 2026)
-
+> **2026-11-05 release status:** The grades and percentages below are historical, not a newly measured current architecture percentage. PR822 changes are recorded in [completion-20261105.md](../sensing/completion-20261105.md); named-path reconciliation preserves the prior grades without certifying the new release against every requirement.
 > ## CORRECTION HEADER — added 2026-09-07 after independent re-measurement
 >
 > A later pass queried both databases and re-derived this census. 127 is
@@ -345,7 +345,7 @@ names its own spec in its own file headers:
 | Programme | Evidence it is not this spec | What it produced |
 |---|---|---|
 | **Intelligence Gathering (IG-01…IG-10)** | `docs/intelligence-gathering-buildout.md:1` — *"Implementation of the Intelligence Gathering Implementation Specification … (23 Aug 2026)"*, with a unit→file→migration table | `intelContracts`, `2130_intel_storage`, `privacyGate`, `confidenceScore`, `intelProjection`, `liveClaimRead`, `intelIndependence`, coverage, rewards, outcomes |
-| **Map spec Phase 7 / §10 / §17 / §24 / §31 / §36 / §37** | Section numbers cited in-file: `mapProducers/worldPulseProducer.ts:2` (*"Map spec §36 Phase 7"*), `crowdFlowProducer.ts:2` (*"Map spec §10"*), `protectedLocations.ts:2` (*"Map spec §24"*) | `world_pulse`, `crowd_flow`, `traveler_flow`, `city_model`, semantic-zoom bands, `protected_zones` |
+| **Map spec Phase 7 / §10 / §17 / §24 / §31 / §36 / §37** | Section numbers cited in-file: `mapProducers/worldPulseProducer.ts:2` (*"Map spec §36 Phase 7"*), `crowdFlowProducer.ts:5` (*"Map spec §10"*), `protectedLocations.ts:2` (*"Map spec §24"*) | `world_pulse`, `crowd_flow`, `traveler_flow`, `city_model`, semantic-zoom bands, `protected_zones` |
 | **Wall spec §4/§5/§14/§22** | `LiveForYouService.ts:2` (*"spec §4"*), `FollowingFeedService.ts:2` (*"spec §5 / TABLE 1"*) | Live For You strip, chronological Following lane, Wall projection |
 | **Global Input Intelligence / Presence Network / Compass phases** | `docs/architecture/input-intelligence-certification.md`; `presence/domain/types.ts:2` (*"spec §56 Phase 0"*) | `liveSuggestions`, precision ladder, Compass Home/Sense/Live |
 
@@ -382,10 +382,10 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 |---|---|---|---|
 | S1 | No second intelligence truth store or second lifecycle | **BC** | `src/migrations/2130_intel_storage.sql:15-26` declines four tables the IG spec listed *"because each would duplicate a system that already exists — the spec's own 'no duplicate truth store' rule applied to its own table list"*. One lifecycle: observations → claims → snapshots. |
 | S2 | No second place identity | **BC** | `2130:142-146` — `subject_id uuid NOT NULL REFERENCES public.places(id)`; the discovery id space is bridged, not forked (`src/lib/coverageAssembly.ts:10-17`). |
-| S3 | No second social presence model | **BW** | Four coexist: `circle_presence`, `trip_crew_location_sessions`, `locateFriendsSession`, and the map's `social_zone`/`buddy_zone`/`crew_member` kinds. `src/presence/domain/types.ts` declares the intended single architecture but is *"Phase-0 types and a transport selector; no store, no fusion layer"* (`src/lib/crowdFlowProducer.ts:388`) and only `locateFriends` consumes it. |
+| S3 | No second social presence model | **BW** | Four coexist: `circle_presence`, `trip_crew_location_sessions`, `locateFriendsSession`, and the map's `social_zone`/`buddy_zone`/`crew_member` kinds. `src/presence/domain/types.ts` declares the intended single architecture but is *"Phase-0 types and a transport selector; no store, no fusion layer"* (`src/lib/crowdFlowProducer.ts:383`) and only `locateFriends` consumes it. |
 | S4 | Preserve null/unknown when canonical fact is unavailable | **BC** | `src/lib/mapObjects.ts:370-386` — `sourceClass` optional and the optionality documented as load-bearing (*"Every candidate default is a lie"*). `src/lib/mapProjection.ts:682` returns the object untouched when there are no claims. |
 | S5 | Do not weaken existing privacy / authz / safety / GPS stripping | **BC** | No weakening found; five standing ratchets: `src/scripts/checkLocationPurposes.ts`, `checkDataRights.ts`, `auditStorageExif.ts`, `checkAuthorizationContract.ts`, `checkSilentSupabaseWrites.ts`. |
-| S6 | Existing Map/Discovery/Wall/Compass keep functioning while new projections are partial or gated | **BC** | Every new producer is flag-gated fail-closed with the legacy path intact: `src/routes/mapProjection.ts:1057`, `src/lib/mapProducers/worldIntelligence.ts:62`, `2295_map_world_intelligence_flag.sql:93-95` (postcondition *refuses* to commit if the flag were seeded ON). |
+| S6 | Existing Map/Discovery/Wall/Compass keep functioning while new projections are partial or gated | **BC** | Every new producer is flag-gated fail-closed with the legacy path intact: `src/routes/mapProjection.ts:1061`, `src/lib/mapProducers/worldIntelligence.ts:62`, `2295_map_world_intelligence_flag.sql:93-95` (postcondition *refuses* to commit if the flag were seeded ON). |
 
 ### §2 Hard semantic separations
 
@@ -394,7 +394,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 | S7 | Busy ≠ good | **BC** | Activity and Trend are separate axes (`mapObjects.ts:243-251`, `:233-241`); `mapProjection.ts:900-907` refuses `packed → peak` because *"peak claims the place is at ITS OWN apex … publishes an inference the contributor never made"*. No enabled path converts activity into a desirability score (`discoveryModifiers.ts:60` momentum is behind `discovery_ranking_modifiers_enabled`, absent in production). |
 | S8 | Crowded ≠ unsafe | **BC** | `intelContracts.ts:257` `SPECIALIST_ONLY_CROWD_LEVELS = ['unsafe_density']`; `quickSignal.ts:110,170` refuses to emit or validate it from a contributor surface; `mapProjection.ts:906` maps it to `null` activity — *"rendering a dangerous crush as 'Peak' would advertise it as the place to go"*. |
 | S9 | Rapid movement ≠ dancing | **NB** | *Unguarded absence.* No motion signal, no periodicity, no `dance_likelihood` anywhere. `VIBE_STATES` (`intelContracts.ts:303`) come only from a human tap in `quickSignal.ts`. Nothing would refuse a motion→vibe inference if one were added. |
-| S10 | Inference ≠ observation | **BC** | `crowdFlowProducer.ts:57-70`: `event_context` is rejected at intake (`cause_is_not_observation`); a `CauseHypothesis` has *"no `actorId`, no `groupKey` and no count field"*; cause confidence capped at the observation's own band. Mirrored in types at `presence/domain/types.ts:5-12` (`PresenceObservation` vs `PresenceEstimate`). |
+| S10 | Inference ≠ observation | **BC** | `crowdFlowProducer.ts:60-73`: `event_context` is rejected at intake (`cause_is_not_observation`); a `CauseHypothesis` has *"no `actorId`, no `groupKey` and no count field"*; cause confidence capped at the observation's own band. Mirrored in types at `presence/domain/types.ts:5-12` (`PresenceObservation` vs `PresenceEstimate`). |
 | S11 | Prediction ≠ current truth | **BC** | `mapProjection.ts:697-701` — freshness is gated on source class, not timestamp: a `portava_prediction` two minutes old is capped at `recent`, never `live`. `mapObjects.ts:113` `FORECAST_KINDS`. `worldPulseProducer.ts:54-59` refuses `prediction` as pulse input. |
 | S12 | No coverage ≠ quiet | **BC** | `mapProjection.ts:682` — `if (!claims || claims.length === 0) return obj;`. An unobserved place carries no activity level at all, rather than `very_quiet`. |
 | S13 | One device ≠ a crowd | **BC** | `src/lib/privacyGate.ts:80-128` with `PRIVACY_THRESHOLD_V1` (`intelContracts.ts:732-739`): ≥15 distinct actors, ≥5 independent groups, ≤20 % single-group share, 10-minute publication delay. A missing group count is a refusal, not an exemption (`privacyGate.ts:101-106`). *(CORRECTED 2026-09-22 by the S2 safety-publication lane — verdict UNCHANGED, evidence extended rather than repointed; the measurement is §12.)* The gate module and its four numbers are untouched and its default is still this threshold (`artifacts/api-server/src/lib/privacyGate.ts:82#PRIVACY_THRESHOLD_V1,`). What moved is the CALLER. `projectClaim` no longer asks the gate with one threshold: for a `crowd.level` claim whose value is `unsafe_density` it routes through the safety policy first (`artifacts/api-server/src/lib/intelProjection.ts:399#isSafetyAssertion(input.claimType,`), and an assertion carrying a recorded `admin_review` decision is gated on `SAFETY_REVIEWED_THRESHOLD` — 1 actor, 1 group, share 1, no publication delay (`artifacts/api-server/src/lib/safetyPolicy.ts:156#SAFETY_REVIEWED_THRESHOLD`) — with the cohort numbers floored to 1 for that ask alone (`artifacts/api-server/src/lib/intelProjection.ts:428#reviewerBackstop`). So the sentence above, *"a missing group count is a refusal, not an exemption"*, is still TRUE of the gate and is now FALSE of the reviewed safety lane, which supplies the missing 1. THE VERDICT HOLDS because one device still cannot make a crowd: the lane is reachable by exactly one value of one claim type (`artifacts/api-server/src/lib/intelContracts.ts:257#SPECIALIST_ONLY_CROWD_LEVELS` is a one-element array), only from status `active` (`artifacts/api-server/src/lib/safetyPolicy.ts:197#SAFETY_SERVABLE_CLAIM_STATUSES`), only against a canonical place, and only on an authority read from the `intel_claim_reviews` audit trail and from nothing else (`artifacts/api-server/src/lib/intelProjectionAggregator.ts:639#safetyAuthority`) — a table whose only writer re-checks the reviewer capability. A contributor cannot set it, and the no-reviewer lane is `SAFETY_COMMUNITY_THRESHOLD`, which is STRICTER than `PRIVACY_THRESHOLD_V1` on independent groups, never weaker on any dimension (`artifacts/api-server/src/lib/safetyPolicy.ts:173#SAFETY_COMMUNITY_THRESHOLD`). The reviewer is the principal, not a device, and the snapshot still records the honest observation count. |
@@ -410,10 +410,10 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 | S18 | Short-lived rotating contribution identifiers; no stable anonymous tracking id | **NB** | Every contribution carries `actor_id`. `presence/domain/transport.ts:35` declares a `subjectEphemeralId` — *"Rotating ephemeral id … never a persistent user id"* — but the module is interface-only with no implementation. |
 | S19 | World-intelligence contribution records carry no permanent `profiles.id` / user FK | **BW** | **The spec's named prohibition, violated by the only contribution table.** `2130_intel_storage.sql:142` — `actor_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE`; same on `intel_evidence:236` and `intel_confirmations:265`. |
 | S20 | Separate contribution eligibility from ingest; ingest receives an opaque short-lived credential | **NB** | `routes/intel.ts` capture authenticates with the ordinary session (`requireUser`) and the actor id *is* the storage key. No credential concept exists. |
-| S21 | Raw precise location reduced on-device or in a narrow trusted boundary as early as practical | **BW** | The store is right, the boundary is wrong. `2130:159-163` stores a derived `presence_attestation`, *"never a pointer to a coordinate row"* — good. But the reduction happens **server-side**, in `services/intel/PresenceVerifier.ts:248,275`, reading identity-linked precise `location_snapshots` rows. Nothing is reduced on the device. |
+| S21 | Raw precise location reduced on-device or in a narrow trusted boundary as early as practical | **BW** | The store is right, the boundary is wrong. `2130:159-163` stores a derived `presence_attestation`, *"never a pointer to a coordinate row"* — good. But the reduction happens **server-side**, in `services/intel/PresenceVerifier.ts:252,279`, reading identity-linked precise `location_snapshots` rows. Nothing is reduced on the device. |
 | S22 `⌀` | Sensitive-location suppression | **BC** | `src/lib/protectedLocations.ts:13-27` — server-side, last gate before serialization, fail-closed on unparseable geometry on *both* sides. Caveat: the policy table ships empty by design (`scripts/checkWriterlessReads.ts:163-171`, quoting migration 2217 *"SHIPS EMPTY BY DESIGN"*), so the correct code currently suppresses nothing. |
 | S23 | Cohort thresholds and minimum independence requirements | **BC** | `privacyGate.ts:94-112` plus `intelIndependence.ts:1-46` — shared media, common source and 30-second synchronised-value detectors MERGE units, and *"Merging only ever REDUCES the independent-group count … It can suppress a real signal but can never inflate one."* |
-| S24 | Anti-differencing controls and rare-path suppression | **BW** | Rare-path suppression is real: every flow edge is independently k-gated, so *"a chain A→B→C made by one traveller cannot be read back out"* (`crowdFlowProducer.ts:26-30`). Anti-differencing as such is absent — no query-set-size auditing, no noise, no repeated-query budget. The 10-minute publication delay is the nearest thing. |
+| S24 | Anti-differencing controls and rare-path suppression | **BW** | Rare-path suppression is real: every flow edge is independently k-gated, so *"a chain A→B→C made by one traveller cannot be read back out"* (`crowdFlowProducer.ts:29-33`). Anti-differencing as such is absent — no query-set-size auditing, no noise, no repeated-query budget. The 10-minute publication delay is the nearest thing. |
 | S25 | Purpose-scoped authorization: collect / retain / aggregate / infer / personalize / surface / share are distinct permissions | **BW** | `src/lib/locationPurposes.ts:1-25,102-314` is a genuine registry — twelve purposes, each with lawful basis, precision class, retention bound, visibility and deletion behaviour. But the seven **verbs** are not distinct permissions: contribution consent is one boolean (`2172_intel_contribution_consent.sql:31-50`, `intelConsent.ts:42`). |
 | S26 | Raw contribution retention short; aggregate retention per explicit policy | **BW** | Both halves exist and both are qualified. Aggregate: `2133` + `intelRetentionScheduler.ts:1-16`, flag-gated. Raw: `2173_intel_contribution_retention.sql:1-3` — *"180-day age-based retention … DISABLED by default"*, and the flag `intel_retention` is **absent from production** (`sensing-surface-inventory.md`). 180 days of actor-linked raw contributions is also not "short" in this spec's sense. |
 | S27 | Social location never silently becomes anonymous crowd intelligence, and vice versa | **BC** | `crowdFlowProducer.ts:317-321` defines `purpose_mismatch` as a first-class blocker — *"the source is written, but its declared lawful basis does not cover publication into a public aggregate"* — and `:1015` empties the cohort on a consent-read failure. `route_flow_contribution_consent` is a separate consent scope from `intel_contribution_consent`. |
@@ -428,10 +428,10 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 | S31 | Search for and extend existing consent/session/device-authorization structures rather than duplicating | **BC** | This was actually done, and documented: `2130:15-26` declines four duplicate tables; `intelConsent.ts:4-8` routes through `locationPurposes`' `intel_claim` purpose; `privacyGate.ts:4-14` is deliberately generic *"because building the spec's threshold as a new intel-only module would leave that path publishing at k=1 forever"*. |
 | S32 | Signal Ingest API with schema validation | **BW** | `routes/intel.ts` + `services/intel/IntelCaptureService.ts` + `intelClaimValidators` is a validated capture API — but it ingests **human claims under session identity**, not privacy-reduced device signal features. There is no signal ingest. |
 | S33 | Replay/idempotency protection and rate limiting per credential/device boundary | **BW** | Both exist, both keyed on the account: unique `(actor_id, idempotency_key)` (`2130:196-197`) and `src/lib/intelThrottle.ts`. Per-credential/device is impossible without S18/S20. |
-| S34 | Ingest fails explicitly; never returns a plausible empty world | **BC** | Refusal taxonomies rather than empty returns: `crowdFlowProducer.ts:1055` (`ReadCrowdFlowSignalsResult.refusal` + per-family `familyRefusals`, and *"a caller can tell 'we looked and found nothing' from 'we declined to look'"*), `intelRetentionScheduler.ts:49-58` (`reason: disabled\|no_client\|error`). |
+| S34 | Ingest fails explicitly; never returns a plausible empty world | **BC** | Refusal taxonomies rather than empty returns: `crowdFlowProducer.ts:1067` (`ReadCrowdFlowSignalsResult.refusal` + per-family `familyRefusals`, and *"a caller can tell 'we looked and found nothing' from 'we declined to look'"*), `intelRetentionScheduler.ts:49-58` (`reason: disabled\|no_client\|error`). |
 | S35 | Reject impossible timestamps, malformed precision, invalid purpose scopes, stale credentials | **BW** | Timestamps: `intelContracts.clampObservedAt` plus the DB backstop `CHECK (observed_at <= received_at + interval '60 seconds')` (`2130:186-190`). Malformed values: `intelClaimValidators`. Purpose scopes and credentials: **do not exist**, so two of the four rejections are unimplementable. |
 | S36 | No precise GPS in canonical event payloads | **BC** | `2130:159-163` (attestation, not a coordinate pointer); `2130:230-233` on `intel_evidence.reference` — *"Never raw coordinates: EXIF is stripped upstream and this table must not become a second location store"*; `dataRights.ts:144` marks `distinct_actors` restricted. |
-| S37 | A crew / tour group / bus / duplicated devices are not independent confirmations | **BC** | `intelIndependence.ts:15-46` — units, not actors; three merge detectors; `SYNC_WINDOW_SECONDS = 30` (`:55`). `crowdFlowProducer.ts:38-46`: `maxGroupShare` uses the **union** denominator so *"an actor in several crews cannot dilute the dominant group's share"*. |
+| S37 | A crew / tour group / bus / duplicated devices are not independent confirmations | **BC** | `intelIndependence.ts:15-46` — units, not actors; three merge detectors; `SYNC_WINDOW_SECONDS = 30` (`:55`). `crowdFlowProducer.ts:41-49`: `maxGroupShare` uses the **union** denominator so *"an actor in several crews cannot dilute the dominant group's share"*. |
 | S38 | Track coverage separately from estimated activity | **BW** | Coverage exists, but as a *mission-gap priority* (`coverageScore.ts:2-13`, `coverageAssembly.ts`, `intel_coverage_snapshots`), not as metadata on published state. `MapObject` (`mapObjects.ts:362-398`) has `freshness`, `confidence`, `activity`, `sourceClass`, `provenance` — and **no coverage field**. |
 
 ### §5 Intelligence engines
@@ -440,13 +440,13 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 |---|---|---|---|
 | S39 | Presence engine → `PresenceObservation` + coverage; must not claim public person identity | **BW** | The *types* exist and are careful (`presence/domain/types.ts:88,114`); there is no engine. What actually feeds aggregates is human observation counts. No per-zone `PresenceObservation` is ever produced. |
 | S40 | Crowd engine → `CrowdState` (density, momentum, arrival-departure balance); must not claim safety or quality | **BW** | The vocabulary is there — `CROWD_LEVELS`, `TRAJECTORIES`, `CROWD_DIRECTIONS` (`intelContracts.ts:246,259,286`), `activityForCohort` (`mapAggregation.ts:535#const kind: MapPresenceKind = obj.kind;`) — and the must-not-claim half is enforced (S8). But there is no `CrowdState` object: density is a claim value, momentum is a trend label, and arrival/departure balance is a human tap, not a computed balance. |
-| S41 | Flow engine → `FlowState`/edges; must not claim individual trajectory | **BC** | The strongest item in the census. `crowdFlowProducer.ts:14-30` — *"There is no per-actor path type, anywhere. The input unit is ONE HOP … so a path cannot be assembled even internally"*; actor ids enter a `Set` and never leave it; `src/test/crowdFlowProducer.test.ts` walks the serialized output for sentinel ids. `deriveCrowdFlow` (`mapAggregation.ts:1115`) applies four gates; geometry is a `LineString` between zone centroids (`:1192,1236-1237`). |
+| S41 | Flow engine → `FlowState`/edges; must not claim individual trajectory | **BC** | The strongest item in the census. `crowdFlowProducer.ts:17-33` — *"There is no per-actor path type, anywhere. The input unit is ONE HOP … so a path cannot be assembled even internally"*; actor ids enter a `Set` and never leave it; `src/test/crowdFlowProducer.test.ts` walks the serialized output for sentinel ids. `deriveCrowdFlow` (`mapAggregation.ts:1115`) applies four gates; geometry is a `LineString` between zone centroids (`:1192,1236-1237`). |
 | S42 | Vibe engine → `VibeState`; must not claim literal behaviour without sufficient evidence | **BW** | `vibe.state` exists as a five-value human claim (`intelContracts.ts:303`) with a live-label ruling (`:587`). There is no inference engine and no `VibeState`. |
 | S43 | Experience engine → `ExperienceState`; must not treat personal preference as world truth | **NB** | No `ExperienceState` under that or any equivalent name. `grep -ri experience_state\|ExperienceState src/` → nothing. |
 | S44 | World Dynamics → `WorldState`/`WorldMoment` (change, anomalies, hotspots, rhythm); must not claim cause when unknown | **BW** | Hotspots and rhythm exist and the must-not-claim half is enforced: `world_pulse` (`worldPulseProducer.ts`), `city_model`, `traveler_flow`, and cause hypotheses structurally separated (S10). **Change** and **anomalies** do not exist — there is no `WorldMoment`, no transition object and no anomaly detector. |
 | S45 | Forecast → `ForecastState` with calibration; must not be presented as observed current fact | **BW** | The must-not half is enforced (S11); the engine is thin. `prediction` is a map kind and `portava_prediction` a source class, with `src/lib/temporalProjection.ts` producing time-shifted projections — but no horizon field, no calibration attached to a forecast, and no `ForecastState`. |
-| S46 | Opportunity → `OpportunityProjection`; must not claim canonical world truth | **BW** | Wall has a `contextual_opportunity` object type (`services/wall/WallProjectionService.ts:57`) and Compass has recommendations, but each surface builds its own; there is no shared Opportunity engine or projection. |
-| S47 | Product surfaces consume projections; they do not reimplement engine logic | **BC** | `src/lib/liveClaimRead.ts` is the single read path, consumed by Map (`mapProjection.ts:98`), Wall (`ContextThreadService.ts:46`), Compass (`CompassMediaContext.ts:58`), Media (`MediaProjectionService.ts:49`), Input (`inputAssistance/liveSuggestions.ts:39`) and Trails (`trailLiveIntel.ts:27`). `LiveForYouService.ts:37-40` reuses `loadNearbyEvents` explicitly so *"The Wall must not implement a second place-state system"*. |
+| S46 | Opportunity → `OpportunityProjection`; must not claim canonical world truth | **BW** | Wall has a `contextual_opportunity` object type (`services/wall/WallProjectionService.ts:59`) and Compass has recommendations, but each surface builds its own; there is no shared Opportunity engine or projection. |
+| S47 | Product surfaces consume projections; they do not reimplement engine logic | **BC** | `src/lib/liveClaimRead.ts` is the single read path, consumed by Map (`mapProjection.ts:98`), Wall (`ContextThreadService.ts:46`), Compass (`CompassMediaContext.ts:58`), Media (`MediaProjectionService.ts:50`), Input (`inputAssistance/liveSuggestions.ts:39`) and Trails (`trailLiveIntel.ts:27`). `LiveForYouService.ts:37-40` reuses `loadNearbyEvents` explicitly so *"The Wall must not implement a second place-state system"*. |
 | S48 | Canonical truth classes: OBSERVED / CORROBORATED / INFERRED / PREDICTED / CONFLICTING / STALE / UNKNOWN | **BW** | `grep -ri truth_class\|truthClass` → **nothing**. The concept is spread across four unrelated vocabularies: `SOURCE_CLASSES` (`intelContracts.ts:44`), `CLAIM_STATUSES` (`:138`, has `conflicting`/`expired`), `CONFIDENCE_BANDS` (`:410`) and `FRESHNESS_STATES` (`mapObjects.ts:121`). `presence/domain/types.ts:67-71` `ESTIMATE_STATES` is the closest single vocabulary but is presence-scoped. **CORROBORATED has no representation.** |
 | S49 | Every server-built state consumed by Map/Discovery/Wall/Compass carries truth class, confidence, freshness **and coverage** | **BW** | Three of four. `MapObject` (`mapObjects.ts:362-398`) carries `freshness`, `confidence`, `sourceClass` and `provenance`; it carries **no coverage**, and no truth class per S48. |
 | S50 | Prediction never rendered indistinguishably from observation | **BC** | Server: `mapProjection.ts:697-701`. Client mirror: `travel-buddy-standalone/src/types/mapObjects.ts:113-117` `FORECAST_KINDS` with the same §37 comment. |
@@ -467,7 +467,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 
 | id | Requirement | V | Evidence / divergence |
 |---|---|---|---|
-| S58 | Keep current layer census and fallback; do not rewrite the gateway | **BC** | The gateway is intact; every Phase-7 kind is additive behind `map_world_intelligence_enabled` (`mapProducers/worldIntelligence.ts:62`, `routes/mapProjection.ts:1057`). |
+| S58 | Keep current layer census and fallback; do not rewrite the gateway | **BC** | The gateway is intact; every Phase-7 kind is additive behind `map_world_intelligence_enabled` (`mapProducers/worldIntelligence.ts:62`, `routes/mapProjection.ts:1061`). |
 | S59 | Add server-built `ExperienceState` to place/event projections rather than separate overlapping vibe pins | **BW** | The **shape** is right and the payload is wrong: `mapProjection.applyLiveClaims` (`:676-701`) folds live claims onto the place object instead of emitting parallel vibe pins — exactly what the spec asks — but what it folds on is individual claims, not an ExperienceState. |
 | S60 | Promote `world_pulse` into transient world-change projections: heating up, forming, moving, clearing, unexpected activity, event spillover, traveler surge | **BW** | `world_pulse` exists and is well built (`worldPulseProducer.ts`), but it is an **activity-concentration cell** with `payload.basis = 'observed_aggregates'` — a *level*, not a *change*. None of the seven named change types exists. `TREND_STATES` (`mapObjects.ts:233`) attach to places, not to world objects. |
 | S61 | Render crowd_flow / traveler_flow as privacy-safe directional geometry, not ordinary pins | **BC** | `mapAggregation.ts:1192,1236-1237` — a `LineString` between two zone centroids, with `:982` recording *"deliberately NO per-person field and no route geometry"*. `travelerFlowProducer.ts:277` runs its own privacy gate. |
@@ -496,7 +496,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 | S74 | Server-built `WallMoment` with subject, transition, occurred_at, relevance window, reason, truth class, freshness, expiry | **NB** | Absent. |
 | S75 | Preserve Wall as chronological/current-life architecture; do not turn it into an opaque engagement-maximizing ranking feed | **BC** | The chronological lane is preserved by contract: `services/wall/FollowingFeedService.ts:1-14` — *"strict reverse-chronological … relevance reordering — there is NONE here, by contract"*. The For You lane is ranked but not opaque: `WallRankingService.ts:1-28` publishes the §14 term→signal mapping and wraps the canonical ranker rather than growing a second one. (Tension noted: the Wall does now carry a ranked surface at all.) |
 | S76 | Live Now strip consumes current projections; chronological Wall records transitions/history; do not duplicate both | **BW** | Half built. The strip is exactly right — `LiveForYouService.ts:1-27`: reads only `readLiveClaimEnvelopes`, caps at 4 (`:69`), dedupes against the feed. The other half does not exist: the Wall records no transitions (S73). |
-| S77 | Personalization controls whether a canonical world event matters to a user; it must not rewrite the world event | **BC** | `WallProjectionService.ts:5,306-310` projects canonical objects; personalization is selection and diversity (`WallDiversityService`, `WallCandidateLoaders`), never mutation of the projected object. |
+| S77 | Personalization controls whether a canonical world event matters to a user; it must not rewrite the world event | **BC** | `WallProjectionService.ts:7,306-310` projects canonical objects; personalization is selection and diversity (`WallDiversityService`, `WallCandidateLoaders`), never mutation of the projected object. |
 
 ### §10 Required tweaks: Compass and Home
 
@@ -540,7 +540,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 | id | Requirement | V | Evidence / divergence |
 |---|---|---|---|
 | S95 | Do not bloat durable `places` rows with current_vibe / current_crowd / current_energy; keep dynamic state in projections | **BC** | `grep -rn "current_vibe\|current_crowd\|current_energy" src/` → **zero hits**, in TypeScript and in SQL. Dynamic state lives in `intel_state_snapshots` (`2130:283-308`) with its own TTL. |
-| S96 | Events may expose runtime inferred/official phases, but source classes and truth classes remain distinct | **BC** | `mapProducers/eventContextProducer.ts:124` `eventPhaseAt` derives ongoing/upcoming/ended at read time; `event.status` is a separate contributor claim with its own source class; and the module keeps observed movement and inferred cause in different types (`crowdFlowProducer.ts:57-70`). |
+| S96 | Events may expose runtime inferred/official phases, but source classes and truth classes remain distinct | **BC** | `mapProducers/eventContextProducer.ts:124` `eventPhaseAt` derives ongoing/upcoming/ended at read time; `event.status` is a separate contributor claim with its own source class; and the module keeps observed movement and inferred cause in different types (`crowdFlowProducer.ts:60-73`). |
 | S97 | Temporary activity must not be forced onto the nearest place ID when ownership is unknown; never assign to the nearest place merely to satisfy a foreign key | **BC** | No nearest-place snapping exists (`grep -riE "nearest place\|nearestPlace\|snap to place"` → nothing). Transient activity is keyed on `zone_id` (a plain text field) and emitted as cell/edge geometry with no place row. |
 | S98 | `HiddenGemCandidate` distinct from canonical Hidden Gem approval where the repo already separates candidates/review | **BC** | It does: `hidden_gems.status ∈ {pending, active, hidden, …}` with a real admin queue and duplicate-candidate scoring (`HiddenGemModerationService.ts:198-206,265-305`). |
 
@@ -565,9 +565,9 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 
 | id | Requirement | V | Evidence / divergence |
 |---|---|---|---|
-| S106 | Shared platform Presence architecture keeping private device / aggregate intelligence / social / trip crew / buddy / public discovery classes distinct | **BW** | The architecture is *declared* and is good — `presence/domain/types.ts:19-52`: a seven-rung precision ladder, `narrowestPrecision` with *"deliberately no `widen` counterpart"*, and per-feature ceilings (`crowd_intelligence: 'presence_only'`, `crew: 'precise'`). But it has no store and no fusion layer (`crowdFlowProducer.ts:388`), only `locateFriends` consumes it, and four other presence models run alongside it (S3). |
+| S106 | Shared platform Presence architecture keeping private device / aggregate intelligence / social / trip crew / buddy / public discovery classes distinct | **BW** | The architecture is *declared* and is good — `presence/domain/types.ts:19-52`: a seven-rung precision ladder, `narrowestPrecision` with *"deliberately no `widen` counterpart"*, and per-feature ceilings (`crowd_intelligence: 'presence_only'`, `crew: 'precise'`). But it has no store and no fusion layer (`crowdFlowProducer.ts:383`), only `locateFriends` consumes it, and four other presence models run alongside it (S3). |
 | S107 | Reuse low-level sensor/proximity infrastructure where possible, not consent/policy semantics | **BC** | `presence/domain/transport.ts:1-17` is interface-only *"so a transport can be added, swapped, or absent without a feature noticing"*, with `CURRENT_STACK_CAPABILITIES` (`types.ts:148`) stating truthfully that BLE does not exist. Consent stays per-purpose in `locationPurposes.ts`. |
-| S108 | LMF may use identity/relay/checkpoints under group permissions; anonymous World Intelligence may not reverse-resolve contributors | **BC** | `lib/locateFriendsSession.ts:60,75` takes its ceiling from `FEATURE_PRECISION_CEILING` rather than re-declaring one (pinned by `test/locateFriendsSession.test.ts:443`). Reverse resolution is blocked on the intel side by envelopes carrying no contributor id and `dataRights.ts:144`. |
+| S108 | LMF may use identity/relay/checkpoints under group permissions; anonymous World Intelligence may not reverse-resolve contributors | **BC** | `lib/locateFriendsSession.ts:61,76` takes its ceiling from `FEATURE_PRECISION_CEILING` rather than re-declaring one (pinned by `test/locateFriendsSession.test.ts:443`). Reverse resolution is blocked on the intel side by envelopes carrying no contributor id and `dataRights.ts:144`. |
 | S109 | RAB may consume public/aggregate area intelligence and authorized Buddy presence, but never infer or expose individual anonymous contributors | **BC** | RAB reads no intel table at all (`grep -rn "intel_observations\|intel_state_snapshots\|liveClaimRead" services/rentBuddy/ routes/rentABuddy*.ts` → nothing); the Wall's RAB producer goes through the master gate `services/wall/wallRabGate.ts`. |
 
 ### §18 Required platform tweaks
@@ -588,7 +588,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 
 | id | Requirement | V | Evidence / divergence |
 |---|---|---|---|
-| S114 | Schema/permission/infrastructure failure ≠ no activity | **BC** | Refusals are typed and distinguishable everywhere: `crowdFlowProducer.ts:1055` (`SignalReadRefusal` + `familyRefusals`), `intelRetentionScheduler.ts:49-58` (*"an error and a disabled flag both used to return `{purged:0, skipped:true}`, which made a persistently failing sweep indistinguishable from one nobody had switched on"*), `discoveryServePointReport.ts`. |
+| S114 | Schema/permission/infrastructure failure ≠ no activity | **BC** | Refusals are typed and distinguishable everywhere: `crowdFlowProducer.ts:1067` (`SignalReadRefusal` + `familyRefusals`), `intelRetentionScheduler.ts:49-58` (*"an error and a disabled flag both used to return `{purged:0, skipped:true}`, which made a persistently failing sweep indistinguishable from one nobody had switched on"*), `discoveryServePointReport.ts`. |
 | S115 | Expired/stale state ≠ current | **BC** | `intel_state_snapshots.expires_at NOT NULL` (`2130:300`) with the reader filtering on it; `MIN_BAND_FOR_LIVE_STATE` (`intelContracts.ts:444`); `FRESHNESS_THRESHOLDS_SECONDS` (`mapObjects.ts:138`); `mayRenderAsLive` (`:126`). |
 | S116 | Inference confidence may only decrease through conflict unless new evidence supports an increase | **BC** | `mapAggregation.ts:438-455` takes the **weakest** contributing band and treats a missing band as the weakest — *"silence must not be read as agreement"*; `mapProjection.ts:665-670` — *"a claim can only ever ADD … never overwrite a value the source already asserted with a weaker one"*; conflict caps via `intelConflict.capForConflict` / `MATERIAL_CONFLICT_BAND_CEILING`. (Liveness caveat: the `conflict_state` column comes from 2275, not in production.) |
 | S117 | No product surface may fabricate world state to make UI look complete | **BC** | `liveSuggestions.ts:12-19` (no manufactured labels), `LiveForYouService.ts:14-18` (no stale labels, `[]` when not servable), `routes/compassHome.ts:12-14` (*"every section is backed by real data or omitted (null)"*), `worldPulseProducer.ts:47-52` (a sub-k cell and an empty cell serialize byte-identically). |
@@ -616,7 +616,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 
 | id | Requirement | V | Evidence / divergence |
 |---|---|---|---|
-| S127 | Location contribution and social live-location permissions are separate | **BC** | Four independent controls, each `requiresSeparateControl: true` in `locationPurposes.ts`: `intel_contribution_consent` (2172), `route_flow_contribution_consent`, `user_location_preferences.journey_observation_enabled` (`locationPurposes.ts:266`), and `live_session_sharing` (`:116`). |
+| S127 | Location contribution and social live-location permissions are separate | **BC** | Four independent controls, each `requiresSeparateControl: true` in `locationPurposes.ts`: `intel_contribution_consent` (2172), `route_flow_contribution_consent`, `user_location_preferences.journey_observation_enabled` (`locationPurposes.ts:268`), and `live_session_sharing` (`:118`). |
 
 ---
 
@@ -869,11 +869,11 @@ portava-ci and never on production.
 **(a) The anonymous path — built end to end, proven on the database, reached by nothing until the owner decides.**
 `lib/sensingAuthPosture.ts:45#undecided` is the owner's switch (it read `undecided` when this was written; **it reads `anonymous_capable` since 2026-09-16 — see §17**) and
 `lib/sensingAuthPosture.ts:118#sensingEligibility(` refuses every caller while
-it reads that; `test/sensingAnonStore.test.ts:637#route` asserts no route
+it reads that; `test/sensingAnonStore.test.ts:639#route` asserts no route
 touches the store — **superseded 2026-09-25**: that assertion is now a preserved
 QUOTATION in the file's own header, and what the suite asserts in its place is the
 stronger property that EXACTLY ONE route reaches the store and it is the registered
-ingest route (`test/sensingAnonStore.test.ts:699#exactly`; §27.3 re-aimed it when the session issuer became the one other route importing a store module, for pure helpers only — the case now asserts exactly one route WRITES), which zero also fails. So: **S18** (rotating identifiers, N → W): the derivation
+ingest route (`test/sensingAnonStore.test.ts:701#exactly`; §27.3 re-aimed it when the session issuer became the one other route importing a store module, for pure helpers only — the case now asserts exactly one route WRITES), which zero also fails. So: **S18** (rotating identifiers, N → W): the derivation
 exists at two layers and is executed on the database; no writer is registered.
 **S20** (eligibility separated from ingest; opaque credential, N → W): the
 separation is code — eligibility in one module, the credential in another
@@ -929,7 +929,7 @@ classes, W → **C**): `lib/truthClass.ts:47#TRUTH_CLASSES` is the vocabulary
 verbatim with CORROBORATED representable and a fail-weak combinator
 (`lib/truthClass.ts:99#weakestTruthClass(`); the Wall serves a class and a
 coverage on every Live For You item today
-(`services/wall/LiveForYouService.ts:277#truthClass:`;
+(`services/wall/LiveForYouService.ts:278#truthClass:`;
 `test/wallTruthClass.test.ts:229#EVERY`) and derives `corroborated` from
 independent sources (`test/wallTruthClass.test.ts:56#corroborated`); the Map
 stamps the same class behind 2350's flag. **S110** (six temporal semantics,
@@ -941,14 +941,14 @@ W → W): the shared envelope carries all six and enforces `predicted_for` iff
 of six are served, up from four of six declared. **S49** (every consumed
 state carries all four fields, W → W): Wall yes, Map yes behind the flag,
 Discovery's candidate carries truth class, confidence and freshness and **no
-coverage** (`lib/discoveryCandidate.ts:150#DiscoveryCandidate`), Compass's
+coverage** (`lib/discoveryCandidate.ts:151#DiscoveryCandidate`), Compass's
 states carry none of the four.
 
 **(d) The Map behind migration 2350 — three flags seeded FALSE, wired, route-tested.**
 `migrations/2350_map_sensing_projection_flags.sql:74#INSERT` seeds
 `map_experience_state_enabled`, `map_world_moments_enabled` and
 `map_display_resolver_enabled` FALSE and refuses to commit them ON;
-`routes/mapProjection.ts:540#map_experience_state_enabled` reads all three
+`routes/mapProjection.ts:543#map_experience_state_enabled` reads all three
 fail-closed, and `test/mapSensingProjectionGates.test.ts:131#ABSENT` proves
 that with every flag absent — production's state — not one new field reaches
 the wire while the live claims still flow. **S43** (Experience engine, N →
@@ -958,14 +958,14 @@ gateway already reads into the spec's six-branch tree, each populated leaf
 from one claim type and every leaf without a producer null, never a default
 (`test/mapExperienceState.test.ts:147#null`); the fold reads no personal
 preference (§1.1's pin); it is served on `payload.experienceState` behind the
-flag (`lib/mapProjection.ts:781#experienceState`;
-`routes/mapProjection.ts:1008#experienceState:`;
+flag (`lib/mapProjection.ts:785#experienceState`;
+`routes/mapProjection.ts:1012#experienceState:`;
 `test/mapSensingProjectionGates.test.ts:165#map_experience_state_enabled`).
 **S59** (ExperienceState on the place object, not separate pins, W → **C**):
 the same fold, onto the same object, and no new kind. **S64** (truth /
 freshness / coverage metadata; predicted visibly distinct, W → **C**): the
 object carries `truthClass` and `coverage` (`lib/mapObjects.ts:454#truthClass?:`;
-`lib/mapProjection.ts:800#truthClass:`) and every forecast object on the
+`lib/mapProjection.ts:804#truthClass:`) and every forecast object on the
 temporal route is stamped `predicted`
 (`routes/mapProjectionTemporal.ts:660#predicted`;
 `test/mapSensingProjectionGates.test.ts:335#predicted`). **S60** (world_pulse
@@ -979,14 +979,14 @@ never observed (`lib/mapProducers/worldMomentProducer.ts:109#WORLD_CHANGE_TRUTH`
 (`test/mapWorldMoments.test.ts:183#unexpected`); hotspots are the pulse and
 rhythm is `city_model` (`lib/mapProducers/cityModelProducer.ts`); a sub-floor
 cell and a quiet cell serialize identically; wired at
-`routes/mapProjection.ts:1299#attachWorldMoments(pulses,` and served with
+`routes/mapProjection.ts:1303#attachWorldMoments(pulses,` and served with
 `moment: null` when nothing changed
 (`test/mapSensingProjectionGates.test.ts:272#map_world_moments_enabled`).
 **S65** (display resolver — safety, mode, zoom, intent, relevance, W → **C**):
 `lib/mapDisplayResolver.ts:268#resolveDisplay(` runs between ranking and
 paging, the band sets the budget, the mode allocates it across classes, the
 intent reorders within a tier, safety notices are never budgeted, and every
-drop is counted by kind (`routes/mapProjection.ts:1321#resolveDisplay(ranked,`;
+drop is counted by kind (`routes/mapProjection.ts:1325#resolveDisplay(ranked,`;
 `test/mapSensingProjectionGates.test.ts:195#map_display_resolver_enabled`).
 **S38** (coverage tracked separately from activity, W → **C**): the Map
 object now carries `coverage` beside `activity` (`lib/mapObjects.ts:455#coverage?:`),
@@ -1007,13 +1007,13 @@ class but no calibration attached.
 **(e) Discovery behind 2361.** **S70** (DiscoveryCandidate with why-now,
 why-for-user, confidence, freshness, truth class, W → W): built and wired
 into `GET /discovery` behind `discovery_candidate_projection_enabled`
-(`lib/discoveryCandidate.ts:139#DISCOVERY_CANDIDATE_PROJECTION_FLAG`), and
-`whyNow` is always null (`lib/discoveryCandidate.ts:158#whyNow:`) because no
+(`lib/discoveryCandidate.ts:140#DISCOVERY_CANDIDATE_PROJECTION_FLAG`), and
+`whyNow` is always null (`lib/discoveryCandidate.ts:159#whyNow:`) because no
 live producer exists for a place on that surface — the module says so itself.
 Built, wrong on the one field the row is named for.
 *(Re-anchored 2026-09-12 by §7: both line numbers drifted when §7 gave the
 field a producer. **SUPERSEDED BY §7** — `whyNow` is no longer always null;
-`lib/discoveryLiveRank.ts` produces it and `lib/discoveryCandidate.ts:240` copies
+`lib/discoveryLiveRank.ts` produces it and `lib/discoveryCandidate.ts:241` copies
 it. The sentence is left standing as §1 measured it; §7.2 moves the row.)*
 
 **(f) The mutation list, and the audit artifact.** **S125** (W → **C**):
@@ -1077,7 +1077,7 @@ the undecided decision. **S21**, **S28**, **S29** and **S32** stay as they
 are: on-device reduction, the nine device features, acoustic capture and the
 signal ingest are decisions #1, #2 and #6, and this lane does not take them.
 **S26** stays W: the anonymous half is closed (72 h structural, the sweep
-registered at `src/index.ts:154#startSensingRetentionScheduler();`) and the
+registered at `src/index.ts:160#startSensingRetentionScheduler();`) and the
 intel raw purge is behind `intel_contribution_retention_enabled`, FALSE in
 production, at 180 days. **S3** and **S106** stay W: `src/presence/domain/`
 is unchanged since Phase 0 — types and a transport interface, no store, no
@@ -1184,12 +1184,12 @@ before its commit; the mutations are listed in §2.3.
   `GET /api/compass/decision` (`routes/compassDecision.ts:53#router.get(`)
   reads the flag fail-closed (`routes/compassDecision.ts:63#compass_decision_enabled`),
   the place for a walking ETA when the client sends none
-  (`lib/compassDecisionAssembly.ts:76#haversineKm(q.lat,`), asks the Live gates
-  whether it may look (`lib/compassDecisionAssembly.ts:89#liveLabelsServable(sc)`),
+  (`lib/compassDecisionAssembly.ts:80#haversineKm(q.lat,`), asks the Live gates
+  whether it may look (`lib/compassDecisionAssembly.ts:93#liveLabelsServable(sc)`),
   reads the candidate and the current experience through
   `readLiveClaimEnvelopes`, and answers the decision with its reasons,
   grounding, interception and switching-cost report; it writes nothing and
-  computes no truth of its own. Registered at the tail of `routes/index.ts:370#compassDecisionRouter`, so no line the other censuses cite in that file moved.
+  computes no truth of its own. Registered at the tail of `routes/index.ts:374#compassDecisionRouter`, so no line the other censuses cite in that file moved.
   2800 seeds the flag FALSE and refuses to commit a TRUE row
   (`migrations/2800_compass_decision_flag.sql:34#INSERT`;
   `migrations/2800_compass_decision_flag.sql:47#reads`); the rollback refuses
@@ -1340,15 +1340,15 @@ in §3.3.
   `lib/wallMomentRead.ts:35#readPreviousReadings(` reads
   `intel_state_snapshot_versions` (2273; present in the 2026-09-08 production
   snapshot) for one subject, privacy-eligible rows only
-  (`lib/wallMomentRead.ts:47#privacy_eligible`) — a sub-k version is never
+  (`lib/wallMomentRead.ts:51#privacy_eligible`) — a sub-k version is never
   read, so nothing the gate withheld can leak through a comparison — and
   reports a failed read as a NAMED refusal: an absent table is
   `versions_unavailable`, anything else `error`, never an empty list
-  (`lib/wallMomentRead.ts:51#versions_unavailable`;
+  (`lib/wallMomentRead.ts:56#versions_unavailable`;
   `test/wallMomentsRoute.test.ts:167#REFUSAL`;
   `test/wallMomentsRoute.test.ts:163#sub-k`). The Live Now strip is
   untouched and keeps consuming current projections
-  (`services/wall/LiveForYouService.ts:212#buildLiveForYou(`); the record of
+  (`services/wall/LiveForYouService.ts:213#buildLiveForYou(`); the record of
   transitions is a different object on a different route, so neither
   duplicates the other.
 - **§15 the Attention Engine (S102)** — `lib/attentionEngine.ts:45#ATTENTION_ROUTES`
@@ -1399,7 +1399,7 @@ in §3.3.
   treated as the budget spent. It answers newest change first with a report
   per subject that tells "no moments" from "could not look" and "no versions
   to compare". It writes nothing and sends nothing. Registered at the tail
-  of `routes/index.ts:375#wallMomentsRouter`. 2801 seeds the flag FALSE and
+  of `routes/index.ts:379#wallMomentsRouter`. 2801 seeds the flag FALSE and
   refuses to commit a TRUE row (`migrations/2801_wall_moments_flag.sql:41#INSERT`;
   `migrations/2801_wall_moments_flag.sql:54#reads`); the rollback refuses
   over a TRUE row (`db/rollback/2026-09-12-2801-wall-moments-flag-rollback.sql:23#DELETE`)
@@ -1560,29 +1560,29 @@ listed in §4.3.
   refusal on it — never false, which would read as "still true"
   (`lib/liveReference.ts:331#refusedComparison(`; `test/liveReference.test.ts:278#null`).
 
-- **the routes** — `routes/telegraphLiveReferences.ts:100#router.post(` is
+- **the routes** — `routes/telegraphLiveReferences.ts:104#router.post(` is
   `POST /api/telegraph/threads/:threadId/live-references`: requireUser, the
-  flag read fail-closed (`routes/telegraphLiveReferences.ts:110#isFlagEnabled`),
+  flag read fail-closed (`routes/telegraphLiveReferences.ts:114#isFlagEnabled`),
   membership by the predicate `authz.is_active_thread_member` uses — a
   present member row with `left_at IS NULL`
   (`lib/liveReferenceMessages.ts:35#isActiveThreadMember(`;
   `lib/liveReferenceMessages.ts:46#left_at`;
-  `routes/telegraphLiveReferences.ts:130#forbidden`) — an ACTIVE, unmerged
-  place (`routes/telegraphLiveReferences.ts:76#readReferenceablePlace(`), then
+  `routes/telegraphLiveReferences.ts:134#forbidden`) — an ACTIVE, unmerged
+  place (`routes/telegraphLiveReferences.ts:77#readReferenceablePlace(`), then
   `liveLabelsServable` and `readLiveClaimEnvelopes` — the one gated read
   path, with live intelligence not servable a refusal and not a card
-  (`routes/telegraphLiveReferences.ts:141#liveLabelsServable`;
-  `routes/telegraphLiveReferences.ts:146#readLiveClaimEnvelopes`;
+  (`routes/telegraphLiveReferences.ts:145#liveLabelsServable`;
+  `routes/telegraphLiveReferences.ts:150#readLiveClaimEnvelopes`;
   `test/telegraphLiveReferencesRoute.test.ts:330#live_intelligence_unavailable`).
   A world moment takes the newest transition lib/wallMoments detects against
-  the previous readings (`routes/telegraphLiveReferences.ts:94#readPreviousReadings`;
+  the previous readings (`routes/telegraphLiveReferences.ts:98#readPreviousReadings`;
   `routes/telegraphLiveReferences.ts:96#detectTransitions`). The newest
   privacy-eligible version per claim type is read to pin to, newest-first
   asserted in code as well as asked of the query
   (`lib/liveReferenceMessages.ts:66#readLatestVersions(`;
   `lib/liveReferenceMessages.ts:83#sort`), and an unreadable record is a pin
-  withheld, not a share refused (`routes/telegraphLiveReferences.ts:163#versions`;
-  `routes/telegraphLiveReferences.ts:182#versionsPinned`). The card is
+  withheld, not a share refused (`routes/telegraphLiveReferences.ts:167#versions`;
+  `routes/telegraphLiveReferences.ts:186#versionsPinned`). The card is
   written as the service client — `card` / `live_reference`, the body the
   reference — after membership is established, for the reason in the
   module header (`lib/liveReferenceMessages.ts:7#WHY THE WRITE`;
@@ -1590,24 +1590,24 @@ listed in §4.3.
   `test/telegraphLiveReferencesRoute.test.ts:254#rows.length`;
   `test/telegraphLiveReferencesRoute.test.ts:267#ver-now`). Nothing to
   reference is the same named refusal on the wire and no card
-  (`routes/telegraphLiveReferences.ts:169#refusal`;
+  (`routes/telegraphLiveReferences.ts:173#refusal`;
   `test/telegraphLiveReferencesRoute.test.ts:295#nothing_to_reference`).
-  `routes/telegraphLiveReferences.ts:188#router.get(` is
+  `routes/telegraphLiveReferences.ts:192#router.get(` is
   `GET /api/telegraph/live-references/:messageId`: the card by id — absent,
   deleted or another subtype reads as not found
   (`lib/liveReferenceMessages.ts:148#subtype`) — membership on ITS thread,
   a non-member answered exactly as an absent card so membership is not
-  disclosed (`routes/telegraphLiveReferences.ts:220#not_found`;
-  `test/telegraphLiveReferencesRoute.test.ts:391#absent`), the stored body
+  disclosed (`routes/telegraphLiveReferences.ts:224#not_found`;
+  `test/telegraphLiveReferencesRoute.test.ts:404#absent`), the stored body
   parsed, then the current envelopes through the same gate and the
-  comparison (`routes/telegraphLiveReferences.ts:236#compareLiveReference`;
-  `routes/telegraphLiveReferences.ts:237#current`), or the refused
+  comparison (`routes/telegraphLiveReferences.ts:246#compareLiveReference`;
+  `routes/telegraphLiveReferences.ts:247#current`), or the refused
   comparison when live intelligence is not servable
-  (`routes/telegraphLiveReferences.ts:233#refusedComparison`;
-  `test/telegraphLiveReferencesRoute.test.ts:386#null`). The wire carries
+  (`routes/telegraphLiveReferences.ts:243#refusedComparison`;
+  `test/telegraphLiveReferencesRoute.test.ts:399#null`). The wire carries
   the current claims only through that gate; nothing person-shaped is on it
   (`test/telegraphLiveReferencesRoute.test.ts:282#forbidden`). Registered at
-  the tail of `routes/index.ts:380#telegraphLiveReferencesRouter`.
+  the tail of `routes/index.ts:384#telegraphLiveReferencesRouter`.
 
 - **2802 and its rollback** — `migrations/2802_telegraph_live_references_flag.sql:47#INSERT`
   seeds `telegraph_live_references_enabled` FALSE, one row, `ON CONFLICT DO
@@ -1843,7 +1843,7 @@ mutations are listed in §5.3.
   `test/adminSafetyCandidatesRoute.test.ts:341#not a person`). A non-admin
   is refused before the flag is read
   (`test/adminSafetyCandidatesRoute.test.ts:205#non-admin`). Registered at
-  the tail of `routes/index.ts:385#adminSafetyCandidatesRouter`;
+  the tail of `routes/index.ts:389#adminSafetyCandidatesRouter`;
   `routes/admin.ts` and `routes/moderation.ts` are untouched.
 
 - **2803 and its rollback** — `migrations/2803_intel_safety_candidates_flag.sql:70#INSERT`
@@ -2080,7 +2080,7 @@ are listed in §6.3.
   either ever grows a density, a trajectory, a vibe or a count
   (`lib/opportunityEngine.ts:151#export const FORBIDDEN_WORLD_VALUE_KEYS`;
   `lib/opportunityEngine.ts:172#export function opportunityWorldValueKeys(`;
-  `routes/opportunities.ts:211#const worldValues`). The guard is not vacuous —
+  `routes/opportunities.ts:216#const worldValues`). The guard is not vacuous —
   it finds a planted key (`test/opportunityEngine.test.ts:271#not a vacuous check`) —
   and with one planted in the surface projection the route answered
   `db_error` instead of serving it (B6-M20, red, the refusal observed on the
@@ -2103,17 +2103,17 @@ are listed in §6.3.
   a surface may drop a field and may never add one, and every value a surface
   receives is copied from the stage's output rather than computed
   (`test/opportunityEngine.test.ts:282#a SUBSET`; B6-M16 red).
-- **§6 the route, and what it does not read** — `routes/opportunities.ts:106#router.get(`
+- **§6 the route, and what it does not read** — `routes/opportunities.ts:107#router.get(`
   serves `GET /api/intel/opportunities` behind `opportunity_engine_enabled`
   (2840, seeded FALSE), read fail-closed: with the flag absent — production's
   state — it answers `feature_disabled` and reads nothing, which is the case
   the suite poisons the snapshot table to prove
-  (`routes/opportunities.ts:116#opportunity_engine_enabled`;
+  (`routes/opportunities.ts:117#opportunity_engine_enabled`;
   `test/opportunitiesRoute.test.ts:102#the flag ABSENT`; B6-M19 red). Behind
   it the Live gates still decide whether anything is served: with the pilot
   closed every subject is refused `live_intelligence_unavailable` and no
   opportunity is invented to fill the page
-  (`routes/opportunities.ts:153#const readable = await liveLabelsServable`;
+  (`routes/opportunities.ts:158#const readable = await liveLabelsServable`;
   `test/opportunitiesRoute.test.ts:147#Live pilot CLOSED`; B6-M21 red). It
   reads NO trip table — the Trips lane owns those reads, and the TripContext
   is what the caller declared for this request and is stored nowhere. The
@@ -2122,7 +2122,7 @@ are listed in §6.3.
 - **§5 / §18.2 the world reading is served where a world reading belongs** —
   the response's `contexts.world` carries each subject's `CrowdState` and
   `ForecastState`, or the forecast's named refusal
-  (`routes/opportunities.ts:232#world: kernel.world.subjects.map`;
+  (`routes/opportunities.ts:237#world: kernel.world.subjects.map`;
   `test/opportunitiesRoute.test.ts:197#the WORLD block`). Through the route,
   over the fake PostgREST double, a `busy` + `building` subject serves density
   `busy`, momentum `building`, balance NULL (no `crowd.direction` claim: not
@@ -2302,11 +2302,11 @@ did **not** build.
   and the coordinate names — is refused at any depth, at build time and again
   on the wire (`lib/experienceSession.ts:181#export const SESSION_FORBIDDEN_KEYS`;
   `lib/experienceSession.ts:203#export function sessionForbiddenKeys(`;
-  `routes/experienceSessions.ts:225#const trail = sessionForbiddenKeys`;
+  `routes/experienceSessions.ts:226#const trail = sessionForbiddenKeys`;
   `test/experienceSession.test.ts:83#cannot be given a trail`; B7-M5 red).
   ONE OPEN SESSION: a second while one is open is refused, so sessions cannot
   accumulate into a parallel trail
-  (`routes/experienceSessions.ts:203#already_open`;
+  (`routes/experienceSessions.ts:204#already_open`;
   `test/experienceSessionsRoute.test.ts:156#a SECOND session`; B7-M9 red).
   NO HISTORY READ: the store exports exactly three functions — the open
   session, one session by id, and an append — and the suite asserts that set
@@ -2338,7 +2338,7 @@ did **not** build.
   `experience_session_enabled` (2841, seeded FALSE), read fail-closed: with the
   flag absent — production's state — all three answer `feature_disabled` and
   neither read nor write, asserted by counting the rows the double stored
-  (`routes/experienceSessions.ts:162#experience_session_enabled`;
+  (`routes/experienceSessions.ts:163#experience_session_enabled`;
   `test/experienceSessionsRoute.test.ts:109#the flag ABSENT`; B7-M10 red).
   Every read and write is keyed on the caller's own id, so another person's
   session simply does not resolve
@@ -2440,7 +2440,7 @@ could be closed honestly — by going through the path that already exists.
   `intel` rather than inside it, so the shared I4a/I4b contract is still
   exactly its six keys (`lib/intelOutcomes.ts:178#experienceSession?: Record<string, unknown>;`;
   `lib/intelOutcomes.ts:204#if (input.experienceSession)`;
-  `routes/experienceSessions.ts:407#if (q.snapshotId && q.claimId && q.servedAt)`).
+  `routes/experienceSessions.ts:412#if (q.snapshotId && q.claimId && q.servedAt)`).
   Through the real route the single written event carries `payload.intel`
   byte-exact — snapshot, claim, subject, outcome, the 1..5 rating and
   `served_at` — and `payload.experience_session` naming the session it closed,
@@ -2459,7 +2459,7 @@ could be closed honestly — by going through the path that already exists.
   event with `calibrated: false`, invisible to the calibration report and
   honestly so: no snapshot id is fabricated to be counted
   (`test/experienceSessionsRoute.test.ts:285#names NO snapshot`;
-  `routes/experienceSessions.ts:38#THE LAST ARROW`).
+  `routes/experienceSessions.ts:39#THE LAST ARROW`).
 
 ### 6.10 Row moves (third pass)
 
@@ -2569,7 +2569,7 @@ makes (`:130#withDiscoveryLiveRank`), which with the flag off returns the very
 array it was handed (`:142`) having read no claim. It is wired into the REAL
 feed at both serve points, and **before the page slice** so it decides what page
 one contains rather than shuffling what page one already held:
-`routes/discovery.ts:1880#withDiscoveryLiveRank` (the cache-A path) and
+`routes/discovery.ts:1871#withDiscoveryLiveRank` (the cache-A path) and
 `:2194#withDiscoveryLiveRank` (the cold path). Migration 2850 seeds
 `discovery_live_rank_enabled` FALSE
 (`src/migrations/2850_discovery_live_rank_flag.sql:39`) and its postcondition
@@ -2577,7 +2577,7 @@ refuses to commit over a TRUE row (`:46`).
 
 **(b) `whyNow` has a producer.** §1 recorded S70 as built and wrong on exactly
 one field: `whyNow` was always null because no live producer existed for a place
-on that surface. It exists now. `lib/discoveryCandidate.ts:324#whyNowOf` copies
+on that surface. It exists now. `lib/discoveryCandidate.ts:325#whyNowOf` copies
 the grounded reasons the rank engine produced — `crowd_busy`,
 `trajectory_building`, `walk_in_refused`, `queue_45m`, `reported_vibe_going_off`
 — in the claims' own vocabulary, and answers **null**, never `[]`, whenever no
@@ -2650,7 +2650,7 @@ observation to a place 8 km away would attribute it to somewhere the contributor
 never was"* — the module knows the hazard and bounds it. But a 3 km bound on a
 mis-attribution is a smaller mis-attribution, not an absent one, and §14's
 sentence has no radius in it. The path is reachable: the router is mounted
-(`src/routes/index.ts:321#mapObservationsRouter`) behind
+(`src/routes/index.ts:323#mapObservationsRouter`) behind
 `map_contributions_enabled` (`routes/mapObservations.ts:741`).
 
 Why this lane does not fix it: the only two fixes are to refuse §22's zone
@@ -2712,7 +2712,7 @@ not the only resolver in the tree, and the row is about the tree.
 - **THE ROUTE-MOUNTING CHECK, applied to §2–§5's C rows rather than assumed.**
   A surface graded BUILT that no router mounts is not built, and this census
   has four new routes from the earlier batches. All four are mounted:
-  `src/routes/index.ts:370#compassDecisionRouter` (S78, S79, S80, S86),
+  `src/routes/index.ts:374#compassDecisionRouter` (S78, S79, S80, S86),
   `:339#wallMomentsRouter` (S73, S74, S76, S102),
   `:344#telegraphLiveReferencesRouter` (S87, S88, S89) and
   `:349#adminSafetyCandidatesRouter` (S103). Nothing moves; the check is
@@ -2722,12 +2722,12 @@ not the only resolver in the tree, and the row is about the tree.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| S68 Rank using live ExperienceState, forecast, travel time, friction, compatibility, freshness, safety and Opportunity value | N | **C** | All eight inputs are axes of one pure engine (`lib/discoveryLiveRank.ts:371#gradeLiveRow`) over the one gated live read, reusing Compass's own `summariseLiveState` / `experienceValue` rather than restating them; wired into the REAL `GET /discovery` at both serve points and before the page slice (`routes/discovery.ts:1880#withDiscoveryLiveRank`, `:2291#withDiscoveryLiveRank`) behind 2850's FALSE flag; influence bounded in positions, absence never scored, "could not look" distinguishable from "saw nothing". Mutations B7-M1 to B7-M10 and B7-R1 to B7-R5 each red. |
+| S68 Rank using live ExperienceState, forecast, travel time, friction, compatibility, freshness, safety and Opportunity value | N | **C** | All eight inputs are axes of one pure engine (`lib/discoveryLiveRank.ts:371#gradeLiveRow`) over the one gated live read, reusing Compass's own `summariseLiveState` / `experienceValue` rather than restating them; wired into the REAL `GET /discovery` at both serve points and before the page slice (`routes/discovery.ts:1871#withDiscoveryLiveRank`, `:2282#withDiscoveryLiveRank`) behind 2850's FALSE flag; influence bounded in positions, absence never scored, "could not look" distinguishable from "saw nothing". Mutations B7-M1 to B7-M10 and B7-R1 to B7-R5 each red. |
 | S66 Safety constraints outrank opportunity/vibe; a dangerous place is never simultaneously promoted as "best move now" | W | **W** | **Built on three more surfaces and still W, deliberately.** The gap the row named is closed in CODE: Discovery's ranker reads safety state now — a Live-qualified `unsafe_density` demotes behind every other row before any score is compared (`lib/discoveryLiveRank.ts:462`), asserted over all eight modes and from first position — and on the layover surface the same reading removes the card (`lib/layoverLiveIntersection.ts:179`). It does not move because of **this census's own stricter rule for prohibitions** (see *"The rule for prohibitions"*): a "must never" is C when an artifact makes the violation unrepresentable or refuses it, and on a DEFAULT deployment nothing refuses it. Discovery's demotion is behind 2850, seeded FALSE; the layover drop is behind 2851, seeded FALSE; Compass's exclusion is behind an env constant whose own comment reads *"Default OFF"* (`src/compass/CompassLiveConstraints.ts:79#liveConstraintsEnabled`). Only the Map's unconditional priority sort (`lib/mapObjects.ts:335#safety`) holds everywhere, and §1's promotion-stripping addition to it is itself behind 2350. Four surfaces can refuse; one does. B7-M1 and B7-L3 red. |
-| S70 Server-built DiscoveryCandidate with why-now, why-for-user, confidence, freshness and truth class | W | **C** | The one field the row is named for has a producer: `whyNow` carries grounded reasons in the claims' own vocabulary (`lib/discoveryCandidate.ts:430#whyNowOf`) and is null — never `[]` — when no grade was computed or no reading was found (`:324#whyNowOf`); route-tested with the candidate projection on, both arms. The other four fields were already carried. B7-R5 red. |
+| S70 Server-built DiscoveryCandidate with why-now, why-for-user, confidence, freshness and truth class | W | **C** | The one field the row is named for has a producer: `whyNow` carries grounded reasons in the claims' own vocabulary (`lib/discoveryCandidate.ts:431#whyNowOf`) and is null — never `[]` — when no grade was computed or no reading was found (`:325#whyNowOf`); route-tested with the candidate projection on, both arms. The other four fields were already carried. B7-R5 red. |
 | S72 Intent modes — Right Now, Tonight, Explore, Quiet, Social, High Energy, Nearby, Trip — on the same shared intelligence | W | **C** | The spec's eight, verbatim and in order (`lib/discoveryLiveRank.ts:103#DISCOVERY_INTENT_MODES`), each a weight vector over the SAME axes of the SAME engine (`:154#INTENT_MODE_PROFILES`) — the suite asserts no mode has an axis of its own — and the crowd preference they declare is Compass's `experienceValue`, so "the same shared intelligence" is literal. Reachable as `GET /discovery?intentMode=…`; an unknown string is not honoured as a mode (B7-R4 red). |
 | S85 Layover Temporal Freedom Engine intersects feasibility with live Experience value, forecast, friction and safe-return | W | **C** | The row's finding was `grep -rn liveClaimRead services/airport/` → nothing. It reads it now, and intersects rather than competing: a live queue becomes minutes the EXISTING `LayoverSafetyEngine` rates against the certified deadline (`services/airport/LayoverRecommendationService.ts:496`, `lib/layoverLiveIntersection.ts:195`), a live `unsafe_density` or refused walk-in removes the card, a decaying window demotes and never drops, and a card with no reading is untouched. Driven through the real `generateRecommendations` (90 → 180 minutes under a 90-minute queue). B7-L1 to B7-L4 red. |
-| S97 Temporary activity must not be forced onto the nearest place ID when ownership is unknown; never assign to the nearest place merely to satisfy a foreign key | C | **W** | **The C rested on a grep that is now false.** `resolveZoneAnchorSubject` (**deleted 2026-09-25**; the file now records its own removal at `routes/mapObservations.ts:42#WHAT`) resolved a §22 zone contribution by finding the **nearest** active place in the zone and storing the observation against it; **that resolver, its haversine, its bbox pre-filter and its 3 km ceiling were all DELETED on 2026-09-25**, and what stores the subject now is `:802#subjectKind` reading lib/sensingSubjectReconciliation, which answers `unknown` unless there is an ownership signal. The sentences below are kept as the record of what this row measured on the day it was written; its own header gives the motive as the FK — *"`intel_observations.subject_id` FKs `public.places`, and a zone is not a place"*. Mounted (`src/routes/index.ts:321#mapObservationsRouter`) behind `map_contributions_enabled` (`routes/mapObservations.ts:741`). The 3 km ceiling and the recorded `zone_id` bound the mis-attribution; they do not make it absent, and §14's sentence carries no radius. Not fixable in this lane: the alternatives are deleting a §22 Map feature or removing `subject_id NOT NULL REFERENCES places(id)` (`src/migrations/2130_intel_storage.sql:142`), both owner decisions. |
+| S97 Temporary activity must not be forced onto the nearest place ID when ownership is unknown; never assign to the nearest place merely to satisfy a foreign key | C | **W** | **The C rested on a grep that is now false.** `resolveZoneAnchorSubject` (**deleted 2026-09-25**; the file now records its own removal at `routes/mapObservations.ts:42#WHAT`) resolved a §22 zone contribution by finding the **nearest** active place in the zone and storing the observation against it; **that resolver, its haversine, its bbox pre-filter and its 3 km ceiling were all DELETED on 2026-09-25**, and what stores the subject now is `:802#subjectKind` reading lib/sensingSubjectReconciliation, which answers `unknown` unless there is an ownership signal. The sentences below are kept as the record of what this row measured on the day it was written; its own header gives the motive as the FK — *"`intel_observations.subject_id` FKs `public.places`, and a zone is not a place"*. Mounted (`src/routes/index.ts:323#mapObservationsRouter`) behind `map_contributions_enabled` (`routes/mapObservations.ts:741`). The 3 km ceiling and the recorded `zone_id` bound the mis-attribution; they do not make it absent, and §14's sentence carries no radius. Not fixable in this lane: the alternatives are deleting a §22 Map feature or removing `subject_id NOT NULL REFERENCES places(id)` (`src/migrations/2130_intel_storage.sql:142`), both owner decisions. |
 
 **Held, with the reason.** **S3** and **S106** stay W, unchanged from §1: the
 single presence architecture would have to be a store and a fusion layer that
@@ -2928,7 +2928,7 @@ four. `MapObject` carries `freshness`, `confidence`, `sourceClass` and
   drift
   (`` `artifacts/api-server/src/lib/mapObjects.ts:278#const _truthClassPin: MutuallyAssignable<TruthClass, WallTruthClass> = true;` ``),
   and `applyLiveClaims` sets them from the ExperienceState
-  (`` `artifacts/api-server/src/lib/mapProjection.ts:800#experienceState.truth.truthClass,` ``).
+  (`` `artifacts/api-server/src/lib/mapProjection.ts:804#experienceState.truth.truthClass,` ``).
 - A **shared envelope carrying exactly the four** exists and is adopted by
   thirteen modules — crowd, vibe, forecast, opportunity, safety, compass
   decision, wall moments, discovery live-rank, layover intersection
@@ -2937,7 +2937,7 @@ four. `MapObject` carries `freshness`, `confidence`, `sourceClass` and
 **The row stays W for a different reason, one nobody had written down.** The one
 server-built state Discovery consumes, `DiscoveryCandidate`, carries truth class,
 confidence and freshness and **no coverage**
-(`` `artifacts/api-server/src/lib/discoveryCandidate.ts:150#export interface DiscoveryCandidate {` ``)
+(`` `artifacts/api-server/src/lib/discoveryCandidate.ts:151#export interface DiscoveryCandidate {` ``)
 — even though the grade it is built from already carries a full `TruthMetadata`
 including coverage
 (`` `artifacts/api-server/src/lib/discoveryLiveRank.ts:212#TruthMetadata` ``).
@@ -3064,7 +3064,7 @@ re-executed here rather than taken:
   `` `artifacts/api-server/src/lib/protectedLocations.ts:748#delete out.coverage;` ``,
   under a comment reading *"`coverage` restates the cohort that `count` was
   deleted for."*
-- Discovery does not run it. `` `artifacts/api-server/src/lib/discoveryCandidate.ts:150#export interface DiscoveryCandidate {` ``,
+- Discovery does not run it. `` `artifacts/api-server/src/lib/discoveryCandidate.ts:151#export interface DiscoveryCandidate {` ``,
   `lib/discoveryLiveRank.ts` and the `routes/discovery*.ts` handlers contain
   **zero** references to `protectedLocations`, `protected_zones` or
   `protectedZone`.
@@ -3138,8 +3138,8 @@ was the notable non-adopter.
 
 It now carries the block, per claim and composed for the answer as a whole:
 
-  - `` `artifacts/api-server/src/routes/intelReadModels.ts:199#  const claims = resolved.claims.map((c) => ({ ...c, truth: truthOfEnvelope(c, nowMs) }));` ``
-  - `` `artifacts/api-server/src/routes/intelReadModels.ts:218#    truth: truthOfEnvelopes(resolved.claims, nowMs),` ``
+  - `` `artifacts/api-server/src/routes/intelReadModels.ts:186#  const claims = resolved.claims.map((c) => ({ ...c, truth: truthOfEnvelope(c, nowMs) }));` ``
+  - `` `artifacts/api-server/src/routes/intelReadModels.ts:205#    truth: truthOfEnvelopes(resolved.claims, nowMs),` ``
 
 Three things about this, stated so it is not read as more than it is.
 
@@ -3308,8 +3308,8 @@ audit row or the stored verifier verdict"*). A lane looking for a cheap C could
 read S21 as already satisfied. It is not, for a reason the row states less
 sharply than it could: the boundary is entered **by profile id**, against
 `location_snapshots`
-(`` `artifacts/api-server/src/services/intel/PresenceVerifier.ts:248#    .from("location_snapshots")` ``,
-`` `artifacts/api-server/src/services/intel/PresenceVerifier.ts:275#    .from("location_snapshots")` ``),
+(`` `artifacts/api-server/src/services/intel/PresenceVerifier.ts:252#    .from("location_snapshots")` ``,
+`` `artifacts/api-server/src/services/intel/PresenceVerifier.ts:279#    .from("location_snapshots")` ``),
 which is the *personal* branch of §3's own diagram. Reducing one identified
 person's precise history inside the World Intelligence path is the branch
 crossing the diagram exists to prevent, whatever the boundary's width. S21
@@ -3325,7 +3325,7 @@ decision no diff can substitute for.
 
 | id | was | now | why — and what settles it |
 | --- | --- | --- | --- |
-| S3 | W | **W** | **Evidence line corrected 2026-09-25 — see §15. The verdict does not move, and §14.2 is this document's current reading of S3.** As written, this cell quoted `crowdFlowProducer`'s own blocker evidence saying `presence/domain` had *"no store, no fusion layer"*. **That sentence no longer exists in any tree**: a lane on `sensing100-integration` built the store and REWROTE that evidence slot, which now reads `` `artifacts/api-server/src/lib/crowdFlowProducer.ts:389#      "src/presence/fusion/store.ts — a PresenceFusionStore now exists and is the ONLY minter of a PresenceEstimate` ``. Read that line before assuming it closes the row — it argues the blocker is **confirmed**, not closed, because a `PresenceEstimate` carries no from-zone and the store deliberately does not hold one. **RED WHEN** one `PresenceEstimate` store and fusion layer exists behind the ladder and all four of `circle_presence`, `trip_crew_location_sessions`, `locateFriendsSession` and the map's `social_zone`/`buddy_zone`/`crew_member` kinds read through it — proven by a test that a second presence write path is unrepresentable, not by the store's existence. **WHO**: a commissioned build across `src/presence/**`, `lib/crowdFlowProducer.ts`, `services/tripCrew/` and `lib/mapAggregation.ts`; the crew half is in trees this lane may not enter. |
+| S3 | W | **W** | **Evidence line corrected 2026-09-25 — see §15. The verdict does not move, and §14.2 is this document's current reading of S3.** As written, this cell quoted `crowdFlowProducer`'s own blocker evidence saying `presence/domain` had *"no store, no fusion layer"*. **That sentence no longer exists in any tree**: a lane on `sensing100-integration` built the store and REWROTE that evidence slot, which now reads `` `artifacts/api-server/src/lib/crowdFlowProducer.ts:384#      "src/presence/fusion/store.ts — a PresenceFusionStore now exists and is the ONLY minter of a PresenceEstimate` ``. Read that line before assuming it closes the row — it argues the blocker is **confirmed**, not closed, because a `PresenceEstimate` carries no from-zone and the store deliberately does not hold one. **RED WHEN** one `PresenceEstimate` store and fusion layer exists behind the ladder and all four of `circle_presence`, `trip_crew_location_sessions`, `locateFriendsSession` and the map's `social_zone`/`buddy_zone`/`crew_member` kinds read through it — proven by a test that a second presence write path is unrepresentable, not by the store's existence. **WHO**: a commissioned build across `src/presence/**`, `lib/crowdFlowProducer.ts`, `services/tripCrew/` and `lib/mapAggregation.ts`; the crew half is in trees this lane may not enter. |
 | S17 | X | **X** | Half is code-answerable and already built (helmet/HSTS in `app.ts`; the store's at-rest control is application-level — peppered HMAC tokens, the device secret never stored). The other half is not in any tree. **RED WHEN** the operator supplies two artifacts: the served response headers of the deployed origin showing TLS termination and an HSTS `max-age`, and Supabase's at-rest encryption attestation for the production project. Neither is a diff. **WHO**: the operator. An honest X until then; no code change can move it. |
 | S18 | W | **W** | Two-layer rotation built, executed, mutation-proven (M1/M1b); `sensing_anon_contributions` has no writer. **RED WHEN** `SENSING_AUTH_POSTURE` leaves `undecided` (`` `artifacts/api-server/src/lib/sensingAuthPosture.ts:82#export const SENSING_AUTH_POSTURE: SensingAuthPosture = "anonymous_capable";` ``) **and** a writer is registered. Note the second gate is not only the posture: `src/test/sensingAnonStore.test.ts` asserts *"no route touches the store — a transport is an owner decision, not an implementation detail"*, so a lane that wired one today would turn that test red by design. **WHO**: the owner, then a lane. |
 | S19 | W | **W** | `` `artifacts/api-server/src/migrations/2130_intel_storage.sql:142#  actor_id           uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,` `` stands, and so do its two siblings — **repointed**: `` `artifacts/api-server/src/migrations/2130_intel_storage.sql:244#  actor_id       uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,` `` on `intel_evidence` and `` `artifacts/api-server/src/migrations/2130_intel_storage.sql:266#  actor_id   uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,` `` on `intel_confirmations` (the row said 236 and 265; both were in range and wrong). **RED WHEN** a reviewed migration drops or nulls the FK on the table that has a writer. **WHO**: the owner rules, the integration owner numbers the migration. **NOT** by reclassifying `intel_observations` as a non-anonymous store — that shrinks the population and §5 forbids it. |
@@ -3342,7 +3342,7 @@ decision no diff can substitute for.
 | S35 | W | **W** | All four rejections exist and three are executed against the database (M3, M10, M11 red); there is no ingest to reject anything. **RED WHEN** S32 does. **WHO**: as S32. |
 | S39 | W | **W** | `` `artifacts/api-server/src/lib/sensingPresenceState.ts:69#  presence: "observed"` `` — two values, no `absent`, no zero, no person named (M8 red, executed on k and k − 1 real contributors); no surface consumes it. **RED WHEN** decision #9 is taken and a surface reads `buildSensingPresenceState`. Note this lane's read-model routes cannot be that surface while the anon-store tripwire stands. **WHO**: the owner (decision #9), then a lane. |
 | S42 | W | **W** | The engine and its guards are pinned (M5 red); not one input has a producer. **RED WHEN** S28 exists. **WHO**: a client build. |
-| S49 | W | **W** | **Part closed this pass (§10.1): the §19 read model now carries all four §5.1 fields, per claim and composed, through the one shared derivation.** The gap §8 named is untouched — `` `artifacts/api-server/src/lib/discoveryCandidate.ts:150#export interface DiscoveryCandidate {` `` still carries truth class, confidence and freshness and no coverage, and `lib/discoveryLiveRank.ts` computes the value in the same function. **RED WHEN** the owner rules the §24 question — either route `DiscoveryCandidate` through `protectedLocations`, or rule that a four-value bucket over an already k-gated state is not protected-zone sensitive — and Discovery adds the field. §10.1's argument that the bucket was already served does **not** transfer: `DiscoveryCandidate` carries no cohort signal today, so adding one there is a first disclosure. **WHO**: the owner, then the Discovery lane. |
+| S49 | W | **W** | **Part closed this pass (§10.1): the §19 read model now carries all four §5.1 fields, per claim and composed, through the one shared derivation.** The gap §8 named is untouched — `` `artifacts/api-server/src/lib/discoveryCandidate.ts:151#export interface DiscoveryCandidate {` `` still carries truth class, confidence and freshness and no coverage, and `lib/discoveryLiveRank.ts` computes the value in the same function. **RED WHEN** the owner rules the §24 question — either route `DiscoveryCandidate` through `protectedLocations`, or rule that a four-value bucket over an already k-gated state is not protected-zone sensitive — and Discovery adds the field. §10.1's argument that the bucket was already served does **not** transfer: `DiscoveryCandidate` carries no cohort signal today, so adding one there is a first disclosure. **WHO**: the owner, then the Discovery lane. |
 | S51 | W | **W** | The inference exists and is guarded; not one signal is produced anywhere. **Narrowed**: §5.2's candidate list names `density` and the input carries `coverage` instead (§10.4), so this row needs one more signal than the census said. **RED WHEN** S28 exists AND a density input joins `VibeFeatureInput`. **WHO**: a client build, then whoever owns `lib/vibeInference.ts`. |
 | S52 | W | **W** | Checked field-for-field against the SPEC's §5.2 list rather than the module's own: energy, sociality, dance_likelihood, volatility, momentum, scene/context tags, confidence, coverage, freshness, provenance — all ten present on `` `artifacts/api-server/src/lib/vibeInference.ts:128#export interface SensingVibeState {` ``. **Evidence corrected 2026-09-14 (§10.9)**: the earlier sentence *"truth class always `inferred`"* restated the module's own header, which is false about its own code — the no-coverage branch returns `unknown`, deliberately (*"Nothing is inferred from nothing"*), and `unknown` is one of §5.1's seven. So the state carries `inferred` where there is coverage and `unknown` where there is none, and the band is structurally below the live floor in both. That is the spec behaving correctly, not a defect, and it moves no verdict. **RED WHEN** something can populate it, i.e. S28. **WHO**: a client build. |
 | S66 | W | **W** | Re-executed at both surfaces: Discovery demotes a Live-qualified `unsafe_density` behind every other row before any score is compared (`` `artifacts/api-server/src/lib/discoveryLiveRank.ts:464#    if (a.grade.safety.demoted !== b.grade.safety.demoted) return a.grade.safety.demoted ? 1 : -1;` ``) and the layover surface removes the card (`` `artifacts/api-server/src/lib/layoverLiveIntersection.ts:199#  if (state.unsafe) { drop = true; dropReason = "unsafe_density"; }` ``). **RED WHEN** a dangerous place is actually refused rather than refusable — the flags these paths ride are ON in a database and real `unsafe_density` state reaches them. **WHO**: nobody, deliberately: this is the census working, and it is recorded so the count of "W rows a lane should move" is not inflated by it. |
@@ -4090,7 +4090,7 @@ and warns the reader what that line actually argues.
 
 ### §15.2 What the replacing line says, which is not what it looks like
 
-`artifacts/api-server/src/lib/crowdFlowProducer.ts:389#      "src/presence/fusion/store.ts — a PresenceFusionStore now exists and is the ONLY minter of a PresenceEstimate`
+`artifacts/api-server/src/lib/crowdFlowProducer.ts:384#      "src/presence/fusion/store.ts — a PresenceFusionStore now exists and is the ONLY minter of a PresenceEstimate`
 is still an entry in `no_declared_origin`'s **blocker evidence**, and it says
 so: a `PresenceEstimate` is a subject at a place — position, zone, floor — and
 carries no from-zone anywhere on it. *"A fusion layer does not close this
@@ -4188,7 +4188,7 @@ Counted across `src/**` with tests excluded, on this tree:
 
 | Method | What it is | Production callers |
 |---|---|---|
-| `presenceFusion.admit` | mint one source's estimate | **4** — `lib/circleResponseShaper.ts:199`, `domain/trips/services/TripCrewLocationService.ts:194`, `lib/locateFriendsSession.ts:904`, `lib/mapAggregation.ts:568` |
+| `presenceFusion.admit` | mint one source's estimate | **4** — `lib/circleResponseShaper.ts:199`, `domain/trips/services/TripCrewLocationService.ts:194`, `lib/locateFriendsSession.ts:905`, `lib/mapAggregation.ts:568` |
 | `presenceFusion.read` | look up a retained estimate | **0** |
 | `presenceFusion.resolve` | **fuse across sources** | **0** |
 | `presenceFusion.sweep` | expire | **0 directly** (reached from `admit`; see §16.4) |
@@ -4393,7 +4393,7 @@ was an instruction to build that consumer.
 
 ### §18.2 Why, stated as two facts one object was carrying
 
-Retention is keyed `(source, subject)`. `locateFriendsSession.ts:907#    // The subject is the Portava account, so an estimate from this source can`
+Retention is keyed `(source, subject)`. `locateFriendsSession.ts:908#    // The subject is the Portava account, so an estimate from this source can`
 argues for that key in as many words — *"the latest observation of a person is
 the latest observation of that person, whichever session carried it, and keying
 per session would put the same human in the store twice."*
@@ -4509,7 +4509,7 @@ It caches one `zones` array process-wide for 30 seconds with no viewer in the
 key — structurally the same shape as the defect above. It is **not** the same
 defect, for a reason that had to be read rather than guessed: its query filters
 on `active` alone, with no viewer predicate, and both call sites hand it a
-SERVICE-ROLE client — `routes/mapProjection.ts:457#getServiceClient` and the four
+SERVICE-ROLE client — `routes/mapProjection.ts:460#getServiceClient` and the four
 `withDiscoveryCandidates(getServiceClient(), …)` sites in `routes/discovery.ts`.
 A service-role read bypasses RLS, so every request sees the identical row set
 and the cached object carries no viewer's entitlement.
@@ -4832,7 +4832,7 @@ S92 reads: *"the bridge is a graph-edge projection and `grep` over
 exists (+243) and its own first line calls itself *"S92's arrow, built from the
 session's OUTCOME"*. It is imported at
 `artifacts/api-server/src/lib/memoryProjectionScheduler.ts:52#}`, and the
-scheduler is started from `artifacts/api-server/src/index.ts:59#startMemoryProjectionScheduler` (its import) and called at `:185#startMemoryProjectionScheduler();` (corrected 2026-09-27; was `:58#import`, right when written, until dbf804b9f added a line above it on 2026-09-26; line 58 is now `registerScopedTrustApplier`'s import, which the one-word anchor still passed. The new anchor names the import rather than the word `import` because a snapshot copy under files/ ends in the same path, so this citation is checked on its first word only).
+scheduler is started from `artifacts/api-server/src/index.ts:63#startMemoryProjectionScheduler` (its import) and called at `:191#startMemoryProjectionScheduler();` (corrected 2026-09-27; was `:58#import`, right when written, until dbf804b9f added a line above it on 2026-09-26; line 58 is now `registerScopedTrustApplier`'s import, which the one-word anchor still passed. The new anchor names the import rather than the word `import` because a snapshot copy under files/ ends in the same path, so this citation is checked on its first word only).
 
 The row's RED WHEN — *S54 exists AND memory eligibility is computed from a
 session's OUTCOME rather than from a graph edge* — has **fired on the code**.
@@ -5112,7 +5112,7 @@ nor §20 examined, and it would also be wrong on the merits.
 **The measurement.** Retention is keyed `(source, subject)` and carries no
 scope: `` `${RETENTION_KEY_SEP}${estimate.subjectKey}` `` (line 735 of `store.ts` as it stood at `2387bc306`; §25 changed it).
 The subject is the ACCOUNT for all three fusable sources —
-`` `artifacts/api-server/src/lib/locateFriendsSession.ts:914#subjectKey: memberId,` ``,
+`` `artifacts/api-server/src/lib/locateFriendsSession.ts:915#subjectKey: memberId,` ``,
 `` `artifacts/api-server/src/domain/trips/services/TripCrewLocationService.ts:181#subjectKey: raw.userId,` ``,
 and `circlePresenceEstimate` uses `profile.userId` — across every session,
 trip and circle that person is in. `resolve` selects on linkage
@@ -5172,7 +5172,7 @@ admitting surfaces are untouched by this pass.
 
 **One owner decision, prepared:** A or B above. Cost of A: a claim field, two
 read signatures, a ranking rule, retention keyed by scope (which is what
-`locateFriendsSession.ts:883` argued against and would now be argued for on
+`locateFriendsSession.ts:884` argued against and would now be argued for on
 consent grounds), and the four admit sites supplying their scope — a lane's
 day, no migration. Cost of B: no code; S3/S106 become a `read`-based wiring
 per surface and move on a lane's report plus a test that an ungranted viewer
@@ -5314,7 +5314,7 @@ weaker one.
 
 | Source | Scope | Line |
 |---|---|---|
-| `locate_friends_session` | `{ locate_session, sessionId }` — `ProjectMemberInput` gains `sessionId`; the session IS the consent. | `` `artifacts/api-server/src/lib/locateFriendsSession.ts:916#scope: locateSessionScope(sessionId),` `` |
+| `locate_friends_session` | `{ locate_session, sessionId }` — `ProjectMemberInput` gains `sessionId`; the session IS the consent. | `` `artifacts/api-server/src/lib/locateFriendsSession.ts:917#scope: locateSessionScope(sessionId),` `` |
 | `circle_presence` | `{ circle, "trip:<id>" \| "event:<id>" }` — `circlePresenceEstimate` and `shapePresence` take the context; both route call sites pass the one they already had. | `` `artifacts/api-server/src/lib/circleResponseShaper.ts:209#scope: circleConsentScope(context.type, context.id),` ``; `` `artifacts/api-server/src/presence/fusion/sources.ts:147#export function circleConsentScope(` `` |
 | `trip_crew_location_sessions` | `{ trip_crew, tripId }` — `admitCrewPresence` takes the trip; `getCrewMap` passes it. The per-viewer `allowed_member_ids` grant stays a CEILING, folded at admit. | `` `artifacts/api-server/src/domain/trips/services/TripCrewLocationService.ts:183#scope: { kind: "trip_crew", id: tripId },` `` |
 | `map_social_presence` | `{ map_public, kind }` — one per map kind. Source-scoped subjects are never fused, so this scope makes the claim well-formed and revocable rather than unlocking a cross-source read. | `` `artifacts/api-server/src/lib/mapAggregation.ts:561#scope: mapPublicScope(kind),` ``; `` `artifacts/api-server/src/presence/fusion/sources.ts:294#export function mapPublicScope(` `` |
@@ -5333,11 +5333,11 @@ from the surface rather than from a test."* Plus §18.6's audience conjunct and
 
 | Conjunct | Met by |
 |---|---|
-| a production consumer calls `resolve` | `fuseMemberView`, called by `readSessionForViewer` for every member of a Locate session: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1085#const fused = presenceFusion.resolve(memberId, "locate_friends_session", audience, nowMs);` ``; `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1482#return fuseMemberView(own, id, sessionId, { ceiling: sessionCeiling, scopes }, nowMs);` `` |
-| the surface's output is derived from the fused estimate | When the winner is another source, the `MemberView` is rendered FROM it — rung, §10 state, age, `live`, and a new `fusedFrom` field naming the source: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1117#fusedFrom: fused.source,` ``. When the winner is this session's own entry, the current projection answers, never the store's retained copy: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1087#if (fused.source === "locate_friends_session") {` ``. |
+| a production consumer calls `resolve` | `fuseMemberView`, called by `readSessionForViewer` for every member of a Locate session: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1086#const fused = presenceFusion.resolve(memberId, "locate_friends_session", audience, nowMs);` ``; `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1488#return fuseMemberView(own, id, sessionId, { ceiling: sessionCeiling, scopes }, nowMs);` `` |
+| the surface's output is derived from the fused estimate | When the winner is another source, the `MemberView` is rendered FROM it — rung, §10 state, age, `live`, and a new `fusedFrom` field naming the source: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1118#fusedFrom: fused.source,` ``. When the winner is this session's own entry, the current projection answers, never the store's retained copy: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1088#if (fused.source === "locate_friends_session") {` ``. |
 | a test asserts the resolver is reached from the surface | `` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:667#describe("E. readSessionForViewer fuses a Circle estimate only through Circle's own guard, per member"` `` — the first case reads through the real `readSessionForViewer` with a fake database and a fake guard and asserts `fusedFrom: "circle_presence"`; deleting the `fuseMemberView` call reds two cases (§25.4). |
 | §18.6 — the viewer's rung | The audience ceiling is the SESSION's ceiling, folded with the estimate's own bound; both only tighten. |
-| §24.3 — the viewer's MEMBERSHIP in the other source's audience | The circle scope is granted PER MEMBER, PER READ, only when Circle's own `canViewCirclePresenceBatch` allows THIS viewer to see THAT member in THAT context — kill switch, both memberships, bans, blocks, global and per-context pause, consent version, visibility mode — AND the row it read admits through `circlePresenceEstimate` now: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1020#circlePresenceBatch: canViewCirclePresenceBatch,` ``; `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1057#return fresh === null ? null : circleConsentScope(circle.type, circle.id);` ``. A guard that throws or answers `unavailable` grants nobody anything: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1462#circleAccess = await deps.circlePresenceBatch(db, viewerId, otherIds, circle.type, circle.id);` ``. Gate (5) still governs: with the §24 policy unreadable the fused step is not taken at all: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1458#const circle = zones === null ? null : circleContextOf(session);` ``. |
+| §24.3 — the viewer's MEMBERSHIP in the other source's audience | The circle scope is granted PER MEMBER, PER READ, only when Circle's own `canViewCirclePresenceBatch` allows THIS viewer to see THAT member in THAT context — kill switch, both memberships, bans, blocks, global and per-context pause, consent version, visibility mode — AND the row it read admits through `circlePresenceEstimate` now: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1021#circlePresenceBatch: canViewCirclePresenceBatch,` ``; `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1058#return fresh === null ? null : circleConsentScope(circle.type, circle.id);` ``. A guard that throws or answers `unavailable` grants nobody anything: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1465#circleAccess = await deps.circlePresenceBatch(db, viewerId, otherIds, circle.type, circle.id);` ``. Gate (5) still governs: with the §24 policy unreadable the fused step is not taken at all: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1461#const circle = zones === null ? null : circleContextOf(session);` ``. |
 
 **What that guard-driven design buys, stated because it is the P24 answer to
 the obvious objection.** The fusion store is process-local (§18.2's design
@@ -5400,7 +5400,7 @@ revoke is not a ban). The production points:
 
 | Consent ends when | Store half | Line |
 |---|---|---|
-| a member leaves a Locate session | `revokeSubjectInScope(user, {locate_session, session})` FIRST — before any row is read or written, even when the membership row is unreadable — and the count is returned. | `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1535#const revokedEstimates = presenceFusion.revokeSubjectInScope(userId, locateSessionScope(sessionId));` `` |
+| a member leaves a Locate session | `revokeSubjectInScope(user, {locate_session, session})` FIRST — before any row is read or written, even when the membership row is unreadable — and the count is returned. | `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1541#const revokedEstimates = presenceFusion.revokeSubjectInScope(userId, locateSessionScope(sessionId));` `` |
 | a member stops a crew live share | `revokeSubjectInScope(user, {trip_crew, trip})` before the row is closed; count returned. | `` `artifacts/api-server/src/domain/trips/services/TripCrewLiveShareService.ts:180#const revokedEstimates = presenceFusion.revokeSubjectInScope(userId, { kind: "trip_crew", id: tripId });` `` |
 | a member pauses one Circle context / pauses all / the session-end pause | `revokeCirclePresence` / `revokeAllCirclePresence` — helpers on the shaper, one line per handler. | `` `artifacts/api-server/src/routes/circle.ts:1345#revokeCirclePresence(user.id, type, id);` ``; `` `artifacts/api-server/src/lib/circleResponseShaper.ts:65#export function revokeCirclePresence(` `` |
 | the sweep deletes an expired row, or a trip or event ends | per row / `revokeCircleContext` per ended context | `` `artifacts/api-server/src/routes/circle.ts:2275#for (const tid of endedTripIds) revokeCircleContext("trip", tid);` `` |
@@ -5635,7 +5635,7 @@ sensor health — and empties the raw buffers the moment the window closes.
 `` `travel-buddy-standalone/src/services/sensing/__tests__/sensingCapture.test.ts:244#  test('no sentinel coordinate or accelerometer axis reaches `submit`', async () => {` ``
 pins that no coordinate and no axis reaches the transport; the nine features
 are pinned at `` `travel-buddy-standalone/src/services/sensing/__tests__/sensingCapture.test.ts:164#  test('a window of real samples is submitted as the nine named features', async () => {` ``.
-The loop is mounted for the app in `` `travel-buddy-standalone/app/_layout.tsx:274#    const handle = installSensingCapture();` ``,
+The loop is mounted for the app in `` `travel-buddy-standalone/app/_layout.tsx:276#    const handle = installSensingCapture();` ``,
 which starts nothing without an API base and valid consent and re-checks
 consent on every foreground.
 
@@ -5655,7 +5655,7 @@ and 3312's `_acoustic_pair` CHECK makes a half-record unrepresentable in the sto
 
 **The commitment, so the device can withdraw.** The device mints a 32-byte
 CSPRNG secret into SecureStore
-(`` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:75#export async function sensingDeviceSecret(): Promise<string | null> {` ``;
+(`` `travel-buddy-standalone/src/services/sensing/sensingDeviceSecret.ts:29#export function sensingDeviceSecret(): Promise<string | null> {` ``;
 refuses without a CSPRNG rather than degrade to a guessable one), derives the
 epoch secret and the commitment exactly as the server does
 (`` `travel-buddy-standalone/src/lib/sensing/commitment.ts:151#export function deviceCommitment(deviceSecret: string, epoch: number): string {` ``;
@@ -5667,7 +5667,7 @@ carries — one fixture, read by the client's mapper
 and by the server's route test, so the two ends cannot drift apart silently.
 
 **On the server.** The ingest accepts the contract's `features`
-(`` `artifacts/api-server/src/routes/sensingIngest.ts:200#    features: contributionFeaturesSchema.optional(),` ``;
+(`` `artifacts/api-server/src/routes/sensingIngest.ts:202#    features: contributionFeaturesSchema.optional(),` ``;
 `` `artifacts/api-server/src/test/sensingReducedFeatures.test.ts:101#describe("the wire contract: the server accepts exactly what the client sends", () => {` ``;
 `` `artifacts/api-server/src/test/sensingIngestRoute.test.ts:53#const WIRE_CONTRACT = JSON.parse(` `` — the route test reads the same fixture, 31 cases), normalises them into 3312's columns with every value an ordinal,
 a centi, a boolean or a closed enum
@@ -5728,12 +5728,12 @@ owner's and is not.
 
 | # | §21.4 blocker | Now |
 |---|---|---|
-| 2 | *"Nothing publishes. `publishThroughDifferencingGate` has no caller outside tests."* | `lib/sensingPublicationScheduler` is that caller: on its own clock, per live cohort of the current and previous privacy bucket, `readSensingCohort` → `aggregateSensingCohort` → `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:225#    const decision = await publishThroughDifferencingGate(` ``. A cohort the k-gate withholds never reaches the gate or the store (`` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:219#    if (aggregate.publishable !== true) {` ``). Started at boot: `` `artifacts/api-server/src/index.ts:162#  startSensingPublicationScheduler();` ``. |
-| 3 | *"A Compass turn carries a city, not a sensing `zone_id`."* | The turn now carries the device's OWN coarse zone — the spatial bucket its capture stamps on its contributions, present only while capture runs (`` `travel-buddy-standalone/src/services/sensing/sensingCapture.ts:103#  currentZone(): string | null;` ``, registered by `` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:171#    registerSensingZoneSource(() => running.currentZone());` ``, sent on both ask paths per `` `travel-buddy-standalone/src/services/__tests__/compass.sensingZone.test.ts:68#describe('the wiring, by source: both ask paths apply the rule to the body they send', () => {` ``). The route accepts it (`` `artifacts/api-server/src/routes/compass.ts:1134#  sensingZoneIds:      z.array(z.string().min(1).max(64)).max(5).optional(),` ``), turns it into the cohort refs of the current and previous bucket (`` `artifacts/api-server/src/compass/CompassSensingPresenceProducer.ts:254#export function sensingCohortRefsForZones(` ``, pure, bounded by the zone cap on the READS) and hands them to the producer (`` `artifacts/api-server/src/routes/compass.ts:1878#        sensingCohortRefsForZones(sensingZoneIds, turnNowMs),` ``). |
+| 2 | *"Nothing publishes. `publishThroughDifferencingGate` has no caller outside tests."* | `lib/sensingPublicationScheduler` is that caller: on its own clock, per live cohort of the current and previous privacy bucket, `readSensingCohort` → `aggregateSensingCohort` → `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:226#    const decision = await publishThroughDifferencingGate(` ``. A cohort the k-gate withholds never reaches the gate or the store (`` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:220#    if (aggregate.publishable !== true) {` ``). Started at boot: `` `artifacts/api-server/src/index.ts:168#  startSensingPublicationScheduler();` ``. |
+| 3 | *"A Compass turn carries a city, not a sensing `zone_id`."* | The turn now carries the device's OWN coarse zone — the spatial bucket its capture stamps on its contributions, present only while capture runs (`` `travel-buddy-standalone/src/services/sensing/sensingCapture.ts:103#  currentZone(): string | null;` ``, registered by `` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:148#    registerSensingZoneSource(() => running.currentZone());` ``, sent on both ask paths per `` `travel-buddy-standalone/src/services/__tests__/compass.sensingZone.test.ts:68#describe('the wiring, by source: both ask paths apply the rule to the body they send', () => {` ``). The route accepts it (`` `artifacts/api-server/src/routes/compass.ts:1134#  sensingZoneIds:      z.array(z.string().min(1).max(64)).max(5).optional(),` ``), turns it into the cohort refs of the current and previous bucket (`` `artifacts/api-server/src/compass/CompassSensingPresenceProducer.ts:254#export function sensingCohortRefsForZones(` ``, pure, bounded by the zone cap on the READS) and hands them to the producer (`` `artifacts/api-server/src/routes/compass.ts:1878#        sensingCohortRefsForZones(sensingZoneIds, turnNowMs),` ``). |
 | 1 | *"`surface` is not in `SENSING_ANON_GRANTED_SCOPES`"* | **Unchanged, deliberately.** Both the publisher and the producer test the scope BEFORE reading their flag and before any read: `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:153#  if (!sensingPublicationScopeGranted(opts.policy ?? SENSING_ANON_POLICY_V1)) {` `` precedes `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:161#  if (!(await isFlagEnabled(db, SENSING_PUBLICATION_FLAG))) return SKIPPED("capability_off");` ``. The frozen constant was not edited. |
 
 **Proven with the scope INJECTED through the seam, never granted.**
-`` `artifacts/api-server/src/test/sensingPublicationScheduler.test.ts:297#describe("END TO END — publisher to conversation, with the scope injected through the seam", () => {` ``:
+`` `artifacts/api-server/src/test/sensingPublicationScheduler.test.ts:303#describe("END TO END — publisher to conversation, with the scope injected through the seam", () => {` ``:
 twenty contributors in independent groups → the publisher records ONE row
 with no contributor column → the route's zone refs → the producer renders
 OBSERVED for the zone with no person and no count, having touched only the
@@ -5741,7 +5741,7 @@ publication store; the SAME world under the policy in force writes nothing
 and renders nothing, both refusing on the scope; a withheld cohort leaves the
 conversation saying NOT KNOWN with the inverse reading forbidden. S24's
 floor is exercised on the durable store: a second pass +2 contributors is not
-recorded, +5 is (`` `artifacts/api-server/src/test/sensingPublicationScheduler.test.ts:135#describe("the publisher's gates, in order", () => {` `` and the cases after it; 18 in all).
+recorded, +5 is (`` `artifacts/api-server/src/test/sensingPublicationScheduler.test.ts:141#describe("the publisher's gates, in order", () => {` `` and the cases after it; 18 in all).
 
 **Seen red:** reading the flag before the scope reds 1; letting a withheld
 cohort reach the gate reds 2; counting a below-floor change as published reds
@@ -5895,7 +5895,7 @@ session: closing it.
 
 | Step | Where |
 |---|---|
-| Closing a session runs the S92 gate and, when it admits, writes the memory WITH its refs, in the same request | `` `artifacts/api-server/src/routes/experienceSessions.ts:444#    const memory = await persistSessionMemory(g.sc, g.userId, built.envelope, now);` `` (and the calibrated branch at `` `artifacts/api-server/src/routes/experienceSessions.ts:425#      const memory = await persistSessionMemory(g.sc, g.userId, built.envelope, now);` ``) |
+| Closing a session runs the S92 gate and, when it admits, writes the memory WITH its refs, in the same request | `` `artifacts/api-server/src/routes/experienceSessions.ts:449#    const memory = await persistSessionMemory(g.sc, g.userId, built.envelope, now);` `` (and the calibrated branch at `` `artifacts/api-server/src/routes/experienceSessions.ts:430#      const memory = await persistSessionMemory(g.sc, g.userId, built.envelope, now);` ``) |
 | The writer refuses rather than drop the lineage: a non-uuid ref refuses the whole write, and a database without 3314 answers `claim_refs_unavailable` with no retry | `` `artifacts/api-server/src/services/memoryProjections/sessionMemoryStore.ts:105#export async function persistSessionMemory(` `` |
 | The column, NOT NULL, GIN-indexed; and the projector's watermark no longer retracts a session memory it never wrote | `` `artifacts/api-server/src/migrations/3314_memory_projection_claim_refs.sql:113#      AND subject_type IS DISTINCT FROM 'experience_session'` `` |
 | The deletion reach enumerates other people's memories resting on the account's evidence, by overlap, and says when the column is absent | `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:283#            .overlaps("claim_refs", part)` ``; `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:128#  memoryStore: "persisted" | "column_absent";` `` |
@@ -5944,8 +5944,8 @@ not CONSENT, and it was not edited.
 |---|---|
 | What each recorded disclosure covers; v1 covers nothing; unknown covers nothing | `` `artifacts/api-server/src/lib/sensingConsentScopes.ts:59#  [SENSING_CONSENT_V1]: Object.freeze([]) as readonly ContributionPurposeScope[],` `` |
 | A session carries consent ∩ policy, never either alone | `` `artifacts/api-server/src/lib/sensingConsentScopes.ts:78#export function sensingScopesForConsent(` `` |
-| Each contribution records whether ITS contributor's session carried `surface`; the ladder already refuses a scope outside the session | `` `artifacts/api-server/src/routes/sensingIngest.ts:382#        surfacePermitted: (body.purposeScopes ?? session.row?.purpose_scopes ?? []).includes("surface"),` `` |
-| The publisher counts only those rows, so the k-gate counts only consenting people | `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:217#    const read = await readSensingCohort(db, ref.cohort_key, nowIso, undefined, { surfaceOnly: true });` ``; `` `artifacts/api-server/src/lib/sensingAnonStore.ts:678#    if (opts.surfaceOnly === true) query = query.eq("surface_permitted", true);` `` |
+| Each contribution records whether ITS contributor's session carried `surface`; the ladder already refuses a scope outside the session | `` `artifacts/api-server/src/routes/sensingIngest.ts:401#        surfacePermitted: (body.purposeScopes ?? session.row?.purpose_scopes ?? []).includes("surface"),` `` |
+| The publisher counts only those rows, so the k-gate counts only consenting people | `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:218#    const read = await readSensingCohort(db, ref.cohort_key, nowIso, undefined, { surfaceOnly: true });` ``; `` `artifacts/api-server/src/lib/sensingAnonStore.ts:678#    if (opts.surfaceOnly === true) query = query.eq("surface_permitted", true);` `` |
 | A grant is recorded only against the words the client displayed; a grant with no version is evidence of v1 only | `` `artifacts/api-server/src/lib/intelConsent.ts:38#export function displayedDisclosureMatches(seen: string | undefined, stamped: string): boolean {` `` |
 | The client renders the words of the version the server will stamp, sends that version, and offers no grant for a version it has no words for | `` `travel-buddy-standalone/src/components/intel/IntelConsentGate.tsx:40#    const state = await setIntelConsent(true, disclosure.version);` `` |
 | The capture loop starts only when the recorded version's words cover passive sensing | installSensingCapture.ts line 122 at `76432df12a` (“if (!consentCoversPassiveSensing(await getIntelConsent())) return;” — replaced in §33 by OD-MAP-6's split consents) |
@@ -5975,7 +5975,7 @@ environment, pepper or no pepper.
 
 **Built:** `POST /v1/sensing/session`
 (sensingSession.ts line 98 at `76432df12a` (“const covered = sensingScopesForConsent(consent.state, SENSING_ANON_POLICY_V1);” — replaced in §33 by the split grants),
-mounted at `` `artifacts/api-server/src/routes/index.ts:424#router.use(sensingSessionRouter);` ``).
+mounted at `` `artifacts/api-server/src/routes/index.ts:430#router.use(sensingSessionRouter);` ``).
 It checks, in order: the pepper, the auth posture, the account, eligibility,
 a per-profile daily budget held nowhere durable, and consent. It then writes
 a row holding the credential's HMAC and the scopes, and no identity. Fourteen
@@ -6137,7 +6137,7 @@ handing every caller `[]`. Discovery's rank read asks; these did not, so a snaps
   which refuses `live_intelligence_unavailable`;
 - the §19 live-state read model — `unknown` after a failed read was indistinguishable from silence:
   the resolver now carries the mark (`artifacts/api-server/src/lib/liveClaimRead.ts:624#return { state: "unknown", claims: carryLiveClaimReadFailure(live, [])`),
-  the route serves `live_read_failed` (`artifacts/api-server/src/routes/intelReadModels.ts:219#claims, live_read_failed:`),
+  the route serves `live_read_failed` (`artifacts/api-server/src/routes/intelReadModels.ts:206#claims, live_read_failed:`),
   and a failed read no longer shares a real `unknown` answer's ETag;
 - the Compass decision (census-compass §29.3) and the Wall moments (census-wall §18) — same mark.
 
@@ -6467,9 +6467,9 @@ applied, flipped or deployed: 3703 is applied nowhere and `sensing_consent_split
   The bundled Quick Signals / v2 path is no longer read: OD-MAP-6 forbids one grant for all three.
 - **The device obeys it.** The capture loop starts only under capture and drops every send unless upload
   is in effect, re-checking on foreground and on every Settings change
-  (`travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:164#if (disposed || generation !== captureGeneration || !uploadAllowed) return;`);
+  (`travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:141#if (disposed || generation !== captureGeneration || !uploadAllowed) return;`);
   three switches in Settings, each OFF until turned on, OFF always reachable
-  (`travel-buddy-standalone/src/components/intel/SensingConsentSection.tsx:42#export function SensingConsentSection() {`).
+  (`travel-buddy-standalone/src/components/intel/SensingConsentSection.tsx:45#export function SensingConsentSection() {`).
 
 ### 33.2 The words (Q-L20)
 
@@ -6522,7 +6522,7 @@ No row moves. S18, S24, S32 and S39 stay `W` for §33.3's reasons.
 
 The real `installSensingCapture` now runs against stand-ins: a fake consent reader with its change channel, a
 fake capture loop that records the `submit` the installer gives it, and a fake transport
-(`travel-buddy-standalone/src/services/sensing/__tests__/installSensingCapture.component.test.ts:104#describe('installSensingCapture obeys OD-MAP-6 on the device'`,
+(`travel-buddy-standalone/src/services/sensing/__tests__/installSensingCapture.component.test.ts:110#describe('installSensingCapture obeys OD-MAP-6 on the device'`,
 8 cases). The test shows:
 
 - **No loop starts** when capture is not granted, or when the consent cannot be read.
@@ -6570,7 +6570,7 @@ device was run here. Historical live observations remain dated observations, not
 
 The twelve-file local repair denies capture immediately when a permission intent
 starts, before its ordered persistence write
-(`travel-buddy-standalone/src/services/sensing/acousticSensingPermission.ts:78#publish({ permission: ACOUSTIC_PERMISSION_DENIED`).
+(`travel-buddy-standalone/src/services/sensing/acousticSensingPermission.ts:82#publish({ permission: ACOUSTIC_PERMISSION_DENIED`).
 Revision checks prevent delayed storage or OS-permission results from restoring
 an obsolete grant. The settings control reports persistence failure honestly;
 the installer, recording lifecycle and transport reject stale work. Cleanup is
@@ -6648,3 +6648,9 @@ The new exact import inventory admits only two narrow modules:
 second insertion transport, account lookup, permanent identity link, canonical
 intel writer, Memory producer or publication permission. Required localPG and
 router checks are registered in the main API suite and mandatory native CI gate.
+
+### 2026-11-05 release evidence reconciliation
+
+The named paths cover atomic admission/revocation, secure device-secret extraction, erasure retry/rotation and capture holds, plus current-world/live-reference consumers and their controlled tests. The reuse map has citation-only relocation. The complete S-row reconciliation and retained grades are recorded in the Sensing completion report. These implementations do not decide consent wording, independent-device evidence, erasure policy, publication enablement or observed production retention; no collection/publication claim follows from freshness registration.
+
+No row, total, scope-coverage floor or citation threshold is promoted by this reconciliation. The original head_commit remains the measured baseline. Source citations were relocated using unchanged source identity or exact anchors; changed claims are explicitly qualified where reconciled. The named-file acknowledgement ledger records this bounded review. Read the linked release evidence for current implementation and its remaining boundaries.

@@ -9,6 +9,8 @@ jest.mock('../../context/SessionContext.tsx',()=>({useSession:()=>({userId:'me'}
 jest.mock('../../services/postDestinations.ts',()=>({capturePostDestinationOwner:()=>mockOwner,listPostDestinationMemories:jest.fn(),savePostToDestination:jest.fn(),newPostDestinationOperation:jest.fn(()=> 'op-1')}));
 const saved={referenceId:'reference',memoryId:'memory',highlightId:null};
 const onSaved=jest.fn(),onCancel=jest.fn();
+// NOTE: the live source card and its permissions are exercised by PostReferenceCard.component.test.
+jest.mock('../PostReferenceCard.tsx', () => ({ PostSharePreview: (props: any) => require('react').createElement(require('react-native').View, { testID: 'draft-preview', ...props }) }));
 const props={postId:'post',active:true,onSaved,onCancel,destination:'memory' as const};
 beforeEach(()=>{jest.clearAllMocks();mockCurrent=true;jest.mocked(api.listPostDestinationMemories).mockResolvedValue({ok:true,data:{memories:[],nextCursor:null}});jest.mocked(api.savePostToDestination).mockResolvedValue({ok:true,data:saved});});
 it('creates a named private Memory and reports its real destination id',async()=>{
@@ -48,4 +50,14 @@ it('publishes a Highlight with an explicit private choice and 24-hour explanatio
  await render(<PostSaveDestinationPanel {...props} destination="highlight"/>);
  expect(screen.getByText(/This Highlight lasts 24 hours/)).toBeTruthy();await fireEvent.press(screen.getByText('Only me'));await fireEvent.press(screen.getByLabelText('Publish Highlight'));
  expect(api.savePostToDestination).toHaveBeenCalledWith('post',expect.objectContaining({destination:'highlight',visibility:'private'}),mockOwner);
+});
+
+it('publishes a profile repost with an original preview, a note, and the chosen audience', async () => {
+ await render(<PostSaveDestinationPanel {...props} destination="profile" />);
+ expect(screen.getByTestId('draft-preview').props.target).toEqual({ legacyPostId: 'post' });
+ await fireEvent.changeText(screen.getByLabelText('Add a note'), 'Our trip');
+ await fireEvent.press(screen.getByText('Only me'));
+ await fireEvent.press(screen.getByLabelText('Publish repost'));
+ expect(api.savePostToDestination).toHaveBeenCalledWith('post', expect.objectContaining({ destination: 'profile', note: 'Our trip', visibility: 'private' }), mockOwner);
+ expect(api.listPostDestinationMemories).not.toHaveBeenCalled();
 });

@@ -86,7 +86,7 @@ close to a judgement call.
 | Measure | Value | Evidence |
 | --- | --- | --- |
 | Client object renderers | **7 / 7** | `components/WallObjectRenderer.tsx:92-108` — a `case` for every member of the union, plus `default: return null` so an unknown type never crashes the feed. |
-| **Server-emittable** object types | **6 / 7** | `routes/wall.ts classifyObjectType:303-308` emits `discovery`/`video`/`social_post`/`social_update`; `WallCandidateLoaders.ts` emits `postcard` (`services/wall/WallCandidateLoaders.ts:494#objectType: "postcard",`), `video` (`services/wall/WallCandidateLoaders.ts:617#const objectType: WallObjectType = proj.mediaType === "video" ? "video" : "social_post";`), `shared_moment` (`services/wall/WallCandidateLoaders.ts:753#objectType: "shared_moment",`). **Nothing emits `contextual_opportunity`.** — *pointer refresh only, see the note under this table.* |
+| **Server-emittable** object types | **6 / 7** | `routes/wall.ts classifyObjectType:303-308` emits `discovery`/`video`/`social_post`/`social_update`; `WallCandidateLoaders.ts` emits `postcard` (`services/wall/WallCandidateLoaders.ts:501#objectType: "postcard",`), `video` (`services/wall/WallCandidateLoaders.ts:625#const objectType: WallObjectType = proj.mediaType === "video" ? "video" : "social_post";`), `shared_moment` (`services/wall/WallCandidateLoaders.ts:764#objectType: "shared_moment",`). **Nothing emits `contextual_opportunity`.** — *pointer refresh only, see the note under this table.* |
 | Rollout phases (TABLE 7) | **6 built + 1 partial** | Phases 1–5 and 7 built; Phase 6 partial (buddy thread built, Dispatch producer absent). §7. |
 | §40 non-negotiables | **7 / 7 PASS** | §8. |
 | HARD invariants | **9 / 9 hold**, three of them strengthened since `#332` | §9. |
@@ -125,10 +125,10 @@ The two-clock contract is structurally complete and functionally inert.
 
 *Present:* the optional field on the projection base
 (`lib/wallProjection.ts:213`); the field on the loader input type
-(`WallCandidate.experienceAt`, `services/wall/WallProjectionService.ts:70`); the
+(`WallCandidate.experienceAt`, `services/wall/WallProjectionService.ts:72`); the
 pass-through in `projectOne` (`:253`, `experienceAt: c.experienceAt ?? undefined`);
 five client consumers — `PostcardWallItem` (date stamp), `SharedMomentWallItem`,
-`VideoWallItem`, `ActorByline` (`components/objects/wallItemShared.tsx:223-256`,
+`VideoWallItem`, `ActorByline` (`components/objects/wallItemShared.tsx:236-312`,
 which shows "Happened …" only when `experienceAt !== publishedAt`, `:232`) and the
 two `WallObjectRenderer` inline items.
 
@@ -153,7 +153,7 @@ delayed-location post's capture time), **with tests proving `publishedAt` and
 
 *Present:* the union member and projection interface
 (`lib/wallProjection.ts:231,290`); the `kind` field on `WallCandidate`
-(`WallProjectionService.ts:88`, commented "contextual_opportunity kind (spec
+(`WallProjectionService.ts:90`, commented "contextual_opportunity kind (spec
 §19)"); the `projectOne` case (`:280-283`); dedupe precedence
 (`CANDIDATE_TYPE_RANK.contextual_opportunity = 6`, `:341`); diversity
 classification — `isSocialObject` (`WallDiversityService.ts:98-99`) treats it as
@@ -214,7 +214,7 @@ bare React-Native `<Image>`, which cannot load a private-bucket reference and
 paints dead whitespace. Swapped for `CachedImage` (which signs private-bucket
 URLs via `useHydratedMedia` and shows a fallback on a null resolve). Re-verified
 at `8f186410d`: zero bare `<Image>` remain in the Wall tree;
-`components/objects/wallItemShared.tsx:17` imports `CachedImage`, `:208` renders
+`components/objects/wallItemShared.tsx:18` imports `CachedImage`, `:221` renders
 it, `:237` uses it for the avatar.
 
 ### 5.2 `#334` — candidate loaders for postcards / video / shared moments — closed §12 and the `media` gap
@@ -230,7 +230,7 @@ separately that `media` was not populated. Both are obsolete.
 `loadSharedMomentCandidates:444` (reads `shared_moment_memberships`, `:458`).
 Each is capped at `LOADER_FETCH = 60` (`:52`).
 
-**They are wired:** `routes/wall.ts:673-687` calls all three in a `Promise.all`
+**They are wired:** `routes/wall.ts:675-690` calls all three in a `Promise.all`
 alongside the Posts spine, each with its own `.catch` that degrades to an empty
 set (§34 fail-soft, so a broken loader costs one object *type*, never the feed).
 `mergeLoadedCandidates` (`:688`) unions the results.
@@ -271,7 +271,7 @@ the same way; out of scope here.)
 `inFlightRef` unconditionally, so a superseded request resolving dropped the
 guard while a newer request still ran; a refresh in that window stranded
 `loading` true (permanent spinner). Fix: the `inFlightRef` release is now
-generation-guarded too (`hooks/useWallFeed.ts:139-148`). Test:
+generation-guarded too (`hooks/useWallFeed.ts:143-156`). Test:
 `hooks/__tests__/useWallFeed.inFlightGuard.component.test.tsx:48`. (The same PR
 fixed three Passport client defects; out of scope here.)
 
@@ -279,21 +279,21 @@ fixed three Passport client defects; out of scope here.)
 
 - **D4 (MED, fail-open eligibility).** `loadSharedMomentCandidates` hardcoded
   `authorAccountStatus: 'active'` for the moment owner, so `passesEligibility`
-  (`WallProjectionService.ts:178-183`) could never drop a banned/suspended owner's
+  (`WallProjectionService.ts:180-185`) could never drop a banned/suspended owner's
   moment. Fix: real status threaded from the already-loaded profile
-  (`WallCandidateLoaders.ts:411`; postcards likewise at `:298`). Test:
+  (`WallCandidateLoaders.ts:418`; postcards likewise at `:308`). Test:
   `wallCandidateLoaders.test.ts:317` ("drops a shared moment whose OWNER is
   suspended/banned").
 - **D5 (MED, §28 cursor stability).** The Post spine froze to `snapshotAt` but the
   three supplementary loaders were called with no horizon, so a newly-published
   postcard/video/moment entered mid-pagination and shifted ranks. Fix: the For You
-  cursor's `snapshotAt` is threaded into all three (`routes/wall.ts:673`;
-  postcards bound at the DB `WallCandidateLoaders.ts:237`, media and moments by
-  `withinSnapshot:89-92`). Tests: `wallCandidateLoaders.test.ts:141,343`.
+  cursor's `snapshotAt` is threaded into all three (`routes/wall.ts:675`;
+  postcards bound at the DB `WallCandidateLoaders.ts:247`, media and moments by
+  `withinSnapshot:89-92`). Tests: `wallCandidateLoaders.test.ts:156,358`.
 - **D10 (LOW, false `caughtUp`).** Following fetched only the newest
   `CANDIDATE_FETCH` (150) followed posts with no cursor lower bound; past the
   150th item the tail was unreachable and `caughtUp=true` was reported anyway.
-  Fix: the fetch window slides to the cursor (`routes/wall.ts:344-346`) and
+  Fix: the fetch window slides to the cursor (`routes/wall.ts:345-347`) and
   `caughtUp` is asserted only when the fetch came back short of its cap
   (`:349`, `FollowingFeedService.ts:133-138`). Tests: `wallFollowingFeed.test.ts:96`;
   route-level `wallFollowingCaughtUp.test.ts:188,200`.
@@ -324,42 +324,42 @@ piece absent. **MISSING** = absent. *No section is MISSING.*
 
 | § | Topic | Verdict | Evidence (file · symbol · line at `8f186410d`) |
 | --- | --- | --- | --- |
-| 1–2 | Product definition / Wall jobs | BUILT | `components/WallScreen.tsx:88-122` composes QuickMedia→LiveForYou→Header→FeedMode→Feed; `WallFeed.tsx` renders projections with no dependency on intelligence (header is an optional `ListHeaderComponent`, `:56,101`). |
-| 3 | Primary screen architecture | BUILT | `WallScreen.tsx`; bottom nav is the app tab bar (`travel-buddy-standalone/app/(tabs)/_layout.tsx:471-472#name="wall"`, registered hidden behind `wall_enabled`; corrected 2026-09-27 from 423, where it sat at a739137a9 with `href: null`, and its `href` now follows the flag). |
-| 4 | Live For You | BUILT | `services/wall/LiveForYouService.ts` · `MAX_LIVE_FOR_YOU = 4` (`:42`, clamped `:117`), `MAX_SUBJECT_PROBES = 16` (`:46,129`), feed dedup; `LiveForYouStrip.tsx:54` renders `null` when empty. Test: `wallLiveForYou.test.ts:100,115`. |
-| 5 | Feed modes | BUILT | For You `WallRankingService.rankForYou:273`; Following `FollowingFeedService.buildFollowing:105` (strict reverse-chron); `FeedModeSwitcher.tsx` (`WallScreen.tsx:111`). |
+| 1–2 | Product definition / Wall jobs | BUILT | `components/WallScreen.tsx:103-137` composes QuickMedia→LiveForYou→Header→FeedMode→Feed; `WallFeed.tsx` renders projections with no dependency on intelligence (header is an optional `ListHeaderComponent`, `:56,101`). |
+| 3 | Primary screen architecture | BUILT | `WallScreen.tsx`; bottom nav is the app tab bar (`travel-buddy-standalone/app/(tabs)/_layout.tsx:474-475#name="wall"`, registered hidden behind `wall_enabled`; corrected 2026-09-27 from 423, where it sat at a739137a9 with `href: null`, and its `href` now follows the flag). |
+| 4 | Live For You | BUILT | `services/wall/LiveForYouService.ts` · `MAX_LIVE_FOR_YOU = 4` (`:42`, clamped `:117`), `MAX_SUBJECT_PROBES = 16` (`:46,129`), feed dedup; `LiveForYouStrip.tsx:55` renders `null` when empty. Test: `wallLiveForYou.test.ts:100,115`. |
+| 5 | Feed modes | BUILT | For You `WallRankingService.rankForYou:273`; Following `FollowingFeedService.buildFollowing:105` (strict reverse-chron); `FeedModeSwitcher.tsx` (`WallScreen.tsx:126`). |
 | 6 | Feed object model | BUILT | `lib/wallProjection.ts:224-231` · `WallObjectType` 7-member union + `WallProjection` base. *See §3 for the 6/7 emittable caveat.* |
 | 7 | Social-first composition | BUILT | `WallProjectionService.buildActions:204-244` adds actions only when the object warrants; `ContextualActionChips` (`wallItemShared.tsx:308-309`) renders only non-`open_object` actions; person is visually primary (`ActorByline`). |
 | 8 | Context Thread | BUILT | `services/wall/ContextThreadService.ts` — one compact attachment; readers for live (`:231`), trip, social (`:384`), gem, buddy (`:572`). |
 | 9 | Context Thread eligibility gate | BUILT | `ContextThreadService.shouldAttachContextThread:103-117` — the 8-condition boolean ANDed, default false. Test: `wallContextThread.test.ts:152-176`. |
-| 10 | Postcards | BUILT | `objects/PostcardWallItem.tsx` distinct paper frame + date stamp; producer `loadPostcardCandidates` (`services/wall/WallCandidateLoaders.ts:367#export async function loadPostcardCandidates(`); never a Post with a badge. Test: `wallCandidateLoaders.test.ts:115`. |
-| 11 | Video | BUILT | `objects/VideoWallItem.tsx` inline poster, no forced fullscreen; producer `services/wall/WallCandidateLoaders.ts:538#loadVideoMediaCandidates`. Test: `wallCandidateLoaders.test.ts:326#loadVideoMediaCandidates`. |
-| **12** | **Shared Moments** | **BUILT** *(was PARTIAL)* | `services/wall/WallCandidateLoaders.ts:663#export async function loadSharedMomentCandidates(` + wiring (`routes/wall.ts:1075#loadSharedMomentCandidates(sc, user.id, loaderOpts).catch((err) => {`) + dedupe precedence; owner eligibility real since `#344` (`services/wall/WallCandidateLoaders.ts:768#callerVisibilityResolved: true,`). Coarse participants, block-filtered. **Full evidence in §5.2, §5.5.** |
-| 13 | Discovery in For You | BUILT | `WallDiscoveryInsertionService.explainDiscovery` — relationship/relevance ladder, popularity last; unexplained outside-graph objects dropped (`routes/wall.ts:470-484`). Tests: `wallDiscoveryInsertion.test.ts:77,85,100`; `wallDiscoveryRoute.test.ts:169,179`. |
+| 10 | Postcards | BUILT | `objects/PostcardWallItem.tsx` distinct paper frame + date stamp; producer `loadPostcardCandidates` (`services/wall/WallCandidateLoaders.ts:377#export async function loadPostcardCandidates(`); never a Post with a badge. Test: `wallCandidateLoaders.test.ts:116`. |
+| 11 | Video | BUILT | `objects/VideoWallItem.tsx` inline poster, no forced fullscreen; producer `services/wall/WallCandidateLoaders.ts:546#loadVideoMediaCandidates`. Test: `wallCandidateLoaders.test.ts:341#loadVideoMediaCandidates`. |
+| **12** | **Shared Moments** | **BUILT** *(was PARTIAL)* | `services/wall/WallCandidateLoaders.ts:671#export async function loadSharedMomentCandidates(` + wiring (`routes/wall.ts:1083#loadSharedMomentCandidates(sc, user.id, loaderOpts).catch((err) => {`) + dedupe precedence; owner eligibility real since `#344` (`services/wall/WallCandidateLoaders.ts:779#callerVisibilityResolved: true,`). Coarse participants, block-filtered. **Full evidence in §5.2, §5.5.** |
+| 13 | Discovery in For You | BUILT | `WallDiscoveryInsertionService.explainDiscovery` — relationship/relevance ladder, popularity last; unexplained outside-graph objects dropped (`routes/wall.ts:471-485`). Tests: `wallDiscoveryInsertion.test.ts:77,85,100`; `wallDiscoveryRoute.test.ts:169,179`. |
 | 14 | For You ranking | BUILT | `WallRankingService.rankForYou:273` wraps `DiscoveryRankingService.rankItems` (`:312-319`); "explore" surface, not watch-time. |
 | 15 | Feed diversity controller | BUILT | `services/wall/WallDiversityService.ts:218#applyFeedDiversity` · `:77#DEFAULT_FEED_DIVERSITY_POLICY` — actor/type spacing, discovery-cap prune, annotation cap, live-strip dedup. Test: `wallDiversity.test.ts:67,86,108,135#it(`. |
 | **16** | **Two clocks** | **PARTIAL** *(was BUILT)* | Shape + 5 client consumers present; **no producer assigns `experienceAt`.** `FollowingFeedService.ts:11-14` correctly sorts on `publishedAt` only. **§4.1.** |
 | 17 | Global Input Intelligence | BUILT | `WallSessionIntentService` delegates to `lib/inputAssistance` gateway; session-scoped, `MAX_INTENT_TEXT` echo only (`:35,102`); steer never empties the feed (`routes/wall.ts:525-530`). Test: `wallSessionIntent.test.ts:19-110`. |
-| 18 | Stories / Quick Media | BUILT | `QuickMediaRow.tsx` — top row (`WallScreen.tsx:88`), renders nothing when empty, `CachedImage`. |
+| 18 | Stories / Quick Media | BUILT | `QuickMediaRow.tsx` — top row (`WallScreen.tsx:103`), renders nothing when empty, `CachedImage`. |
 | **19** | **Rent a Buddy / contextual opportunity** | **PARTIAL** *(was BUILT)* | Buddy Context Thread BUILT (`ContextThreadService.readBuddyCandidate:572-620`, city granularity, `available_now` only `:586`, behind `wall_rab_integration_enabled`). **`contextual_opportunity` has no producer — 1 of 7 object types unreachable. §4.2.** |
-| 20 | Hidden Gems | BUILT | Protected / reveal-after-acceptance gems set `sensitiveDisclosure` (`ContextThreadService.ts:528,553`) and `viewerAuthorized: false` (`:547`) so the §9 gate suppresses them; discovery gem reason only when disclosure is public/approximate (`routes/wall.ts:425,480`). Tests: `wallContextThread.test.ts:236,262`. |
-| 21 | Compass integration | BUILT | Action-only; `buildActions:220-222` adds `ask_compass` only when `compassHandoffEnabled` (flag read `routes/wall.ts:624`); `services/wallCompass.ts:12,44` phrases a QUESTION, never asserts inference; ids-only handoff. Test: `WallCompassHandoff.component.test.tsx:95,122`. |
-| 22 | Map & Place | BUILT | No second place-state system — all current-state labels via `lib/liveClaimRead` (`LiveForYouService.ts:6,32`); place refs built with placeId/name/city/country only, no `lat`/`lng` (`routes/wall.ts:409-414`; `PublicPlaceRef` `lib/wallProjection.ts:73-81`). |
-| 23 | Privacy / safety / visibility | BUILT | `WallProjectionService.projectObjects:303-324` — eligibility (`:311`) → block (`:314`) → visibility (`:323`) upstream of ordering; `loadBlockedAuthorIds:145-173` fail-closed both directions; `passesVisibility:189-201` defaults to not-authorized. Test: `wallProjection.test.ts:60-118`. |
-| 24 | Projection architecture | BUILT | canonical → projection (`routes/wall.ts:1138#projections = await projectObjects(sc, steered, projectViewer);`) → gate → rank/sort (`routes/wall.ts:1151#const built = buildFollowing(projections, {`, `routes/wall.ts:1169#const built = await rankForYou(sc, projections, rankViewer, {`) → diversity/dedup (`routes/wall.ts:1187#const diversified = applyFeedDiversity(items, DEFAULT_FEED_DIVERSITY_POLICY);`) → context (`routes/wall.ts:1234#items = await attachContextThreads(sc, items, projectViewer, {`) → API (`routes/wall.ts:1244#const body: WallResponse = {`) → UI. |
+| 20 | Hidden Gems | BUILT | Protected / reveal-after-acceptance gems set `sensitiveDisclosure` (`ContextThreadService.ts:528,553`) and `viewerAuthorized: false` (`:547`) so the §9 gate suppresses them; discovery gem reason only when disclosure is public/approximate (`routes/wall.ts:426,481`). Tests: `wallContextThread.test.ts:236,262`. |
+| 21 | Compass integration | BUILT | Action-only; `buildActions:220-222` adds `ask_compass` only when `compassHandoffEnabled` (flag read `routes/wall.ts:625`); `services/wallCompass.ts:12,44` phrases a QUESTION, never asserts inference; ids-only handoff. Test: `WallCompassHandoff.component.test.tsx:95,122`. |
+| 22 | Map & Place | BUILT | No second place-state system — all current-state labels via `lib/liveClaimRead` (`LiveForYouService.ts:6,32`); place refs built with placeId/name/city/country only, no `lat`/`lng` (`routes/wall.ts:410-415`; `PublicPlaceRef` `lib/wallProjection.ts:73-81`). |
+| 23 | Privacy / safety / visibility | BUILT | `WallProjectionService.projectObjects:303-324` — eligibility (`:311`) → block (`:314`) → visibility (`:323`) upstream of ordering; `loadBlockedAuthorIds:145-173` fail-closed both directions; `passesVisibility:189-201` defaults to not-authorized. Test: `wallProjection.test.ts:78-136`. |
+| 24 | Projection architecture | BUILT | canonical → projection (`routes/wall.ts:1146#projections = await projectObjects(sc, steered, projectViewer);`) → gate → rank/sort (`routes/wall.ts:1159#const built = buildFollowing(projections, {`, `routes/wall.ts:1177#const built = await rankForYou(sc, projections, rankViewer, {`) → diversity/dedup (`routes/wall.ts:1195#const diversified = applyFeedDiversity(items, DEFAULT_FEED_DIVERSITY_POLICY);`) → context (`routes/wall.ts:1242#items = await attachContextThreads(sc, items, projectViewer, {`) → API (`routes/wall.ts:1252#const body: WallResponse = {`) → UI. |
 | 25 | Service boundaries | BUILT | TABLE 2 owns/does-not-own honoured per service header; each service owns shape/order, never truth. |
-| 26 | API shape | BUILT | `routes/wall.ts` — GET `/wall` (`routes/wall.ts:958#"/wall",`), GET `/wall/live` (`routes/wall.ts:1262#"/wall/live",`), POST `/wall/session-intent` (`routes/wall.ts:1331#"/wall/session-intent",`), DELETE `/wall/session-intent` (`routes/wall.ts:1369#router.delete(`), POST `/wall/impression` (`routes/wall.ts:1388#"/wall/impression",`), POST `/wall/action` (`routes/wall.ts:1439#"/wall/action",`). |
+| 26 | API shape | BUILT | `routes/wall.ts` — GET `/wall` (`routes/wall.ts:966#"/wall",`), GET `/wall/live` (`routes/wall.ts:1270#"/wall/live",`), POST `/wall/session-intent` (`routes/wall.ts:1339#"/wall/session-intent",`), DELETE `/wall/session-intent` (`routes/wall.ts:1377#router.delete(`), POST `/wall/impression` (`routes/wall.ts:1396#"/wall/impression",`), POST `/wall/action` (`routes/wall.ts:1447#"/wall/action",`). |
 | 27 | Response contract | BUILT | `lib/wallProjection.ts:387` · `WallResponse` = `mode`/`sessionIntent`/`liveForYou`/`items`/`nextCursor`/`caughtUp`/`generatedAt`; `caughtUp` honest since `#344` (§5.5). |
-| 28 | Cursor & pagination | BUILT | Following cursor `publishedAt`+id tiebreak (`FollowingFeedService.decodeFollowingCursor:56`); For You cursor carries session+version+`snapshotAt`, which freezes the candidate set (`routes/wall.ts:337,363,673`) **and, since `#346`, is the ranker's evaluation instant** (`WallRankingService.ts:292-293,319`). Tests: `wallForYouCursor.test.ts` (9), `wallFollowingFeed.test.ts` (6). |
+| 28 | Cursor & pagination | BUILT | Following cursor `publishedAt`+id tiebreak (`FollowingFeedService.decodeFollowingCursor:56`); For You cursor carries session+version+`snapshotAt`, which freezes the candidate set (`routes/wall.ts:338,364,675`) **and, since `#346`, is the ranker's evaluation instant** (`WallRankingService.ts:292-293,319`). Tests: `wallForYouCursor.test.ts` (9), `wallFollowingFeed.test.ts` (6). |
 | 29 | Client architecture | BUILT | `src/features/wall/` matches the spec tree (components/objects/hooks/services/types). Naming variance: `ContextThreadView.tsx` for the spec's `ContextThread.tsx`. `wallPrefetch.ts` absent — scored under §31. |
 | 30 | State ownership | BUILT | Rank score = Wall Ranking; cursor = Wall; intent = `wall_session_intents` (migration 2271, deleted with the account since `#342`); everything else read from its canonical owner. |
-| **31** | **Caching & prefetch** | **PARTIAL** | Live strip short-TTL (`hooks/useLiveForYou.ts:21`) + degrade-when-stale (`isValid:43-44`); feed keeps items on failure. **No explicit prefetch layer exists. §4.3.** |
-| 32 | Analytics | BUILT | `services/wallAnalytics.ts:72-202` full event set; ids + enums + counts only, never raw text (`services/wallApi.ts:248-263`). Test: `WallFeedAnalytics.component.test.tsx:99-155`. |
-| **33** | **Performance targets** | **BUILT (construction)** *(was PARTIAL)* | Construction obligations met: `CANDIDATE_FETCH = 150` (`routes/wall.ts:98`), `LOADER_FETCH = 60` (`WallCandidateLoaders.ts:52`), live strip independent + probe-bounded (`LiveForYouService.ts:46`), lazy media. **Runtime targets unmeasured — §13, not a construction gap.** |
-| 34 | Failure modes | BUILT | Every subsystem call in `routes/wall.ts` wrapped: live→empty strip (`buildLiveStrip:555-571`), projection→empty (`:700-705`), each loader→empty (`:675-686`), context→unannotated (`:770-778`); ranking→input order (`WallRankingService.ts:324-327`). Test: `wallRouteDegradation.test.ts:208-252`. |
+| **31** | **Caching & prefetch** | **PARTIAL** | Live strip short-TTL (`hooks/useLiveForYou.ts:23`) + degrade-when-stale (`isValid:43-44`); feed keeps items on failure. **No explicit prefetch layer exists. §4.3.** |
+| 32 | Analytics | BUILT | `services/wallAnalytics.ts:72-202` full event set; ids + enums + counts only, never raw text (`services/wallApi.ts:249-264`). Test: `WallFeedAnalytics.component.test.tsx:105-166`. |
+| **33** | **Performance targets** | **BUILT (construction)** *(was PARTIAL)* | Construction obligations met: `CANDIDATE_FETCH = 150` (`routes/wall.ts:99`), `LOADER_FETCH = 60` (`WallCandidateLoaders.ts:52`), live strip independent + probe-bounded (`LiveForYouService.ts:46`), lazy media. **Runtime targets unmeasured — §13, not a construction gap.** |
+| 34 | Failure modes | BUILT | Every subsystem call in `routes/wall.ts` wrapped: live→empty strip (`buildLiveStrip:555-571`), projection→empty (`:700-705`), each loader→empty (`:677-689`), context→unannotated (`:774-782`); ranking→input order (`WallRankingService.ts:324-327`). Test: `wallRouteDegradation.test.ts:208-252`. |
 | 35 | Design system rules | BUILT | One object at a time; Postcards break rhythm; purple as accent. Private-bucket media goes through `CachedImage` (§5.1). Runtime visual QA owed (§13). |
 | 36 | Accessibility | BUILT (construction) | Labels/roles throughout; live state conveyed as TEXT not colour (`ContextThreadView.freshnessLabel:48-60`, `LiveForYouStrip.stateLabel:36`). On-device screen-reader pass owed (§13). |
-| 37 | Security & abuse | BUILT | Server-side eligibility authoritative; `checkRateLimit` on session-intent / impression / action (`routes/wall.ts:854,906,953`); ranking metadata never exposes raw score (`lib/wallProjection.ts:185-194`); moderation drop in `passesEligibility:183`. |
+| 37 | Security & abuse | BUILT | Server-side eligibility authoritative; `checkRateLimit` on session-intent / impression / action (`routes/wall.ts:859,911,958`); ranking metadata never exposes raw score (`lib/wallProjection.ts:185-194`); moderation drop in `passesEligibility:183`. |
 | 38 | Testing matrix | BUILT | TABLE 6 families all represented across 12 backend + 9 client Wall test files. §10. |
 | 39 | Rollout plan | BUILT | §7. |
 | 40 | Non-negotiable product tests | BUILT — 7/7 | §8. The §16 and §19 downgrades touch none of them (neither `experienceAt` nor `contextual_opportunity` appears in any of the seven). |
@@ -388,12 +388,12 @@ piece absent. **MISSING** = absent. *No section is MISSING.*
 | # | Test | Result | Why (file:line at `8f186410d`) |
 | --- | --- | --- | --- |
 | a | Enjoyable as **pure social media** | **PASS** | `components/WallFeed.tsx:96-103` renders projections in order with zero dependency on live strip or context threads; the header is an optional `ListHeaderComponent` (`:56`). A plain text post renders as a plain post (`objects/SocialPostWallItem.tsx`). Test: `WallScreen.liveDegrades.component.test.tsx:59` ("keeps a working social feed when the live strip fails"). |
-| b | Live For You **ignorable** | **PASS** | `components/LiveForYouStrip.tsx:54` returns `null` when empty; it is a header fragment (`WallScreen.tsx:92,122`), never gating scroll. `hooks/useLiveForYou.ts:51,65` idles when disabled. Server bounds it to ≤4 (`LiveForYouService.ts:42,117`). Tests: `LiveForYouStrip.boundedIgnorable.component.test.tsx:41,53`. |
-| c | **Strict chronological Following** exists | **PASS** | `FollowingFeedService.buildFollowing:105-140` orders `publishedAt` DESC + `canonicalObjectId` DESC tiebreak, **no relevance reordering** (TABLE 1; header `:11-14` "never experienceAt"); `FeedModeSwitcher` always rendered (`WallScreen.tsx:111`). Tests: `wallFollowingFeed.test.ts:27`; `wallRouteDegradation.test.ts:221`; `WallScreen.modeSwitch.component.test.tsx:63`. |
-| d | Postcards/videos **native + distinct** | **PASS** | Distinct renderers `objects/PostcardWallItem.tsx` (paper/rotation/date-stamp) and `objects/VideoWallItem.tsx` (inline); dispatched by `WallObjectRenderer.tsx:92-108` on discriminated `objectType`; never one card template. Since `#334` both are server-produced (`WallCandidateLoaders.ts:216,329`). Tests: `WallScreen.objectTypes.component.test.tsx:55`; `wallCandidateLoaders.test.ts:115,237`. |
+| b | Live For You **ignorable** | **PASS** | `components/LiveForYouStrip.tsx:55` returns `null` when empty; it is a header fragment (`WallScreen.tsx:107,137`), never gating scroll. `hooks/useLiveForYou.ts:51,65` idles when disabled. Server bounds it to ≤4 (`LiveForYouService.ts:42,117`). Tests: `LiveForYouStrip.boundedIgnorable.component.test.tsx:41,53`. |
+| c | **Strict chronological Following** exists | **PASS** | `FollowingFeedService.buildFollowing:105-140` orders `publishedAt` DESC + `canonicalObjectId` DESC tiebreak, **no relevance reordering** (TABLE 1; header `:11-14` "never experienceAt"); `FeedModeSwitcher` always rendered (`WallScreen.tsx:126`). Tests: `wallFollowingFeed.test.ts:27`; `wallRouteDegradation.test.ts:221`; `WallScreen.modeSwitch.component.test.tsx:63`. |
+| d | Postcards/videos **native + distinct** | **PASS** | Distinct renderers `objects/PostcardWallItem.tsx` (paper/rotation/date-stamp) and `objects/VideoWallItem.tsx` (inline); dispatched by `WallObjectRenderer.tsx:92-108` on discriminated `objectType`; never one card template. Since `#334` both are server-produced (`WallCandidateLoaders.ts:216,329`). Tests: `WallScreen.objectTypes.component.test.tsx:55`; `wallCandidateLoaders.test.ts:116,252`. |
 | e | Contextual intelligence **only when useful** | **PASS** | `ContextThreadService.shouldAttachContextThread:103-117` defaults false and requires all 8 conditions; at most one thread per object (`selectContextThread:149-160`); `attachContextThreads` reads `wall_context_threads_enabled` once, fail-closed (`WallProjectionService.ts:417`); flag seeded OFF (2272). Tests: `wallContextThread.test.ts:152-176,406`; `wallDiscoveryRoute.test.ts:193,208`. |
-| f | Social object → Map/Trip/Compass/Gem/Buddy **without forced transition** | **PASS** | Actions are additive & optional (`buildActions:204-244`; `ask_compass` only behind its flag `:220-222`); the client renders chips only when present (`ContextualActionChips`, `wallItemShared.tsx:308-309`). Handoffs route to canonical surfaces on tap (`resolveActionRoute`, `wallItemShared.tsx:93`; `services/wallCompass.ts:44-73`), never auto-navigate; a missing route never crashes the feed (`wallCompass.ts:63-73`). Tests: `WallCompassHandoff.component.test.tsx:95,122`; `WallFeedAnalytics.component.test.tsx:114`. |
-| g | All intelligence fails → **safe social feed remains** (§34) | **PASS** | Route wraps every subsystem: rank→input order (`WallRankingService.ts:324-327`), projection→empty (`routes/wall.ts:700-705`), each loader→empty (`:675-686`), live→empty strip (`buildLiveStrip:562-571`), context→unannotated (`:770-778`). Tests: `wallRouteDegradation.test.ts:208` ("returns a safe social feed when the live subsystem fails"), `:231`; `wallLiveForYou.test.ts:141,156`; `WallScreen.liveDegrades.component.test.tsx:59`. |
+| f | Social object → Map/Trip/Compass/Gem/Buddy **without forced transition** | **PASS** | Actions are additive & optional (`buildActions:204-244`; `ask_compass` only behind its flag `:220-222`); the client renders chips only when present (`ContextualActionChips`, `wallItemShared.tsx:308-309`). Handoffs route to canonical surfaces on tap (`resolveActionRoute`, `wallItemShared.tsx:101`; `services/wallCompass.ts:44-73`), never auto-navigate; a missing route never crashes the feed (`wallCompass.ts:63-73`). Tests: `WallCompassHandoff.component.test.tsx:95,122`; `WallFeedAnalytics.component.test.tsx:114`. |
+| g | All intelligence fails → **safe social feed remains** (§34) | **PASS** | Route wraps every subsystem: rank→input order (`WallRankingService.ts:324-327`), projection→empty (`routes/wall.ts:700-705`), each loader→empty (`:677-689`), live→empty strip (`buildLiveStrip:562-571`), context→unannotated (`:774-782`). Tests: `wallRouteDegradation.test.ts:208` ("returns a safe social feed when the live subsystem fails"), `:231`; `wallLiveForYou.test.ts:141,156`; `WallScreen.liveDegrades.component.test.tsx:59`. |
 
 ---
 
@@ -402,7 +402,7 @@ piece absent. **MISSING** = absent. *No section is MISSING.*
 1. **Server-side eligibility authoritative + fail-closed flags; master flag
    short-circuits before canonical reads (§37/§24).**
    Every route checks `isFlagEnabled(sc, "wall_enabled")` and returns
-   `feature_disabled` *before* any candidate read: `routes/wall.ts:606-607`
+   `feature_disabled` *before* any candidate read: `routes/wall.ts:607-608`
    (GET /wall), `:802-803` (GET /wall/live), `:839-840` (POST session-intent),
    `:876-877` (DELETE session-intent), `:894-895` (POST impression), `:943-944`
    (POST action). `isFlagEnabled` returns `false` on any error
@@ -420,21 +420,21 @@ piece absent. **MISSING** = absent. *No section is MISSING.*
    `new Set(unique)` at `:163,173`). Visibility for non-post objects defaults to
    *not authorized* (`passesVisibility:199-201`). **Strengthened by `#344` D4:**
    a shared moment's owner status is now real, so a banned/suspended owner's
-   moment is dropped by `passesEligibility:178-183` (`WallCandidateLoaders.ts:411`).
+   moment is dropped by `passesEligibility:178-183` (`WallCandidateLoaders.ts:418`).
    Context threads: protected/reveal-after-acceptance gems set
    `sensitiveDisclosure` + `viewerAuthorized: false`
    (`ContextThreadService.ts:528,547,553`) so the §9 gate suppresses them;
    social-presence has a k-anonymity floor `SOCIAL_PRESENCE_MIN = 2` (`:375`) and
    reads only PUBLIC posts by followed people (`:384-399`). Live strip carries
    only decision-exposure fields, never coordinates (`lib/wallProjection.ts:322-346`;
-   `LiveForYouService.labelFor:74-84`). Tests: `wallProjection.test.ts:70,78,90,102,111`;
-   `wallCandidateLoaders.test.ts:195,317,364`; `wallContextThread.test.ts:262,371,386`.
+   `LiveForYouService.labelFor:74-84`). Tests: `wallProjection.test.ts:88,96,108,120,129`;
+   `wallCandidateLoaders.test.ts:210,332,380`; `wallContextThread.test.ts:262,371,386`.
 
 3. **For You cursor stable — page 2 never reshuffles page 1; no cross-page dupes (§28).**
    The full candidate set is ranked to a *total* order (finalScore desc +
    session-seeded deterministic tiebreak, `WallRankingService.ts:333-338`) and
    sliced at the cursor offset, with the candidate set held steady by
-   `snapshotAt` on the Post spine (`routes/wall.ts:337,363`) **and, since `#344`
+   `snapshotAt` on the Post spine (`routes/wall.ts:338,364`) **and, since `#344`
    D5, on all three supplementary loaders** (`:673`; `WallCandidateLoaders.ts:237,
    89-92`). **Since `#346`, `snapshotAt` is also the ranker's evaluation instant**
    (`WallRankingService.ts:292-293,319`), so every page of a session is scored at
@@ -444,7 +444,7 @@ piece absent. **MISSING** = absent. *No section is MISSING.*
    again client-side (append-only, `hooks/useWallFeed.ts:50-63`). Tests:
    `wallForYouCursor.test.ts:51` ("page 2 continues page 1 with no overlap and no
    reshuffle"), `:76` ("byte-for-byte stable"), `:107` (dedupe), `:186,206,248`
-   (evaluation instant); `wallCandidateLoaders.test.ts:141,343` (loader horizon).
+   (evaluation instant); `wallCandidateLoaders.test.ts:156,358` (loader horizon).
 
 4. **Stale live labels degrade, never fabricated (§4/§34).**
    `LiveForYouService.freshnessFor:66-68` marks expired claims `stale` and the
@@ -473,13 +473,13 @@ piece absent. **MISSING** = absent. *No section is MISSING.*
    The Wall stores/derives no place state. Every live/current-state label comes
    from `lib/liveClaimRead` (`LiveForYouService.ts:32`,
    `ContextThreadService.readLivePlaceCandidate:231`); place refs deliberately
-   omit coordinates (`routes/wall.ts:409-414`). Actions route into canonical
-   Map/Place surfaces (`resolveActionRoute`, `wallItemShared.tsx:93`).
+   omit coordinates (`routes/wall.ts:410-415`). Actions route into canonical
+   Map/Place surfaces (`resolveActionRoute`, `wallItemShared.tsx:101`).
 
 8. **Analytics never log raw private text (§32).**
    `services/wallAnalytics.ts` events carry only `objectId`/`objectType`/enums/
    counts; server mutation payloads are ids + verb only
-   (`services/wallApi.ts:248-263`); session intent stores the *structured* intent
+   (`services/wallApi.ts:249-264`); session intent stores the *structured* intent
    plus a bounded echo, never a transcript (`WallSessionIntentService.ts:36,199,345`;
    `2271_wall_session_intents.sql:15,40-42`). **Strengthened by `#342`:** that
    echo is now deleted with the account (§5.3). Test:
@@ -487,7 +487,7 @@ piece absent. **MISSING** = absent. *No section is MISSING.*
 
 9. **No bare `<Image>` for private-bucket media (§35).**
    Re-verified: zero bare `<Image>` remain in `src/features/wall/`; `WallImage`
-   uses `CachedImage` (`wallItemShared.tsx:17,208`). Fixed in `#332` (§5.1).
+   uses `CachedImage` (`wallItemShared.tsx:18,221`). Fixed in `#332` (§5.1).
 
 ---
 
@@ -496,13 +496,13 @@ piece absent. **MISSING** = absent. *No section is MISSING.*
 | Family | Proven by |
 | --- | --- |
 | Ordering | `wallFollowingFeed.test.ts` (6), `wallForYouCursor.test.ts` (9), `wallFollowingCaughtUp.test.ts` (2) |
-| Privacy | `wallProjection.test.ts` (block both-directions, private drop, trip gate, fail-closed), `wallCandidateLoaders.test.ts:195,317,364`, `wallContextThread.test.ts` (gem disclosure, k-anonymity) |
-| Dedup | `wallForYouCursor.test.ts:107`, `wallFollowingFeed.test.ts:86`, `wallCandidateLoaders.test.ts:405-443`, client `useWallFeed` |
+| Privacy | `wallProjection.test.ts` (block both-directions, private drop, trip gate, fail-closed), `wallCandidateLoaders.test.ts:210,332,380`, `wallContextThread.test.ts` (gem disclosure, k-anonymity) |
+| Dedup | `wallForYouCursor.test.ts:107`, `wallFollowingFeed.test.ts:86`, `wallCandidateLoaders.test.ts:421-459`, client `useWallFeed` |
 | Freshness | `wallLiveForYou.test.ts`, `wallContextThread.test.ts`, `wallForYouCursor.test.ts:186-248` (evaluation instant) |
-| Media | `wallCandidateLoaders.test.ts:115,237,413`; client `WallScreen.objectTypes.component.test.tsx` |
-| Postcards | `wallCandidateLoaders.test.ts:115-195`; `PostcardWallItem` distinct route |
+| Media | `wallCandidateLoaders.test.ts:116,252,429`; client `WallScreen.objectTypes.component.test.tsx` |
+| Postcards | `wallCandidateLoaders.test.ts:116-210`; `PostcardWallItem` distinct route |
 | Context | `wallContextThread.test.ts` (gate), `wallDiscoveryRoute.test.ts:193,208`, `WallCompassHandoff.component.test.tsx` |
-| Offline / failure | `wallRouteDegradation.test.ts`, `wallCandidateLoaders.test.ts:136,256,375`, `wallLiveForYou.test.ts:141,156`, `WallScreen.liveDegrades.component.test.tsx`, `useWallFeed.inFlightGuard.component.test.tsx` |
+| Offline / failure | `wallRouteDegradation.test.ts`, `wallCandidateLoaders.test.ts:151,271,391`, `wallLiveForYou.test.ts:141,156`, `WallScreen.liveDegrades.component.test.tsx`, `useWallFeed.inFlightGuard.component.test.tsx` |
 | Accessibility | labels/roles across components (construction); runtime SR pass owed (§13) |
 
 ---
@@ -558,7 +558,7 @@ postcondition that raises `POSTCONDITION FAILED: … seeded ON — … must ship
 if `on_count <> 0` (`2270:85-86`, `2272:72-73`). `wall_enabled` is the master
 gate and every route checks it before any canonical read (§9 #1);
 `isFlagEnabled` treats an unreadable flag as off. The client tab is registered
-but hidden (`travel-buddy-standalone/app/(tabs)/_layout.tsx:471-472#name="wall"`; corrected 2026-09-27 from 423: it is hidden while `wall_enabled` is off, because its `href` now follows the flag).
+but hidden (`travel-buddy-standalone/app/(tabs)/_layout.tsx:474-475#name="wall"`; corrected 2026-09-27 from 423: it is hidden while `wall_enabled` is off, because its `href` now follows the flag).
 
 **Migrations 2270 / 2271 / 2272 are present in the repository.**
 

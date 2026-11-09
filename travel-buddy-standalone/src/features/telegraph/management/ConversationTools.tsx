@@ -1,11 +1,11 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSession } from '../../../context/SessionContext.tsx';
 import { captureMessagingOwnerRequest, type MessagingOwnerRequest } from '../../../services/messagingOwnerRequest.ts';
-import { currentDiscoveryScope } from '../../../services/discoveryViewerScope.ts';
-import { searchUsers, type TravelerSearchResult } from '../../../services/follows.ts';
+import type { TravelerSearchResult } from '../../../services/follows.ts';
+import { useInputAssistance } from '../../../platform/input-assistance/hooks/useInputAssistance.ts';
 import { formConversationGroup, forwardThreadMessage, getMyThreads, getThreadControls, moderateThreadMember, updateMessageContentCapability, updateThreadControls, type CarryForwardSelection, type MessageContentCapability, type MsgResult, type ThreadControlState, type ThreadSummary } from '../../../services/messaging.ts';
 import { useTelegraphPalette } from '../theme/telegraphTheme.ts';
 
@@ -40,14 +40,20 @@ export function ConversationTools({ threadId, messageId, mode }: ConversationToo
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [people, setPeople] = useState<TravelerSearchResult[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<TravelerSearchResult[]>([]);
+  const [focused, setFocused] = useState(false);
+  const [selected, setSelected] = useState<Array<Pick<TravelerSearchResult, 'id' | 'displayName' | 'username'>>>([]);
   const [carried, setCarried] = useState<CarryForwardSelection[]>([]);
   const [title, setTitle] = useState('');
   const [slowMode, setSlowMode] = useState('0');
   const currentThread = threads.find((thread) => thread.id === threadId);
+  // Recipient search shares the platform's policy, cancellation, cache scope,
+  // and eligibility checks instead of starting another keystroke request loop.
+  const recipientSearch = useInputAssistance({ fieldId: 'telegraph.recipient', context: 'telegraph_recipient', text: query,
+    enabled: focused && mode === 'add' && !!userId && query.trim().length >= 2 });
+  const searching = recipientSearch.loading;
+  const searchError = recipientSearch.unavailable ? 'People could not be loaded. Try your search again.' : null;
+  const people = recipientSearch.suggestions.filter((person) => person.entityType === 'user' && !!person.entityId && person.entityId !== userId && !currentThread?.otherMembers.some((member) => member.id === person.entityId))
+    .map((person) => ({ id: person.entityId!, displayName: person.label, username: null }));
   const load = useCallback(async () => {
     const owner = ownerRef.current;
     if (!owner?.isCurrent()) { setError('Sign in again to manage this conversation.'); setLoading(false); return; }
@@ -68,27 +74,11 @@ export function ConversationTools({ threadId, messageId, mode }: ConversationToo
   useFocusEffect(useCallback(() => {
     const owner = captureMessagingOwnerRequest();
     ownerRef.current = owner;
-    setThreads([]); setControls(null); setPeople([]); setSelected([]); setCarried([]); setNotice(null); setBusy(false); busyRef.current = false;
+    setFocused(true);
+    setThreads([]); setControls(null); setSelected([]); setCarried([]); setNotice(null); setBusy(false); busyRef.current = false;
     void load();
-    return () => { owner?.invalidate(); if (ownerRef.current === owner) ownerRef.current = null; };
+    return () => { setFocused(false); owner?.invalidate(); if (ownerRef.current === owner) ownerRef.current = null; };
   }, [userId, load]));
-  useEffect(() => {
-    if (mode !== 'add') return;
-    const owner = ownerRef.current;
-    const abort = new AbortController();
-    setPeople([]); setSearchError(null);
-    if (query.trim().length < 2 || !owner?.isCurrent()) { setSearching(false); return; }
-    setSearching(true);
-    const scope = currentDiscoveryScope();
-    const timer = setTimeout(async () => {
-      const result = await searchUsers(query, 20, { signal: abort.signal, scope, isCurrent: owner.isCurrent });
-      if (abort.signal.aborted || !owner.isCurrent()) return;
-      if (result.ok && result.data) setPeople(result.data.filter((person) => person.id !== userId && !currentThread?.otherMembers.some((member) => member.id === person.id)));
-      else setSearchError(result.message ?? 'People could not be loaded. Try your search again.');
-      setSearching(false);
-    }, 300);
-    return () => { clearTimeout(timer); abort.abort(); };
-  }, [mode, query, userId, currentThread]);
 
   async function run<T>(action: (owner: MessagingOwnerRequest) => Promise<MsgResult<T>>, success: (data: T) => void) {
     const owner = ownerRef.current;
@@ -118,7 +108,7 @@ export function ConversationTools({ threadId, messageId, mode }: ConversationToo
     <View style={[s.header, { borderBottomColor: p.hairline }]}><Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={() => router.back()} style={s.back}><Text style={text}>Back</Text></Pressable><Text accessibilityRole="header" style={[s.heading, text]}>{TITLES[mode]}</Text></View>
     <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={[s.content, { paddingBottom: insets.bottom + 24 }]}>
       {loading ? <ActivityIndicator accessibilityLabel="Loading conversation" color={p.operational} /> : null}
-      {error ? <View accessibilityRole="alert"><Text style={[s.body, { color: p.attention }]}>{error}</Text>{button('Reload', () => void load())}</View> : null}
+      {error ? <View accessibilityRole="alert"><Text style={[s.body, text]}>{error}</Text>{button('Reload', () => void load())}</View> : null}
       {notice ? <Text accessibilityLiveRegion="polite" style={[s.body, text]}>{notice}</Text> : null}
       {!loading && mode === 'add' && <>
         <Text style={[s.body, secondary]}>Create a new group with the people in this chat. Your direct conversation and its messages stay private.</Text>

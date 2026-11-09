@@ -31,6 +31,8 @@ import {
   type ProfilePostItem, type ProfileTripItem, type ProfileEventItem, type ProfileCircleItem,
 } from '../../services/profileTabs.ts';
 import { useBlockedIds } from '../../context/BlockedIdsContext.tsx';
+import { PostTakeover } from '../PostTakeover.tsx';
+import { PostSharePreview, postShareTarget } from '../PostReferenceCard.tsx';
 import { Avatar } from '../ui/Avatar.tsx';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 
@@ -62,19 +64,16 @@ function PostRow({ item }: { item: ProfilePostItem }) {
   const where = place(item.locationCity, item.locationCountry);
   const when = fmtDate(item.createdAt);
   const media = Array.isArray(item.mediaUrls) ? item.mediaUrls.length : 0;
-  return (
-    <Pressable
-      style={s.card}
-      onPress={() => router.push(`/post/${item.id}` as never)}
-      accessibilityRole="button"
-      testID={`profile-post-${item.id}`}
-    >
-      {item.content ? <Text style={s.body} numberOfLines={3}>{item.content}</Text> : null}
-      <Text style={s.meta}>
-        {[when, where, media > 0 ? `${media} ${media === 1 ? 'photo' : 'photos'}` : null].filter(Boolean).join(' · ')}
-      </Text>
+  const share = postShareTarget(item.postReferenceId, item.content);
+  const [open, setOpen] = useState(false);
+  return <View style={s.card}>
+    <Pressable onPress={() => setOpen(true)} accessibilityRole="button" accessibilityLabel="Open post" testID={`profile-post-${item.id}`}>
+      {item.content && !share?.legacyPostId ? <Text style={s.body} numberOfLines={3}>{item.content}</Text> : null}
+      <Text style={s.meta}>{[when, where, media > 0 ? `${media} media` : null].filter(Boolean).join(' · ')}</Text>
     </Pressable>
-  );
+    {share && <PostSharePreview target={share} />}
+    {open && <PostTakeover postId={item.id} onClose={() => setOpen(false)} />}
+  </View>;
 }
 
 function TripRow({ item }: { item: ProfileTripItem }) {

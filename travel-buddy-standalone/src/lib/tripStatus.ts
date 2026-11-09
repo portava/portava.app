@@ -1,3 +1,4 @@
+import { tripWindowEnded } from './tripCalendar.ts';
 /**
  * tripStatus — single source of truth for trip status badge color/label.
  *
@@ -50,11 +51,7 @@ export function tripStatusLabel(status: string): string {
  * next write touches it. `cancelled`/`archived`/`draft` are terminal states
  * unrelated to dates and are passed through unchanged.
  */
-export function deriveTripDisplayStatus(status: string, endDate?: string | null): string {
-  if (status === 'cancelled' || status === 'archived' || status === 'draft') return status;
-  if (!endDate) return status;
-  const end = new Date(endDate + 'T23:59:59Z');
-  if (Number.isNaN(end.getTime())) return status;
-  if (end.getTime() < Date.now()) return 'completed';
-  return status;
+export function deriveTripDisplayStatus(status: string, endDate?: string | null, timezone?: string | null): string {
+  if (['cancelled', 'archived', 'draft', 'completed'].includes(status)) return status;
+  return tripWindowEnded({ status, endDate, timezone }) ? 'completed' : status;
 }

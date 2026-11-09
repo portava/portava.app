@@ -12,6 +12,7 @@
  * Runtime: node:test + node:assert/strict
  * Run: node --import tsx/esm --test src/test/tripInvitesPending.test.ts
  */
+import { mock } from "node:test";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -219,6 +220,8 @@ async function get(port: number, path: string, token?: string) {
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
+
+mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-08-01T12:00:00Z") });
 
 describe("GET /api/me/trip-invites/pending", () => {
   it("1. missing Authorization header returns 401", async () => {

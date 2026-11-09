@@ -398,6 +398,7 @@ describe("mediaAccess 3d — a story only authorizes media its owner owns", () =
         storage_bucket: "post-media",
         storage_path: keyFor(ATTACKER),
         owner_user_id: VICTIM,
+        moderation_status: "active", deleted_at: null,
       }],
     });
 

@@ -24,7 +24,7 @@ gap is structural rather than incidental.
 | Table | Migration | The code that targets it |
 |---|---|---|
 | `intel_state_snapshot_versions` | `2273_intel_replayable_projection.sql` | `intelReplay` |
-| `intel_presence_verifications` | `2276_intel_presence_verification.sql` | `IntelCaptureService.ts:303` (write-only) |
+| `intel_presence_verifications` | `2276_intel_presence_verification.sql` | `IntelCaptureService.ts:304` (write-only) |
 | `intel_attributions` | `2277_intel_outcomes_attribution.sql` | `intelAttributionScheduler` |
 | `intel_scoped_trust` | `2278_intel_scoped_trust.sql` | `intelScopedTrustApply` |
 | `intel_historical_patterns` | `2279_intel_historical_patterns.sql` | `intelPatternScheduler` |
@@ -165,21 +165,21 @@ No `sensing_*` table is created anywhere in this tree.
 
 | Table | Created by | Writer in server code | Reader |
 |---|---|---|---|
-| ✅ `intel_observations` | `migrations/2130_intel_storage.sql` | `services/intel/IntelCaptureService.ts:565`; SQL: deleted by `purge_intel_contributions_older_than` (`2173:82`) and `erase_intel_for_actor` (`2278:217`) | **18** server readers (e.g. `routes/intel.ts:247`, `lib/intelProjectionAggregator.ts:153`, `lib/trailServe.ts:292`) |
-| ✅ `intel_claims` | `migrations/2130_intel_storage.sql` | `services/intel/IntelCaptureService.ts:526,550,644`; SQL `INSERT` in `2174:85` | 9 server readers (e.g. `lib/intelProjectionScheduler.ts:61,123`) |
+| ✅ `intel_observations` | `migrations/2130_intel_storage.sql` | `services/intel/IntelCaptureService.ts:569`; SQL: deleted by `purge_intel_contributions_older_than` (`2173:82`) and `erase_intel_for_actor` (`2278:217`) | **18** server readers (e.g. `routes/intel.ts:247`, `lib/intelProjectionAggregator.ts:153`, `lib/trailServe.ts:292`) |
+| ✅ `intel_claims` | `migrations/2130_intel_storage.sql` | `services/intel/IntelCaptureService.ts:530,554,648`; SQL `INSERT` in `2174:85` | 9 server readers (e.g. `lib/intelProjectionScheduler.ts:61,123`) |
 | ✅ `intel_evidence` | `migrations/2130_intel_storage.sql` | `lib/intelEvidenceCapture.ts:262`, `lib/media/mediaEvidenceLink.ts:157`; SQL deletes (`2173:71`, `2278:209`) | 4 (e.g. `lib/intelProjectionAggregator.ts:196`) |
-| ✅ `intel_confirmations` | `migrations/2130_intel_storage.sql` | `services/intel/IntelCaptureService.ts:741`; SQL deletes (`2173:75`, `2278:213`) | 3 |
+| ✅ `intel_confirmations` | `migrations/2130_intel_storage.sql` | `services/intel/IntelCaptureService.ts:745`; SQL deletes (`2173:75`, `2278:213`) | 3 |
 | ✅ `intel_state_snapshots` | `migrations/2130_intel_storage.sql` | `lib/intelProjection.ts:408`, `lib/intelProjectionScheduler.ts:167`; SQL delete in `2133:56` | 12 (e.g. `routes/intelApi.ts:41`, `lib/liveClaimRead.ts:321`) |
-| ✅ `intel_mission_candidates` | `migrations/2167_intel_mission_candidates.sql` | 8 sites — `services/intel/CoverageService.ts:77,92,125,157,183`, `services/intel/PresenceVerifier.ts:434`, `services/media/MediaViewRequestService.ts:182`, `services/accountDeletion/AccountDeletionService.ts:1155` | 3 (`routes/intelCoverage.ts:103`, `services/intel/PresenceVerifier.ts:414`, `lib/intelCoverageScheduler.ts:205`) |
+| ✅ `intel_mission_candidates` | `migrations/2167_intel_mission_candidates.sql` | 8 sites — `services/intel/CoverageService.ts:77,92,125,157,183`, `services/intel/PresenceVerifier.ts:438`, `services/media/MediaViewRequestService.ts:182`, `services/accountDeletion/AccountDeletionService.ts:1155` | 3 (`routes/intelCoverage.ts:103`, `services/intel/PresenceVerifier.ts:418`, `lib/intelCoverageScheduler.ts:205`) |
 | ✅ `intel_reward_ledger` | `migrations/2170_intel_reward_ledger.sql` | `services/intel/RewardService.ts:72`, `services/accountDeletion/AccountDeletionService.ts:1126` | 2 (`routes/intelObservability.ts:98`, `services/intel/RewardService.ts:78`) |
-| ✅ `intel_contribution_consent` | `migrations/2172_intel_contribution_consent.sql` | `lib/intelConsent.ts:118`, `services/accountDeletion/AccountDeletionService.ts:1116` | 5 (e.g. `lib/crowdFlowProducer.ts:1008`, `lib/trailServe.ts:312`) |
+| ✅ `intel_contribution_consent` | `migrations/2172_intel_contribution_consent.sql` | `lib/intelConsent.ts:118`, `services/accountDeletion/AccountDeletionService.ts:1116` | 5 (e.g. `lib/crowdFlowProducer.ts:1020`, `lib/trailServe.ts:312`) |
 | ✅ `intel_live_promoted_scopes` | `migrations/2179_intel_live_promoted_scopes.sql` | **none found** | 1 — `lib/liveClaimRead.ts:229` |
 | ✅ `intel_coverage_snapshots` | `migrations/2181_intel_coverage_snapshots.sql` | `lib/intelCoverageScheduler.ts:112,198` | 1 — `routes/intelCoverage.ts:77` |
 | ❔ `intel_state_snapshot_versions` | `migrations/2273_intel_replayable_projection.sql` | `lib/intelProjection.ts:386` | 3 (`routes/mapProjectionTemporal.ts:397`, `lib/intelReplay.ts:181,306`) |
-| ❔ `intel_presence_verifications` | `migrations/2276_intel_presence_verification.sql` | `services/intel/IntelCaptureService.ts:303` | **none found — write-only** |
+| ❔ `intel_presence_verifications` | `migrations/2276_intel_presence_verification.sql` | `services/intel/IntelCaptureService.ts:304` | **none found — write-only** |
 | ❔ `intel_attributions` | `migrations/2277_intel_outcomes_attribution.sql` | `lib/intelAttributionScheduler.ts:196`; SQL delete in `2278:205` | 2 (`routes/intelObservability.ts:100`, `lib/intelScopedTrustApply.ts:156`) |
 | ❔ `intel_scoped_trust` | `migrations/2278_intel_scoped_trust.sql` | `lib/intelScopedTrustApply.ts:181,188`; SQL delete in `2278:201` | 1 — `lib/intelScopedTrustApply.ts:135` |
-| ❔ `intel_historical_patterns` | `migrations/2279_intel_historical_patterns.sql` | `lib/intelPatternScheduler.ts:158,181` | 3 (`routes/intelReadModels.ts:214`, `lib/liveClaimRead.ts:476`, `lib/intelPatternScheduler.ts:116`) |
+| ❔ `intel_historical_patterns` | `migrations/2279_intel_historical_patterns.sql` | `lib/intelPatternScheduler.ts:158,181` | 3 (`routes/intelReadModels.ts:201`, `lib/liveClaimRead.ts:476`, `lib/intelPatternScheduler.ts:116`) |
 
 Two entries need their caveat stated in place rather than as a footnote:
 
@@ -190,9 +190,9 @@ Two entries need their caveat stated in place rather than as a footnote:
   gate and human review. Its emptiness is the fail-closed default. **Reader count matches the
   ratchet exactly (1).**
 - **`intel_presence_verifications` is written and never read** in server code. The write is
-  `services/intel/IntelCaptureService.ts:303`. This is the mirror image of the defect the analyzer
+  `services/intel/IntelCaptureService.ts:304`. This is the mirror image of the defect the analyzer
   exists for, and the analyzer does not look for it — `findWriterless` only walks the reads map
-  (`scripts/checkWriterlessReads.ts:285-298`). Whether that is intended could not be established
+  (`scripts/checkWriterlessReads.ts:276-289`). Whether that is intended could not be established
   from the tree.
 
 The sixteenth intel table, **`intel_claim_reviews`**, was applied by hand to the `portava-ci`
@@ -319,12 +319,12 @@ handler tests stayed green with the mount commented out (`:1-18`).
 | `POST /v1/internal/intel/missions/:id/decline` | `routes/intelCoverage.ts:175` | |
 | `GET /v1/internal/intel/observability` | `routes/intelObservability.ts:54` | the four admin dashboards |
 | `POST /v1/intel/outcomes` | `routes/intelOutcomes.ts:80` | outcome events |
-| `GET /v1/experiences/:id/live-state` | `routes/intelReadModels.ts:140` | |
-| `GET /v1/experiences/:id/typical-patterns` | `routes/intelReadModels.ts:198` | reads `intel_historical_patterns` (`:214`) |
-| `GET /v1/neighborhoods/:id/pulse` | `routes/intelReadModels.ts:274` | |
-| `GET /v1/intel/prompt-eligibility` | `routes/intelReadModels.ts:360` | |
-| `POST /map/observations` | `routes/mapObservations.ts:901` | mounted `routes/index.ts:321#router.use(mapObservationsRouter)`; the only caller of `lib/intelEvidenceCapture.ts` |
-| `GET /map/projection/temporal` | `routes/mapProjectionTemporal.ts:412` | mounted `routes/index.ts:319#router.use(mapProjectionTemporalRouter)`; reads `intel_state_snapshot_versions` (`routes/mapProjectionTemporal.ts:397`) |
+| `GET /v1/experiences/:id/live-state` | `routes/intelReadModels.ts:126` | |
+| `GET /v1/experiences/:id/typical-patterns` | `routes/intelReadModels.ts:185` | reads `intel_historical_patterns` (`:201`) |
+| `GET /v1/neighborhoods/:id/pulse` | `routes/intelReadModels.ts:262` | |
+| `GET /v1/intel/prompt-eligibility` | `routes/intelReadModels.ts:351` | |
+| `POST /map/observations` | `routes/mapObservations.ts:901` | mounted `routes/index.ts:323#router.use(mapObservationsRouter)`; the only caller of `lib/intelEvidenceCapture.ts` |
+| `GET /map/projection/temporal` | `routes/mapProjectionTemporal.ts:412` | mounted `routes/index.ts:321#router.use(mapProjectionTemporalRouter)`; reads `intel_state_snapshot_versions` (`routes/mapProjectionTemporal.ts:397`) |
 
 ## 6. PR #475 — measured, not merged
 
@@ -347,7 +347,7 @@ sibling `sensingCoverageAggregate.ts:81`; the only import of `sensingCoverageAgg
 (`lib/sensingAnonStore.ts:23-26`): "Nothing outside this module's tests imports it. There is no
 route, scheduler, job or feature flag behind it. It is a contract, waiting for a decision to use
 it." The PR ships a test that *enforces* that inertness by scanning the tree for referrers
-(`test/sensingAnonStore.test.ts:347-366`), so the store cannot be quietly wired without turning
+(`test/sensingAnonStore.test.ts:347-368`), so the store cannot be quietly wired without turning
 that test red.
 
 **What it would need in order to be reachable** — stated as gaps in the tree, not as requirements:
@@ -373,7 +373,7 @@ that test red.
 - **No `sensing_*` module, table or route exists in this tree at all.** The entire sensing surface
   is the unmerged PR #475 described in §6.
 - **`intel_presence_verifications` has no reader.** Written at
-  `services/intel/IntelCaptureService.ts:303`, read by nothing in server code.
+  `services/intel/IntelCaptureService.ts:304`, read by nothing in server code.
 - **`intel_live_promoted_scopes` has no writer, deliberately** — the human-curated allowlist whose
   emptiness is the fail-closed default (`scripts/checkWriterlessReads.ts:172-180`). There is no
   promotion endpoint; promotion is an out-of-band human act.

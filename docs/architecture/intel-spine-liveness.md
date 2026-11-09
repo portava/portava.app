@@ -82,7 +82,7 @@ anywhere.
 What holds it empty is different and simpler: **a chain of fail-closed feature flags, each
 seeded `false`, whose head is `intel_capture_quick_signal`.** Nothing enters the spine except
 through `writeObservation`, and `writeObservation` refuses on that flag before it does anything
-else (`src/services/intel/IntelCaptureService.ts:324`). Every downstream table's producer reads
+else (`src/services/intel/IntelCaptureService.ts:325`). Every downstream table's producer reads
 rows that only capture can create, and each returns early on an empty input rather than writing.
 So the spine's emptiness is one switch deep, not ten defects deep — and flipping that one switch
 does **not** open the spine, because each stage carries its own separately-seeded `false`.
@@ -198,10 +198,10 @@ Each row answers: is there a writer, and can a registered route/scheduler actual
 
 | Table | Writer (file:line) | Reachable from | Gate | Reachable? |
 |---|---|---|---|---|
-| `intel_observations` | `services/intel/IntelCaptureService.ts:565` (`insert`) | `POST /v1/intel/observations` — `routes/intel.ts:189`, router mounted `routes/index.ts:293`; **client caller** `travel-buddy-standalone/src/services/intelCapture.ts:100`, reached from `app/intel/quick-signal.tsx:254` (`PromptBlock`), which is navigated to from `src/components/place/living/LivingDestinationPage.tsx:314,426` and deep-link `src/navigation/portavaRoutes.ts:2047#path: 'intel/quick-signal',`. Second caller: `POST /api/map/observations` (`routes/mapObservations.ts:111`, mounted `routes/index.ts:267`). | `intel_capture_quick_signal` (`IntelCaptureService.ts:324`) **then** D4 consent row (`:331`) | **YES — full UI-to-table path** |
+| `intel_observations` | `services/intel/IntelCaptureService.ts:569` (`insert`) | `POST /v1/intel/observations` — `routes/intel.ts:189`, router mounted `routes/index.ts:293`; **client caller** `travel-buddy-standalone/src/services/intelCapture.ts:100`, reached from `app/intel/quick-signal.tsx:254` (`PromptBlock`), which is navigated to from `src/components/place/living/LivingDestinationPage.tsx:316,428` and deep-link `src/navigation/portavaRoutes.ts:2083#path: 'intel/quick-signal',`. Second caller: `POST /api/map/observations` (`routes/mapObservations.ts:111`, mounted `routes/index.ts:267`). | `intel_capture_quick_signal` (`IntelCaptureService.ts:325`) **then** D4 consent row (`:332`) | **YES — full UI-to-table path** |
 | `intel_contribution_consent` | `lib/intelConsent.ts:117` (`upsert`) | `PUT /v1/intel/consent` — `routes/intel.ts:176`; **client** `travel-buddy-standalone/src/services/intelConsent.ts:14`, called from `app/settings/intel-prompts.tsx:85#setIntelConsent(` and `src/components/intel/IntelConsentGate.tsx:15`; entered from `app/settings/index.tsx:279` and `app/profile/edit/index.tsx:96` | **NONE — no feature flag.** Auth only. | **YES — ungated. The one intel table any logged-in user can write today.** |
-| `intel_claims` | (a) `IntelCaptureService.ts:526` (`insert`, propose); (b) `IntelCaptureService.ts:551` (`update` → active, approve); (c) RPC `system_promote_admissible_intel_claims` `2174_intel_system_claim_promotion.sql:85` | (a)/(b): `POST …/claims/propose` and `…/claims/approve`, `routes/intel.ts:299-300`; client `app/intel/moment.tsx:26`. (c): `lib/intelPromotionScheduler.ts:55` (`db.rpc`), started `index.ts:136` | (a)/(b) `intel_capture_quick_signal`; (c) `intel_claim_projection_crowd` | **YES** (two independent paths) |
-| `intel_confirmations` | `IntelCaptureService.ts:741` (`insert`) | `POST /v1/intel/claims/:id/confirm`, `routes/intel.ts:309`; client `app/intel/moment.tsx:26` | `captureSystemEnabled` (either capture flag, `IntelCaptureService.ts:101-106`) + consent | **YES** |
+| `intel_claims` | (a) `IntelCaptureService.ts:530` (`insert`, propose); (b) `IntelCaptureService.ts:555` (`update` → active, approve); (c) RPC `system_promote_admissible_intel_claims` `2174_intel_system_claim_promotion.sql:85` | (a)/(b): `POST …/claims/propose` and `…/claims/approve`, `routes/intel.ts:299-300`; client `app/intel/moment.tsx:26`. (c): `lib/intelPromotionScheduler.ts:55` (`db.rpc`), started `index.ts:136` | (a)/(b) `intel_capture_quick_signal`; (c) `intel_claim_projection_crowd` | **YES** (two independent paths) |
+| `intel_confirmations` | `IntelCaptureService.ts:745` (`insert`) | `POST /v1/intel/claims/:id/confirm`, `routes/intel.ts:309`; client `app/intel/moment.tsx:26` | `captureSystemEnabled` (either capture flag, `IntelCaptureService.ts:101-106`) + consent | **YES** |
 | `intel_state_snapshots` | `lib/intelProjection.ts:410` (`upsert`); `lib/intelProjectionScheduler.ts:167` (`update`, go-dark) | `lib/intelProjectionScheduler.ts:97` → `projectAndStore`, started `index.ts:137` | `intel_claim_projection_crowd` | **YES — scheduler runs; input starved** |
 | `intel_reward_ledger` | `services/intel/RewardService.ts:72` (`insert`) | `lib/intelRewardScheduler.ts:240` → `recordEarnedReward`, started `index.ts:158` | `intel_rewards` — **TRUE in production** | **YES — and the gate is OPEN. Starved only by empty `intel_state_snapshots` (`intelRewardScheduler.ts:143`).** |
 | `intel_coverage_snapshots` | `lib/intelCoverageScheduler.ts:198` (`insert`), `:112` (`delete` prune) | started `index.ts:145` | `intel_coverage` | **YES — scheduler runs; gate closed** |
@@ -233,7 +233,7 @@ the finding that most changes the shape of the question, so each is cited indivi
 
 | Scheduler | `start…()` defined | Registered at | Flag it reads |
 |---|---|---|---|
-| `intelRetentionScheduler` | `lib/intelRetentionScheduler.ts:597#export function startIntelRetentionScheduler` | **`src/index.ts:144#startIntelRetentionScheduler()`** | `intel_retention_sweep_enabled`, `intel_contribution_retention_enabled` (`:358`) |
+| `intelRetentionScheduler` | `lib/intelRetentionScheduler.ts:597#export function startIntelRetentionScheduler` | **`src/index.ts:148#startIntelRetentionScheduler()`** | `intel_retention_sweep_enabled`, `intel_contribution_retention_enabled` (`:358`) |
 | `intelPromotionScheduler` | `lib/intelPromotionScheduler.ts:80` | **`src/index.ts:136`** | `intel_claim_projection_crowd` (`:83`) |
 | `intelProjectionScheduler` | `lib/intelProjectionScheduler.ts:216` | **`src/index.ts:137`** | `intel_claim_projection_crowd` (`:219`) |
 | `intelCoverageScheduler` | `lib/intelCoverageScheduler.ts:262` | **`src/index.ts:145`** | `intel_coverage` (`:29`) |
@@ -262,13 +262,13 @@ without a read or a write. The eighth — reward — gets `true`, performs a rea
 `src/lib/intelRewardScheduler.ts:143`. That is the entire observed behaviour of the spine.
 
 **Routers, for completeness.** All six intel routers are mounted:
-`intelRouter` `routes/index.ts:347#router.use(intelRouter)`, `intelCoverageRouter` `:349#router.use(intelCoverageRouter)`, `intelApiRouter` `:350#router.use(intelApiRouter)`,
+`intelRouter` `routes/index.ts:351#router.use(intelRouter)`, `intelCoverageRouter` `:353#router.use(intelCoverageRouter)`, `intelApiRouter` `:354#router.use(intelApiRouter)`,
 `intelReadModelsRouter` `:338#router.use(intelReadModelsRouter)`, `intelOutcomesRouter` `:341#router.use(intelOutcomesRouter)`, `intelObservabilityRouter` `:343#router.use(intelObservabilityRouter)`.
 `src/test/intelRouterRegistrationGuard.test.ts` exists to keep them mounted. The three internal
 ones (`intelCoverage`, `intelObservability`, and the missions routes) are `requireAdmin`-gated
 (`routes/intelCoverage.ts:61,72,101,113,123,137,158,176`;
 `routes/intelObservability.ts:55`) — admin-gated is not unreachable, unlike the
-internal-secret-gated-with-no-caller shape `checkWriterlessReads.ts:226-238` warns about.
+internal-secret-gated-with-no-caller shape `checkWriterlessReads.ts:217-229` warns about.
 
 ---
 
@@ -325,7 +325,7 @@ migration.**
   before anything else, and `writeObservation(sc, auth.user.id, …)` passes the authenticated id
   (`:238`). There is no service-role or internal-secret capture path that could supply a
   different actor.
-- The D4 consent gate is *keyed on that same id* (`IntelCaptureService.ts:331` →
+- The D4 consent gate is *keyed on that same id* (`IntelCaptureService.ts:332` →
   `hasValidIntelConsent(sc, actorId)` → `intel_contribution_consent.user_id`). Anonymity and
   consent are therefore mutually exclusive by construction: you cannot check consent for an actor
   you do not identify. Removing attribution would require redesigning the lawful basis, not

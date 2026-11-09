@@ -158,7 +158,7 @@ The older statement that no workflow applies migrations is too broad: the manual
 (`.github/workflows/beta-db.yml:141#workflow_dispatch`) has an explicit apply step (`.github/workflows/beta-db.yml:678#db:apply-migrations`).
 Pending beta application requires `apply=yes` (`.github/workflows/beta-db.yml:647#if:`, with the dry-run alternative at `:632#if:`); this is not evidence that production has this branch's schema.
 A production build therefore does not establish migration readiness. The repository's ledger comparison remains `pnpm run check:migration-ledger`
-(`artifacts/api-server/package.json:245#check:migration-ledger`); its missing-credentials outcome is explicitly non-success (`artifacts/api-server/src/scripts/checkMigrationLedger.ts:55#Exit code 2`).
+(`artifacts/api-server/package.json:248#check:migration-ledger`); its missing-credentials outcome is explicitly non-success (`artifacts/api-server/src/scripts/checkMigrationLedger.ts:55#Exit code 2`).
 This documentation pass does not use database credentials, invoke workflows or verify any deployment or activation state.
 
 ### 1.5 Deployment readiness checklist
@@ -219,9 +219,9 @@ throughout this document.
 **VERIFIED 2026-09-15 by reading the code on `main` and querying both databases.
 This is a DEPLOY-ORDER constraint, not a defect in either half.**
 
-`services/passport/PassportMapService.ts:463#buildStats` — on `main` since
+`services/passport/PassportMapService.ts:479#buildStats` — on `main` since
 #482 — pages every active stamp through `readAllActiveUserStamps`
-(`services/passport/PassportMapService.ts:443#.select`), which issues:
+(`services/passport/PassportMapService.ts:459#.select`), which issues:
 
 ```
 .select("id, country, city, visibility, is_revoked, stamp_definitions(category, slug, evidences_presence)")
@@ -236,7 +236,7 @@ PostgREST rejects a select naming a column that does not exist, so `buildStats`
 takes its documented failure branch and returns
 `countries: 0, cities: 0, neighborhoods: 0, planStamps: 0, hostStamps: 0,
 hiddenGemStamps: 0, safeReturnStamps: 0, totalStamps: 0` with `readFailed: true`
-(`PassportMapService.ts:490#readFailed: true`).
+(`PassportMapService.ts:506#readFailed: true`).
 
 **THE FLAG IS HONEST AND THE SCREEN IS NOT.** `routes/passportStamps.ts:553#...stats`
 spreads `stats` into the response, so `readFailed` does reach the client — and
@@ -449,19 +449,19 @@ Base URL `https://portava.replit.app`. All unauthenticated.
 
 1. **The deploy is live and is this build.**
    `GET /api/healthz` → **200** `{"status":"ok"}`.
-   (`artifacts/api-server/src/routes/health.ts:38#healthz`.) A non-200, or an
+   (`artifacts/api-server/src/routes/health.ts:41#healthz`.) A non-200, or an
    HTML error page, means the process is not serving — most likely the
    `process.exit(1)` from §1.4.
 2. **Background jobs are not failing.**
    `GET /api/healthz/schedulers` → **200** when healthy, **503** when any job is
    failing, **503** with `"no scheduler reported"` if the report list is empty
-   (`artifacts/api-server/src/routes/health.ts:527#schedulers`). The body names
+   (`artifacts/api-server/src/routes/health.ts:534#schedulers`). The body names
    each job and its status, so this one request distinguishes "deployed but
    idle" from "deployed and working".
 3. **Cleanup and delayed-publish are alive.**
    `GET /api/healthz/cleanup` and `GET /api/healthz/delayed-publish`
-   (`artifacts/api-server/src/routes/health.ts:45#cleanup`,
-   `artifacts/api-server/src/routes/health.ts:77#delayed-publish`). These are
+   (`artifacts/api-server/src/routes/health.ts:48#cleanup`,
+   `artifacts/api-server/src/routes/health.ts:80#delayed-publish`). These are
    DB-backed, so a 200 here is also evidence the service client has real
    credentials — which `/api/healthz` alone does **not** prove.
 4. **Admin surface is closed to the public.**
@@ -478,8 +478,8 @@ Base URL `https://portava.replit.app`. All unauthenticated.
 **`discovery_live_rank_enabled` — response-visible. This is the strongest
 runtime proof available for any flag in §2.2.** `GET /discovery` emits a
 `meta.liveRank` object **only** when the pass applied
-(`artifacts/api-server/src/routes/discovery.ts:1901#liveRank`, and the cold path
-at `artifacts/api-server/src/routes/discovery.ts:2337#liveRank`), carrying
+(`artifacts/api-server/src/routes/discovery.ts:1892#liveRank`, and the cold path
+at `artifacts/api-server/src/routes/discovery.ts:2328#liveRank`), carrying
 `mode`, `readable`, `windowSize` and `demoted`.
 
 - Before enabling: `meta.liveRank` **absent**.

@@ -4,7 +4,7 @@ const mockAreas = jest.fn(); const mockConsent = jest.fn(); const mockSetConsent
 // NOTE: isolates network/storage results so the mounted settings flow can exercise partial failure and withdrawal without a real account.
 jest.mock('../../../services/mapPrivacy', () => ({ readProtectedPlaces: () => mockAreas(), readMapRouteConsent: () => mockConsent(), setMapRouteConsent: (...args: unknown[]) => mockSetConsent(...args), removeProtectedPlace: jest.fn() }));
 // NOTE: navigation is observed rather than launching an actual map; the focus callback runs once per mount.
-jest.mock('expo-router', () => ({ router: { push: (...args: unknown[]) => mockPush(...args) }, useFocusEffect: (callback: () => void) => { React.useEffect(callback, [callback]); } }));
+jest.mock('expo-router', () => ({ router: { push: (...args: unknown[]) => mockPush(...args) }, useFocusEffect: (callback: () => void) => { require('react').useEffect(callback, [callback]); } }));
 // NOTE: owner remount behavior is covered by useInputAccountEpoch; this test keeps one authenticated owner stable.
 jest.mock('../../../platform/input-assistance/hooks/useInputAccountEpoch', () => ({ useInputAccountEpoch: () => 1 }));
 import { setDiscoveryViewerFromSession } from '../../../services/discoveryViewerScope.ts';

@@ -108,6 +108,9 @@ import { MessageMediaBubble } from '../../src/components/MessageMediaBubble';
 import { MessageSafetyBanner } from '../../src/features/telegraph/components/MessageSafetyBanner';
 import { StrangerMediaShield } from '../../src/features/telegraph/components/StrangerMediaShield';
 // Telegraph §16.2 / §17.4 — data-saver and the degradation ladder.
+import { LinkedMessageMedia } from '../../src/features/telegraph/sharing/LinkedMessageMedia.tsx';
+import { canonicalMediaLink } from '../../src/features/telegraph/sharing/canonicalMediaLink.ts';
+import { ThreadSharePlaybackContext, SHARED_MEDIA_VIEWABILITY, useThreadSharePlayback } from '../../src/features/telegraph/sharing/threadSharePlayback.tsx';
 import { useDataSaver } from '../../src/features/telegraph/hooks/useDataSaver'; import { reportThreadSend, reportMeetAtSend } from '../../src/features/telegraph/composer/composerTaskOutcome.ts'; import { useFeatureFlags } from '../../src/context/FeatureFlagsContext.tsx'; import { useLinkPreviews } from '../../src/features/telegraph/linkPreview/useLinkPreviews.ts'; import { LinkPreviewCard } from '../../src/features/telegraph/linkPreview/LinkPreviewCard.tsx'; import { LINK_PREVIEWS_FLAG, type LinkPreview } from '../../src/features/telegraph/linkPreview/linkPreviewApi.ts'; // census T404, one line: this file is cited by line
 import * as Haptics from 'expo-haptics';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
@@ -768,8 +771,9 @@ function MessageBubble({
   currentUserId,
   isCircleMember,
   onCircleCardPress,
-  threadId,
+  threadId, plainThread,
 }: {
+  plainThread?: boolean;
   item: Message;
   mine: boolean;
   groupStart?: boolean;
@@ -843,6 +847,14 @@ function MessageBubble({
       </Pressable>
     );
   }
+
+  // A canonical link pasted into plaintext chat uses the same revocable source as a typed share.
+  // Never send a decrypted URL or an optimistic encrypted send to a projection endpoint.
+  const linked = !item.e2eeFailed && item.msgType === 'text'
+    ? canonicalMediaLink(item.body) : null;
+  if (linked) return <Pressable onLongPress={onLongPress} delayLongPress={300}>
+    <LinkedMessageMedia key={`${threadId}:${item.id}:${linked.objectId}`} refInfo={linked} encrypted={!plainThread || Boolean(item.ciphertext || item.pendingIsE2ee)} mine={mine} threadId={threadId ?? null} messageId={item.id} />
+  </Pressable>;
 
   // Meetup card — special rendering (long-press wrapper added)
   const meetupPayload = parseMeetupCard(item.body ?? '', item);
@@ -1276,6 +1288,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
   // Telegraph §16.2 / §17.4 — the degradation ladder. Consulted here for
   // media; the AI tray consults it for `ai`.
   const dataSaver = useDataSaver(); const { isEnabled: flagEnabled } = useFeatureFlags(); const linkPreviews = useLinkPreviews(id ?? null, messages, flagEnabled(LINK_PREVIEWS_FLAG) && !safetyQuiet && dataSaver.mayLoad('mediaPreview')); // census T404: off (the seed), a raised safety mode or data saver ⇒ no request and no preview (Q-LP6)
+  const sharedPlayback = useThreadSharePlayback(dataSaver.mayLoad('mediaPreview') && !safetyQuiet && !actionMsg && !showSafetySheet);
   const [showMediaPickerSheet, setShowMediaPickerSheet] = useState(false);
 
   function handleBlockPress() {
@@ -2099,7 +2112,10 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
           while a decision or commitment is unresolved. */}
       {id ? <CoordinationPanel threadId={id} viewerId={userId ?? null} onOpenRecap={threadRecap.available ? () => setShowRecap(true) : undefined} onShareLocation={() => setTypedCompose('LOCATION_SCOPE')} refreshKey={messages[messages.length - 1]?.id ?? null} onDrawnIdsChange={setPanelDrawnIds} /> : null}{id ? <SemanticLayersStrip threadId={id} viewerId={userId ?? null} messages={messages} refreshKey={messages[messages.length - 1]?.id ?? null} dataSaver={!dataSaver.mayLoad('mediaPreview')} onLayeredIdsChange={setLayeredIds} panelDrawnIds={panelDrawnIds} /> : null}
 
+      <ThreadSharePlaybackContext.Provider value={sharedPlayback.playback}>
       <FlatList
+        viewabilityConfig={SHARED_MEDIA_VIEWABILITY}
+        onViewableItemsChanged={sharedPlayback.onViewableItemsChanged}
         windowSize={9}
         initialNumToRender={18}
         maxToRenderPerBatch={12}
@@ -2214,6 +2230,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
                 item={m}
                 mine={mine}
                 threadId={id ?? null}
+                plainThread={conversationProjection.status === 'ready' && conversationProjection.isE2ee === false}
                 groupStart={item.groupStart}
                 groupEnd={item.groupEnd}
                 autoTranslate={autoTranslate}
@@ -2254,6 +2271,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
         }}
         onLayout={() => listRef.current?.scrollToEnd({ animated: false })}
       />
+      </ThreadSharePlaybackContext.Provider>
 
       {/* Scroll-to-bottom FAB */}
       {showJumpFab && (

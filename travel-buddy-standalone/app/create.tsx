@@ -2,7 +2,10 @@ import React from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
 import { UnifiedPostComposer } from '../src/components/PulseCreate';
 import type { Place } from '../src/lib/location/placeTypes';
-import { canonicalUrl } from '../src/constants/canonicalUrl';
+import { Alert } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { PostSaveDestinationPanel } from '../src/components/PostSaveDestinationPanel.tsx';
+import { POST_UUID } from '../src/constants/postReference.ts';
 
 /**
  * /create — full-screen post composer page.
@@ -44,10 +47,10 @@ export default function Create() {
     tripId?: string;
     sharePostId?: string;
   }>();
-  // Sharing carries a reference, never the source author's copied text or media.
-  // The user can add a note and choose the new post's audience before publishing.
-  const sharedLink = typeof sharePostId === 'string' && /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(sharePostId)
-    ? canonicalUrl(`/posts/${sharePostId}`) : '';
+  if (typeof sharePostId === 'string' && POST_UUID.test(sharePostId)) {
+    return <SafeAreaView style={{ flex: 1 }}><PostSaveDestinationPanel postId={sharePostId} destination="profile" active
+      onCancel={dismiss} onSaved={() => { dismiss(); Alert.alert('Shared to your profile'); }} /></SafeAreaView>;
+  }
 
   // Build a minimal Place snapshot from the query params so the composer
   // opens with the location chip pre-populated.
@@ -75,8 +78,8 @@ export default function Create() {
     <UnifiedPostComposer
       onClose={dismiss}
       onSuccess={dismiss}
-      openCameraOnMount={!initialPlace && !sharedLink}
-      initialText={sharedLink}
+      openCameraOnMount={!initialPlace}
+      initialText=""
       initialPlace={initialPlace}
       initialBucket={bucket ?? null}
       tripId={typeof tripId === 'string' && tripId ? tripId : null}

@@ -102,6 +102,6 @@ describe('T320 — the open booking thread re-reads the booking when its transit
     expect(dm).toContain('const bookingTransitionKey = latestBookingTransitionKey(messages);');
     expect(dm).toContain('}, [threadType, contextId, bookingTransitionKey]);');
     expect(dm).toMatch(/<RentABuddyThreadHeader\s+key=\{bookingTransitionKey \?\? 'booking'\}/);
-    expect(dm).toContain("<SharedContextRail threadId={id} key={bookingTransitionKey ?? 'rail'} scrolled={railCollapsed} />");
+    expect(dm).toContain("<SharedContextRail threadId={id} key={bookingTransitionKey ?? 'rail'} scrolled={railCollapsed}");
   });
 });

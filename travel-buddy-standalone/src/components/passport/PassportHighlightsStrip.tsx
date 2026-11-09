@@ -64,7 +64,7 @@ function HighlightBubble({
           the signed-URL hydration layer (DisplayMediaImage/useHydratedMedia)
           rather than binding straight to <Image>. */}
       <View style={b.bubble}>
-        {highlight.mediaType === POST_REFERENCE_MEDIA_TYPE ? <PostReferenceCover /> : <DisplayMediaImage
+        {highlight.mediaType === POST_REFERENCE_MEDIA_TYPE ? <PostReferenceCover uri={highlight.mediaUrl} /> : <DisplayMediaImage
           uri={src}
           width={BUBBLE_SIZE}
           height={BUBBLE_SIZE}

@@ -26,6 +26,7 @@
  * The strip refreshes independently of feed pagination (spec §28) and may be
  * ignored entirely — normal scrolling never depends on it.
  */
+import { tripHasEnded } from '../../domain/trips/invariants/tripStatus.js';
 import {
   readLiveClaimEnvelopes,
   type LiveClaimEnvelope,
@@ -885,6 +886,10 @@ export async function buildTripSignalLiveCandidates(
   const byPlace = new Map(places.map((p) => [p.placeId, p]));
 
   try {
+    const windowRead = await sc.from("trips").select("id, status, end_date, timezone").in("id", tripIds);
+    if (windowRead.error || !Array.isArray(windowRead.data)) return [];
+    const currentIds = windowRead.data.filter((trip: any) => !tripHasEnded(trip, now)).map((trip: any) => trip.id);
+    if (!currentIds.length) return [];
     // 1) Which of the feed's places are SAVED STOPS on those trips.
     //    trip_saved_places.place_id is client-supplied text (routes/trips-expansion
     //    POST /trips/:id/saved-places), so this is an exact-id match: a stop saved
@@ -893,7 +898,7 @@ export async function buildTripSignalLiveCandidates(
     const { data: savedRows, error: savedErr } = await sc
       .from("trip_saved_places")
       .select("trip_id, place_id, lat, lng")
-      .in("trip_id", tripIds)
+      .in("trip_id", currentIds)
       .in("place_id", [...byPlace.keys()])
       .limit(200);
     if (savedErr || !Array.isArray(savedRows)) return [];

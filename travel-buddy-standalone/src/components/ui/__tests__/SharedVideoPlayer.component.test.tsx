@@ -68,6 +68,20 @@ beforeEach(() => {
 });
 
 describe('SharedVideoPlayer', () => {
+  it('opens directly over the current screen at the inline playback position and returns to its caller on close', async () => {
+    const onClose = jest.fn();
+    const onPositionChange = jest.fn();
+    await render(<SharedVideoPlayer uri="https://example.com/modal.mp4" fullscreenOnly autoplay muted={false} initialPositionMillis={12000} onClose={onClose} onPositionChange={onPositionChange} />);
+    expect(screen.getByLabelText('Close full-screen video')).toBeTruthy();
+    expect(screen.getAllByTestId('mock-video')).toHaveLength(1);
+    expect(screen.getByTestId('mock-video').props.status.positionMillis).toBe(12000);
+    await fireEvent(screen.getByTestId('mock-video'), 'load');
+    await act(async () => { capturedStatusCallback?.({ isLoaded: true, isPlaying: true, positionMillis: 15000, durationMillis: 60000 }); });
+    expect(onPositionChange).toHaveBeenCalledWith(15000);
+    await fireEvent.press(screen.getByLabelText('Close full-screen video'));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('renders the play overlay when not playing (autoplay=false)', async () => {
     await render(
       <SharedVideoPlayer uri="https://example.com/video.mp4" />,

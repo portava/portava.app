@@ -193,15 +193,6 @@ export const KNOWN_WRITERLESS_READS: Record<
   // human decision with provenance, horizon and withdrawal; nothing promotes a
   // scope on its own. The table is still empty in production; that is now a
   // pending owner decision (which scope, on what evidence), not a missing lane.
-  route_flow_contribution_consent: {
-    readers: 1,
-    classification: "human-allowlist",
-    note:
-      "Server-authoritative consent for contributing accepted route plans to the public Crowd " +
-      "Flow aggregate. Deliberately empty pending privacy-policy review, so no opt-in endpoint " +
-      "exists yet. Consequence to keep in view: the crowd_flow accepted_plan signal family " +
-      "cannot be satisfied while this stands, so a Map layer depends on a privacy decision.",
-  },
 
   // ── EXTERNALLY SEEDED REFERENCE DATA ──────────────────────────────────────
   fsq_places: {

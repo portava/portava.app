@@ -18,7 +18,7 @@
  * player is not mounted until the item first enters the viewport. Before that —
  * and whenever reduce-motion is on or there is no playable source — the poster is
  * shown with a play affordance. Tapping the poster (or the inline Open control)
- * enters the dedicated Media Viewer, the canonical surface (§11).
+ * opens the shared player's modal above the Wall, retaining the current scroll position.
  */
 
 import React from 'react';
@@ -31,9 +31,10 @@ import {
   PlaceLine,
   SocialActionRow,
   WallImage,
-  runWallAction,
 } from './wallItemShared.tsx';
 import { ContextThreadView } from '../ContextThreadView.tsx';
+import { RecordingStampBadge } from '../../../capture-stamps/RecordingStamp.tsx';
+import { PostTakeover } from '../../../../components/PostTakeover.tsx';
 import { SharedVideoPlayer } from '../../../../components/ui/SharedVideoPlayer.tsx';
 import { useWallItemVisible } from '../../hooks/useWallItemVisibility.tsx';
 import { useReducedMotionSetting } from '../../hooks/useReducedMotionSetting.ts';
@@ -44,7 +45,13 @@ export function VideoWallItem({ projection }: { projection: VideoProjection }) {
   const media = projection.media?.[0];
   const videoUri = media?.url ?? null;
   const posterUri = media?.thumbnailUrl ?? media?.url ?? undefined;
-  const openViewer = () => runWallAction({ type: 'open_object', label: 'Play' }, projection);
+  const [posterOpen, setPosterOpen] = React.useState(false);
+  const playbackPosition = React.useRef(0);
+  const notePosition = React.useCallback((position: number) => { playbackPosition.current = position; }, []);
+  const openViewer = () => {
+    if (!videoUri || media?.processing) return;
+    setPosterOpen(true);
+  };
 
   const isVisible = useWallItemVisible(projection.projectionId);
   const reduceMotion = useReducedMotionSetting();
@@ -79,18 +86,19 @@ export function VideoWallItem({ projection }: { projection: VideoProjection }) {
           experienceAt={projection.experienceAt}
         />
       </View>
-      {showPlayer ? (
+      {posterOpen ? <View style={s.frame} /> : showPlayer ? (
         <View style={s.frame}>
           <SharedVideoPlayer
             uri={videoUri as string}
             poster={posterUri}
             autoplay={autoplay}
             muted={muted}
+            onRequestFullscreen={openViewer}
+            initialPositionMillis={playbackPosition.current}
+            onPositionChange={notePosition}
             style={StyleSheet.absoluteFill}
           />
-          {/* §11: tapping may enter the dedicated Media Viewer. The player owns
-              tap (play/pause) + mute; this quiet control opens the canonical
-              viewer without stealing the inline play gesture. */}
+          {/* The full post reuses the current position and displays its conversation. */}
           <Pressable
             style={s.openBtn}
             onPress={openViewer}
@@ -106,7 +114,9 @@ export function VideoWallItem({ projection }: { projection: VideoProjection }) {
         <Pressable
           onPress={openViewer}
           accessibilityRole="button"
-          accessibilityLabel="Play video"
+          accessibilityLabel={media?.processing ? 'Video processing' : videoUri ? 'Play video' : 'Video unavailable'}
+          disabled={!videoUri || media?.processing}
+          accessibilityState={{ disabled: !videoUri || !!media?.processing }}
           style={s.frame}
         >
           <WallImage media={media} ratio={aspect.wide} rounded={false} />
@@ -115,7 +125,10 @@ export function VideoWallItem({ projection }: { projection: VideoProjection }) {
           </View>
         </Pressable>
       )}
+      {posterOpen && <PostTakeover postId={projection.canonicalObjectId} initialMediaUri={videoUri ?? undefined}
+        initialPositionMillis={playbackPosition.current} onPositionChange={notePosition} onClose={() => setPosterOpen(false)} />}
       <View style={s.body}>
+        {isVisible && videoUri && <RecordingStampBadge targetType="post" targetId={projection.canonicalObjectId} />}
         {projection.text ? (
           <Text style={s.text} numberOfLines={3}>
             {projection.text}
@@ -123,7 +136,7 @@ export function VideoWallItem({ projection }: { projection: VideoProjection }) {
         ) : null}
         <PlaceLine projection={projection} onDark />
         <ContextualActionChips projection={projection} />
-        <SocialActionRow projection={projection} onDark />
+        <SocialActionRow projection={projection} onDark onOpenPost={() => setPosterOpen(true)} />
         {projection.contextThread ? (
           <ContextThreadView thread={projection.contextThread} projection={projection} />
         ) : null}

@@ -7,13 +7,14 @@ import {decideForward,type ForwardSource} from '../services/telegraph/forwarding
 import {authorizeMediaAccess} from '../lib/mediaAccess.js';
 import {makeFakeClient} from './telegraphCertificationHarness.js';
 import type {SupabaseClient} from '@supabase/supabase-js';
+import {logger} from '../lib/logger.js';
 const A='aaaaaaaa-0000-4000-8000-000000000001',T='bbbbbbbb-0000-4000-8000-000000000001',M='cccccccc-0000-4000-8000-000000000001';
 const source:ForwardSource={id:M,thread_id:T,sender_id:A,body:'private caption',msg_type:'media',subtype:null,media_url:`post-media/${A}/source.jpg`,media_type:'image'};
-async function fixture(options:{uploadFail?:boolean;commitError?:string;removeFail?:boolean;access?:boolean;unknownAuthor?:boolean}={}){
+async function fixture(options:{uploadFail?:boolean;commitError?:string;removeFail?:boolean;recordDeleteFail?:boolean;access?:boolean;unknownAuthor?:boolean}={}){
  const raw=await sharp({create:{width:8,height:8,channels:3,background:'#ee4433'}}).jpeg().withMetadata().withExif({IFD0:{Artist:'PRIVATE CAMERA OWNER'}}).toBuffer();
  const uploaded=new Map<string,Buffer>();let downloads=0,finishes=0,prepared=0;const removed:string[][]=[];let finishArgs:any;
  const seed:Record<string,any[]>={profiles:[{id:A,account_status:options.unknownAuthor?'deleted':'active'}],feature_flags:[{flag:'disable_media_uploads',enabled:false}],telegraph_forward_media_jobs:[]};
- const base=makeFakeClient(seed);
+ const base=makeFakeClient(seed,options.recordDeleteFail?{errors:{telegraph_forward_media_jobs:{message:'journal unavailable',ops:['delete']}}}:{});
  const store=base._store;
  const client={...base,storage:{from(){return {
   async download(){downloads++;return {data:new Blob([new Uint8Array(raw)]),error:null};},
@@ -52,6 +53,13 @@ describe('real attachment sanitization with Storage boundary fixture',()=>{
   const uncertain=await fixture({commitError:'network'});await assert.rejects(run(uncertain));assert.equal(uncertain.removed.length,0);assert.equal(uncertain.store.telegraph_forward_media_jobs.length,1);
  });
  it('cleanup failures retain the journal for a later pass',async()=>{const f=await fixture({commitError:'P0001',removeFail:true});await assert.rejects(run(f));assert.equal(f.store.telegraph_forward_media_jobs.length,1);await assert.rejects(sweepForwardMedia(f.client),/cleanup_failed/);assert.equal(f.store.telegraph_forward_media_jobs.length,1);});
+ it('observes a journal delete error without masking the original failure or losing retry state',async(t)=>{
+  const warn=t.mock.method(logger,'warn',()=>undefined);
+  const f=await fixture({commitError:'P0001',recordDeleteFail:true});
+  await assert.rejects(run(f),/attachment_commit_failed/);
+  assert.equal(f.uploaded.size,0);assert.equal(f.store.telegraph_forward_media_jobs.length,1);
+  assert.ok(warn.mock.calls.some(call=>(call.arguments[0] as any)?.err?.message==='journal unavailable'));
+ });
  it('copied media cannot bypass the live message check through the owner shortcut',async()=>{
   const denied=await fixture();const path=`${A}/telegraph-forwards/${M}/0`;
   assert.equal(await authorizeMediaAccess(denied.client as unknown as SupabaseClient,A,'post-media',path),false);

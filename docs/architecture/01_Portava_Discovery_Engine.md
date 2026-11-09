@@ -39,7 +39,7 @@ Every place the surface hands items to a caller is a numbered serve point
 | 4 | `CACHE_B_HIT` | no — replays a stored Compass order |
 | 5 | `COMPASS_FRESH_RANK` | **yes** |
 | 6 | `COLD_FETCH_LEGACY_RANK` | **yes** |
-| 7 | `FEED` (`GET /discovery/feed`) | no ranker. *Had no caller in the repo until #382 (2026-09-04); it now has two — `DiscoveryEventPostsRail.tsx` and `ForYouTab.tsx:428`* |
+| 7 | `FEED` (`GET /discovery/feed`) | no ranker. *Had no caller in the repo until #382 (2026-09-04); it now has two — `DiscoveryEventPostsRail.tsx` and `ForYouTab.tsx:434`* |
 | 8 | `SEARCH` | no ranker (query relevance) |
 | 9 | `SUGGEST` | no ranker |
 | 10 | `COMMUNITY` (`GET /discovery/community`) | no ranker |

@@ -365,6 +365,7 @@ const CellWrapper = React.memo(function CellWrapper({
         videoUrl={item.videoUrl}
         posterUrl={item.posterUrl}
         isActive={effectiveActive}
+        isViewable={isActive}
         playbackEligible={playbackEligible}
         isMuted={isMuted}
         onProgress={handleProgress}
@@ -379,6 +380,7 @@ const CellWrapper = React.memo(function CellWrapper({
 
       {/* Overlay (creator info, captions, actions) */}
       <WatchItemOverlay
+        showRecordingStamp={effectiveActive}
         item={item}
         currentUserId={currentUserId}
         isSaved={isSaved}
@@ -462,6 +464,8 @@ const CellWrapper = React.memo(function CellWrapper({
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 export interface WatchFeedListProps {
+  /** Roam plays the current video as soon as it becomes visible. */
+  autoplayOnView?: boolean;
   items: MediaFeedItem[];
   activeIndex: number;
   currentUserId?: string;
@@ -477,6 +481,7 @@ export interface WatchFeedListProps {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function WatchFeedList({
+  autoplayOnView = false,
   items,
   activeIndex,
   currentUserId,
@@ -488,7 +493,10 @@ export function WatchFeedList({
   savedSet,
 }: WatchFeedListProps) {
   const insets = useSafeAreaInsets();
-  const tapToPlay = useMediaSurfaceDecisions().tapToPlay; const playback = useWatchPlayback({ autoplay: !tapToPlay }); // census-media §34 (F2): tapToPlay false — the seed — is today's autoplaying manager and cells
+  const [hasVisibleItem, setHasVisibleItem] = useState(true);
+  const tapToPlayPolicy = useMediaSurfaceDecisions().tapToPlay;
+  const tapToPlay = !autoplayOnView && tapToPlayPolicy;
+  const playback = useWatchPlayback({ autoplay: !tapToPlay, cellOwnsPlayback: autoplayOnView }); // census-media §34 (F2): tapToPlay false — the seed — is today's autoplaying manager and cells
 
   // Mute state — persisted to AsyncStorage.
   const [isMuted, setIsMuted] = useState(Platform.OS === 'web'); // 2026-11-04: sound on in the app ("the videos have no sound"); web starts muted because browsers refuse to autoplay with sound
@@ -532,7 +540,8 @@ export function WatchFeedList({
 
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
-      if (viewableItems.length === 0) return;
+      setHasVisibleItem(viewableItems.length > 0);
+      if (viewableItems.length === 0) { void playback.setActiveId(null); return; }
       const first = viewableItems[0];
       const idx = first.index ?? 0;
       onActiveIndexChangeRef.current(idx);
@@ -553,7 +562,7 @@ export function WatchFeedList({
     ({ item, index }: { item: MediaFeedItem; index: number }) => (
       <CellWrapper
         item={item}
-        isActive={index === activeIndex}
+        isActive={hasVisibleItem && index === activeIndex}
         playbackEligible={playback.playbackEligible}
         isMuted={isMuted}
         currentUserId={currentUserId}
@@ -566,7 +575,7 @@ export function WatchFeedList({
         showSwipeHint={showSwipeHint} tapToPlay={tapToPlay}
       />
     ),
-    [activeIndex, isMuted, currentUserId, onComment, onSave, onMore,
+    [activeIndex, hasVisibleItem, isMuted, currentUserId, onComment, onSave, onMore,
       playback.registerRef, playback.unregisterRef, playback.playbackEligible, savedSet,
       showSwipeHint, tapToPlay],
   );

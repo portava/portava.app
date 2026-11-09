@@ -51,7 +51,7 @@ The serve paths are the ones §47.2 of the census maps. "Rows examined" is the h
 
 ### QP-05 Saved counts for served OSM ids
 
-`routes/discovery.ts:1331`: `osm_id IN (…)`. **Index:** `idx_discovery_places_osm_id` (partial, `osm_id IS NOT NULL`). Harness: Index Scan, 5 rows. The unique twin `discovery_places_osm_id_idx` exists as well (§3).
+`routes/discovery.ts:1322`: `osm_id IN (…)`. **Index:** `idx_discovery_places_osm_id` (partial, `osm_id IS NOT NULL`). Harness: Index Scan, 5 rows. The unique twin `discovery_places_osm_id_idx` exists as well (§3).
 
 ### QP-06 Resolved photo for a card
 

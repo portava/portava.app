@@ -1,3 +1,5 @@
+// NOTE: this screen fixture is mounted without a navigator; focus is stable here.
+jest.mock('@react-navigation/native', () => ({ ...jest.requireActual('@react-navigation/native'), useIsFocused: () => true }));
 /**
  * FullScreenMapScreen — the §22 photo step is offered only when the server says
  * a photo would be KEPT for this account (census-map §45.12).

@@ -26,6 +26,7 @@ import { WallHeader } from './WallHeader.tsx';
 import { FeedModeSwitcher } from './FeedModeSwitcher.tsx';
 import { WallFeed } from './WallFeed.tsx';
 import { LiveForYouStrip } from './LiveForYouStrip.tsx'; import { WallMomentsStrip } from './WallMomentsStrip.tsx';
+import { PostTakeover } from '../../../components/PostTakeover.tsx';
 import { QuickMediaRow, type QuickMediaEntry } from './QuickMediaRow.tsx';
 import { useWallFeed } from '../hooks/useWallFeed.ts';
 import { useLiveForYou } from '../hooks/useLiveForYou.ts';
@@ -74,8 +75,10 @@ function WallScreenForAccount({
   const [foreground, setForeground] = React.useState(AppState.currentState !== 'background' && AppState.currentState !== 'inactive');
   React.useEffect(() => { const sub = AppState.addEventListener('change', state => setForeground(state === 'active')); return () => sub.remove(); }, []);
   const visible = active && foreground;
+  const [quickPostId, setQuickPostId] = React.useState<string | null>(null);
   const [mode, setMode] = React.useState<WallMode>('for_you');
 
+  React.useEffect(() => { if (!visible) setQuickPostId(null); }, [visible]);
   const intent = useWallSessionIntent();
   const feed = useWallFeed(mode, intent.intentText);
   const live = useLiveForYou({ enabled: liveEnabled && visible });
@@ -111,12 +114,7 @@ function WallScreenForAccount({
     <>
       <QuickMediaRow
         entries={quickEntries}
-        // Open lands in the canonical media viewer for the person's newest
-        // item (the projection is never the object, spec §24); an entry with
-        // no canonical post falls back to the media home.
-        onOpen={(entry) =>
-          router.push((entry.postId ? `/media-viewer/${entry.postId}` : '/media') as never)
-        }
+        onOpen={entry => { if (entry.postId) setQuickPostId(entry.postId); else router.push('/media' as never); }}
       />
       <LiveForYouStrip
         items={live.items}
@@ -156,6 +154,7 @@ function WallScreenForAccount({
         onHide={feed.hide}
         ListHeaderComponent={header}
       />
+      {quickPostId && visible && <PostTakeover postId={quickPostId} onClose={() => setQuickPostId(null)} />}
     </View></WallActionContext.Provider>
   );
 }

@@ -89,8 +89,12 @@ export async function copyForwardAttachments(sc: any, input: { source: ForwardSo
     if(!commitStarted&&!uploadUncertain){
       try {
         const removed=await bucket.remove(prep.data.paths);
-        if(!removed.error)await sc.from('telegraph_forward_media_jobs').delete().eq('id',id).eq('state','preparing');
-      } catch { /* Deadline or cleanup failure: the durable journal remains. */ }
+        if(removed.error)logger.warn({err:removed.error,jobId:id},'Forward media cleanup deferred; journal retained');
+        else {
+          const deleted=await sc.from('telegraph_forward_media_jobs').delete().eq('id',id).eq('state','preparing');
+          if(deleted.error)logger.warn({err:deleted.error,jobId:id},'Forward media cleanup journal deletion failed; retry remains scheduled');
+        }
+      } catch(cleanupError) { logger.warn({err:cleanupError,jobId:id},'Forward media cleanup failed; journal retained'); }
     }
     throw err;
   }

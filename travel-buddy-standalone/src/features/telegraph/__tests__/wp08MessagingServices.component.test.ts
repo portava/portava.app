@@ -25,6 +25,16 @@ jest.mock('../../../lib/supabase.ts', () => ({
 jest.mock('../../../services/apiToken.ts', () => ({
   freshToken: async () => 'tok-1',
 }));
+// NOTE: this suite checks HTTP response contracts; the real owner-observer
+// race/refusal matrix is exercised in messagingOwnerRequest.component.test.ts.
+let mockOwnerCurrent = true;
+jest.mock('../../../services/messagingOwnerRequest.ts', () => ({
+  captureMessagingOwnerRequest: () => mockOwnerCurrent ? {
+    ownerId: 'owner-1', sessionId: 'session-1', isCurrent: () => mockOwnerCurrent,
+    invalidate: () => { mockOwnerCurrent = false; },
+  } : null,
+  messagingOwnerToken: async () => mockOwnerCurrent ? 'tok-1' : null,
+}));
 // NOTE: intentionally exhaustive — the E2EE modules load native crypto; none
 // of the calls under test touches them.
 jest.mock('../../../lib/e2ee/threadCrypto.ts', () => ({
@@ -60,6 +70,7 @@ function respond(status: number, body: unknown) {
 
 beforeEach(() => {
   calls = [];
+  mockOwnerCurrent = true;
   process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
 });
 afterAll(() => { global.fetch = realFetch; });
@@ -81,6 +92,12 @@ describe('saveMessage (TEL-F08)', () => {
 });
 
 describe('getSavedMessages (TEL-F08)', () => {
+  it('a missing owner refuses before fetching private saved messages', async () => {
+    mockOwnerCurrent = false;
+    respond(200, { saved: [] });
+    expect(await getSavedMessages()).toMatchObject({ ok: false, code: 'unauthenticated' });
+    expect(calls).toHaveLength(0);
+  });
   it('an unconfigured build is ok:false, never an empty success', async () => {
     delete process.env.EXPO_PUBLIC_API_BASE_URL;
     respond(200, { saved: [] });

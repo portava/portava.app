@@ -10,6 +10,7 @@
  * Data, routes, and permissions unchanged: trips come in via props, public
  * views only see public trips, and taps open the existing /trip/[id] screen.
  */
+import { useTripWindowClock } from '../hooks/useTripWindowClock.ts';
 import React, { useMemo, useState } from 'react';
 import { View, Text, Image, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { CachedImage } from './CachedImage.tsx';
@@ -32,7 +33,7 @@ const FILTERS: { key: Filter; label: string }[] = [
 ];
 
 function bucket(trip: TripRow): Exclude<Filter, 'all'> | 'other' {
-  const status = deriveTripDisplayStatus(trip.status, trip.endDate);
+  const status = deriveTripDisplayStatus(trip.status, trip.endDate, trip.timezone);
   if (status === 'active') return 'ongoing';
   if (status === 'upcoming' || status === 'planning') return 'upcoming';
   if (status === 'completed') return 'past';
@@ -59,7 +60,7 @@ function fmtRange(trip: TripRow): string {
 }
 
 function TripCard({ trip }: { trip: TripRow }) {
-  const displayStatus = deriveTripDisplayStatus(trip.status, trip.endDate);
+  const displayStatus = deriveTripDisplayStatus(trip.status, trip.endDate, trip.timezone);
   const statusColor = tripStatusColor(displayStatus);
   const dates = fmtDates(trip);
   return (
@@ -105,6 +106,7 @@ export function TripsTab({
   const [filter, setFilter] = useState<Filter>('all');
   const bottomInset = useBottomInset();
 
+  const calendarTick = useTripWindowClock(trips);
   // Featured: the ongoing trip, else the soonest upcoming trip.
   const featured = useMemo(() => {
     const ongoing = visible.find((t) => bucket(t) === 'ongoing');
@@ -112,13 +114,13 @@ export function TripsTab({
     return visible
       .filter((t) => bucket(t) === 'upcoming' && t.startDate)
       .sort((a, b) => (a.startDate ?? '').localeCompare(b.startDate ?? ''))[0] ?? null;
-  }, [visible]);
+  }, [visible, calendarTick]);
 
   const filtered = useMemo(() => {
     const list = filter === 'all' ? visible : visible.filter((t) => bucket(t) === filter);
     // Featured trip is rendered above the list — avoid showing it twice.
     return featured ? list.filter((t) => t.id !== featured.id) : list;
-  }, [visible, filter, featured]);
+  }, [visible, filter, featured, calendarTick]);
 
   const timeline = useMemo(() => {
     const byYear = new Map<string, TripRow[]>();

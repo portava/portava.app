@@ -19,6 +19,7 @@
  * storage continue to work unchanged via _setTestStorage().  Tests that want
  * to exercise the API path can call _setTestToken(token) to bypass supabase.
  */
+import { currentDiscoveryScope, isCurrentDiscoveryScope, viewerKeyForToken } from './discoveryViewerScope.ts';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { categoryStorageKey, resolveCategoryStorageKey, type StorageLike } from '../components/savedPlacesMapFilterStorage.ts';
 import { isAccountScopedStorageEnabled } from '../config/accountScopedStorageFlag.ts';
@@ -191,6 +192,86 @@ async function getAuthToken(): Promise<string | null> {
   }
 }
 
+export interface PendingPlaceChange { operationId: string; place: BookmarkedPlace; add: boolean; sent: boolean }
+let readVersion = 0;
+let appliedReadVersion = 0;
+
+function pendingKey(owner: string) { return `portava_saved_place_pending_v1:${owner}`; }
+async function journal(owner: string): Promise<PendingPlaceChange[]> {
+  const raw = await _storage.getItem(pendingKey(owner));
+  return raw ? JSON.parse(raw) : [];
+}
+async function setJournal(owner: string, values: PendingPlaceChange[]) {
+  if (values.length) await _storage.setItem(pendingKey(owner), JSON.stringify(values));
+  else await _storage.removeItem(pendingKey(owner));
+}
+const samePair = (a: BookmarkedPlace, b: BookmarkedPlace) => a.id === b.id && (a.listId ?? 'global') === (b.listId ?? 'global');
+function knownOwner() {
+  const key = currentDiscoveryScope().viewer;
+  return key?.startsWith('u:') ? key.slice(2) : null;
+}
+async function remember(owner: string | null, place: BookmarkedPlace, add: boolean) {
+  if (!owner) return;
+  const rows = (await journal(owner)).filter(change => !samePair(change.place, place));
+  rows.push({operationId:`${Date.now()}-${Math.random().toString(36).slice(2)}`,place,add,sent:false});
+  await setJournal(owner,rows);
+}
+
+export async function pendingPlaceChanges(owner: string): Promise<PendingPlaceChange[]> {
+  if (knownOwner() !== owner) return [];
+  return withWriteLock(() => journal(owner));
+}
+/** A successful, complete wishlist read can acknowledge only intents that
+ * precede that request. A newer tap with the same place/list remains pending. */
+export async function reconcileSavedPlaceRead(owner: string, observed: readonly PendingPlaceChange[], currentRows: readonly {placeId: string; listIds: string[]}[]) {
+  return withWriteLock(async () => {
+    if (knownOwner() !== owner) return [];
+    const previous = new Set(observed.map(change=>change.operationId));
+    const pending = (await journal(owner)).filter(change=>{
+      if (!previous.has(change.operationId)) return true;
+      const present = currentRows.some(row=>row.placeId===change.place.id && row.listIds.includes(change.place.listId ?? 'global'));
+      // An acknowledged addition that did not survive current place governance
+      // is unavailable. Its old device snapshot must not recreate its preview.
+      return !change.sent && present !== change.add;
+    });
+    await setJournal(owner,pending);
+    return pending;
+  });
+}
+function overlay(rows: BookmarkedPlace[], changes: PendingPlaceChange[]): BookmarkedPlace[] {
+  const result = rows.filter(place => !changes.some(change => samePair(change.place,place)));
+  return [...changes.filter(change => change.add).map(change => change.place), ...result];
+}
+
+async function writePair(token: string, place: BookmarkedPlace, add: boolean): Promise<boolean> {
+  const list = place.listId ?? 'global';
+  const url = add ? `${apiBase()}/api/wishlist` : `${apiBase()}/api/wishlist/${encodeURIComponent(place.id)}?list=${encodeURIComponent(list)}`;
+  const res = await fetch(url, {
+    method:add ? 'POST' : 'DELETE',
+    headers:{Authorization:`Bearer ${token}`, ...(add ? {'Content-Type':'application/json'} : {})},
+    ...(add ? {body:JSON.stringify({placeId:place.id,placeData:place,listId:list})} : {}),
+  });
+  return res.ok;
+}
+
+/** Pending changes survive process restarts. A matching owner and token are
+ * required for replay, and only a successful later read clears an intent. */
+export async function retryPendingPlaces(owner: string): Promise<void> {
+  const scope = currentDiscoveryScope();
+  if (scope.viewer !== `u:${owner}`) return;
+  await withWriteLock(async () => {
+    const changes = await journal(owner);
+    if (!changes.some(change=>!change.sent)) return;
+    const token = await getAuthToken();
+    if (!token || viewerKeyForToken(token) !== scope.viewer || !isCurrentDiscoveryScope(scope)) return;
+    for (const change of changes) {
+      if (!isCurrentDiscoveryScope(scope)) return;
+      if (!change.sent) change.sent = await writePair(token,change.place,change.add);
+    }
+    await setJournal(owner,changes);
+  });
+}
+
 // ── Public API ─────────────────────────────────────────────────────────────────
 
 export async function isSaved(id: string): Promise<boolean> {
@@ -222,11 +303,16 @@ export function toggleSave(place: BookmarkedPlace, listId = 'global'): Promise<T
   // rapid save→unsave tap) are serialised.  Without this, both calls could read
   // the same stale list, both decide to remove the item, and both fire
   // removeItem for the category-filter key — leaving a stale filter in storage.
+  const owner = knownOwner();
+  const scope = currentDiscoveryScope();
   return withWriteLock(async () => {
+    if (!isCurrentDiscoveryScope(scope)) throw new Error('The account changed.');
     // 1. Update AsyncStorage first — fast, works offline
     const all = await readAll();
     const idx = all.findIndex((b) => b.id === place.id && (b.listId ?? 'global') === listId);
     const removing = idx >= 0;
+    const changedPlace = {...place,listId,savedAt: Date.now()};
+    await remember(owner, changedPlace, !removing);
     if (removing) {
       // remove just this (place, list) pair — other trips keep their copy
       all.splice(idx, 1);
@@ -249,23 +335,18 @@ export function toggleSave(place: BookmarkedPlace, listId = 'global'): Promise<T
     const token = await getAuthToken();
     if (!token) {
       // Unauthenticated — local storage is canonical; treat as synced
-      return { added: !removing, synced: true };
+      return { added: !removing, synced: !owner };
     }
 
-    const base = apiBase();
     try {
-      const res = removing
-        ? await fetch(
-            `${base}/api/wishlist/${encodeURIComponent(place.id)}?list=${encodeURIComponent(listId)}`,
-            { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
-          )
-        : await fetch(`${base}/api/wishlist`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ placeId: place.id, placeData: place, listId }),
-          });
-      // Local state already updated; Supabase will reconcile on the next listSaved() call.
-      return { added: !removing, synced: res.ok };
+      if (!isCurrentDiscoveryScope(scope) || owner && viewerKeyForToken(token) !== scope.viewer) return {added: !removing,synced:false};
+      const synced = await writePair(token,changedPlace,!removing);
+      if (synced && owner) {
+        const rows = await journal(owner);
+        for (const change of rows) if (samePair(change.place,changedPlace)) change.sent = true;
+        await setJournal(owner,rows);
+      }
+      return {added: !removing,synced};
     } catch {
       // Network error — local state already updated
       return { added: !removing, synced: false };
@@ -281,9 +362,14 @@ export function toggleSave(place: BookmarkedPlace, listId = 'global'): Promise<T
  * to AsyncStorage on network error or when unauthenticated.
  */
 export async function listSaved(listId?: string): Promise<BookmarkedPlace[]> {
+  const request = ++readVersion;
+  const scope = currentDiscoveryScope();
+  const owner = knownOwner();
+  if (owner) await retryPendingPlaces(owner).catch(() => {});
+
   // Try Supabase first — authoritative source when online & authenticated
   const token = await getAuthToken();
-  if (token) {
+  if (token && (!owner || viewerKeyForToken(token) === scope.viewer) && isCurrentDiscoveryScope(scope)) {
     const base = apiBase();
     try {
       const res = await fetch(`${base}/api/wishlist`, {
@@ -291,9 +377,17 @@ export async function listSaved(listId?: string): Promise<BookmarkedPlace[]> {
       });
       if (res.ok) {
         const json = (await res.json()) as { places: BookmarkedPlace[] };
-        const places = json.places ?? [];
-        // Keep local cache in sync with the authoritative Supabase list
-        await writeAll(places);
+        if (!Array.isArray(json.places) || !isCurrentDiscoveryScope(scope)) throw new Error('Wishlist unavailable');
+        const places = await withWriteLock(async () => {
+          if (!isCurrentDiscoveryScope(scope)) return [];
+          if (request < appliedReadVersion) return readAll();
+          appliedReadVersion = request;
+          const changes = owner ? await journal(owner) : [];
+          const merged = overlay(json.places,changes);
+          if (owner) await setJournal(owner, changes.filter(change => !change.sent || json.places.some(row=>samePair(row,change.place)) !== change.add));
+          await writeAll(merged);
+          return merged;
+        });
         const filtered = listId
           ? places.filter((b) => (b.listId ?? 'global') === listId)
           : places;
@@ -305,6 +399,7 @@ export async function listSaved(listId?: string): Promise<BookmarkedPlace[]> {
   }
 
   // Fallback: local AsyncStorage
+  if (!isCurrentDiscoveryScope(scope)) return [];
   const all = await readAll();
   const filtered = listId
     ? all.filter((b) => (b.listId ?? 'global') === listId)
@@ -330,6 +425,8 @@ export async function getSavedListIds(placeId: string): Promise<Set<string>> {
 export async function clearAllSaved(): Promise<void> {
   // Clear local storage
   const key = await resolveKey();
+  const owner = knownOwner();
+  if (owner) for (const place of await readAll()) await withWriteLock(()=>remember(owner,place,false));
   if (key !== null) await _storage.removeItem(key);
   const globalFilterKey = await resolveCategoryStorageKey(_storage, 'global');
   if (globalFilterKey !== null) await _storage.removeItem(globalFilterKey);
@@ -377,6 +474,8 @@ export async function removeSavedFromList(id: string, listId: string): Promise<v
   }
   const raw = await _storage.getItem(key);
   const all: BookmarkedPlace[] = raw ? (JSON.parse(raw) as BookmarkedPlace[]) : [];
+  const removed = all.find(b=>b.id === id && (b.listId ?? 'global') === listId);
+  if (removed) await withWriteLock(()=>remember(knownOwner(),removed,false));
   const remaining = all.filter(
     (b) => !(b.id === id && (b.listId ?? 'global') === listId),
   );
@@ -417,6 +516,7 @@ export async function removeSaved(id: string): Promise<void> {
   }
   const raw = await _storage.getItem(key);
   const all: BookmarkedPlace[] = raw ? (JSON.parse(raw) as BookmarkedPlace[]) : [];
+  for (const place of all.filter(b=>b.id===id)) await withWriteLock(()=>remember(knownOwner(),place,false));
   const remaining = all.filter((b) => b.id !== id);
   await _storage.setItem(key, JSON.stringify(remaining));
 

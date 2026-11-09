@@ -1,3 +1,4 @@
+import { tripSearchType, useTripSearchMinute } from '../../../hooks/useTripSearchMinute.ts';
 /**
  * Global Input Intelligence — the unified assistance hook (spec §33, §39).
  *
@@ -109,6 +110,9 @@ export function useInputAssistance(
   );
 
   const [suggestions, setSuggestions] = useState<InputSuggestion[]>([]);
+  const observedMinute = useTripSearchMinute(enabled && context === 'global_search' && suggestions.some(row => tripSearchType(row.entityType)));
+  const searchMinute = context === 'global_search' ? observedMinute : 0;
+  const previousMinute = useRef(searchMinute);
   const [loading, setLoading] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
   // §44 ACTION/RESULT LINKAGE (census G355). The suggest response has always
@@ -202,7 +206,11 @@ export function useInputAssistance(
     // field's non-AI cache entry for the same text.
     const scopedFieldId = sessionKey ? `${fieldId}::scope:${sessionKey}` : fieldId;
     const baseFieldId = capKey ? `${scopedFieldId}::cap:${capKey}` : scopedFieldId;
-    const cacheFieldId = (aiAssist === true ? `${baseFieldId}::ai:${aiKey}` : checkKey ? `${baseFieldId}::check:${checkKey}` : baseFieldId) + (tzKey ? `::tz:${tzKey}` : ''); // G149: a verdict is keyed by the pair it judged; G46: a date by the zone it was read in
+    const cacheFieldId = (aiAssist === true ? `${baseFieldId}::ai:${aiKey}` : checkKey ? `${baseFieldId}::check:${checkKey}` : baseFieldId) + (tzKey ? `::tz:${tzKey}` : '') + (searchMinute ? `::trip-minute:${searchMinute}` : ''); // G149: a verdict is keyed by the pair it judged; G46: a date by the zone it was read in
+    if (previousMinute.current !== searchMinute) {
+      previousMinute.current = searchMinute;
+      setSuggestions(previous => previous.filter(row=>!tripSearchType(row.entityType)));
+    }
     const cacheKey = SuggestionCache.key(cacheFieldId, trimmed, latKey, lngKey);
     // §29 — the field's declared privacyClass decides whether its suggestions
     // may live in the process-global cache at all. A `personal` / `sensitive` /
@@ -485,7 +493,7 @@ export function useInputAssistance(
     // for this effect; depending on the object itself would re-fetch on every
     // render that produced an equal declaration.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trimmed, enabled, policy, fieldId, latKey, lngKey, sessionKey, aiKey, capKey, checkKey, tzKey, accountEpoch, resultScope]);
+  }, [trimmed, enabled, policy, fieldId, latKey, lngKey, sessionKey, aiKey, capKey, checkKey, tzKey, accountEpoch, resultScope, searchMinute]);
 
   return { suggestions: scopeCurrent ? suggestions : [], loading, unavailable: scopeCurrent && unavailable, policy, requestId: scopeCurrent ? requestId : null, refusal: scopeCurrent ? refusal : null, policyAuthoritative: policy != null && getContextDescriptor(policy.context).authoritative, answeredText: scopeCurrent ? answeredText : null };
 }

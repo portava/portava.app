@@ -57,7 +57,7 @@ export function MemoriesStrip({ limit = 8 }: MemoriesStripProps) {
             style={styles.card}
             onPress={() => router.push(`/memory/${m.id}` as any)}
           >
-            {m.cover?.mediaType === POST_REFERENCE_MEDIA_TYPE ? <View style={styles.cover}><PostReferenceCover /></View> : <DisplayMediaImage
+            {m.cover?.mediaType === POST_REFERENCE_MEDIA_TYPE ? <View style={styles.cover}><PostReferenceCover uri={m.cover?.mediaUrl} /></View> : <DisplayMediaImage
               uri={m.cover?.mediaUrl}
               width={CARD_W}
               height={80}

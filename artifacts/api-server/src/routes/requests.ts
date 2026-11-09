@@ -12,6 +12,7 @@
  * All writes use auth.client (service-role, JWT-verified) so they work in tests
  * via the _setTestClient slot in http.ts.
  */
+import { tripHasEnded } from "../domain/trips/invariants/tripStatus.js";
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { normalizedFriendshipPair, isUuid } from "../lib/friendDecisions";
@@ -142,11 +143,11 @@ router.get("/me/requests", async (req, res) => {
   let tripOwnerMap: Record<string, string> = {};
   if (allTripIds.length > 0) {
     const [{ data: tripsData }, { data: ownerRows }] = await Promise.all([
-      sc.from("trips").select("id, title").in("id", allTripIds),
+      sc.from("trips").select("id, title, status, end_date, timezone").in("id", allTripIds),
       sc.from("trip_members").select("trip_id, user_id")
         .in("trip_id", allTripIds).eq("role", "owner"),
     ]);
-    for (const t of (tripsData ?? [])) tripTitleMap[t.id] = t.title ?? null;
+    for (const t of (tripsData ?? [])) if (!tripHasEnded(t)) tripTitleMap[t.id] = t.title ?? null;
     for (const r of (ownerRows ?? [])) tripOwnerMap[r.trip_id] = r.user_id;
   }
 
@@ -177,6 +178,7 @@ router.get("/me/requests", async (req, res) => {
     });
   }
   for (const r of (tripInvited ?? [])) {
+    if (!Object.hasOwn(tripTitleMap, r.trip_id)) continue;
     items.push({
       id: r.trip_id, type: "trip_invite", direction: "incoming", status: "invited",
       actor: profileToActor(profileMap[tripOwnerMap[r.trip_id]]),
@@ -196,6 +198,7 @@ router.get("/me/requests", async (req, res) => {
     });
   }
   for (const r of tripInviteesOut) {
+    if (!Object.hasOwn(tripTitleMap, r.trip_id)) continue;
     // Compound ID: tripId|inviteeId — the owner needs this for cancel
     items.push({
       id: `${r.trip_id}|${r.user_id}`, type: "trip_invite", direction: "outgoing", status: "invited",
@@ -628,6 +631,10 @@ router.post("/me/requests/trip_invite/:tripId/accept", async (req, res) => {
     .select("trip_id, user_id, role").eq("trip_id", tripId).eq("user_id", user.id).maybeSingle();
   if (!tm) { sendError(res, "not_found", "Trip invite not found"); return; }
   if (tm.role !== "invited") { sendError(res, "invalid_payload", `Trip membership is already '${tm.role}'`); return; }
+
+  const tripWindow = await sc.from("trips").select("status, end_date, timezone").eq("id", tripId).maybeSingle();
+  if (tripWindow.error) { sendError(res, "degraded_unavailable", "Could not check this trip"); return; }
+  if (!tripWindow.data || tripHasEnded(tripWindow.data)) { res.status(410).json({ error: "gone", message: "This trip is no longer active" }); return; }
 
   // Trip Kernel path (ACCEPT_INVITE, contract v2). The invitee is the actor;
   // the kernel requires exactly an 'invited' row for them. Off => the direct

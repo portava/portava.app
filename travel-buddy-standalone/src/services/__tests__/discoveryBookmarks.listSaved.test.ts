@@ -433,3 +433,27 @@ describe('listSaved — local cache is the authoritative offline store', () => {
     assert.ok(result.some((p) => p.id === 'cached-p2'));
   });
 });
+
+describe('offline list reconciliation', () => {
+  it('retains a pending add across a stale GET and isolates the queued save by owner', async () => {
+    const { toggleSave, pendingPlaceChanges } = await import('../discoveryBookmarks.ts');
+    const { setDiscoveryViewerFromSession, _resetDiscoveryViewerScopeForTests } = await import('../discoveryViewerScope.ts');
+    const original = global.fetch;
+    const owner = 'member-A';
+    const token = `e30.${Buffer.from(JSON.stringify({sub:owner})).toString('base64url')}.test`;
+    _setTestStorage(fakeStorage()); _setTestToken(token); setDiscoveryViewerFromSession(owner);
+    try {
+      global.fetch = failFetch();
+      assert.deepEqual(await toggleSave(makePlace('node/13','trip-A'),'trip-A'), {added:true,synced:false});
+      global.fetch = async (_url,init) => init?.method === 'POST'
+        ? {ok:false} as Response : {ok:true,json:async()=>({places:[]})} as Response;
+      const rows = await listSaved();
+      assert.deepEqual(rows.map(p=>[p.id,p.listId]),[['node/13','trip-A']]);
+      assert.equal((await pendingPlaceChanges(owner)).length,1);
+      setDiscoveryViewerFromSession('member-B');
+      assert.deepEqual(await pendingPlaceChanges(owner),[]);
+    } finally {
+      global.fetch=original;_setTestToken(undefined);_resetDiscoveryViewerScopeForTests();
+    }
+  });
+});

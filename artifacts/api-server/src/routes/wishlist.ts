@@ -1,3 +1,4 @@
+import { PROVIDER_REF_LIST, savedPlaceLibrary, fileSavedPlaceForOwner } from "../lib/savedPlaceLibrary.js";
 import { Router } from "express";
 import { provenanceStamp } from "../lib/placeProvenance.js";
 import { z } from "zod";
@@ -230,6 +231,28 @@ export async function trackOsmPlaceUnsave(
 // Returns all saved places for the authenticated user, optionally filtered by
 // list_id.  The response shape mirrors BookmarkedPlace so the mobile client can
 // use it directly without transformation.
+router.get("/users/me/saved-places", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  res.setHeader("Cache-Control", "private, no-store");
+  const result = await savedPlaceLibrary(auth.client, auth.user.id);
+  res.status(result.state === "unavailable" ? 503 : 200).json(result);
+});
+
+router.put("/users/me/saved-places/collection", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const parsed = z.object({ placeId: z.string().min(1).max(512), collectionId: z.string().uuid() }).safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", "Invalid place or collection"); return; }
+  try {
+    const result = await fileSavedPlaceForOwner(auth.client, auth.user.id, parsed.data.placeId, parsed.data.collectionId);
+    if (!result) { sendError(res, "not_found", "This saved place or collection is unavailable"); return; }
+    res.json({ok:true, ...result});
+  } catch {
+    sendError(res, "degraded_unavailable", "Could not file this saved place. Please try again.");
+  }
+});
+
 router.get("/wishlist", async (req, res) => {
   const sc = await requireUser(req, res);
   if (!sc) return;
@@ -253,8 +276,10 @@ router.get("/wishlist", async (req, res) => {
     return;
   }
 
-  const places = ((data ?? []) as Array<{ place_data: object; saved_at: string }>).map((row) => ({
+  const places = ((data ?? []) as Array<{ place_id: string; list_id: string; place_data: object; saved_at: string }>).filter(row => row.list_id !== PROVIDER_REF_LIST).map((row) => ({
     ...(row.place_data as object),
+    id: row.place_id,
+    listId: row.list_id ?? 'global',
     savedAt: new Date(row.saved_at).getTime(),
   }));
 
@@ -280,6 +305,7 @@ router.post("/wishlist", async (req, res) => {
   }
 
   const { placeId, placeData, listId } = parsed.data;
+  if (listId === PROVIDER_REF_LIST) { sendError(res, "invalid_payload", "Invalid list"); return; }
 
   // Discovery's ONE save path (census-discovery §81, A21): the same row,
   // payload and conflict key this route used to write inline, now shared with
@@ -320,7 +346,8 @@ router.delete("/wishlist/:placeId", async (req, res) => {
     .from("wishlist_places")
     .delete()
     .eq("user_id", sc.user.id)
-    .eq("place_id", placeId);
+    .eq("place_id", placeId)
+    .neq("list_id", PROVIDER_REF_LIST);
 
   if (listId) {
     query = (query as any).eq("list_id", listId);
@@ -350,7 +377,8 @@ router.delete("/wishlist", async (req, res) => {
   const { error } = await sc.client
     .from("wishlist_places")
     .delete()
-    .eq("user_id", sc.user.id);
+    .eq("user_id", sc.user.id)
+    .neq("list_id", PROVIDER_REF_LIST);
 
   if (error) {
     sendError(res, "db_error", (error as { message: string }).message);

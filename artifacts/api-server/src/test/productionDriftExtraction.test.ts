@@ -35,7 +35,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  stripSqlNoise,
+  publicTableNames,
   appliedAfterSnapshot,
   declaredTables,
   staleUnmergedEntries,
@@ -44,10 +44,15 @@ import {
   PRODUCTION_SNAPSHOT,
 } from "../scripts/checkProductionDrift.js";
 
-const TABLE_RE = /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:"?public"?\.)?"?([a-z0-9_]+)"?/gi;
-const namesIn = (sql: string) => [...stripSqlNoise(sql).matchAll(TABLE_RE)].map((m) => m[1].toLowerCase());
+const namesIn = publicTableNames;
 
 describe("stripSqlNoise reports storage, not grammar", () => {
+  it("consumes private schema names without inventing public tables", () => {
+    assert.deepEqual(namesIn(`CREATE TABLE telegraph_crypto_private.key_package_publications (id uuid);
+      CREATE TABLE "private_store" . "same_name" (id uuid);
+      CREATE TABLE "public" . "same_name" (id uuid);
+      CREATE TABLE ordinary (id uuid);`), ["same_name", "ordinary"]);
+  });
   it("a CREATE TABLE inside a -- comment declares nothing", () => {
     assert.deepEqual(namesIn("-- the next CREATE TABLE re-issues the blanket set\n"), []);
   });

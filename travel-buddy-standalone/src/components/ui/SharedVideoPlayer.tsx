@@ -56,6 +56,15 @@ export interface SharedVideoPlayerProps {
   muted?: boolean;
   loop?: boolean;
   onEnd?: () => void;
+  /** Open over the current screen; closing removes this player, never navigates. */
+  fullscreenOnly?: boolean;
+  onClose?: () => void;
+  initialPositionMillis?: number;
+  onPositionChange?: (positionMillis: number) => void;
+  /** Increment to open this existing player in its modal without replacing it. */
+  fullscreenRequest?: number;
+  /** Expand the whole post, including comments, when a surrounding post owns the overlay. */
+  onRequestFullscreen?: () => void;
   style?: StyleProp<ViewStyle>;
 }
 
@@ -73,14 +82,20 @@ function SharedVideoSession({
   muted: mutedProp = true,
   loop = false,
   onEnd,
+  fullscreenOnly = false,
+  onClose,
+  initialPositionMillis = 0,
+  onPositionChange,
+  fullscreenRequest = 0,
+  onRequestFullscreen,
   style,
 }: SharedVideoPlayerProps) {
   const videoRef = useRef<Video>(null);
-  const [fullscreen, setFullscreen] = useState(false);
+  const [fullscreen, setFullscreen] = useState(fullscreenOnly);
   const switching = useRef(false);
-  const position = useRef(0);
-  const pendingResume = useRef<number | null>(null);
-  const [resumeStatus, setResumeStatus] = useState<{ positionMillis?: number }>({});
+  const position = useRef(initialPositionMillis);
+  const pendingResume = useRef<number | null>(initialPositionMillis > 0 ? initialPositionMillis : null);
+  const [resumeStatus, setResumeStatus] = useState<{ positionMillis?: number }>(() => initialPositionMillis > 0 ? { positionMillis: initialPositionMillis } : {});
   const [progress, setProgress] = useState({ position: 0, duration: 0 });
   const [viewError, setViewError] = useState<string | null>(null);
   const mounted = useRef(true);
@@ -96,6 +111,7 @@ function SharedVideoSession({
     setIntent({ uri, autoplay, requested: false });
     setIsPlaying(false);
     setFullscreen(false);
+    if (fullscreenOnly) onClose?.();
   });
   const playIntent = activity.active && (intent.uri === uri && intent.autoplay === autoplay ? intent.requested : autoplay);
   const waitingForWebResume = Platform.OS === 'web' && resumeStatus.positionMillis !== undefined;
@@ -144,7 +160,10 @@ function SharedVideoSession({
         }
         return;
       }
-      if (pendingResume.current === null) position.current = status.positionMillis;
+      if (pendingResume.current === null) {
+        position.current = status.positionMillis;
+        onPositionChange?.(status.positionMillis);
+      }
       if (fullscreen) setProgress({ position: pendingResume.current ?? status.positionMillis, duration: status.durationMillis ?? 0 });
       setIsPlaying(status.isPlaying);
       if (status.didJustFinish && !loop) {
@@ -152,7 +171,7 @@ function SharedVideoSession({
         onEnd?.();
       }
     },
-    [fullscreen, loop, onEnd, captionsEnabled, uri, autoplay, playback.rejectAdaptive, dubbing.playback.onSourceStatus, isCurrentPlayback, playbackVersion, playbackKey],
+    [fullscreen, loop, onEnd, onPositionChange, captionsEnabled, uri, autoplay, playback.rejectAdaptive, dubbing.playback.onSourceStatus, isCurrentPlayback, playbackVersion, playbackKey],
   );
 
   const togglePlay = useCallback(async () => {
@@ -196,6 +215,7 @@ function SharedVideoSession({
       pendingResume.current = position.current;
       setResumeStatus({ positionMillis: position.current });
       setFullscreen(false);
+      if (fullscreenOnly) onClose?.();
       return;
     }
     if (switching.current) return;
@@ -216,7 +236,14 @@ function SharedVideoSession({
     } catch {
       if (isCurrentPlayback()) setViewError('Couldn’t change the video view. Try again.');
     } finally { if (timeout) clearTimeout(timeout); switching.current = false; }
-  }, [isCurrentPlayback, isPlaying]);
+  }, [isCurrentPlayback, isPlaying, fullscreenOnly, onClose]);
+
+  const lastFullscreenRequest = useRef(0);
+  useEffect(() => {
+    if (fullscreenRequest <= lastFullscreenRequest.current) return;
+    lastFullscreenRequest.current = fullscreenRequest;
+    void changeFullscreen(true);
+  }, [fullscreenRequest, changeFullscreen]);
 
   const restorePosition = useCallback(async () => {
     const target = videoRef.current;
@@ -332,7 +359,7 @@ function SharedVideoSession({
           <Volume2 size={18} color="#fff" />
         )}
       </Pressable>
-      {!fullscreen && <Pressable style={s.expandBtn} onPress={() => void changeFullscreen(true)} accessibilityRole="button" accessibilityLabel="View video full screen"><Maximize2 size={22} color="#fff" /></Pressable>}
+      {!fullscreen && <Pressable style={s.expandBtn} onPress={onRequestFullscreen ?? (() => void changeFullscreen(true))} accessibilityRole="button" accessibilityLabel="View video full screen"><Maximize2 size={22} color="#fff" /></Pressable>}
       {fullscreen && progress.duration > 0 ? <View style={s.seekBar}>
         <Text style={s.time}>{formatTime(progress.position)} / {formatTime(progress.duration)}</Text>
         <Slider testID="fullscreen-video-seek" accessibilityLabel="Video position" minimumValue={0} maximumValue={progress.duration} value={progress.position} onSlidingComplete={seek} minimumTrackTintColor="#fff" maximumTrackTintColor="#777" thumbTintColor="#fff" />
@@ -355,7 +382,7 @@ const s = StyleSheet.create({
   fullscreenTitle: { color: '#fff', fontSize: 16 },
   closeBtn: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
   fullscreenPlayer: { flex: 1, borderRadius: 0, backgroundColor: '#000' },
-  expandBtn: { position: 'absolute', top: 10, right: 10, width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.65)', alignItems: 'center', justifyContent: 'center' },
+  expandBtn: { position: 'absolute', top: 10, right: 10, width: avatar.s44, height: avatar.s44, borderRadius: avatar.s44 / 2, backgroundColor: 'rgba(0,0,0,0.65)', alignItems: 'center', justifyContent: 'center' },
   seekBar: { position: 'absolute', bottom: 12, left: 16, right: 16, padding: 8, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.7)' },
   time: { color: '#fff', fontSize: 13 },
   container: {

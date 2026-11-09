@@ -75,6 +75,8 @@ import {
 } from "../services/memory/MemoryDomainService.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
 import { z } from "zod";
+import { postMediaStorageRef } from '../lib/media/postMediaModerationHold.js';
+import { presentPosters, storagePresence } from '../lib/media/storageBackedPostMedia.js';
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const router = Router();
@@ -98,7 +100,7 @@ const UUID = /^[0-9a-f-]{36}$/i;
  * app-side, here, and a direct PostgREST read would still see archived rows.
  * ============================================================================ */
 const HIGHLIGHT_COLUMNS =
-  "id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at, archived_at";
+  "id, owner_id, media_url, media_type, media_thumbnail_url, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at, archived_at";
 
 /* ----------------------------------------------------------------------------
  * §12 / §5 — the three columns migration 2723 added, projected.
@@ -981,18 +983,12 @@ router.post("/highlights", async (req, res) => {
   // writes no audit line (verifier F2).
   const envelope = readMemoryCommandEnvelope(req);
 
-  const outcome = await dispatchMemoryCommand<{ id: string; row: any }>({
-    sc: client,
-    commandType: "CREATE_HIGHLIGHT",
-    memoryId: null,
-    highlightId: null,
-    actorUserId: user.id,
-    idempotencyKey: envelope.ok ? envelope.idempotencyKey : "",
-    kernelEnvelopeError: envelope.ok ? null : envelope.message,
-    legacyUnaudited: true,
-    // The function re-checks every invariant and computes the expiry from its
-    // own clock; `expires_in_hours` is null exactly for PERMANENT.
-    payload: {
+  const sourceRef = postMediaStorageRef(d.mediaUrl);
+  const trackedUpload = sourceRef.kind === 'object' && sourceRef.bucket === 'post-media'
+    && sourceRef.path.startsWith(user.id + '/') && z.string().uuid().safeParse(req.get('Idempotency-Key')).success;
+  const poster = trackedUpload && d.mediaType.startsWith('video/') && sourceRef.kind === 'object'
+    ? (await presentPosters(storagePresence(client), [sourceRef.path])).get(sourceRef.path) : null;
+  const commandPayload = {
       media_url: d.mediaUrl,
       media_type: d.mediaType,
       video_duration_seconds: d.videoDurationSeconds ?? null,
@@ -1005,11 +1001,41 @@ router.post("/highlights", async (req, res) => {
       lifetime_class: d.lifetimeClass ?? null,
       filter_id: d.filterId,
       filter_intensity: d.filterIntensity,
-    },
+      ...(trackedUpload ? {
+        uploaded_highlight_receipt: true, source_memory_ids: requestedSources,
+        verified_thumbnail_url: poster ? 'post-media/' + poster : null,
+      } : {}),
+  };
+
+  const outcome = await dispatchMemoryCommand<{ id: string; row: any }>({
+    sc: client,
+    commandType: "CREATE_HIGHLIGHT",
+    memoryId: null,
+    highlightId: null,
+    actorUserId: user.id,
+    idempotencyKey: envelope.ok ? envelope.idempotencyKey : "",
+    kernelEnvelopeError: envelope.ok ? null : envelope.message,
+    legacyUnaudited: true,
+    // The function re-checks every invariant and computes the expiry from its
+    // own clock; `expires_in_hours` is null exactly for PERMANENT.
+    payload: commandPayload,
     // The receipt holds ids only (§23); the row is re-read below under the
     // caller's own client, so a replay answers with the same Highlight.
     fromKernelResult: (r: any) => ({ id: String(r?.id ?? ""), row: null }),
     legacy: async () => {
+      if (trackedUpload && envelope.ok) {
+        const { data: receipt, error } = await client.rpc('submit_uploaded_highlight', {
+          p_command: {actor_user_id:user.id, idempotency_key:envelope.idempotencyKey, type:'CREATE_HIGHLIGHT', payload:commandPayload},
+          p_with_events:false,
+        });
+        if (error) return {ok:false, http:{code:'db_error',message:'Could not publish this Highlight. Retry your upload.'}};
+        if (!receipt?.ok || !receipt.result?.id) {
+          const conflict = receipt?.reason === 'MEMORY_IDEMPOTENCY_KEY_REUSED';
+          return {ok:false, http:{code:conflict ? 'conflict' : 'invalid_payload', message:conflict
+            ? 'This submission was already used with different details.' : 'This Highlight can no longer be published.'}};
+        }
+        return {ok:true, body:{id:receipt.result.id, row:null}};
+      }
       const { data, error } = await client
         .from("highlights")
         .insert({

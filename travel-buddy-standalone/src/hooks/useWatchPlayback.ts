@@ -30,7 +30,7 @@ export interface WatchPlaybackManager {
   setActiveId: (id: string | null) => void;
 }
 
-export function useWatchPlayback(options: { autoplay?: boolean } = {}): WatchPlaybackManager { const autoplay = options.autoplay !== false; const autoplayRef = useRef(autoplay); useEffect(() => { autoplayRef.current = autoplay; }, [autoplay]); // census-media §34 (F2): autoplay false = tap-to-play — this manager then starts nothing itself; omitted = true = today
+export function useWatchPlayback(options: { autoplay?: boolean; cellOwnsPlayback?: boolean } = {}): WatchPlaybackManager { const autoplay = options.autoplay !== false && !options.cellOwnsPlayback; const autoplayRef = useRef(autoplay); useEffect(() => { autoplayRef.current = autoplay; }, [autoplay]); // census-media §34 (F2): autoplay false = tap-to-play — this manager then starts nothing itself; omitted = true = today
   const refsMap = useRef<Map<string, VideoRef>>(new Map());
   const activeIdRef = useRef<string | null>(null);
   // Track whether the screen is currently focused.
@@ -121,6 +121,7 @@ export function useWatchPlayback(options: { autoplay?: boolean } = {}): WatchPla
 
       // Pause the previous active item.
       const prevId = activeIdRef.current;
+      activeIdRef.current = id;
       if (prevId) {
         const prevRef = refsMap.current.get(prevId);
         try {
@@ -130,10 +131,10 @@ export function useWatchPlayback(options: { autoplay?: boolean } = {}): WatchPla
         }
       }
 
-      activeIdRef.current = id;
+      if (activeIdRef.current !== id) return;
 
       // Play the new active item (only if the screen is focused).
-      if (id && focusedRef.current && eligibleRef.current && autoplayRef.current) {
+      if (id && focusedRef.current && foregroundRef.current && eligibleRef.current && autoplayRef.current) {
         const ref = refsMap.current.get(id);
         try {
           await ref?.current?.playAsync();

@@ -58,6 +58,7 @@ export interface WatchVideoCellProps {
   captionSource?: string;
   posterUrl: string | null;
   isActive: boolean;
+  isViewable?: boolean;
   playbackEligible?: boolean;
   isMuted: boolean;
   /** Called on every playback tick. `durationMs` is null until the video metadata loads. */
@@ -73,7 +74,7 @@ export interface WatchVideoCellHandle {
 
 export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellProps>(
   function WatchVideoCell(
-    { id, videoUrl, captionSource, posterUrl, isActive, playbackEligible = true, isMuted, onProgress, onVideoRef, onVideoUnmount },
+    { id, videoUrl, captionSource, posterUrl, isActive, isViewable = isActive, playbackEligible = true, isMuted, onProgress, onVideoRef, onVideoUnmount },
     ref,
   ) {
     const videoRef = useRef<Video>(null);
@@ -111,9 +112,9 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
       } else {
         videoRef.current?.pauseAsync().catch(() => {});
         // Reset position so the next time this cell becomes active it starts fresh.
-        if (!isActive) videoRef.current?.setPositionAsync(0).catch(() => {});
+        if (!isViewable) videoRef.current?.setPositionAsync(0).catch(() => {});
       }
-    }, [isActive, shouldPlay, hasHardFailed]);
+    }, [isViewable, shouldPlay, hasHardFailed]);
 
     const handleStatus = useCallback(
       (status: AVPlaybackStatus) => {

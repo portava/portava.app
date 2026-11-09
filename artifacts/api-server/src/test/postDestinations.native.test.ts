@@ -37,6 +37,9 @@ describe('Post reference destinations: real PostgreSQL 17',{skip:!binary?'PORTAV
   await sql(readFileSync(new URL('./fixtures/hosted4000MemorySourceGuard.sql',import.meta.url),'utf8'));
   await sql('GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO service_role; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO service_role');
   await sql(migration('4007_post_reference_destinations.sql'));
+  await sql('ALTER TABLE posts ADD COLUMN content text, ADD COLUMN created_by uuid, ADD COLUMN updated_by uuid, ADD COLUMN source text');
+  await sql(migration('4018_profile_post_references.sql'));
+  await sql(migration('4020_uploaded_highlight_receipts.sql'));
  });
  after(async()=>{await cluster?.close();});
  beforeEach(async()=>{
@@ -45,12 +48,39 @@ describe('Post reference destinations: real PostgreSQL 17',{skip:!binary?'PORTAV
    INSERT INTO posts(id,author_id) VALUES('${post}','${author}');
    INSERT INTO memories(id,owner_id,title,state,visibility) VALUES('${memory}','${owner}','Existing','published','only_me');`);
  });
+ for (const kernel of [false,true]) test('direct Highlight upload retries across kernel rollout: '+kernel, async () => {
+  const key=randomUUID();
+  const payload={uploaded_highlight_receipt:true,media_url:'post-media/'+owner+'/clip.mp4',media_type:'video/mp4',
+    video_duration_seconds:6,expires_in_hours:24,visibility:'public',filter_id:'original',filter_intensity:100,
+    verified_thumbnail_url:'post-media/'+owner+'/clip.mp4.poster.jpg',source_memory_ids:[]};
+  const write=(events:boolean,caption:string) => sql(`SELECT submit_uploaded_highlight('${JSON.stringify({command_id:randomUUID(),actor_user_id:owner,
+    type:'CREATE_HIGHLIGHT',idempotency_key:key,payload:{...payload,caption}})}'::jsonb, ${events})`).then(JSON.parse);
+  const [one,two]=await Promise.all([write(kernel,'video'),write(kernel,'video')]);
+  assert.equal(one.ok,true);assert.equal(two.ok,true);assert.equal(one.result.id,two.result.id);
+  assert.equal((await write(!kernel,'video')).result.id,one.result.id);
+  assert.equal((await write(kernel,'edited')).reason,'MEMORY_IDEMPOTENCY_KEY_REUSED');
+  assert.equal(await sql('SELECT count(*) FROM highlights'),'1');
+  assert.equal(await sql('SELECT count(*) FROM memory_domain_events'),kernel?'2':'0');
+  assert.equal(await sql('SELECT media_thumbnail_url FROM highlights'),payload.verified_thumbnail_url);
+  await sql('DELETE FROM highlights');
+  assert.equal((await write(kernel,'video')).reason,'HIGHLIGHT_NOT_FOUND');
+ });
  test('new Memory and reference commit with canonical events and no copied media',async()=>{
   const r=await runSave();assert.equal(r.memoryCreated,true);
   assert.equal(await sql(`SELECT visibility FROM memories WHERE id='${r.memoryId}'`),'only_me');
   assert.equal(await sql('SELECT media_type||\'|\'||media_url FROM memory_items'),`application/vnd.portava.post-reference+json|portava-post-reference:${r.referenceId}`);
   assert.equal(await sql('SELECT count(*) FROM memory_domain_events'),'2');assert.equal(await sql('SELECT count(*) FROM memory_event_outbox'),'2');
   assert.equal(await sql('SELECT count(*) FROM memory_command_audit'),'2');assert.equal(await sql('SELECT source_post_id IS NULL FROM memory_items'),'t');
+ });
+ test('profile repost keeps provenance, survives a retry and stops replay after removal', async () => {
+  const operation=randomUUID();
+  const write=`SELECT share_post_to_profile('${owner}','${post}','${operation}','My note','public')`;
+  const first=JSON.parse(await sql(write));
+  assert.equal(first.profilePostId,first.referenceId);
+  assert.equal(await sql(`SELECT content FROM posts WHERE post_reference_id='${first.referenceId}'`),'My note');
+  const replay=JSON.parse(await sql(write)); assert.equal(replay.profilePostId,first.profilePostId); assert.equal(replay.replayed,true);
+  await assert.rejects(sql(write.replace('My note','A different note')),/destination_intent_conflict/);
+  await sql(`DELETE FROM posts WHERE id='${first.profilePostId}'`); await assert.rejects(sql(write),/destination_unavailable/);
  });
  test('Highlight creates two lifecycle events and expires after 24 hours',async()=>{
   const r=await runSave({destination:'highlight'});assert.ok(r.highlightId);assert.equal(r.memoryId,null);

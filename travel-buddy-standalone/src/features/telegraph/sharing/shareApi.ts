@@ -15,7 +15,9 @@ import { stampPlaceLiveInformation } from './placeLiveInformation.ts';
 import { isSupabaseConfigured } from '../../../lib/supabase.ts';
 import { captureMessagingOwnerRequest, type MessagingOwnerRequest } from '../../../services/messagingOwnerRequest.ts';
 import { fetchOwnedApi } from '../../../services/ownedApiRequest.ts';
-import type { TelegraphAction, TelegraphObjectType } from '../sharedContext/types.ts'; import { shareProjectionHeaders } from '../negotiation/clientCapabilities.ts'; // census-telegraph T431
+import type { TelegraphAction, TelegraphObjectType as ContextObjectType } from '../sharedContext/types.ts'; import { shareProjectionHeaders } from '../negotiation/clientCapabilities.ts'; // census-telegraph T431
+
+type TelegraphObjectType = ContextObjectType | 'MEDIA';
 
 export type UnavailableReason = 'deleted' | 'private' | 'unauthorized' | 'not_found' | 'unknown';
 
@@ -25,6 +27,7 @@ export interface TelegraphShareProjection {
   title: string;
   subtitle: string | null;
   imageUrl: string | null;
+  media?: { type: 'image' | 'video'; uri: string; thumbnailUri: string | null }[];
   projectionVersion: string | null;
   deepLink: string;
   liveIntelligence?: import('./placeLiveInformation.ts').PlaceLiveInformation;

@@ -123,10 +123,10 @@ async function readMembers(
   threadId: string,
   sequenced = false,
 ): Promise<{ ok: true; members: ReceiptMember[] } | { ok: false }> {
-  const { data, error } = await client
-    .from("message_thread_members")
-    .select(sequenced ? `${MEMBER_COLUMNS}, delivered_sequence, seen_sequence` : MEMBER_COLUMNS)
-    .eq("thread_id", threadId);
+  const query = sequenced
+    ? client.from("message_thread_members").select(`${MEMBER_COLUMNS}, delivered_sequence, seen_sequence`)
+    : client.from("message_thread_members").select(MEMBER_COLUMNS);
+  const { data, error } = await query.eq("thread_id", threadId);
   if (error) return { ok: false };
   return { ok: true, members: ((data as any[]) ?? []) as ReceiptMember[] };
 }
@@ -179,9 +179,10 @@ router.get(
       return;
     }
 
-    const { data: rows, error: rowErr } = await client
-      .from("messages")
-      .select(sequenced ? `${MESSAGE_COLUMNS}, sequence` : MESSAGE_COLUMNS)
+    const messagesQuery = sequenced
+      ? client.from("messages").select(`${MESSAGE_COLUMNS}, sequence`)
+      : client.from("messages").select(MESSAGE_COLUMNS);
+    const { data: rows, error: rowErr } = await messagesQuery
       .eq("thread_id", threadId)
       .in("id", ids);
     if (rowErr) {

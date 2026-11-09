@@ -160,10 +160,10 @@ DEFAULT 0` on **PostgreSQL 17.6** (measured: `server_version_num = 170006`) is a
 ```
 lib/mapProjectionTripRead.ts:193      → .map(toAuthorizedTripView)
 domain/trips/services/tripReadiness.ts:269              → explicit field reads only
-routes/trips-expansion.ts:113,147,181,214 → .map(toAuthorizedTripView)
-routes/trips-expansion.ts:395         → explicit field reads only
+routes/trips-expansion.ts:114,148,182,215 → .map(toAuthorizedTripView)
+routes/trips-expansion.ts:396         → explicit field reads only
 routes/trips-expansion.ts:474         → toAuthorizedTripView(updated)
-routes/trips-expansion.ts:2803        → explicit field reads only
+routes/trips-expansion.ts:2807        → explicit field reads only
 ```
 
 `lib/privacy/tripSerializers.ts:84 toAuthorizedTripView` copies **38 named

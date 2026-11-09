@@ -1514,7 +1514,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // Listing only the two Wall directories would have made this census look fresh
   // while the contracts it grades moved underneath it — the same trap the trust
   // scope above avoids.
-  "census-wall.md": [
+  "census-wall.md": [ "travel-buddy-standalone/app/_layout.tsx", /* 2026-11-05: shared speech bootstrap cited by Wall. */
     // WIDENED 2026-09-14 for the palette ruling's evidence. `mapChrome.ts` is
     // cited to record that it is OUT of scope — its near-black navy is the Map
     // spec's dark-mode GROUND, not a brand accent — and a citation that says
@@ -2878,7 +2878,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/constants/mapTransportStyle.test.ts",
     "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryMapView.transportLayer.component.test.tsx",
   ],
-  "census-sensing.md": [
+  "census-sensing.md": [ "artifacts/api-server/src/lib/sensingAtomicAdmission.ts", "artifacts/api-server/src/routes/sensingRevocation.ts", /* 2026-11-05: atomic admission and revocation are graded sensing boundaries. */
     "artifacts/api-server/src/scripts/lib/sensingPostureOnDisk.ts",
     // ADDED 2026-09-14 on the Sensing lane's standing request. The scope covered
     // `services/intel/` and `routes/intel.ts` but not `routes/intelReadModels.ts`,

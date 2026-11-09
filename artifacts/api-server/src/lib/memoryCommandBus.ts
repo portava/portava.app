@@ -682,7 +682,8 @@ export async function executeMemoryCommand(sc: any, cmd: MemoryCommand): Promise
   // present two subjects — the TypeScript half of 2993's one-subject CHECK.
   const highlight = isHighlightCommand(cmd.type);
   const fn = cmd.type === 'CREATE_MEMORY' && typeof cmd.payload.telegraph_source_message_id === 'string'
-    ? 'telegraph_memory_draft_execute' : COMMAND_KERNEL_FN[cmd.type];
+    ? 'telegraph_memory_draft_execute' : cmd.type === 'CREATE_HIGHLIGHT' && cmd.payload.uploaded_highlight_receipt === true
+      ? 'submit_uploaded_highlight' : COMMAND_KERNEL_FN[cmd.type];
   const p_command = COMMAND_SUBJECT[cmd.type] === "owner_policy"
     ? {
         command_id: cmd.commandId,

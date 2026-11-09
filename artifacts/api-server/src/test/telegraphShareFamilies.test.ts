@@ -583,6 +583,7 @@ describe("§5 Media — the fifth family, and what 'inherit' has to mean", () =>
     assert.equal(r.available, true);
     assert.equal(r.available === true && r.projection.title, "The alley");
     assert.equal(r.available === true && r.projection.imageUrl, "post-media/x/m1t.jpg");
+    assert.deepEqual(r.available && r.projection.media, [{type: "image", uri: "post-media/x/m1.jpg", thumbnailUri: "post-media/x/m1t.jpg"}]);
   });
 
   it("VISIBILITY 'inherit' DEGRADES rather than resolving permissively", async () => {

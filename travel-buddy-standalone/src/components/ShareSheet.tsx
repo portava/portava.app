@@ -9,10 +9,8 @@
  *                    target derived from thread type:
  *                      direct → 'dm', trip → 'trip_crew', circle → 'circle'
  *
- * The in-app share is real end-to-end: it fetches the post (getPostById),
- * lets the user pick one of their threads (getMyThreads), and sends a
- * post_card message (sendMessage) that renders as a rich card in the thread
- * (see PostCardMessage). No fake "shared!" confirmations.
+ * Chats carry a reference and the sender's caption. The recipient resolves current
+ * content, media and attribution. Encrypted conversations send an encrypted permalink.
  *
  * The parent (PostEngagementBar) calls recordShare(postId, target) via
  * onShareSuccess so the correct target is always persisted.
@@ -57,7 +55,8 @@ import { Avatar } from './ui/Avatar.tsx';
 import { SectionHeader } from './ui/SectionHeader.tsx';
 import { getMyThreads, sendMessage, openDirectThread } from '../services/messaging.ts';
 import type { ThreadSummary } from '../services/messaging.ts';
-import { getPostById } from '../services/posts.ts';
+import { fetchConversationProjection } from '../features/telegraph/conversation/conversationProjection.ts';
+import { canonicalMediaLink } from '../features/telegraph/sharing/canonicalMediaLink.ts';
 import { searchUsers } from '../services/follows.ts';
 import type { TravelerSearchResult } from '../services/follows.ts';
 import { useInputAccountEpoch } from '../platform/input-assistance/hooks/useInputAccountEpoch.ts';
@@ -79,24 +78,12 @@ interface CommonProps {
    * for each reader at read time, so a later privacy change or deletion is
    * honoured — instead of the post_card snapshot. Unset: unchanged behaviour.
    */
-  telegraphObject?: { objectType: 'POST'; objectId: string } | null;
+  telegraphObject?: { objectType: 'POST' | 'MEDIA'; objectId: string } | null;
 }
 type Props = CommonProps & (
   | { postId: string; canonicalLink?: never }
-  | { postId?: never; canonicalLink: { url: string; title: string }; telegraphObject?: never }
+  | { postId?: never; canonicalLink: { url: string; title: string } }
 );
-
-interface PostPreview {
-  authorName?: string;
-  authorHandle?: string;
-  authorAvatar?: string | null;
-  snippet?: string;
-  thumbnail?: string | null;
-  city?: string | null;
-  country?: string | null;
-  likeCount?: number;
-  commentCount?: number;
-}
 
 function postPermalink(postId: string): string {
   return canonicalUrl(`/posts/${postId}`);
@@ -127,7 +114,6 @@ export function ShareSheet({ visible, postId = '', canonicalLink, onClose, onSha
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [caption, setCaption] = useState('');
   const [sending, setSending] = useState(false);
-  const [preview, setPreview] = useState<PostPreview | null>(null);
 
   // Thread search
   const [threadSearch, setThreadSearch] = useState('');
@@ -185,8 +171,6 @@ export function ShareSheet({ visible, postId = '', canonicalLink, onClose, onSha
   }
 
   useLayoutEffect(() => {
-    let active = true;
-    const isCurrentHydration = () => active && isCurrent();
     currentContext.current = context;
     context.active = visible;
     pickerActive.current = false;
@@ -197,31 +181,8 @@ export function ShareSheet({ visible, postId = '', canonicalLink, onClose, onSha
     setThreads([]);
     setLoadingThreads(false);
     setThreadsFailed(false);
-    setPreview(null);
-    if (visible) {
-      nativeSharePending.current = null;
-      if (linkOnly) return () => { active = false; context.active = false; scheduler.cancel(); };
-      getPostById(postId)
-        .then((res) => {
-          if (isCurrentHydration() && res.ok && res.data) {
-            const post = res.data;
-            setPreview({
-              authorName: post.author?.name,
-              authorHandle: post.author?.handle,
-              authorAvatar: post.author?.avatarUrl ?? null,
-              snippet: (post.content ?? '').slice(0, 220),
-              thumbnail: post.mediaUrls?.[0] ?? post.mediaThumbnailUrl ?? null,
-              city: post.locationCity ?? null,
-              country: post.locationCountry ?? null,
-              likeCount: post.likeCount,
-              commentCount: post.commentCount,
-            });
-          }
-        })
-        .catch(() => {});
-    }
+    if (visible) nativeSharePending.current = null;
     return () => {
-      active = false;
       context.active = false;
       scheduler.cancel();
     };
@@ -290,6 +251,19 @@ export function ShareSheet({ visible, postId = '', canonicalLink, onClose, onSha
     setSelectedId(thread.id);
   }
 
+  async function sendToChat(threadId: string, knownEncryption?: boolean) {
+    const encrypted = typeof knownEncryption === 'boolean' ? knownEncryption
+      : (await fetchConversationProjection(threadId))?.conversation?.isE2ee;
+    if (!isCurrentAction() || typeof encrypted !== 'boolean' || !shareUrl) return { ok: false };
+    const note = caption.trim();
+    if (encrypted) return sendMessage(threadId, [note, shareUrl].filter(Boolean).join('\n'), {isE2ee: true});
+    const reference = telegraphObject ?? (linkOnly ? canonicalMediaLink(shareUrl) : null);
+    if (reference) return shareObjectIntoThread(threadId, reference.objectType, reference.objectId, note || null);
+    if (linkOnly) return sendMessage(threadId, [note, shareUrl].filter(Boolean).join('\n'));
+    // Legacy readers understand post_card. Only the reference and sender's note belong in history.
+    return sendMessage(threadId, JSON.stringify({postId, caption: note || undefined}), {msgType: 'system', subtype: 'post_card'});
+  }
+
   async function handleUserResultPress(user: TravelerSearchResult) {
     if (!isCurrentAction() || sendingRef.current || !userResults.includes(user) || !shareUrl) return;
     sendingRef.current = true;
@@ -302,26 +276,7 @@ export function ShareSheet({ visible, postId = '', canonicalLink, onClose, onSha
         return;
       }
       const threadId = threadRes.data.threadId;
-      const payload = {
-        postId,
-        permalink: postPermalink(postId),
-        authorName: preview?.authorName,
-        authorHandle: preview?.authorHandle,
-        authorAvatar: preview?.authorAvatar ?? null,
-        snippet: preview?.snippet,
-        thumbnail: preview?.thumbnail ?? null,
-        city: preview?.city ?? null,
-        country: preview?.country ?? null,
-        likeCount: preview?.likeCount,
-        commentCount: preview?.commentCount,
-        caption: caption.trim() || undefined,
-      };
-      const msgRes = linkOnly ? await sendMessage(threadId, [caption.trim(), shareUrl].filter(Boolean).join('\n')) : telegraphObject
-        ? await shareObjectIntoThread(threadId, telegraphObject.objectType, telegraphObject.objectId, caption.trim() || null)
-        : await sendMessage(threadId, JSON.stringify(payload), {
-            msgType: 'system',
-            subtype: 'post_card',
-          });
+      const msgRes = await sendToChat(threadId, threads.find(t => t.id === threadId)?.isE2ee);
       if (!isCurrentAction()) return;
       if (msgRes.ok) {
         onShareSuccess?.('dm');
@@ -406,26 +361,7 @@ export function ShareSheet({ visible, postId = '', canonicalLink, onClose, onSha
     sendingRef.current = true;
     setSending(true);
     try {
-      const payload = {
-        postId,
-        permalink: postPermalink(postId),
-        authorName: preview?.authorName,
-        authorHandle: preview?.authorHandle,
-        authorAvatar: preview?.authorAvatar ?? null,
-        snippet: preview?.snippet,
-        thumbnail: preview?.thumbnail ?? null,
-        city: preview?.city ?? null,
-        country: preview?.country ?? null,
-        likeCount: preview?.likeCount,
-        commentCount: preview?.commentCount,
-        caption: caption.trim() || undefined,
-      };
-      const res = linkOnly ? await sendMessage(selectedId, [caption.trim(), shareUrl].filter(Boolean).join('\n')) : telegraphObject
-        ? await shareObjectIntoThread(selectedId, telegraphObject.objectType, telegraphObject.objectId, caption.trim() || null)
-        : await sendMessage(selectedId, JSON.stringify(payload), {
-            msgType: 'system',
-            subtype: 'post_card',
-          });
+      const res = await sendToChat(selectedId, thread.isE2ee);
       if (!isCurrentAction()) return;
       if (res.ok) {
         onShareSuccess?.(targetForThread(thread.threadType));
@@ -515,7 +451,7 @@ export function ShareSheet({ visible, postId = '', canonicalLink, onClose, onSha
                 iconBg="#EEF1FF"
                 icon={<Globe size={20} color="#4A6CF7" />}
                 label="Share to my profile"
-                sub="Post a link with your own note and audience"
+                sub="Repost with your own note and audience"
                 onPress={openProfileComposer}
               />}
 

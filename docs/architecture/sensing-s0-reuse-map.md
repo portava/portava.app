@@ -98,7 +98,7 @@ cannot carry anonymous input. This is why the owner ruling made room for a separ
 rather than an extension.
 
 `intel_presence_verifications` is additionally **write-only**: written at
-`services/intel/IntelCaptureService.ts:303`, read by nothing. `checkWriterlessReads` cannot see this
+`services/intel/IntelCaptureService.ts:304`, read by nothing. `checkWriterlessReads` cannot see this
 shape — it walks the reads map only.
 
 ## 6. Wall

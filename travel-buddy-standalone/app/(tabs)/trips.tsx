@@ -1,3 +1,5 @@
+import { useTripWindowClock } from '../../src/hooks/useTripWindowClock.ts';
+import { tripWindowEnded } from '../../src/lib/tripCalendar.ts';
 import React, { useState, useCallback } from 'react';
 import Animated from 'react-native-reanimated';
 import { useCollapsingHeader } from '../../src/hooks/useCollapsingHeader';
@@ -197,7 +199,9 @@ function InviteCard({ invite, onDone }: { invite: TripInvite; onDone: () => void
 function PendingInvitesSection({ onAccepted }: { onAccepted: () => void }) {
   const { invites, reload } = usePendingTripInvites();
 
-  if (!invites.length) return null;
+  const now = useTripWindowClock(invites);
+  const currentInvites = invites.filter(invite => !tripWindowEnded(invite, now));
+  if (!currentInvites.length) return null;
 
   async function handleDone() {
     await reload();
@@ -207,7 +211,7 @@ function PendingInvitesSection({ onAccepted }: { onAccepted: () => void }) {
   return (
     <View style={styles.inviteSection}>
       <Text style={styles.inviteSectionTitle}>Trip Invites</Text>
-      {invites.map((inv) => (
+      {currentInvites.map((inv) => (
         <InviteCard key={inv.tripId} invite={inv} onDone={handleDone} />
       ))}
     </View>
@@ -287,7 +291,9 @@ function TripsScreen() {
 
   // Use snapshot only while the initial load is in-flight. Once any response
   // arrives (even empty) live data always wins — no stale trips left on screen.
-  const displayTrips = tripsLoadedOnce ? realTrips : (tripsSnapshot ?? realTrips);
+  const tripSource = tripsLoadedOnce ? realTrips : (tripsSnapshot ?? realTrips);
+  const now = useTripWindowClock(tripSource);
+  const displayTrips = tripSource.filter(trip => !tripWindowEnded(trip, now));
 
   useFocusEffect(useCallback(() => {
     postCompassFrontloadEvent({ eventType: 'navigation', screen: 'trips' }).catch(() => {});
@@ -473,6 +479,7 @@ function TripCardItem({ tr, onPickTrip }: { tr: any; onPickTrip?: (tripId: strin
       destinationCountry={tr.destinationCountry ?? null}
       startDate={tr.startDate ?? null}
       endDate={tr.endDate ?? null}
+      timezone={tr.timezone ?? null}
       status={tr.status}
       coverUrl={tr.coverUrl ?? null}
       onPress={() => (onPickTrip ? onPickTrip(tr.id) : router.push(`/trip/${tr.id}`))}

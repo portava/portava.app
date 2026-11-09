@@ -82,7 +82,7 @@ export function ProfileMemoryAlbums({ userId, readPage }: { userId: string; read
             const cover = m.cover?.mediaUrl ?? m.items?.[0]?.mediaUrl ?? null;
             return (
               <Pressable key={m.id} style={s.card} onPress={() => router.push(`/memory/${m.id}` as never)} accessibilityRole="button" testID={`profile-memory-${m.id}`}>
-                {(m.cover?.mediaType ?? m.items?.[0]?.mediaType) === POST_REFERENCE_MEDIA_TYPE ? <View style={s.cover}><PostReferenceCover /></View> : cover ? <CachedImage source={{ uri: cover }} style={s.cover} /> : (
+                {(m.cover?.mediaType ?? m.items?.[0]?.mediaType) === POST_REFERENCE_MEDIA_TYPE ? <View style={s.cover}><PostReferenceCover uri={cover} /></View> : cover ? <CachedImage source={{ uri: cover }} style={s.cover} /> : (
                   <View style={[s.cover, s.coverEmpty]}><BookImage size={22} color={color.mute} /></View>
                 )}
                 <Text style={s.title} numberOfLines={1}>{m.title || 'Untitled memory'}</Text>

@@ -162,7 +162,7 @@ Package under test: **`com.passporttravelbuddy.app`**.
    settled fling measures mostly idle frames.
 6. Stop the trace.
 
-Item 60 is reached across **three server pages** (`artifacts/api-server/src/routes/wall.ts:124#const DEFAULT_LIMIT = 20;`),
+Item 60 is reached across **three server pages** (`artifacts/api-server/src/routes/wall.ts:126#const DEFAULT_LIMIT = 20;`),
 so the scroll includes **two mid-scroll `onEndReached` fetches and two list-data
 replacements while the thumb is still moving**. Those are the moments a feed
 drops frames and they are deliberately inside the measured window.
@@ -403,7 +403,7 @@ built to reach the maximum the code can currently emit:
 That composition is asserted, per renderer, at
 `WallCertRenderSet.webrender.test.tsx:303#  it('the ceiling cards carry the exact composition W167 asks a human to rule on', () => {`.
 The cap it is measured against is
-`travel-buddy-standalone/src/features/wall/components/objects/wallItemShared.tsx:430#      {actions.slice(0, 3).map((action, idx) => (`.
+`travel-buddy-standalone/src/features/wall/components/objects/wallItemShared.tsx:502#      {actions.slice(0, 3).map((action, idx) => (`.
 
 ### 3.2 The question
 

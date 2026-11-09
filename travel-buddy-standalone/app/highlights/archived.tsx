@@ -146,7 +146,7 @@ export default function ArchivedHighlightsScreen() {
           {(highlights ?? []).map((h) => (
             <View key={h.id} style={s.card}>
               <View style={s.row} testID={`archived-highlight-${h.id}`}>
-                {h.mediaType === POST_REFERENCE_MEDIA_TYPE ? <View style={s.thumb}><PostReferenceCover /></View> : <DisplayMediaImage
+                {h.mediaType === POST_REFERENCE_MEDIA_TYPE ? <View style={s.thumb}><PostReferenceCover uri={h.mediaUrl} /></View> : <DisplayMediaImage
                   uri={h.mediaUrl}
                   width={56}
                   height={56}

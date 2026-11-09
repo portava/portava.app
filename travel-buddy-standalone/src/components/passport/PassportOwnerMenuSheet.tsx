@@ -296,7 +296,7 @@ const SECTIONS: Section[] = [
         Icon: Bookmark,
         iconColor: '#D4A017',
         live: true,
-        action: (p) => { closeThenNavigate(p.onClose, '/saved'); },
+        action: (p) => { closeThenNavigate(p.onClose, '/saved-places'); },
       },
     ],
   },

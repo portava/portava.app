@@ -16,15 +16,25 @@
  * The caller mounts it only for the one card that should play and unmounts it
  * when that changes, which also stops the video and frees the decoder.
  */
-import React, { useState } from 'react';
-import { View, StyleSheet } from 'react-native';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { Platform, View, StyleSheet } from 'react-native';
 import { Video, ResizeMode } from 'expo-av';
 import { VolumeX } from 'lucide-react-native';
 import { useHydratedMedia } from '../../services/mediaUrl.ts';
 import { playbackUriState } from '../../services/playbackUri.ts';
 import { avatar } from '../../theme/tokens.ts';
 
-export function FeedAutoplayVideo({ uri }: { uri: string }) {
+export interface FeedAutoplayVideoHandle { pause: () => Promise<void> }
+export const FeedAutoplayVideo = forwardRef<FeedAutoplayVideoHandle, { uri: string; muted?: boolean; initialPositionMillis?: number; onPositionChange?: (position: number) => void }>(function FeedAutoplayVideo({ uri, muted = true, initialPositionMillis = 0, onPositionChange }, ref) {
+  const player = useRef<Video>(null);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const initialStatus = useRef({ positionMillis: initialPositionMillis }).current;
+  const [resuming, setResuming] = useState(Platform.OS === 'web' && initialPositionMillis > 0);
+  useImperativeHandle(ref, () => ({ pause: async () => {
+    const status = await player.current?.pauseAsync();
+    if (mounted.current && status?.isLoaded) onPositionChange?.(status.positionMillis);
+  } }), [onPositionChange]);
   const { resolved } = useHydratedMedia([uri]);
   const source = playbackUriState(uri, resolved);
   const [shownFor, setShownFor] = useState<string | null>(null);
@@ -41,25 +51,29 @@ export function FeedAutoplayVideo({ uri }: { uri: string }) {
       pointerEvents="none"
     >
       <Video
+        ref={player}
         key={playbackUri}
         source={{ uri: playbackUri }}
         style={StyleSheet.absoluteFill}
         resizeMode={ResizeMode.COVER}
-        shouldPlay
+        shouldPlay={!resuming}
         isLooping
-        isMuted
+        isMuted={muted}
         useNativeControls={false}
+        status={initialStatus}
+        onLoad={() => { if (resuming) void player.current?.setPositionAsync(initialStatus.positionMillis).then(() => { if (mounted.current) setResuming(false); }).catch(() => { if (mounted.current) setFailedFor(playbackUri); }); }}
+        onPlaybackStatusUpdate={status => { if (mounted.current && !resuming && status.isLoaded) onPositionChange?.(status.positionMillis); }}
         onReadyForDisplay={() => setShownFor(playbackUri)}
         onError={() => setFailedFor(playbackUri)}
       />
-      {shown ? (
-        <View style={s.mutedBadge} accessibilityLabel="Playing without sound. Open the post to hear it.">
+      {shown && muted ? (
+        <View style={s.mutedBadge} accessibilityLabel="Playing without sound. Tap the video to open it full screen.">
           <VolumeX size={14} color="#fff" />
         </View>
       ) : null}
     </View>
   );
-}
+});
 
 const s = StyleSheet.create({
   hidden: { opacity: 0 },

@@ -1,3 +1,5 @@
+// NOTE: this screen fixture is mounted without a navigator; focus is stable here.
+jest.mock('@react-navigation/native', () => ({ ...jest.requireActual('@react-navigation/native'), useIsFocused: () => true }));
 /**
  * FullScreenMapScreen — the map's notices hang BELOW the floating header stack, not behind the status bar.
  *

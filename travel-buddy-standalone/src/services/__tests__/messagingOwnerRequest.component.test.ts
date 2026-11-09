@@ -441,9 +441,22 @@ describe('message preparation and existing contracts', () => {
     disposeMessagingOwnerObserver();
     expect((await getMyMessageSettings()).ok).toBe(true);
     expect((await updateMyMessageSettings({ allow_message_requests: false })).ok).toBe(true);
-    expect((await resolveShareProjections('thread-one', [{ objectType: 'POST', objectId: 'post-one' }])).ok).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(auth.listeners.size).toBe(0);
+  });
+
+  it('share projections require an observed owner and reject a response after an account switch', async () => {
+    disposeMessagingOwnerObserver();
+    expect(await resolveShareProjections('thread-one', [{ objectType: 'POST', objectId: 'post-one' }])).toEqual({ ok: false, error: 'unauthenticated' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    emit('INITIAL_SESSION', currentSession);
+    const body = deferred<unknown>();
+    fetchMock.mockResolvedValueOnce({ ...jsonResponse(null), json: () => body.promise } as Response);
+    const pending = resolveShareProjections('thread-one', [{ objectType: 'POST', objectId: 'post-one' }]);
+    await reached(fetchMock);
+    switchAccount();
+    body.resolve({ threadId: 'thread-one', projections: [], unsupported: [] });
+    expect(await pending).toEqual({ ok: false, error: 'unauthenticated' });
   });
 });
 

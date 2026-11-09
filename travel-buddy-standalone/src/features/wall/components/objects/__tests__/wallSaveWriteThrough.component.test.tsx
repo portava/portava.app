@@ -1,3 +1,5 @@
+// NOTE: save-picker tests use a current authenticated owner; owner invalidation has separate coverage.
+jest.mock('../../../../../services/messagingOwnerRequest.ts', () => ({ captureMessagingOwnerRequest: () => ({ isCurrent: () => true }) }));
 /** Wall saves use the shared collection picker and confirm canonical writes. */
 
 import React from 'react';

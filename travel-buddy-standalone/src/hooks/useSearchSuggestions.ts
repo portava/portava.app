@@ -1,3 +1,4 @@
+import { tripSearchType, useTripSearchMinute } from './useTripSearchMinute.ts';
 /**
  * useSearchSuggestions — live grouped typeahead for the global search bar.
  *
@@ -31,6 +32,8 @@ export interface UseSearchSuggestionsOpts {
 export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOpts = {}) {
   const { lat, lng, city, enabled = true } = opts;
   const [groups, setGroups] = useState<SuggestGroup[]>([]);
+  const minute = useTripSearchMinute(enabled && groups.some(group => tripSearchType(group.type)));
+  const earlierMinute = useRef(minute);
   const [loading, setLoading] = useState(false);
   /**
    * The last answer was a REFUSAL, not a result — the server did not read the
@@ -63,8 +66,12 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
     }
 
     const key = `${trimmed}|${latKey ?? ''}|${lngKey ?? ''}`;
+    if (earlierMinute.current !== minute) {
+      earlierMinute.current = minute;
+      setGroups(previous => previous.filter(group => !tripSearchType(group.type)));
+    }
     const cached = cacheRef.current.get(key);
-    if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+    if (cached && Date.now() - cached.ts < CACHE_TTL_MS && (Math.floor(cached.ts / 60_000) === minute || !cached.groups.some(group=>tripSearchType(group.type)))) {
       // Refresh LRU position
       cacheRef.current.delete(key);
       cacheRef.current.set(key, cached);
@@ -134,7 +141,7 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [trimmed, enabled, latKey, lngKey, city, lat, lng]);
+  }, [trimmed, enabled, latKey, lngKey, city, lat, lng, minute]);
 
   // Abort any in-flight request on unmount
   useEffect(() => () => { abortRef.current?.abort(); }, []);

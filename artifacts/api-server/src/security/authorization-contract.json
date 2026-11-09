@@ -120,7 +120,7 @@
       ]
     },
     "discovery_places": {
-      "note": "2153 — INSERT forge + submitter impersonation. SELECT-only for clients; all writes service-role. 3390 (census-discovery, explicit RLS): three RESTRICTIVE client-deny policies (INSERT, UPDATE, DELETE for anon+authenticated), so no later permissive policy or re-GRANT can reopen a client write.",
+      "note": "2153 — INSERT forge + submitter impersonation. SELECT-only for clients; all writes service-role. 3390 (census-discovery, explicit RLS): three RESTRICTIVE client-deny policies (INSERT, UPDATE, DELETE for anon+authenticated), so no later permissive policy or re-GRANT can reopen a client write. 4009 adds restrictive SELECT moderation for canonical-place links; submitters retain access to retract their own listing. No new client write grants.",
       "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
       "insertCols": {},
       "updateCols": {},
@@ -128,6 +128,7 @@
         { "name": "discovery_places_deny_delete_clients", "cmd": "DELETE", "permissive": false, "roles": ["anon","authenticated"] },
         { "name": "discovery_places_deny_insert_clients", "cmd": "INSERT", "permissive": false, "roles": ["anon","authenticated"] },
         { "name": "discovery_places_deny_update_clients", "cmd": "UPDATE", "permissive": false, "roles": ["anon","authenticated"] },
+        { "name": "discovery_places_canonical_moderation", "cmd": "SELECT", "permissive": false, "roles": ["anon","authenticated"] },
         { "name": "discovery_places_auth_insert", "cmd": "INSERT", "permissive": true, "roles": ["public"] },
         { "name": "discovery_places_own_delete", "cmd": "DELETE", "permissive": true, "roles": ["public"] },
         { "name": "discovery_places_own_update", "cmd": "UPDATE", "permissive": true, "roles": ["public"] },

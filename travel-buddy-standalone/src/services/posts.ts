@@ -1,3 +1,4 @@
+import { messagingOwnerToken, type MessagingOwnerRequest } from './messagingOwnerRequest.ts';
 /**
  * Posts service — typed client over the API SERVER (not supabase tables).
  *
@@ -49,6 +50,7 @@ export interface PostRow {
   tripId: string | null;
   content: string;
   mediaUrls: string[];
+  postReferenceId?: string | null;
   /** Structured ready media (url/type/dims + stamp_overlay) from feed + detail endpoints. */
   media?: import('../types/models').PostcardMediaItem[];
   visibility: PostVisibility;
@@ -118,6 +120,7 @@ function mapPost(r: any): PostRow {
     authorId: r.author_id,
     tripId: r.trip_id ?? null,
     content: r.content ?? '',
+    postReferenceId: r.postReferenceId ?? r.post_reference_id ?? null,
     mediaUrls: r.media_urls ?? [],
     media: Array.isArray(r.media) ? r.media : undefined,
     visibility: r.visibility,
@@ -260,11 +263,14 @@ interface CreatePostInput {
   category?: string | null;
 }
 
-export async function createPost(input: CreatePostInput): Promise<PostResult<PostRow>> {
+export async function createPost(input: CreatePostInput, owner?: MessagingOwnerRequest): Promise<PostResult<PostRow>> {
   if (!isSupabaseConfigured) return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
   if (!apiBase()) return { ok: false, data: null, errorKind: 'config_error', message: 'API base URL not set' };
 
-  const token = await freshToken();
+  const stale = (): PostResult<PostRow> => ({ ok: false, data: null, errorKind: 'forbidden', message: 'Your signed-in session changed.' });
+  if (owner && !owner.isCurrent()) return stale();
+  const token = owner ? await messagingOwnerToken(owner) : await freshToken();
+  if (owner && !owner.isCurrent()) return stale();
   if (!token) return { ok: false, data: null, errorKind: 'unauthenticated', message: 'Please sign in' };
 
   try {
@@ -304,11 +310,14 @@ export async function createPost(input: CreatePostInput): Promise<PostResult<Pos
         category: input.category ?? null,
       }),
     });
+    if (owner && !owner.isCurrent()) return stale();
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       return mapApiError<PostRow>(res.status, body);
     }
-    return { ok: true, data: mapPost(await res.json()) };
+    const data = await res.json();
+    if (owner && !owner.isCurrent()) return stale();
+    return { ok: true, data: mapPost(data) };
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable', message: 'Network unavailable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown error' };

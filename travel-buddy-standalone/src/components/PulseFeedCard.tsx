@@ -1,3 +1,4 @@
+import { RecordingStampBadge } from '../features/capture-stamps/RecordingStamp.tsx';
 import { Maximize2 } from 'lucide-react-native';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet, Alert, Share, useWindowDimensions } from 'react-native';
@@ -35,9 +36,11 @@ import { primaryIdentityText } from '../lib/displayIdentity.ts';
 import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
 import { OfficialBadge } from './OfficialBadge.tsx';
 import { MediaStampOverlay } from './StampOverlayBadge.tsx';
-import { VideoThumbnail } from './ui/VideoThumbnail.tsx'; import { FeedAutoplayVideo } from './media/FeedAutoplayVideo.tsx';
+import { VideoThumbnail } from './ui/VideoThumbnail.tsx'; import { FeedAutoplayVideo, type FeedAutoplayVideoHandle } from './media/FeedAutoplayVideo.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { navigateToProfile } from '../lib/navigateToProfile.ts';
+import { PostTakeover } from './PostTakeover.tsx';
+import { PostSharePreview, postShareTarget } from './PostReferenceCard.tsx';
 import { PostCard as SharedPostCard } from './cards/PostCard.tsx';
 import { FeaturedBadge } from './FeaturedBadge.tsx';
 import { PlaceQuickActions } from './PlaceQuickActions.tsx';
@@ -46,6 +49,7 @@ import { useStamp } from '../hooks/useStamp.ts';
 import { useDoubleTapToStamp } from '../hooks/useDoubleTapToStamp.ts';
 import { PostCardStampBurst, type PostCardStampBurstHandle } from './stamps/PostCardStampBurst.tsx';
 import { canonicalUrl } from '../constants/canonicalUrl.ts';
+import { useMediaSurfaceActivity } from '../hooks/useMediaSurfaceActivity.ts';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -232,6 +236,31 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId, autoplayVideo 
   const [dismissed, setDismissed] = useState(false);
   const [mediaFailed, setMediaFailed] = useState(false);
   const [wrongPlaceOpen, setWrongPlaceOpen] = useState(false);
+  const share = postShareTarget(item.postReferenceId, item.caption);
+  const [videoOpen, setVideoOpen] = useState(false);
+  const [photoOpen, setPhotoOpen] = useState(false);
+  const mediaActivity = useMediaSurfaceActivity(() => { setVideoOpen(false); setPhotoOpen(false); });
+  const inlineVideo = useRef<FeedAutoplayVideoHandle>(null);
+  const videoPosition = useRef(0);
+  const openingVideo = useRef(false);
+  const cardMounted = useRef(true);
+  useEffect(() => { cardMounted.current = true; return () => { cardMounted.current = false; }; }, []);
+  const noteVideoPosition = useCallback((position: number) => { videoPosition.current = position; }, []);
+  const openVideo = useCallback(async () => {
+    if (openingVideo.current || !mediaActivity.isCurrent()) return;
+    openingVideo.current = true;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      // Pause first, then unmount the inline decoder before mounting the modal.
+      // A stalled native command must not prevent the user opening their media.
+      await Promise.race([inlineVideo.current?.pause(), new Promise<void>(resolve => { timeout = setTimeout(resolve, 400); })]);
+    } catch { /* Unmount still releases a failed decoder. */ }
+    finally {
+      if (timeout) clearTimeout(timeout);
+      openingVideo.current = false;
+      if (cardMounted.current && mediaActivity.isCurrent()) setVideoOpen(true);
+    }
+  }, [mediaActivity.isCurrent]);
   const dismiss = () => setDismissed(true);
   const undismiss = () => setDismissed(false);
   const handleDeleted = () => { dismiss(); onDeleteSuccess?.(); };
@@ -255,11 +284,11 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId, autoplayVideo 
     burstRef.current?.play();
   }, [canStamp, postStamp]);
   const handleTextCardPress = useDoubleTapToStamp(
-    () => router.push(`/post/${item.id}` as any),
+    () => setPhotoOpen(true),
     handleDoubleTapStamp,
   );
   const handleMediaCardPress = useDoubleTapToStamp(
-    () => router.push(`/post/${item.id}` as any),
+    () => { if (showsVideo) void openVideo(); else setPhotoOpen(true); },
     handleDoubleTapStamp,
   );
 
@@ -304,6 +333,9 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId, autoplayVideo 
   const mediaHeight = Math.round(effectiveWidth * (5 / 4));
   const tripLabel = item.tripLabel ?? undefined;
 
+  const takeover = (videoOpen || photoOpen) ? <PostTakeover postId={item.id}
+    initialPositionMillis={videoPosition.current} onPositionChange={noteVideoPosition} initialMediaUri={firstMediaUrl}
+    onClose={() => { setVideoOpen(false); setPhotoOpen(false); }} /> : null;
   if (!showMediaFrame) {
     return (
       <Pressable
@@ -319,7 +351,8 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId, autoplayVideo 
         </View>
 
         <View style={s.postFooter}>
-          {item.caption ? (
+          {share && <PostSharePreview target={share} />}
+          {item.caption && !share?.legacyPostId ? (
             <TranslatedContent entityType="post" entityId={item.id} field="content" original={item.caption} style={s.caption} numberOfLines={8}>
               <RichText content={item.caption} tags={item.spanTags} hashtagUsages={item.spanHashtags} style={s.caption} numberOfLines={8} />
             </TranslatedContent>
@@ -389,6 +422,7 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId, autoplayVideo 
           />
         </View>
 
+        {takeover}
         <PostWrongPlaceSheet
           postId={item.id}
           visible={wrongPlaceOpen}
@@ -417,7 +451,7 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId, autoplayVideo 
               style={StyleSheet.absoluteFill}
             />
             {/* The card the feed picked plays its video, muted, over the poster (2026-11-04). */}
-            {autoplayVideo && firstMediaUrl ? <FeedAutoplayVideo uri={firstMediaUrl} /> : null}
+            {autoplayVideo && firstMediaUrl && !videoOpen ? <FeedAutoplayVideo ref={inlineVideo} uri={firstMediaUrl} initialPositionMillis={videoPosition.current} onPositionChange={noteVideoPosition} /> : null}
           </>
         ) : (
           // signedMediaUrl is pre-resolved via batchSignUrls (relay URL when flag
@@ -430,7 +464,7 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId, autoplayVideo 
             onError={() => setMediaFailed(true)}
           />
         )}
-        <Pressable style={{ position: 'absolute', top: 12, right: 12, width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.65)', alignItems: 'center', justifyContent: 'center', zIndex: 2 }} accessibilityRole="button" accessibilityLabel={showsVideo ? 'View video full screen' : 'View photo full screen'} onPress={event => { event.stopPropagation?.(); router.push(`/media-viewer/${item.id}` as any); }}><Maximize2 size={22} color="#fff" /></Pressable>
+        <Pressable style={{ position: 'absolute', top: 12, right: 12, width: avatar.s44, height: avatar.s44, borderRadius: avatar.s44 / 2, backgroundColor: 'rgba(0,0,0,0.65)', alignItems: 'center', justifyContent: 'center', zIndex: 2 }} accessibilityRole="button" accessibilityLabel={showsVideo ? 'View video full screen' : 'View photo full screen'} onPress={event => { event.stopPropagation?.(); if (showsVideo) void openVideo(); else setPhotoOpen(true); }}><Maximize2 size={22} color="#fff" /></Pressable>
         {/* Passport-stamp overlay — sits on the photo, under the scrim/labels */}
         {!mediaFailed && <MediaStampOverlay raw={item.media?.[0]?.stamp_overlay} />}
         {/* Bottom scrim for AuthorRow readability.
@@ -540,6 +574,8 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId, autoplayVideo 
         />
       </View>
 
+      {showsVideo && autoplayVideo && <RecordingStampBadge targetType="post" targetId={item.id} />}
+      {takeover}
       <PostWrongPlaceSheet
         postId={item.id}
         visible={wrongPlaceOpen}
@@ -551,7 +587,7 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId, autoplayVideo 
 
 
 /* ── Question — delegates to SharedPostCard ── */
-function QuestionCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void }) {
+function QuestionCard({ item, onOpenPost, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; onOpenPost: () => void; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void }) {
   const [dismissed, setDismissed] = useState(false);
   // dismiss = local-only hide (Compass feedback / hide-from-feed)
   const dismiss = () => setDismissed(true);
@@ -568,7 +604,7 @@ function QuestionCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedIt
       tags={item.tags}
       featuredByPortava={item.featuredByPortava ?? null}
       cardStyle={{ marginBottom: 0 }}
-      onPress={() => router.push(`/post/${item.id}` as any)}
+      onPress={onOpenPost}
       authorRow={
         <AuthorRow item={item} badge={{ label: 'QUESTION', bg: '#EFE7FA', fg: '#7A4DBF' }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={handleDeleted} />
       }
@@ -659,7 +695,7 @@ function PlanCard({ item, onWhyPress, onDeleteSuccess }: { item: PulseFeedItem; 
 }
 
 /* ── Hidden Gem Share — delegates to SharedPostCard ── */
-function GemCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void; sessionId?: string | null }) {
+function GemCard({ item, onOpenPost, onWhyPress, onDeleteSuccess, sessionId }: { item: PulseFeedItem; onOpenPost: () => void; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void; sessionId?: string | null }) {
   const planPicker = usePlanPicker();
   const [dismissed, setDismissed] = useState(false);
   const dismiss = () => setDismissed(true);
@@ -687,7 +723,7 @@ function GemCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Pulse
       tags={item.tags}
       savedByMe={item.savedByMe ?? false}
       cardStyle={{ marginBottom: 0 }}
-      onPress={() => router.push(`/post/${item.id}` as any)}
+      onPress={onOpenPost}
       authorRow={
         <AuthorRow item={item} badge={{ label: 'HIDDEN GEM', bg: '#E3F1EA', fg: color.success }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={handleDeleted} />
       }
@@ -714,7 +750,7 @@ function GemCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Pulse
 }
 
 /* ── Itinerary / Plan Idea — delegates to SharedPostCard ── */
-function ItineraryCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: PulseFeedItem; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void; sessionId?: string | null }) {
+function ItineraryCard({ item, onOpenPost, onWhyPress, onDeleteSuccess, sessionId }: { item: PulseFeedItem; onOpenPost: () => void; onWhyPress?: (id: string) => void; onDeleteSuccess?: () => void; sessionId?: string | null }) {
   const planPicker = usePlanPicker();
   const [dismissed, setDismissed] = useState(false);
   const dismiss = () => setDismissed(true);
@@ -731,7 +767,7 @@ function ItineraryCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item:
       featuredByPortava={item.featuredByPortava ?? null}
       savedByMe={item.savedByMe ?? false}
       cardStyle={{ marginBottom: 0 }}
-      onPress={() => router.push(`/post/${item.id}` as any)}
+      onPress={onOpenPost}
       authorRow={
         <AuthorRow item={item} badge={{ label: 'ITINERARY', bg: '#E2EDF0', fg: color.deep }} onHide={dismiss} onUnhide={undismiss} onDeleteSuccess={handleDeleted} />
       }
@@ -924,6 +960,7 @@ function PlaceRecommendationCard({ item }: { item: PulseFeedItem }) {
 
 /* ── Unified renderer: switch on type ── */
 export function PulseFeedCard({ item, onDeleteSuccess, sessionId, autoplayVideo = false }: { item: PulseFeedItem; onDeleteSuccess?: () => void; sessionId?: string | null; /** Play this card's video in place, muted (only a post card with a video has one). */ autoplayVideo?: boolean }) {
+  const [openedPost, setOpenedPost] = useState<string | null>(null);
   const [whyId, setWhyId] = useState<string | null>(null);
   const [whyOpen, setWhyOpen] = useState(false);
 
@@ -945,10 +982,10 @@ export function PulseFeedCard({ item, onDeleteSuccess, sessionId, autoplayVideo 
   let card: React.ReactNode;
   switch (item.type) {
     case 'post':               card = <PostCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} sessionId={sessionId} autoplayVideo={autoplayVideo} />; break;
-    case 'question':           card = <QuestionCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} />; break;
+    case 'question':           card = <QuestionCard onOpenPost={() => setOpenedPost(item.id)} item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} />; break;
     case 'plan':               card = <PlanCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} />; break;
-    case 'hidden_gem':         card = <GemCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} sessionId={sessionId} />; break;
-    case 'itinerary':          card = <ItineraryCard item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} sessionId={sessionId} />; break;
+    case 'hidden_gem':         card = <GemCard onOpenPost={() => setOpenedPost(item.id)} item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} sessionId={sessionId} />; break;
+    case 'itinerary':          card = <ItineraryCard onOpenPost={() => setOpenedPost(item.id)} item={item} onWhyPress={handleWhyPress} onDeleteSuccess={onDeleteSuccess} sessionId={sessionId} />; break;
     case 'circle_activity':    card = <CircleCard item={item} />; break;
     case 'compass_suggestion': card = item.reason ? <CompassCard item={item} onWhyPress={handleWhyPress} /> : null; break;
     case 'city_note':          card = item.isProvisional ? <CityNoteCard item={item} /> : null; break;
@@ -961,6 +998,7 @@ export function PulseFeedCard({ item, onDeleteSuccess, sessionId, autoplayVideo 
   return (
     <>
       {card}
+      {openedPost === item.id && <PostTakeover postId={openedPost} onClose={() => setOpenedPost(null)} />}
       <CompassWhySheet
         visible={whyOpen}
         recommendationId={whyId}

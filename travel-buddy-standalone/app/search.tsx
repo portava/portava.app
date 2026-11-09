@@ -1,3 +1,4 @@
+import { tripSearchType, useTripSearchMinute } from '../src/hooks/useTripSearchMinute.ts';
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, TextInput, FlatList, Pressable, StyleSheet,
@@ -108,6 +109,8 @@ export default function SearchScreen() {
   const [submitted, setSubmitted] = useState(!!params.q);
 
   const [results, setResults] = useState<UnifiedSearchResult[]>([]);
+  const searchMinute = useTripSearchMinute(results.some(row=>tripSearchType(row.type)));
+  const checkedMinute = useRef(searchMinute);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -323,6 +326,14 @@ export default function SearchScreen() {
   }, [userCoords, tz, activeChips]);
 
   // Debounce search trigger when query or tab changes
+  useEffect(() => {
+    if (checkedMinute.current === searchMinute) return;
+    checkedMinute.current = searchMinute;
+    if (!submitted || !results.some(row=>tripSearchType(row.type))) return;
+    setResults(previous => previous.filter(row=>!tripSearchType(row.type)));
+    void runSearch(query, activeTab, null, buildIntentParams(detectedIntent,activeChips));
+  }, [searchMinute, submitted, results, runSearch, query, activeTab, detectedIntent, activeChips]);
+
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     const trimmedLen = query.trim().length;

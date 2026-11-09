@@ -51,6 +51,7 @@ import {
   expandPlayback,
   getCompactPlayback,
   minimizePlayback,
+  playbackContextIsCurrent,
   reconcilePlaybackContext,
   routeKeyOf,
   stopPlayback,
@@ -159,7 +160,7 @@ export function CompactPlaybackHost() {
     return () => sub.remove();
   }, [key, presentation]);
 
-  if (!session) return null;
+  if (!session || !playbackContextIsCurrent(routeKey, userId ?? null)) return null;
   const expanded = session.presentation === 'expanded';
   const sessionKey = session.key;
   const authorized = authorizedKey === sessionKey;

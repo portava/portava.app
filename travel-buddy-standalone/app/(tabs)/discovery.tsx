@@ -1,3 +1,4 @@
+import { tripWindowEnded } from '../../src/lib/tripCalendar.ts';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 import {
@@ -607,7 +608,7 @@ function DiscoveryHubScreen() {
     listMyTrips().then((rows) => {
       if (cancelled) return;
       const list = Array.isArray(rows) ? rows : [];
-      const active = list.find((r) => r.status === 'planning' || r.status === 'active') ?? list[0];
+      const active = list.find((r) => !tripWindowEnded(r) && ['planning', 'active', 'upcoming'].includes(r.status));
       if (active?.destinationCity && !locationState.place.city) {
         setDestination(active.destinationCity);
       }

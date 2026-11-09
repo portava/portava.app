@@ -44,6 +44,7 @@
  * status and the viewer's role — nothing about other members.
  */
 
+import { tripHasEnded } from '../invariants/tripStatus.js';
 import { planScopeAdmitsCrew } from "../policies/privateAnchorAccess.js";
 /** Bumped when a field is renamed, removed, or changes meaning. */
 export const TRIP_PLAN_ITEM_PROJECTION_SCHEMA_VERSION = 1;
@@ -159,7 +160,7 @@ export async function readViewerNextTrip(sc: any, viewerId: string): Promise<Tri
   try {
     const owned = await sc
       .from("trips")
-      .select("id, destination_city, start_date, status")
+      .select("id, destination_city, start_date, end_date, timezone, status")
       .eq("owner_id", viewerId)
       .in("status", [...NEXT_TRIP_STATUSES])
       .limit(NEXT_TRIP_READ_CAP);
@@ -185,7 +186,7 @@ export async function readViewerNextTrip(sc: any, viewerId: string): Promise<Tri
     if (joinedIds.length > 0) {
       const joined = await sc
         .from("trips")
-        .select("id, destination_city, start_date, status")
+        .select("id, destination_city, start_date, end_date, timezone, status")
         .in("id", joinedIds)
         .in("status", [...NEXT_TRIP_STATUSES]);
       if (joined.error) return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", detail: String(joined.error.message ?? joined.error) };
@@ -195,7 +196,7 @@ export async function readViewerNextTrip(sc: any, viewerId: string): Promise<Tri
     const candidates = [
       ...ownedRows.map((r) => ({ r, role: "owner" })),
       ...joinedRows.map((r) => ({ r, role: roleOf.get(String(r.id)) ?? "member" })),
-    ].filter(({ r }) => (NEXT_TRIP_STATUSES as readonly string[]).includes(String(r.status)));
+    ].filter(({ r }) => (NEXT_TRIP_STATUSES as readonly string[]).includes(String(r.status)) && !tripHasEnded(r, new Date(generatedAt)));
 
     candidates.sort((a, b) => {
       const sa = typeof a.r.start_date === "string" ? a.r.start_date : null;

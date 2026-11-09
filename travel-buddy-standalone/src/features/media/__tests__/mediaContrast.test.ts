@@ -1447,10 +1447,10 @@ for (const [id, file, line] of [
   ['world.perspectiveTile', F.tile, '<CachedImage source={{ uri: media.thumbnailUrl }} style={styles.img} resizeMode="cover" fallbackBg={color.mute} />'],
   ['world.experienceMosaic', F.expMosaic, '<CachedImage source={{ uri: m.thumbnailUrl }} style={styles.heroImg} resizeMode="cover" fallbackBg={color.mute} />'],
   ['world.people', F.people, '<CachedImage source={{ uri: c.avatarUrl }} style={styles.avatar} resizeMode="cover" fallbackBg={color.mute} />'],
-  ['mediaViewer', MV, '<CachedImage source={{ uri: mediaUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackBg={color.mute} />'],
 ] as const) {
   add({ id: `${id}.imageFallback.caption`, fg: color.paper, on: 'mediaFallbackGround', kind: 'text', at: [[file, line], CACHED_BG, ...FALLBACK_CAPTION] }); // FIXED by lane K (census-media §31.13): was 1.19 (paper on haze)
 }
+add({ id: 'mediaViewer.imageFallback.caption', fg: color.paper, on: 'ink', kind: 'text', at: [[MV, '<CachedImage source={{ uri: mediaUrl }} style={StyleSheet.absoluteFill} resizeMode="contain" fallbackBg={color.ink} />'], CACHED_BG, ...FALLBACK_CAPTION] });
 add({ id: 'gridTile.imageFallback.caption', fg: color.paper, on: 'mediaFallbackGround', kind: 'text', at: [[FT.gridTile, 'resizeMode="cover" fallbackBg={color.mute}'], [FT.mediaFallback, 'bg={fallbackBg}'], ...FALLBACK_CAPTION] }); // FIXED by lane K (census-media §31.13): was 1.19
 add({ id: 'imageFallback.dot', fg: 'rgba(250,249,246,0.6)', on: 'mediaFallbackGround', kind: 'decor', at: [[FT.mediaFallback, 'backgroundColor: color.paper, opacity: 0.6 }']] });
 // Avatar: with no photo, initials in ink on a `haze` disc (its own ground). The name beside it is the label.

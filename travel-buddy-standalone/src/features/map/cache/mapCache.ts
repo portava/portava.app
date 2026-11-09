@@ -47,6 +47,7 @@
  * testable without a native module; `mapCache` is the app-bound singleton.
  */
 
+import { tripWindowEnded, type TripWindow } from '../../../lib/tripCalendar.ts';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   FRESHNESS_THRESHOLDS_MS,
@@ -517,6 +518,10 @@ export function rehydrate(entry: MapCacheEntry, now: number): RehydrateResult {
 
   for (const stored of entry.objects ?? []) {
     if (!stored || typeof stored !== 'object') continue;
+    if (stored.kind === 'trip_stop' && stored.payload && tripWindowEnded({ ...(stored.payload as TripWindow), expiresAt: stored.expiresAt }, now)) {
+      droppedUnrenderable += 1;
+      continue;
+    }
 
     // §23 first: an object whose position has expired must not be rendered at
     // all, no matter how its freshness reads.

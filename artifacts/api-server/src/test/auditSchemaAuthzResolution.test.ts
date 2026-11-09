@@ -26,7 +26,7 @@ import { readFileSync, readdirSync } from "node:fs";
 // credential, no guard front door and no env at all. See the header of
 // schemaClaimResolution.ts for why it was extracted — check:guard-coverage
 // caught the earlier version of this file naming credential env vars.
-import { functionClaimKey, isMissing, type LiveSchema } from "../scripts/lib/schemaClaimResolution.js";
+import { functionClaimKey, relationClaimKey, isMissing, type LiveSchema } from "../scripts/lib/schemaClaimResolution.js";
 
 /** A LiveSchema with nothing in it but the function sets under test. */
 function schema(pub: string[], authz: string[], extra: Partial<LiveSchema> = {}): LiveSchema {
@@ -53,6 +53,33 @@ function schema(pub: string[], authz: string[], extra: Partial<LiveSchema> = {})
 
 const fnClaim = (name: string) =>
   ({ kind: "function", key: `function:${name}`, label: `function ${name}` }) as any;
+
+describe("audit:schema — private relation namespace isolation", () => {
+  it("keeps public compatibility keys and qualifies private tables", () => {
+    assert.equal(relationClaimKey('"public"', 'Receipts'), 'receipts');
+    assert.equal(relationClaimKey(undefined, 'receipts'), 'receipts');
+    assert.equal(relationClaimKey('"telegraph_crypto_private"', 'receipts'), 'telegraph_crypto_private.receipts');
+  });
+  it("does not let same-named public and private tables satisfy one another", () => {
+    for (const [claimed, actual] of [['vault.receipts', 'receipts'], ['receipts', 'vault.receipts']]) {
+      const live = schema([], [], { relations: new Set([actual]) });
+      assert.equal(isMissing({ kind: 'table', key: `table:${claimed}`, label: claimed }, live), true);
+      live.relations.add(claimed);
+      assert.equal(isMissing({ kind: 'table', key: `table:${claimed}`, label: claimed }, live), false);
+    }
+  });
+  it("checks private columns, RLS and grants only in their own namespace", () => {
+    const live = schema([], [], { relations: new Set(['vault.receipts']), columns: new Set(['receipts.id']),
+      rlsEnabled: new Set(['receipts']), tableGrants: new Set(['receipts.service_role.select']) });
+    assert.equal(isMissing({ kind: 'column', key: 'column:vault.receipts.id', label: '' }, live), true);
+    assert.equal(isMissing({ kind: 'rls', key: 'rls:vault.receipts', label: '' }, live), true);
+    assert.equal(isMissing({ kind: 'grant', key: 'grant:vault.receipts.service_role.select', label: '' }, live), true);
+    live.columns.add('vault.receipts.id'); live.rlsEnabled.add('vault.receipts'); live.tableGrants.add('vault.receipts.service_role.select');
+    assert.equal(isMissing({ kind: 'column', key: 'column:vault.receipts.id', label: '' }, live), false);
+    assert.equal(isMissing({ kind: 'rls', key: 'rls:vault.receipts', label: '' }, live), false);
+    assert.equal(isMissing({ kind: 'grant', key: 'grant:vault.receipts.service_role.select', label: '' }, live), false);
+  });
+});
 
 describe("audit:schema — function claims resolve in public OR authz", () => {
   it("a function in public only is NOT missing", () => {

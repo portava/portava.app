@@ -127,7 +127,7 @@ vocabulary admits three of `09` §3's eight states and can never produce `payabl
 | `lib/creatorLedgerRows.ts` | the one model→row mapping | reachable |
 | `lib/creatorShareCanonical.ts` | pure fold over the canonical relation | reachable |
 | `lib/creatorRuleEvaluation.ts` | refuses `{}` rule params rather than defaulting (`artifacts/api-server/src/lib/creatorRuleEvaluation.ts:68#p))`) | reachable |
-| `lib/creatorAttributionScheduler.ts` | hourly tick, started at `artifacts/api-server/src/index.ts:293#startPlaceCooccurrenceRebuildScheduler();` | reachable, **inert**: one flag read per tick |
+| `lib/creatorAttributionScheduler.ts` | hourly tick, started at `artifacts/api-server/src/index.ts:299#startPlaceCooccurrenceRebuildScheduler();` | reachable, **inert**: one flag read per tick |
 | `lib/rentBuddyEarningsLedger.ts` | writes the legacy estimate summary row | reachable |
 | `lib/rentBuddyFeeSchedule.ts` | the single fee resolver (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:85#FEE_SCHEDULE_TABLE`, `:292#resolveFeeSchedule(`) | reachable |
 | `lib/rentBuddyKycGate.ts` | hard-blocks booking creation (§1.4) | **reachable and closed** |
@@ -145,7 +145,7 @@ vocabulary admits three of `09` §3's eight states and can never produce `payabl
 ### 1.4 Routes and gates
 
 **Mounted.** Both creator routers are registered:
-`artifacts/api-server/src/routes/index.ts:247#router.use(rentABuddyMarketplaceRouter);`.
+`artifacts/api-server/src/routes/index.ts:249#router.use(rentABuddyMarketplaceRouter);`.
 
 | Route group | Endpoints | Authorization / gate |
 |---|---|---|
@@ -221,7 +221,7 @@ It imports nothing, and no ledger module imports it.
 
 ### 1.7 Tests
 
-Nineteen files, **all registered in the main runner** (`artifacts/api-server/package.json:96#"test": "SUPABASE_URL=http://127.0.0.1:9`)
+Nineteen files, **all registered in the main runner** (`artifacts/api-server/package.json:112#"test": "SUPABASE_URL=http://127.0.0.1:9`)
 — so they run in CI's unstarvable static tier, not only on a developer's machine.
 
 The two that bear directly on §11: `test/paymentsLiveGuard.test.ts` (694 lines, A–H) drives the real

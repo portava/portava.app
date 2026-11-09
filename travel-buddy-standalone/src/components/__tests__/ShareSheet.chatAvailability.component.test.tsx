@@ -9,8 +9,13 @@ import { _resetDiscoveryViewerScopeForTests, setDiscoveryViewerFromSession } fro
 
 const mockThreads = jest.fn();
 const mockSend = jest.fn();
+const mockTyped = jest.fn(async () => ({ok:true}));
+// NOTE: Assert the outgoing typed-share command without posting to a remote thread.
+jest.mock('../../features/telegraph/sharing/shareApi.ts', () => ({shareObjectIntoThread: (...args: unknown[]) => (mockTyped as jest.Mock)(...args)}));
 const mockDestination = jest.fn();
 const mockSheet = jest.fn();
+// NOTE: The capability endpoint owns room encryption state; these tests exercise the send decision after that read.
+jest.mock('../../features/telegraph/conversation/conversationProjection.ts', () => ({ fetchConversationProjection: jest.fn(async () => ({conversation: {isE2ee: false}})) }));
 jest.mock('../ui/PortavaSheet.tsx', () => {
   const actual = jest.requireActual('../ui/PortavaSheet.tsx');
   return { ...actual, PortavaSheet: (props: unknown) => { mockSheet(props); return require('react').createElement(actual.PortavaSheet, props); } };
@@ -141,4 +146,18 @@ it('refuses a link outside the app origin', async () => {
   await fireEvent.press(ui.getByLabelText('Select Travel group 0'));
   await fireEvent.press(ui.getByText('Send'));
   expect(mockSend).not.toHaveBeenCalled();
+});
+
+
+it.each([false, true])('sends a canonical video as a typed reference or encrypted permalink (encrypted=%s)', async encrypted => {
+  const id='12340000-0000-4000-8000-000000000001';
+  const url=canonicalUrl(`/media-viewer/${id}`);
+  mockTyped.mockClear();
+  mockThreads.mockResolvedValue({ok:true,data:{threads:[{id:'thread-0',title:'Travel group 0',threadType:'group',isE2ee:encrypted,otherMembers:[]}]}});
+  const ui=await render(<ShareSheet visible canonicalLink={{url,title:'Share video'}} onClose={jest.fn()} />);
+  await fireEvent.press(ui.getByText('Send in a chat'));
+  await fireEvent.press(ui.getByLabelText('Select Travel group 0'));
+  await fireEvent.press(ui.getByText('Send'));
+  if (encrypted) {expect(mockTyped).not.toHaveBeenCalled();expect(mockSend).toHaveBeenCalledWith('thread-0',url,{isE2ee:true});}
+  else {expect(mockTyped).toHaveBeenCalledWith('thread-0','MEDIA',id,null);expect(mockSend).not.toHaveBeenCalled();}
 });

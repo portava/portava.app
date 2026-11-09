@@ -792,6 +792,7 @@ jobs:
         run: |
           set -euo pipefail
           bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:post-destinations-native 2>&1 | tee "$RUNNER_TEMP/post-destinations-native.log"
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:recording-capture-native 2>&1 | tee "$RUNNER_TEMP/recording-capture-native.log"
 
       - name: Require native trip nearby checkpoint transaction suite
         # Radio behavior is separately device-certified; this gate covers the

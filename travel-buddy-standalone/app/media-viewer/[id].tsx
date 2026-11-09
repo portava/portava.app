@@ -14,6 +14,7 @@
  * Web: CSS injection forces expo-av <video> to cover-fill with !important.
  */
 
+import { RecordingStampBadge } from '../../src/features/capture-stamps/RecordingStamp.tsx';
 import React, {
   useCallback,
   useEffect,
@@ -228,6 +229,7 @@ function ViewerOverlay({
       >
         {/* Left column: author + caption + place */}
         <View style={ov.leftCol} pointerEvents="box-none">
+          {isVideo && post && <RecordingStampBadge targetType="post" targetId={post.id} />}
           {post ? (
             <>
               {/* Author row */}

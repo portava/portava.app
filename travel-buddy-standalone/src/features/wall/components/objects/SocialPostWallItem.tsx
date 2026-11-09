@@ -16,11 +16,13 @@ import {
   SocialActionRow,
   WallImage,
 } from './wallItemShared.tsx';
+import { PostSharePreview, postShareTarget } from '../../../../components/PostReferenceCard.tsx';
 import { ContextThreadView } from '../ContextThreadView.tsx';
 import type { SocialPostProjection } from '../../types/wallProjection.ts';
 
 export function SocialPostWallItem({ projection }: { projection: SocialPostProjection }) {
   const media = projection.media?.[0];
+  const share = postShareTarget(projection.postReferenceId, projection.text);
   return (
     <View style={s.card} testID={`wall-item-${projection.objectType}`}>
       <ActorByline
@@ -28,14 +30,15 @@ export function SocialPostWallItem({ projection }: { projection: SocialPostProje
         publishedAt={projection.publishedAt}
         experienceAt={projection.experienceAt}
       />
-      {projection.text ? (
+      {projection.text && !share?.legacyPostId ? (
         <Text style={s.text} numberOfLines={6}>
           {projection.text}
         </Text>
       ) : null}
+      {share && <PostSharePreview target={share} />}
       {media ? (
         <View style={s.media}>
-          <WallImage media={media} />
+          <WallImage media={media} postId={projection.canonicalObjectId} />
         </View>
       ) : null}
       <PlaceLine projection={projection} />

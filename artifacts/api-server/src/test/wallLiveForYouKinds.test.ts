@@ -473,7 +473,12 @@ describe("trip_signal producer — trip-scoped, anchored on a saved stop", () =>
   }
 
   const tripClient = (items: any[], over: Record<string, any> = {}) =>
-    tableClient({ trip_saved_places: SAVED, places: PLACE_ROWS, trip_plan_items: items, meetups: [], ...over });
+    tableClient({ trips: [{ id: "trip-1", status: "active", end_date: null }], trip_saved_places: SAVED, places: PLACE_ROWS, trip_plan_items: items, meetups: [], ...over });
+
+  it("a still-scheduled item on an ended trip produces no live trip signal", async () => {
+    const expired = tripClient([planItem()], { trips: [{ id: "trip-1", status: "active", end_date: "2000-01-01", timezone: "Asia/Tokyo" }] });
+    assert.deepEqual(await buildTripSignalLiveCandidates(expired, VIEWER, TRIPS, PLACES, { now: NOW }), []);
+  });
 
   it("a crew gathering near a saved stop becomes one trip_signal candidate", async () => {
     const cands = await buildTripSignalLiveCandidates(tripClient([planItem()]), VIEWER, TRIPS, PLACES, { now: NOW });
@@ -498,7 +503,7 @@ describe("trip_signal producer — trip-scoped, anchored on a saved stop", () =>
 
   it("falls back to the saved stop's own coordinate when the canonical place has none", async () => {
     const sc = tableClient({
-      trip_saved_places: SAVED, places: [], trip_plan_items: [planItem()], meetups: [],
+      trips: [{ id: "trip-1", status: "active" }], trip_saved_places: SAVED, places: [], trip_plan_items: [planItem()], meetups: [],
     });
     const cands = await buildTripSignalLiveCandidates(sc, VIEWER, TRIPS, PLACES, { now: NOW });
     assert.equal(cands.length, 1);
@@ -585,7 +590,7 @@ describe("trip_signal producer — trip-scoped, anchored on a saved stop", () =>
     const FAR = { placeId: "p2", name: "Old Town", city: "Bangkok" };
     const FAR_LAT = LAT + 0.5;
     const sc = tableClient({
-      trip_saved_places: [...SAVED, { trip_id: "trip-1", place_id: "p2", lat: FAR_LAT, lng: LNG }],
+      trips: [{ id: "trip-1", status: "active" }], trip_saved_places: [...SAVED, { trip_id: "trip-1", place_id: "p2", lat: FAR_LAT, lng: LNG }],
       places: [...PLACE_ROWS, { id: "p2", latitude: FAR_LAT, longitude: LNG, status: "active", merged_into_place_id: null }],
       trip_plan_items: [
         planItem({ id: "pi-manual", title: "Breakfast", category: "activity" }),

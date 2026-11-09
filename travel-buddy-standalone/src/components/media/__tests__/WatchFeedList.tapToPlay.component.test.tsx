@@ -115,7 +115,7 @@ describe('WatchFeedList — tap-to-play flag', () => {
     mockFlags = {};
     await act(async () => { render(<WatchFeedList {...props('off-1')} />); });
     expect(mockIsActive['off-1']).toBe(true);
-    expect(mockPlaybackOptions).toEqual({ autoplay: true });
+    expect(mockPlaybackOptions).toEqual({ autoplay: true, cellOwnsPlayback:false });
     expect(screen.queryByTestId('watch-tap-to-play')).toBeNull();
   });
 
@@ -123,8 +123,16 @@ describe('WatchFeedList — tap-to-play flag', () => {
     mockFlags = { MEDIA_WATCH_TAP_TO_PLAY_ENABLED: true };
     await act(async () => { render(<WatchFeedList {...props('on-1')} />); });
     expect(mockIsActive['on-1']).toBe(false);
-    expect(mockPlaybackOptions).toEqual({ autoplay: false });
+    expect(mockPlaybackOptions).toEqual({ autoplay: false, cellOwnsPlayback:false });
     expect(screen.getByTestId('watch-tap-to-play')).toBeTruthy();
+  });
+
+  it('Roam automatically plays the visible video even when the legacy Watch flag is on', async () => {
+    mockFlags = { MEDIA_WATCH_TAP_TO_PLAY_ENABLED:true };
+    await act(async () => { render(<WatchFeedList {...props('roam')} autoplayOnView />); });
+    expect(mockIsActive.roam).toBe(true);
+    expect(mockPlaybackOptions).toEqual({autoplay:true, cellOwnsPlayback:true});
+    expect(screen.queryByTestId('watch-tap-to-play')).toBeNull();
   });
 
   it('ON: the single tap starts it', async () => {

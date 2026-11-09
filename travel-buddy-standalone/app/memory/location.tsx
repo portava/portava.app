@@ -37,7 +37,7 @@ function MemoryRow({ memory }: { memory: Memory }) {
       style={row.wrap}
       onPress={() => router.push(`/memory/${memory.id}` as any)}
     >
-      {memory.cover?.mediaType === POST_REFERENCE_MEDIA_TYPE ? <View style={row.thumb}><PostReferenceCover /></View> : memory.cover?.mediaUrl ? (
+      {memory.cover?.mediaType === POST_REFERENCE_MEDIA_TYPE ? <View style={row.thumb}><PostReferenceCover uri={memory.cover?.mediaUrl} /></View> : memory.cover?.mediaUrl ? (
         <CachedImage source={{ uri: memory.cover.mediaUrl }} style={row.thumb} fallbackLabel="" />
       ) : (
         <View style={[row.thumb, row.thumbFallback]}>

@@ -1,3 +1,4 @@
+import { sealRecordingUpload } from '../services/stamps/recordingCapture.js';
 import { filterCurrentPostAuthors } from '../lib/postAuthorAudience.js';
 import { Router } from "express";
 import { z } from "zod";
@@ -221,13 +222,24 @@ export async function storeVerifiedMediaUpload(req: any, res: any, sc: any, user
       uploadBuf = scrub.buffer;
     }
 
-    const basePath = `${user.id}/${Date.now()}`;
-    const path = `${basePath}.${uploadExt}`;
+    const captureToken = req.headers?.['x-portava-capture-token'];
+    let basePath = `${user.id}/${Date.now()}`;
+    let path = `${basePath}.${uploadExt}`;
+    if (captureToken !== undefined) {
+      if (sniffed.kind !== 'video' || !videoProbe?.durationMs || !videoProbe.width || !videoProbe.height) {
+        sendError(res,'invalid_payload','A recording stamp requires a readable camera video.'); return;
+      }
+      try { path = await sealRecordingUpload(sc,user.id,captureToken,uploadBuf,uploadExt); }
+      catch { sendError(res,'conflict','This capture session cannot accept this recording.'); return; }
+      basePath = path.slice(0,-uploadExt.length-1);
+    }
 
     const { error } = await sc.storage
       .from(STORAGE_BUCKET)
       .upload(path, uploadBuf, { contentType: uploadMime, upsert: false });
-    if (error) {
+    // A retried token can only name this immutable path and its exact stored digest.
+    const duplicateCapture = captureToken !== undefined && (error?.statusCode === '409' || error?.statusCode === 409 || error?.error === 'Duplicate');
+    if (error && !duplicateCapture) {
       req.log.error({ err: error, path }, "Storage upload failed");
       sendError(res, "db_error", `Upload failed: ${error.message}`);
       return;
@@ -296,14 +308,14 @@ export async function storeVerifiedMediaUpload(req: any, res: any, sc: any, user
     // client must treat null as "use `url`". It must never construct a variant
     // path itself: for every pre-existing post that URL would 404.
     res.status(201).json({
-      url: mediaRelayUrl, path, thumbnailUrl, feedUrl, width, height, processed, phash, durationSeconds: probedDurationSeconds(videoProbe),
+      url: mediaRelayUrl, path, thumbnailUrl, feedUrl, width, height, processed, phash, durationSeconds: probedDurationSeconds(videoProbe), ...(captureToken !== undefined ? {captureAccepted:true} : {}),
     });
 }
 
 // Columns returned to clients. NEVER include original_lat/original_lng or
 // user_gps_lat/user_gps_lng — those are stored privately and must not leak.
 const POST_COLUMNS =
-  "id, author_id, trip_id, content, media_urls, visibility, status, created_at, updated_at, " +
+  "id, author_id, trip_id, content, post_reference_id, media_urls, visibility, status, created_at, updated_at, " +
   "location_name, location_city, location_country, " +
   "location_privacy_mode, post_status, " +
   "public_lat, public_lng, public_location_label, geofence_radius_meters, " +
@@ -1078,9 +1090,6 @@ router.post("/posts", async (req, res) => {
   })();
 });
 
-// Safe public location labels (no GPS coordinates). Same privacy contract as POST_COLUMNS.
-const FOLLOWING_POST_COLUMNS = POST_COLUMNS;
-
 // ── Delayed geotag helpers ────────────────────────────────────────────────────
 
 /** Append an event to the delayed_post_location_events table. Non-fatal. */
@@ -1267,7 +1276,7 @@ router.get("/posts", async (req, res) => {
     // Step 2: public standalone active published posts from followed users only.
     let q = sc
       .from("posts")
-      .select(FOLLOWING_POST_COLUMNS)
+      .select(POST_COLUMNS)
       .in("author_id", followingIds)
       .is("trip_id", null)
       .eq("visibility", "public")

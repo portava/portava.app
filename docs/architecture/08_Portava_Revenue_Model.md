@@ -463,7 +463,7 @@ independent enforcements already exist:
   Intel capture records a non-`none` commercial disclosure under the **non-independent**
   `sponsored` source class, which "keeps a disclosed-commercial report out of independent
   community consensus — it never overwrites confidence, only its epistemic standing"
-  (`services/intel/IntelCaptureService.ts:394-399`), and `sponsored` resolves to the
+  (`services/intel/IntelCaptureService.ts:395-400`), and `sponsored` resolves to the
   `"sponsored"` source label, never to `"consensus"` (`:453-462`). Fail-closed: an omitted
   disclosure is `'none'`.
 - **Featured placement is editorial and admin-only.** `portava_featured` is written only through

@@ -31,6 +31,8 @@ interface SaveToCollectionSheetProps {
   onStatusRead?: (saved: boolean) => void;
   /** Render in an existing native modal, avoiding two simultaneous iOS presenters. */
   embedded?: boolean;
+  /** Existing wishlist/provider entries can be filed without a collection-item UUID. */
+  savedPlace?: { collectionIds: string[]; fileInto: (collectionId: string) => Promise<boolean> };
 }
 
 const SUGGESTED_NAMES = ['Food', 'Nightlife', 'Beaches', 'Hidden Gems', 'Future Trips'];
@@ -45,6 +47,7 @@ export function SaveToCollectionSheet({
   onUnsaved,
   onStatusRead,
   embedded = false,
+  savedPlace,
 }: SaveToCollectionSheetProps) {
   const statusCallback = useRef(onStatusRead);
   statusCallback.current = onStatusRead;
@@ -72,7 +75,7 @@ export function SaveToCollectionSheet({
     setLoading(true);
     try {
       const [read, savedState] = await Promise.all([
-        readCollections(), checkSaved(entityType, entityId),
+        readCollections(), savedPlace ? Promise.resolve({ok:true, saved:true, collectionIds:savedPlace.collectionIds}) : checkSaved(entityType, entityId),
       ]);
       if (request !== generation.current) return;
       if (!owner.current?.isCurrent()) { setLoadFailed(true); return; }
@@ -86,7 +89,7 @@ export function SaveToCollectionSheet({
     } finally {
       if (request === generation.current) setLoading(false);
     }
-  }, [entityType, entityId]);
+  }, [entityType, entityId, savedPlace]);
 
   useEffect(() => {
     let mounted = true;
@@ -138,7 +141,7 @@ export function SaveToCollectionSheet({
     setError(null);
     setConfirmation(null);
     try {
-      const ok = await saveItem(entityType, entityId, col?.id);
+      const ok = savedPlace && col ? await savedPlace.fileInto(col.id) : await saveItem(entityType, entityId, col?.id);
       if (request !== generation.current || !owner.current?.isCurrent()) return;
       if (!ok) { setError(col ? `Couldn't save to “${col.name}”. Please try again.` : "Couldn't save this item. Please try again."); return; }
       if (col) finishSave(col);
@@ -172,7 +175,7 @@ export function SaveToCollectionSheet({
       setCollections((prev) => [...prev, col]);
       setCreating(false);
       setNewName('');
-      const ok = await saveItem(entityType, entityId, col.id);
+      const ok = savedPlace ? await savedPlace.fileInto(col.id) : await saveItem(entityType, entityId, col.id);
       if (request !== generation.current || !owner.current?.isCurrent()) return;
       if (!ok) { setError(`Created “${col.name}” but couldn't save to it. Please try again.`); return; }
       finishSave(col);

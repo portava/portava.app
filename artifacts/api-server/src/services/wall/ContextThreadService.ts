@@ -36,6 +36,7 @@
  * the feed (spec §34). The whole surface is behind wall_context_threads_enabled
  * (fail-closed) — off, no object ever carries a thread.
  */
+import { tripHasEnded } from "../../domain/trips/invariants/tripStatus.js";
 import type {
   ContextThread,
   ContextThreadKind,
@@ -390,7 +391,7 @@ async function readTripRelevanceCandidate(
   try {
     const { data, error } = await sc
       .from("trips")
-      .select("id, destination_city, destination_country, start_date, status")
+      .select("id, destination_city, destination_country, start_date, status, end_date, timezone")
       .eq("owner_id", viewer.viewerId)
       .in("status", ["planning", "upcoming", "active"])
       .limit(50);
@@ -398,6 +399,7 @@ async function readTripRelevanceCandidate(
     const wantCity = place.city.trim().toLowerCase();
     let best: { id: string; startMs: number | null; city: string } | null = null;
     for (const row of data as any[]) {
+      if (tripHasEnded(row, now)) continue;
       const city = String(row.destination_city ?? "").trim().toLowerCase();
       if (!city || city !== wantCity) continue;
       const startMs = row.start_date ? Date.parse(String(row.start_date)) : NaN;

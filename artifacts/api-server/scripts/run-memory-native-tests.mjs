@@ -67,6 +67,12 @@ const manifests = {
     binaryVariable: "PORTAVA_TEST_POSTGRES_BIN",
     expectedTests: 11,
   },
+  "recording-capture": {
+    file: "src/test/recordingCaptureStamps.native.test.ts",
+    suite: "Recording capture stamps on PostgreSQL",
+    binaryVariable: "PORTAVA_TEST_POSTGRES_BIN",
+    expectedTests: 4,
+  },
   "post-destinations": {
     file: "src/test/postDestinations.native.test.ts",
     suite: "Post reference destinations: real PostgreSQL 17",

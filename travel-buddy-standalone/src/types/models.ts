@@ -887,6 +887,7 @@ export interface PulseAuthor {
 }
 
 export interface PulseFeedItem {
+  postReferenceId?: string | null;
   id: ID;
   type: PulseItemType;
   city?: string;

@@ -1,3 +1,5 @@
+// NOTE: save-picker tests use a current authenticated owner; owner invalidation has separate coverage.
+jest.mock('../../../../services/messagingOwnerRequest.ts', () => ({ captureMessagingOwnerRequest: () => ({ isCurrent: () => true }) }));
 /**
  * Component test: the Wall's outcome + engagement analytics (Wall spec §32).
  *

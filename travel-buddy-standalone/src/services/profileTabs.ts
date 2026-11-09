@@ -19,6 +19,7 @@ import { freshToken } from './apiToken.ts';
 export type ProfileTabKind = 'posts' | 'trips' | 'events' | 'circles';
 
 export interface ProfilePostItem {
+  postReferenceId?: string | null;
   id: string;
   content: string | null;
   mediaUrls: string[];

@@ -142,7 +142,7 @@ interface Changed {
 }
 const CHANGED: readonly Changed[] = [
   { file: SF.comments, draws: /<(CommentsSheet|CommentsSection)\b/, consumers: ['app/post/[id].tsx', 'src/components/PostEngagementBar.tsx', 'src/components/media/MediaCommentSheet.tsx'] },
-  { file: SF.share, draws: /<ShareSheet\b/, consumers: ['src/components/PostEngagementBar.tsx', 'src/components/media/WatchItemOverlay.tsx', 'src/features/media/components/MediaActionPanels.tsx'] },
+  { file: SF.share, draws: /<ShareSheet\b/, consumers: ['app/post/[id].tsx', 'src/components/PostEngagementBar.tsx', 'src/components/media/WatchItemOverlay.tsx', 'src/features/media/components/MediaActionPanels.tsx', 'src/features/wall/components/objects/wallItemShared.tsx'] },
   {
     file: SF.placePicker, draws: /<GlobalPlacePicker\b/, consumers: [
       'app/(rent-a-buddy)/become/apply.tsx', 'app/(rent-a-buddy)/buddy-dashboard/requests.tsx', 'app/(rent-a-buddy)/index.tsx', 'app/(rent-a-buddy)/marketplace.tsx',
@@ -155,7 +155,7 @@ const CHANGED: readonly Changed[] = [
   },
   {
     file: SF.planPicker, draws: /\busePlanPicker\(|<PlanPickerControllerProvider\b/, consumers: [
-      'app/(tabs)/ai.tsx', 'app/(tabs)/discovery.tsx', 'app/_layout.tsx', 'app/meetup/[id].tsx', 'src/components/DiscoveryWall.tsx', 'src/components/PlaceQuickActions.tsx',
+      'app/(tabs)/ai.tsx', 'app/(tabs)/discovery.tsx', 'app/(tabs)/wall.tsx', 'app/_layout.tsx', 'app/meetup/[id].tsx', 'src/components/DiscoveryWall.tsx', 'src/components/PlaceQuickActions.tsx',
       'src/components/PulseFeedCard.tsx', 'src/components/discovery/PlaceCard.tsx', 'src/components/map/MapEntityActionRow.tsx', 'src/components/media/RouteItPlaceSheet.tsx',
       'src/components/media/WatchFeedList.tsx', 'src/features/media/components/MediaActionRail.tsx',
     ],
@@ -334,7 +334,7 @@ test('the counts: consumers, pairs, improved, unchanged, worse', () => {
   };
   assert.equal(counts.improved + counts.unchanged + counts.worse, counts.pairs);
   // Recorded in census-media §33. A change to any of these is a change to what §33 claims.
-  assert.deepEqual(counts, { changedComponents: 16, consumers: 68, pairs: 310, asserted: 245, improved: 103, unchanged: 207, worse: 0, failingBefore: 89, failingAfter: 0 }); // HM-F08 (TM-create): +1 consumer, app/memory/new.tsx opens GlobalPlacePicker; its pairs are the sheet's own, so pairs do not move. §33.13 (was: assert.deepEqual(counts, { changedComponents: 10, consumers: 54, pairs: 205, asserted: 160, improved: 74, unchanged: 131, worse: 0, failingBefore: 65, failingAfter: 0 }), before the nested sheets)
+  assert.deepEqual(counts, { changedComponents: 16, consumers: 70, pairs: 310, asserted: 245, improved: 103, unchanged: 207, worse: 0, failingBefore: 89, failingAfter: 0 }); // 2026-11-05: Wall adds one consumer of ShareSheet's intrinsic ground; pairs stay unchanged. HM-F08 (TM-create): +1 consumer, app/memory/new.tsx opens GlobalPlacePicker; its pairs are the sheet's own, so pairs do not move. §33.13 (was: assert.deepEqual(counts, { changedComponents: 10, consumers: 54, pairs: 205, asserted: 160, improved: 74, unchanged: 131, worse: 0, failingBefore: 65, failingAfter: 0 }), before the nested sheets)
 });
 
 test('print the before/after table when SHEET_CONTRAST_TABLE=1', () => {
@@ -424,6 +424,7 @@ interface TokenAdopter {
 
 function tokenAdopters(): TokenAdopter[] {
   const tripSheet = 'src/features/telegraph/composer/PortavaTripShareSheet.tsx';
+  const nearbyCard = 'src/features/trips/crew/TripNearbyCard.tsx';
   // PortavaSheet paints its own ground (s.sheet → color.paperRaised), so every consumer sees the same pair.
   const sheetGround: Needle = ['src/components/ui/PortavaSheet.tsx', /sheet: \{[^}]*backgroundColor: color\.paperRaised,/];
   return [{
@@ -433,6 +434,11 @@ function tokenAdopters(): TokenAdopter[] {
       at: [[tripSheet, '<PortavaSheet visible='], [tripSheet, 'error: { ...typography.body, color: color.signalStrong },'], sheetGround],
       component: tripSheet, consumer: 'intrinsic',
     }],
+  }, {
+    file: nearbyCard, draws: /<TripNearbyCard\b/, consumers: ['src/components/map/LocateFriendsPanel.tsx', 'src/features/trips/crew/CrewMapSection.tsx'],
+    pairs: [{ id: 'tripNearby.action', fg: color.signalStrong, on: 'sheetPaperRaised', kind: 'text',
+      at: [[nearbyCard, 'action:{...t.bodyStrong,color:color.signalStrong},'], [nearbyCard, /card:\{[^}]*backgroundColor:color\.paperRaised/], [nearbyCard, '<Text style={s.action}>']],
+      component: nearbyCard, consumer: 'intrinsic' }],
   }, itineraryPasteAdopter(), ...tripsCardAdopters()]; // census-input-intelligence G160: TripItineraryPaste; wave-5 D: its sibling trips cards — both measured at the tail so no line above moves
 }
 

@@ -34,6 +34,7 @@
  *
  * Pure: no React, no network, no storage. Fully unit-testable.
  */
+import { tripWindowEnded, tripExpiryTime } from '../../../lib/tripCalendar.ts';
 import {
   KIND_DEFAULT_PRIORITY,
   point,
@@ -232,14 +233,17 @@ function stripDistance(buddy: any): Record<string, unknown> {
  */
 export const TRIP_PRIVACY_CLASS: PrivacyClass = 'place_level';
 
-export function projectTrip(trip: any): MapObject | null {
+export function projectTrip(trip: any, now = Date.now()): MapObject | null {
+  if (!trip || tripWindowEnded(trip, now)) return null;
   const lat = trip?.destinationLat ?? null;
   const lng = trip?.destinationLng ?? null;
   if (lat == null || lng == null) return null;
 
+  const expiry = tripExpiryTime(trip);
   return {
     id: `trip:${trip.id}`,
     kind: 'trip_stop',
+    expiresAt: expiry === null ? undefined : new Date(expiry).toISOString(),
     geometry: point(Number(lat), Number(lng)),
     // `destinationCity`, NOT `destination`: `TripRow` (services/trips.ts) has
     // only ever carried `destinationCity`, so the old read was undefined every

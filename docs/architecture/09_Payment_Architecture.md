@@ -5,7 +5,7 @@
 > **§11's first bullet is false at `f71cfb85f`.** It says of §§3–10: *"No migration, no table, no
 > route, no flag."* All four nouns exist. **Nine** migrations implement §§4–10's shapes — 2901, 2920,
 > 2921, 2922, 2930, 3385, 3386, 3387, 3510 — creating **five** tables plus a view; **two** mounted
-> routers serve **eight** endpoints (`artifacts/api-server/src/routes/index.ts:247#router.use(rentABuddyMarketplaceRouter);`);
+> routers serve **eight** endpoints (`artifacts/api-server/src/routes/index.ts:249#router.use(rentABuddyMarketplaceRouter);`);
 > and `creator_attribution_enabled` is a flag, seeded FALSE
 > (`artifacts/api-server/src/migrations/2922_creator_attribution_flag.sql:60#false,`). The body below
 > is unedited and describes 2026-09-07; these corrections take precedence. The full inventory, with

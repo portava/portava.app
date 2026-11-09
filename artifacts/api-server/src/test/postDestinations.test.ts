@@ -5,8 +5,10 @@ const viewer='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',author='bbbbbbbb-bbbb-4bbb-8
 const post='cccccccc-cccc-4ccc-8ccc-cccccccccccc',ref='dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 let rows:Record<string,any[]>;let failures:Set<string>;let reads:string[];
 function client(){return {from(table:string){const filters:Array<(row:any)=>boolean>=[];let max=Infinity;
- const result=()=>{reads.push(table);return {data:(rows[table]??[]).filter(row=>filters.every(f=>f(row))).slice(0,max),error:failures.has(table)?{message:'unreadable'}:null};};
- const query:any={select:()=>query,eq:(key:string,value:unknown)=>{filters.push(row=>row[key]===value);return query;},in:(key:string,values:unknown[])=>{filters.push(row=>values.includes(row[key]));return query;},limit:(value:number)=>{max=value;return query;},
+ const result=()=>{reads.push(table);const matched=(rows[table]??[]).filter(row=>filters.every(f=>f(row)));return {data:matched.slice(0,max),count:matched.length,error:failures.has(table)?{message:'unreadable'}:null};};
+ const query:any={select:()=>query,order:()=>query,
+ overlaps:(field:string,values:string[])=>{filters.push(row=>Array.isArray(row[field]) && row[field].some((v:string)=>values.includes(v)));return query;},
+ eq:(key:string,value:unknown)=>{filters.push(row=>row[key]===value);return query;},in:(key:string,values:unknown[])=>{filters.push(row=>values.includes(row[key]));return query;},limit:(value:number)=>{max=value;return query;},
  or:(expression:string)=>{assert.ok(expression.includes(viewer)||expression.includes(author));return query;},
  maybeSingle:async()=>{const r=result();return {...r,data:r.data[0]??null};},then:(resolve:any,reject:any)=>Promise.resolve(result()).then(resolve,reject)};return query;
  }};}
@@ -18,8 +20,8 @@ beforeEach(()=>{failures=new Set();reads=[];rows={
  memories:[{id:'memory',owner_id:viewer,state:'published',visibility:'only_me'}],
 };});
 describe('Post reference current authorization',()=>{
- it('returns live text with no source media URL or copied snapshot',async()=>{
-  assert.deepEqual(await readPostReference(client(),ref,viewer),{available:true,postId:post,author:'@traveler',text:'A shared memory'});
+ it('returns live text for a post without attachments',async()=>{
+  assert.deepEqual(await readPostReference(client(),ref,viewer),{available:true,postId:post,author:'@traveler',text:'A shared memory',media:[]});
   rows.posts[0].content='Edited';assert.equal((await readPostReference(client(),ref,viewer) as any).text,'Edited');
  });
  it('checks destination audience before touching the source',async()=>{
@@ -91,4 +93,16 @@ it('post references honor a private account and recheck revoked approved follows
 it('unknown private-account follow state never grants a saved reference audience',async()=>{
   rows.profiles[0].is_private=true;rows.user_follows=[{follower_id:viewer,following_id:author}];failures.add('user_follows');
   assert.equal((await readReferenceSource(client(),post,viewer)).available,false);
+});
+
+it('projects ordered first-party media and revokes it after moderation, without resurrecting legacy copies',async()=>{
+ const video='post-media/'+author+'/clip.mp4',photo='post-media/'+author+'/photo.jpg';
+ rows.posts[0].media_urls=[photo];
+ rows.post_media=[{post_id:post,media_type:'video',public_url:video,storage_path:author+'/clip.mp4',sort_order:1,processing_status:'ready',moderation_status:'approved'},
+  {post_id:post,media_type:'image',public_url:photo,storage_path:author+'/photo.jpg',sort_order:0,processing_status:'ready',moderation_status:'pending'}];
+ let view=await readReferenceSource(client(),post,viewer);assert.ok(view.available);assert.deepEqual(view.media.map(m=>[m.type,m.uri]),[['image',photo],['video',video]]);
+ rows.post_media[1].moderation_status='rejected'; rows.post_media_moderation_ledger=[{storage_path:author+'/clip.mp4'}];
+ view=await readReferenceSource(client(),post,viewer);assert.ok(view.available);assert.deepEqual(view.media,[]);
+ rows.post_media=[]; view=await readReferenceSource(client(),post,viewer);assert.ok(view.available);assert.deepEqual(view.media.map(m=>m.uri),[photo]);
+ failures.add('post_media');await assert.rejects(readReferenceSource(client(),post,viewer),/source_media_unavailable/);
 });

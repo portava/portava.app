@@ -3,7 +3,7 @@
  *
  * Shows all of the user's collections as a grid of cards.
  * Tapping a collection opens its items list within the same screen.
- * The legacy place-bookmarks are preserved in the default "Saved" collection.
+ * The Saved places entry includes Discovery and map wishlist bookmarks.
  */
 import React, { useState, useCallback, useRef } from 'react';
 import { usePrivateSurfaceKey } from '../src/hooks/usePrivateSurfaceKey.ts';
@@ -59,7 +59,7 @@ function routeForItem(item: CollectionItem): string | null {
     // entityId is the profile's user id (uuid) — the /u/ route resolves
     // uuid params to the canonical handle via its UuidHandleRedirect fallback.
     case 'profile':   return `/u/${item.entityId}`;
-    case 'place':     return `/place/${item.entityId}`;
+    case 'place':     return `/place/${encodeURIComponent(item.placeId ?? item.entityId)}`;
     case 'hashtag':   return `/hashtag/${item.title?.startsWith('#') ? item.title.slice(1) : item.entityId}`;
     case 'memory':    return `/memory/${encodeURIComponent(item.entityId)}`;
     case 'gem':       return `/gems/${encodeURIComponent(item.entityId)}`;
@@ -615,6 +615,9 @@ function SavedForViewer() {
               onScroll={navBarScrollHandler}
               scrollEventThrottle={16}
             >
+              <Pressable style={s.newCollectionRow} accessibilityRole="button" accessibilityLabel="Saved places" onPress={() => router.push('/saved-places' as never)}>
+                <MapPin size={18} color={color.deep} /><Text style={s.newCollectionText}>Saved places</Text>
+              </Pressable>
               <SavedPeopleEntry />
               <SavedPostsEntry onPress={() => setSavedPostsOpen(true)} />
               <Pressable style={s.newCollectionRow} accessibilityRole="button" accessibilityLabel="Saved gems" onPress={() => setSavedGemsOpen(true)}><Bookmark size={18} color={color.deep} /><Text style={s.newCollectionText}>Saved gems</Text></Pressable>
@@ -630,13 +633,16 @@ function SavedForViewer() {
               onScroll={navBarScrollHandler}
               scrollEventThrottle={16}
             >
+              <Pressable style={s.newCollectionRow} accessibilityRole="button" accessibilityLabel="Saved places" onPress={() => router.push('/saved-places' as never)}>
+                <MapPin size={18} color={color.deep} /><Text style={s.newCollectionText}>Saved places</Text>
+              </Pressable>
               <SavedPeopleEntry />
               <SavedPostsEntry onPress={() => setSavedPostsOpen(true)} />
               <Pressable style={s.newCollectionRow} accessibilityRole="button" accessibilityLabel="Saved gems" onPress={() => setSavedGemsOpen(true)}><Bookmark size={18} color={color.deep} /><Text style={s.newCollectionText}>Saved gems</Text></Pressable>
               <EmptyState
                 icon={Bookmark}
                 title="No collections yet"
-                description="Saved posts, gems and people are listed above. Save places, events, and more into collections — they'll appear here."
+                description="Saved places, posts, gems and people are listed above. Save places, events, and more into collections — they'll appear here."
                 primaryAction={{ label: 'Create a collection', onPress: () => { setCreateName(''); setCreateOpen(true); } }}
               />
               <Text style={s.suggestLabel}>Starter ideas</Text>
@@ -662,7 +668,10 @@ function SavedForViewer() {
               scrollEventThrottle={16}
               ListHeaderComponent={
                 <>
-                      <SavedPeopleEntry />
+                      <Pressable style={s.newCollectionRow} accessibilityRole="button" accessibilityLabel="Saved places" onPress={() => router.push('/saved-places' as never)}>
+                <MapPin size={18} color={color.deep} /><Text style={s.newCollectionText}>Saved places</Text>
+              </Pressable>
+              <SavedPeopleEntry />
                   <SavedPostsEntry onPress={() => setSavedPostsOpen(true)} />
               <Pressable style={s.newCollectionRow} accessibilityRole="button" accessibilityLabel="Saved gems" onPress={() => setSavedGemsOpen(true)}><Bookmark size={18} color={color.deep} /><Text style={s.newCollectionText}>Saved gems</Text></Pressable>
                   <Pressable style={s.newCollectionRow} onPress={() => { setCreateName(''); setCreateOpen(true); }}>

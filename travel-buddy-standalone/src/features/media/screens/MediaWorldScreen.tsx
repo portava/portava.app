@@ -62,11 +62,11 @@ export function MediaWorldScreen({
     emptyState = (
       <LensStateView
         status={state.status === 'idle' ? 'loading' : state.status}
-        title={state.status === 'error' ? 'The world is quiet right now' : 'Nothing changing yet'}
+        title={state.status === 'error' ? 'World couldn’t load' : 'No recent posts here'}
         message={
           state.status === 'error'
-            ? 'We could not reach the intelligence network. Pull to try again.'
-            : 'As people share perspectives around you, the city will come alive here.'
+            ? 'Try again to load recent activity.'
+            : 'Photos and videos shared around this area will appear here.'
         }
         onRetry={onReload}
       />

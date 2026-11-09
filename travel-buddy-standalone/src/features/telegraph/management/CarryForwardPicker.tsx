@@ -49,7 +49,7 @@ export function CarryForwardPicker({ threadId, owner, selected, onChange, disabl
     })}
     <Text accessibilityLiveRegion="polite" style={{ color: p.mute }}>{selected.length}/10 items selected</Text>
     {loading && <ActivityIndicator accessibilityLabel="Loading plans and places" color={p.operational} />}
-    {error && <Text accessibilityRole="alert" style={{ color: p.attention }}>{error}</Text>}
+    {error && <Text accessibilityRole="alert" style={{ color: p.recvText }}>{error}</Text>}
     {!loading && !error && !items.length && <Text style={{ color: p.mute }}>No eligible plans or places in the messages checked.</Text>}
     {!loading && (error || next) && <Pressable accessibilityRole="button" disabled={disabled} accessibilityState={{ disabled }} onPress={() => void load(error ? cursor.current : next)} style={{ minHeight: 48, justifyContent: 'center' }}><Text style={{ color: p.operational }}>{error ? 'Retry plans and places' : 'Check older messages'}</Text></Pressable>}
   </View>;

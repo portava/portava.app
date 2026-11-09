@@ -28,7 +28,7 @@ import { canViewEvent, checkEventEligibility } from "./events.js";
 import { canReadPost, isPostPublished, needsFollowerCheck, needsTripMembershipCheck } from "../lib/postVisibility.js";
 import { isAcceptedTripMember } from "../lib/http.js";
 import { canViewTrip } from "../domain/trips/policies/tripPolicy.js"; import { removeFromOwnCollections } from "../lib/collectionUnfile.js";
-import { readDiscoveryPlaceFacts } from "../lib/discoveryPlaceGovernance.js";
+import { collectionPlacePreviews } from "../lib/savedPlaceLibrary.js";
 
 import { filterCurrentPostAuthors } from '../lib/postAuthorAudience.js';
 import { savedGemPreviews } from '../lib/savedGemPreviews.js';
@@ -468,7 +468,7 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
     byType[row.entity_type].push(row.entity_id as string);
   }
 
-  const previewMap: Record<string, { title: string; coverUrl: string | null }> = {};
+  const previewMap: Record<string, { title: string; coverUrl: string | null; placeId?: string }> = {};
 
   // Resolve each type
   await Promise.all(
@@ -630,10 +630,9 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
             previewMap[`${type}:${r.id}`] = { title: `#${r.slug ?? r.name}`, coverUrl: null };
           }
         } else if (type === "place") {
-          const places = await readDiscoveryPlaceFacts(sc, ids);
-          if (!places) throw new Error('Saved place visibility could not be checked.');
-          for (const r of places) {
-            previewMap[`${type}:${r.id}`] = { title: r.name ?? "Place", coverUrl: r.image_url ?? null };
+          const places = await collectionPlacePreviews(sc, user.id, ids);
+          for (const [id, place] of places) {
+            previewMap[`place:${id}`] = { title: place.title, coverUrl: place.coverUrl, placeId: place.placeId };
           }
         } else if (type === "highlight") {
           // Same defect, louder payload: a caption AND a media URL, for any
@@ -674,6 +673,7 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
       entityId:   row.entity_id as string,
       savedAt:    row.saved_at as string,
       title:      previewMap[`${row.entity_type}:${row.entity_id}`]?.title ?? null,
+      ...(row.entity_type === "place" ? { placeId: previewMap[`place:${row.entity_id}`]?.placeId ?? null } : {}),
       coverUrl:   previewMap[`${row.entity_type}:${row.entity_id}`]?.coverUrl ?? null,
     })),
     hasMore,

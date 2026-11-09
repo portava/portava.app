@@ -10,6 +10,7 @@
  *   Returns all trip fields.
  */
 
+import { tripStatusAtRead } from "../../domain/trips/invariants/tripStatus.js";
 import type { PrivateTripPreview, AuthorizedTripView } from "./dtos.js";
 import {
   PRIVATE_TRIP_COVER_PLACEHOLDER,
@@ -50,7 +51,7 @@ export function toPrivateTripPreview(
         ? ((t.destination_city as string | null) ?? null)
         : null,
     destinationCountry: (t.destination_country as string | null) ?? null,
-    status: t.status as string,
+    status: tripStatusAtRead(t),
     visibility: t.visibility as string,
     // Respect show_header_publicly: replace the cover with a generic placeholder
     // when the owner has opted out of showing it to non-members.
@@ -104,7 +105,7 @@ export function toAuthorizedTripView(t: any): AuthorizedTripView {
     neighborhoods: (t.neighborhoods as string[]) ?? [],
     startDate: (t.start_date as string | null) ?? null,
     endDate: (t.end_date as string | null) ?? null,
-    status: t.status as string,
+    status: tripStatusAtRead(t),
     visibility: t.visibility as string,
     tripType: (t.trip_type as string) ?? "leisure",
     timezone: (t.timezone as string | null) ?? null,

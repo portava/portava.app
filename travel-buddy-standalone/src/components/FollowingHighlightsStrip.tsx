@@ -1,3 +1,4 @@
+import { PostReferenceCover } from './PostReferenceCard.tsx';
 import { POST_REFERENCE_MEDIA_TYPE } from '../services/postDestinations.ts';
 /**
  * FollowingHighlightsStrip — horizontal stories-style tray for the Explore tab.
@@ -42,6 +43,7 @@ interface Props {
   unreadable?: HighlightErrorKind | null;
   /** Retry the feed read. Only offered for a failure that can be retried. */
   onRetry?: () => void;
+  onViewerClose?: () => void;
 }
 
 /**
@@ -66,10 +68,11 @@ function resolveRingPosterUri(user: HighlightFeedUser): string | null {
 }
 
 export function FollowingHighlightsStrip({
-  users, sessionViewedIds, onMarkViewed, unreadable = null, onRetry,
+  users, sessionViewedIds, onMarkViewed, unreadable = null, onRetry, onViewerClose,
 }: Props) {
   const { userId: currentUserId } = useSession();
-  const [viewingUser, setViewingUser] = useState<HighlightFeedUser | null>(null);
+  const [viewingUserId, setViewingUserId] = useState<string | null>(null);
+  const viewingUser = users.find(user => user.userId === viewingUserId);
 
   // §28.11. The read failed and we have nothing to show. Say that. Rendering
   // null here would put the same picture on screen as "nobody you follow has
@@ -107,7 +110,8 @@ export function FollowingHighlightsStrip({
     if (viewingUser) {
       onMarkViewed(viewingUser.highlights.map((h) => h.id));
     }
-    setViewingUser(null);
+    setViewingUserId(null);
+    onViewerClose?.();
   };
 
   return (
@@ -130,7 +134,7 @@ export function FollowingHighlightsStrip({
             <Pressable
               key={u.userId}
               style={styles.item}
-              onPress={() => setViewingUser(u)}
+              onPress={() => setViewingUserId(u.userId)}
               accessibilityRole="button"
               accessibilityLabel={`View ${label}'s highlights`}
             >
@@ -156,6 +160,8 @@ export function FollowingHighlightsStrip({
                     }
                     testID={`following-highlight-avatar-${u.userId}`}
                   />
+                ) : firstHighlight?.mediaType === POST_REFERENCE_MEDIA_TYPE ? (
+                  <PostReferenceCover uri={firstHighlight.mediaUrl} />
                 ) : (
                   <View style={[styles.avatar, styles.avatarFallback]}>
                     <Text style={styles.avatarInitial}>

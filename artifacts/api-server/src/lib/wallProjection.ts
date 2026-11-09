@@ -424,6 +424,7 @@ export interface WallProjectionBase {
   visibility: VisibilityState;
   media?: DisplayMedia[];
   text?: string;
+  postReferenceId?: string;
   place?: PublicPlaceRef;
   /** Rendered only when the §9 gate passed (populated by ContextThreadService). */
   contextThread?: ContextThread;

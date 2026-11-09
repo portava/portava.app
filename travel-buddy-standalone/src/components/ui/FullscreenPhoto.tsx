@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Modal, PanResponder, Pressable, StyleSheet, Text, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ChevronLeft, ChevronRight, Maximize2, Minus, Plus, X } from 'lucide-react-native';
+import { avatar } from '../../theme/tokens.ts';
 import { DisplayMediaImage } from './DisplayMediaImage.tsx';
 import { usePrivateSurfaceKey } from '../../hooks/usePrivateSurfaceKey.ts';
 import { useMediaSurfaceActivity } from '../../hooks/useMediaSurfaceActivity.ts';
@@ -10,7 +11,9 @@ export interface FullscreenPhotoProps {
   uri: string;
   /** Original image references, never thumbnail URLs. */
   photos?: string[];
-  children: React.ReactNode;
+  children?: React.ReactNode;
+  fullscreenOnly?: boolean;
+  onClose?: () => void;
   style?: StyleProp<ViewStyle>;
   filterId?: string;
   filterIntensity?: number;
@@ -24,9 +27,10 @@ export function FullscreenPhoto(props: FullscreenPhotoProps) {
   return <PhotoForViewer key={`${scope}:${props.uri}`} {...props} />;
 }
 
-function PhotoForViewer({ uri, photos, children, style, filterId, filterIntensity }: FullscreenPhotoProps) {
-  const [open, setOpen] = useState(false);
-  const activity = useMediaSurfaceActivity(() => setOpen(false));
+function PhotoForViewer({ uri, photos, children, style, filterId, filterIntensity, fullscreenOnly = false, onClose }: FullscreenPhotoProps) {
+  const [open, setOpen] = useState(fullscreenOnly);
+  const close = () => { setOpen(false); if (fullscreenOnly) onClose?.(); };
+  const activity = useMediaSurfaceActivity(close);
   const images = [...new Set(photos?.length ? photos : [uri])].filter(Boolean);
   const [index, setIndex] = useState(Math.max(0, images.indexOf(uri)));
   const dimensions = useWindowDimensions();
@@ -72,13 +76,13 @@ function PhotoForViewer({ uri, photos, children, style, filterId, filterIntensit
     },
   });
   return <View style={style}>
-    <Pressable accessibilityRole="button" accessibilityLabel="View photo full screen" onPress={(event) => { event.stopPropagation?.(); if (activity.isCurrent()) setOpen(true); }} style={StyleSheet.absoluteFill}>
+    {!fullscreenOnly && <Pressable accessibilityRole="button" accessibilityLabel="View photo full screen" onPress={(event) => { event.stopPropagation?.(); if (activity.isCurrent()) setOpen(true); }} style={StyleSheet.absoluteFill}>
       {children}
       <View style={s.expand} pointerEvents="none"><Maximize2 size={22} color="#fff" /></View>
-    </Pressable>
-    {open && activity.active ? <Modal visible animationType="fade" presentationStyle="fullScreen" supportedOrientations={['portrait', 'landscape']} onRequestClose={() => setOpen(false)}>
+    </Pressable>}
+    {open && activity.active ? <Modal visible animationType="fade" presentationStyle="fullScreen" supportedOrientations={['portrait', 'landscape']} onRequestClose={close}>
       <SafeAreaView style={s.root} accessibilityViewIsModal>
-        <View style={s.toolbar}><Text style={s.text}>{images.length > 1 ? `${index + 1} of ${images.length}` : 'Photo'}</Text><Pressable style={s.button} accessibilityRole="button" accessibilityLabel="Close full-screen photo" onPress={() => setOpen(false)}><X color="#fff" size={26} /></Pressable></View>
+        <View style={s.toolbar}><Text style={s.text}>{images.length > 1 ? `${index + 1} of ${images.length}` : 'Photo'}</Text><Pressable style={s.button} accessibilityRole="button" accessibilityLabel="Close full-screen photo" onPress={close}><X color="#fff" size={26} /></Pressable></View>
         <View testID="fullscreen-photo-canvas" style={s.canvas} onLayout={event => setSize(event.nativeEvent.layout)} {...responder.panHandlers}>
           <Animated.View testID="fullscreen-photo-transform" style={[StyleSheet.absoluteFill, { transform: [{ translateX: animated.x }, { translateY: animated.y }, { scale: animated.scale }] }]}>
             <DisplayMediaImage uri={activeUri} width={size.width} height={size.height} resizeMode="contain" style={StyleSheet.absoluteFill} filterId={filterId} filterIntensity={filterIntensity} />
@@ -103,5 +107,5 @@ const s = StyleSheet.create({
   reset: { minWidth: 64, height: 48, alignItems: 'center', justifyContent: 'center' },
   tools: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
   canvas: { flex: 1, overflow: 'hidden' },
-  expand: { position: 'absolute', top: 10, right: 10, width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.65)', alignItems: 'center', justifyContent: 'center' },
+  expand: { position: 'absolute', top: 10, right: 10, width: avatar.s44, height: avatar.s44, borderRadius: avatar.s44 / 2, backgroundColor: 'rgba(0,0,0,0.65)', alignItems: 'center', justifyContent: 'center' },
 });
