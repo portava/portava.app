@@ -234,12 +234,12 @@ test('a happy-path record posts the built body to the select endpoint with auth'
     fetchImpl: (async (url: string, init: RequestInit) => {
       calledUrl = url;
       calledInit = init;
-      return { ok: true, status: 200 };
+      return { ok: true, status: 200, json: async () => ({ ok: true, recorded: true }) };
     }) as unknown as typeof fetch,
   });
   const res = await recordSelectionWith(d, req);
   assert.equal(res.recorded, true);
-  assert.equal(calledUrl, 'https://api.example.test/input-assistance/select');
+  assert.equal(calledUrl, 'https://api.example.test/api/input-assistance/select');
   assert.equal(calledInit?.method, 'POST');
   assert.equal((calledInit?.headers as Record<string, string>).Authorization, 'Bearer tok-123');
   assert.deepEqual(JSON.parse(calledInit?.body as string), buildSelectBody(req));
@@ -271,7 +271,7 @@ test('no token → the request is never sent', async () => {
     getToken: async () => null,
     fetchImpl: (async () => {
       called = true;
-      return { ok: true, status: 200 };
+      return { ok: true, status: 200, json: async () => ({ ok: true, recorded: true }) };
     }) as unknown as typeof fetch,
   });
   const res = await recordSelectionWith(d, req);
@@ -288,7 +288,7 @@ test('a getToken that throws is swallowed (fail-soft), request not sent', async 
     },
     fetchImpl: (async () => {
       called = true;
-      return { ok: true, status: 200 };
+      return { ok: true, status: 200, json: async () => ({ ok: true, recorded: true }) };
     }) as unknown as typeof fetch,
   });
   const res = await recordSelectionWith(d, req); // must not throw
@@ -301,4 +301,11 @@ test('no api base configured → nothing is sent', async () => {
   const res = await recordSelectionWith(d, req);
   assert.equal(res.recorded, false);
   assert.equal(res.reason, 'no_api_base');
+});
+
+test('selection respects a declined write or malformed success receipt', async () => {
+  for (const receipt of [{ ok: true, recorded: false }, { ok: false, recorded: true }, {}]) {
+    const d = deps({ fetchImpl: async () => Response.json(receipt) });
+    assert.equal((await recordSelectionWith(d, req)).recorded, false);
+  }
 });

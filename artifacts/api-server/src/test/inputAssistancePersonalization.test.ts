@@ -417,6 +417,74 @@ describe("POST /suggest — personalization augments but never overrides (§9)",
 
 // ── 6. Cold-start identical to today ────────────────────────────────────────────
 
+describe("trip title typeahead", () => {
+  it("checks dates with an empty title using one owner-scoped joined read", async () => {
+    const client = makeFakeClient({});
+    let joinedReads = 0;
+    const policies: Record<string, unknown> = {};
+    _setTestClient({ ...client, from(table: string) {
+      if (table !== "trip_members") return client.from(table);
+      const query = {
+        select(columns: string) { assert.match(columns, /trips!inner/); return query; },
+        eq(col: string, value: string) { policies[col] = value; return query; },
+        neq(col: string, value: string) { policies[col] = value; return query; },
+        or(filter: string) { assert.equal(filter, "status.is.null,status.eq.accepted"); return query; },
+        in(col: string, values: string[]) { assert.equal(col, "trips.status"); assert.deepEqual(values, ["active","upcoming","planning"]); return query; },
+        order(col: string) { assert.equal(col, "trip_id"); return query; },
+        async range() { joinedReads++; return { data: [{trips: { id: "t-1", title: "Existing trip", start_date: "2030-04-02", end_date: "2030-04-04" }}], error: null }; },
+      };
+      return query;
+    }}, true);
+    const response = await suggest({ context: "trip_title", fieldId: "trip.title", text: "",
+      sessionContext: { surface: "trip_create", startDate: "2030-04-01", endDate: "2030-04-03" } });
+    assert.equal(response.status, 200);
+    const out = await response.json() as any;
+    assert.ok(out.suggestions.some((row: any) => row.structuredValue?.kind === "trip_date_conflict"));
+    assert.equal(joinedReads, 1);
+    assert.deepEqual(policies, {user_id:USER_A,role:"invited"});
+  });
+
+  it("starts the opted-in AI gate while the independent trip-window read is still pending", async () => {
+    const client = makeFakeClient({});
+    let releaseDates: () => void = () => {};
+    const dates = new Promise<void>(resolve => { releaseDates = resolve; });
+    let dateReadStarted = false;
+    let gateDuringDateRead = false;
+    const timeout = setTimeout(releaseDates, 300);
+    _setTestClient({ ...client, from(table: string) {
+      const query = client.from(table);
+      if (table === "trip_members") {
+        const range = query.range.bind(query);
+        query.range = (start: number, end: number) => {
+          dateReadStarted = true;
+          return dates.then(() => { dateReadStarted = false; return range(start, end); });
+        };
+      }
+      if (table === "feature_flags" && dateReadStarted) {
+        gateDuringDateRead = true;
+        releaseDates();
+      }
+      return query;
+    }}, true);
+    try {
+      const reply = await suggest({ context: "trip_title", fieldId: "trip.title", text: "Spring Escape", aiAssist: true,
+        sessionContext: { surface: "trip_create", startDate: "2030-04-01", endDate: "2030-04-03" } });
+      assert.equal(reply.status, 200);
+      assert.ok(gateDuringDateRead, "an AI request must not wait through both the trip dates and the provider in series");
+    } finally { clearTimeout(timeout); releaseDates(); }
+  });
+
+  it("checks dates rather than querying the catalog for an unassisted title", async () => {
+    const client = makeFakeClient({});
+    const queries: string[] = [];
+    _setTestClient({ ...client, from(table: string) { queries.push(table); return client.from(table); } }, true);
+    const r = await suggest({ context: "trip_title", fieldId: "trip.title", text: "Spring Escape", sessionContext: { surface: "trip_create" } });
+    assert.equal(r.status, 200);
+    assert.equal((await r.json() as any).suggestions.length, 0);
+    assert.deepEqual(queries, ["profiles"], "only the authentication profile check runs");
+  });
+});
+
 describe("POST /suggest — cold-start is identical to today", () => {
   it("a user with no history sees the base ranking, no memory rows", async () => {
     setup({ canonical_locations: [SANTA_ANA, SANTA_ROSA], input_selection_history: [] });
@@ -435,6 +503,17 @@ describe("POST /suggest — cold-start is identical to today", () => {
 // ── 7. Recording — explicit-only + owner-scoped (§35) ───────────────────────────
 
 describe("POST /select — records explicit selections, owner-scoped", () => {
+  it("reports a failed selection write as retryable and records no history", async () => {
+    const state = { input_selection_history: [] };
+    _setTestClient({ ...makeFakeClient(state), rpc: async () => ({ data: null, error: { message: "fixture write unavailable" } }) }, true);
+    const reply = await select({ context: "city_picker", entityType: "city", entityId: SANTA_ROSA.id }, A_TOK);
+    assert.equal(reply.status, 503);
+    assert.deepEqual(await reply.json(), {
+      error: "degraded_unavailable", message: "Your selection could not be recorded.", retryable: true,
+    });
+    assert.equal(state.input_selection_history.length, 0);
+  });
+
   it("records a city_picker selection under the SESSION user id, with the query key", async () => {
     setup({ canonical_locations: [SANTA_ROSA], input_selection_history: [] });
     const r = await select({

@@ -26,6 +26,7 @@ import {
   registerSocialFields,
   SOCIAL_FIELD_IDS,
 } from '../platform/input-assistance/social/socialFields.ts';
+import { emitInputEvent } from '../platform/input-assistance/services/inputTelemetry.ts';
 import { recordSuggestionSelection } from '../platform/input-assistance/services/selectionRecorder.ts';
 import type { InputSessionContext } from '../platform/input-assistance/types/inputSuggestion.ts';
 
@@ -101,9 +102,11 @@ export function useTelegraphRecipients(
         (s) => s.entityType === 'user' && s.entityId === userId,
       );
       if (!suggestion) return;
+      if (gateway.policy) emitInputEvent('suggestion_selected', gateway.policy.fieldId, gateway.policy.context,
+        { suggestionType: suggestion.type, source: suggestion.source }, gateway.policy.telemetryPolicy, gateway.requestId);
       recordSuggestionSelection(suggestion, { policy: gateway.policy, query });
     },
-    [gateway.suggestions, gateway.policy, query],
+    [gateway.suggestions, gateway.policy, gateway.requestId, query],
   );
 
   return {

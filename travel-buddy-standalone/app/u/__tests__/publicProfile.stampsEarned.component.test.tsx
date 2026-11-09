@@ -111,7 +111,7 @@ jest.mock('../../../src/hooks/useHighlightRingState', () => ({
 
 // NOTE: intentionally exhaustive — calls Supabase for follow state.
 jest.mock('../../../src/hooks/useFollow', () => ({
-  useFollow: () => ({ isFollowing: false, followsYou: false, loading: false, toggling: false, toggle: jest.fn() }),
+  useFollow: () => ({ isFollowing: false, followsYou: false, followersCount: 1, loading: false, toggling: false, toggle: jest.fn() }),
 }));
 
 // NOTE: intentionally exhaustive — calls Supabase for friend status.
@@ -201,6 +201,18 @@ describe('Public profile screen — Stamps Earned', () => {
     mockGetPublicShowcase.mockResolvedValue([]);
   });
   afterEach(async () => { await act(async () => {}); });
+
+  it('prints singular labels for a single postcard, country, city, follower and stamp', async () => {
+    mockUsePublicPassport.mockReturnValue({
+      ...hookState(profile({ stampsEarned: 1 })),
+      postcards: [{ id: 'card', locationCountry: 'Vietnam', locationCity: 'Đà Nẵng' }],
+    });
+    await render(<PublicPassportScreen />);
+    await act(async () => {});
+    for (const label of ['Postcard', 'Country', 'City', 'Follower', 'Stamp Earned']) {
+      expect(screen.getByText(label)).toBeTruthy();
+    }
+  });
 
   it('a measured count is shown as the number and reaches the milestone hook', async () => {
     mockUsePublicPassport.mockReturnValue(hookState(profile({ stampsEarned: 1500 })));

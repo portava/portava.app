@@ -262,6 +262,8 @@ describe("POST /v1/sensing/session — the issuer's ladder", () => {
     assert.equal(r.status, 201, JSON.stringify(r.body));
     assert.equal(typeof r.body.credential, "string");
     assert.ok(r.body.credential.length >= 32);
+    assert.equal(r.body.rotationPeriodSeconds, 3600, "the device can rotate its commitment while the same longer-lived session is valid");
+    assert.ok(Date.parse(r.body.expiresAt) > (r.body.rotationEpoch + 1) * r.body.rotationPeriodSeconds * 1000);
     assert.deepEqual(r.body.purposeScopes, ["collect", "retain", "aggregate"]);
     assert.equal(f.inserts.length, 1);
     const row = f.inserts[0]!;

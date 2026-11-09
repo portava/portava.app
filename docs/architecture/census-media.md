@@ -464,7 +464,7 @@ testable structure by §3 and §4.1. Narrative.
 | MD65 | OBSERVATION | **W** | Media never becomes an observation. `mediaEvidenceLink` produces a *link* row; `:1-13` states it *"never writes `intel_observations`/`intel_claims`/`intel_state_snapshots`"*. The stage is deliberately not wired, which is right for safety and wrong against §9. |
 | MD66 | CLAIM SYSTEM | **W** | The claim system exists (`lib/intelProjection`, `2130_intel_storage.sql`) and has no media input by construction (MD65). |
 | MD67 | LIVE INTELLIGENCE | **C** | `lib/liveClaimRead.readLiveClaimEnvelopes`, consumed at `MediaProjectionService.ts:721#export async function readCurrentState(`; fail-closed to `[]`. |
-| MD68 | MEDIA / DISCOVERY / MAP / COMPASS outputs | **C** | `routes/mediaWorld.ts` (media), `MediaProjectionService.ts:1631#export async function buildMediaMapProjection(` map clusters, `compass/CompassMediaContext.ts:232` consumed at `routes/compass.ts:1732#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
+| MD68 | MEDIA / DISCOVERY / MAP / COMPASS outputs | **C** | `routes/mediaWorld.ts` (media), `MediaProjectionService.ts:1631#export async function buildMediaMapProjection(` map clusters, `compass/CompassMediaContext.ts:232` consumed at `routes/compass.ts:1767#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
 
 ### §10 IntelligenceEligibility
 
@@ -511,7 +511,7 @@ testable structure by §3 and §4.1. Narrative.
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | MD94 | Go There / Show on Map / Directions | **W** | `MediaActionResolver.ts:381-387` emits `show_on_map`, targeting `/api/media/places/:placeId` — a projection, deliberately coordinate-free. There is **no directions action**: no `directions` id in the resolver's thirteen (`:335,343,351,361,381,388,399,416,424,439,461,482,498`), and `directions_tap` exists only as a telemetry name (`routes/mediaAnalyticsBatch.ts:41`) with no emitter. "Go There" and "Directions" are unbuilt; "Show on Map" is built and correct. |
-| MD95 | Ask Compass | **C** | `MediaActionResolver.ts:19-20` (Compass-gated) → `compass/CompassMediaContext.ts:232` `buildCompassMediaContext`, consumed at `routes/compass.ts:1732#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
+| MD95 | Ask Compass | **C** | `MediaActionResolver.ts:19-20` (Compass-gated) → `compass/CompassMediaContext.ts:232` `buildCompassMediaContext`, consumed at `routes/compass.ts:1767#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
 | MD96 | Save Place | **C** | Resolved to the existing saved-places endpoint and served at `routes/mediaActions.ts:43,82`. |
 | MD97 | Add to Trip | **C** | `MediaActionResolver.ts:16-18` — offered only when `canEditPlan` passes, which is the exact gate the trip-plan-item endpoint enforces, so the rail can never grant access the endpoint would deny. |
 | MD98 | Create Plan | **C** | Same resolver, Compass-gated (`:19-20`). |
@@ -712,17 +712,17 @@ here. (MD238's rank reads `hidden_gem_contributions`, absent from production —
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| MD242 | The `CompassMediaContext` contract | **C** | `compass/CompassMediaContext.ts:232` `buildCompassMediaContext`, wired into the real ask path at `routes/compass.ts:1732#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
+| MD242 | The `CompassMediaContext` contract | **C** | `compass/CompassMediaContext.ts:232` `buildCompassMediaContext`, wired into the real ask path at `routes/compass.ts:1767#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
 | MD243 | `entityRefs` — coarse, opaque, viewer-permitted | **C** | `CompassMediaContext.ts:26-53` — refs come from `resolveMediaEntities`, which runs the location/gem choke point, so a hidden venue, a gem-ceilinged place, and a protected gem's **name** are all withheld before anything is rendered into the prompt. |
 | MD244 | `viewerContext` | **C** | `CompassMediaContext.ts:69-74` — `viewerCountry` and `subjectCity` only, *"never a coordinate"*. |
 | MD245 | `permittedIntelligenceRefs` | **C** | `CompassMediaContext.ts:19-25` — filtered **twice**: the intel comes only from the gated fail-closed live-claim read, then is filtered to refs whose place the viewer is eligible to see. |
-| MD246 | Question: "Is this worth going to now?" | **C** | `CompassMediaContext.ts:9-12` names it as the driving case; the context lines are appended to the ask at `routes/compass.ts:1732#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
+| MD246 | Question: "Is this worth going to now?" | **C** | `CompassMediaContext.ts:9-12` names it as the driving case; the context lines are appended to the ask at `routes/compass.ts:1767#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
 | MD247 | Question: "Find somewhere like this." | **C** | Same; `find_similar` action at `MediaActionResolver.ts:399`. |
 | MD248 | Question: "Is this still busy?" | **C** | Answerable from `permittedIntelligenceRefs` (gated live claims); returns nothing rather than guessing when live is off. |
 | MD249 | Question: "Where is this?" | **C** | `entityRefs` carry the coarse place label subject to the owner's tier and any gem ceiling. |
 | MD250 | Question: "Build a plan around this." | **C** | `create_plan` action (`MediaActionResolver.ts:426`), Compass-gated. |
 | MD251 | Question: "What's nearby?" | **C** | `see_nearby` (`MediaActionResolver.ts:390`) + the map projection. |
-| MD252 | Question: "Where should we go after this?" | **N** | No sequencing concept in the media→Compass context: no next-stop, no chain (MD171), no time-of-evening term. *(STATED ABSENCE FALSIFIED 2026-09-13, and **this verdict is owed a re-read this note does not perform**. `fa5d7c25d` added a sequencing concept to exactly the context this row says has none: `artifacts/api-server/src/compass/CompassMediaContext.ts:225#export function buildSequencingAnchor` carries the canonical place the media resolved to, the coarse city, and a `chainable` flag that is FALSE — with the prompt saying the question cannot be answered — when the location/gem choke point withheld the place, and the block is rendered into the real ask at `routes/compass.ts:1732#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. census-compass §12.1 records the build as CM-03 `W → C` and cites this row by name. The letter is left at `N` because moving a row onto `C` is a media re-measure with mutations, not an integrator's note; the debt is recorded here and in this census's entry in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` rather than silenced.)* |
+| MD252 | Question: "Where should we go after this?" | **N** | No sequencing concept in the media→Compass context: no next-stop, no chain (MD171), no time-of-evening term. *(STATED ABSENCE FALSIFIED 2026-09-13, and **this verdict is owed a re-read this note does not perform**. `fa5d7c25d` added a sequencing concept to exactly the context this row says has none: `artifacts/api-server/src/compass/CompassMediaContext.ts:225#export function buildSequencingAnchor` carries the canonical place the media resolved to, the coarse city, and a `chainable` flag that is FALSE — with the prompt saying the question cannot be answered — when the location/gem choke point withheld the place, and the block is rendered into the real ask at `routes/compass.ts:1767#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. census-compass §12.1 records the build as CM-03 `W → C` and cites this row by name. The letter is left at `N` because moving a row onto `C` is a media re-measure with mutations, not an integrator's note; the debt is recorded here and in this census's entry in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` rather than silenced.)* |
 | MD253 | Question: "Find a quieter or cheaper version." | **N** | See MD101 — no comparative modifier exists anywhere in the media path. *(STATED ABSENCE FALSIFIED 2026-09-13, and **this verdict is owed a re-read this note does not perform** — see MD101, whose correction above states what is now true and what still is not. The comparator this row says exists nowhere exists in the Compass media context as of `fa5d7c25d`, for two of its three words, and reaches the ask; census-compass §12.1's CM-03 records the build. The letter is left at `N` for MD252's reason, and the debt is recorded rather than silenced.)* |
 | MD254 | Question: "Add this to my Trip." | **C** | `add_to_trip` (`MediaActionResolver.ts:594#id: "add_to_trip"`), gated by `canEditPlan`. |
 
@@ -9017,12 +9017,12 @@ carries the checkable anchors.
 | census-trips | §69.1, lines 7778 and 7784 | "Of the 181, 168 are absent from [the ledger] and 13 are 2420 itself, which IS applied", and "anyone can re-derive the three numbers (181 / 168 / 13)". Measured 2026-09-15; true then. | Line 7778: the 168 are no longer absent. Re-run over the same 181 references, all 168 are recorded as applied. They name 24 migrations, 2760 to 2794, stamped 2026-09-16 between 20:14 and 21:01 UTC. The rows stay W on the two flags. Line 7784: "Re-run on 2026-09-27, the same loop yields 181 / 0 / 13." | Re-derived here from §68.2's table. Taking the distinct migration numbers in each row, range endpoints included, gives exactly 181 references and exactly 13 of 2420, so that is the rule §69.1 used. None of the other 168 is absent today. `artifacts/api-server/src/lib/capability/production-applied-migrations.json:307#2760_trip_stages` (version 20260916201420) to `:443#2794_trip_meeting_checkpoints` (20260916210038). |
 | census-trips | §73.1, line 8583 | "parsed in full it carries 34 migrations at or above 2410, and not one of 2760-2795 is among them. 2450, 2500 and 2590 are absent too". Written 2026-09-15; true then. | Today the file carries 101 migrations at or above 2410, including every one of 2760–2795, stamped 2026-09-16 between 20:14 and 21:01 UTC. 2450, 2500 and 2590 were applied the same evening, and the 2796 repair at 2026-09-17 03:10. The apply that the paragraph says the branch may not perform has been performed, and those rows now wait on the two flags. No verdict moves and no class is re-derived. | Counted: at d7bab3f6e, the commit that wrote the sentence, the file has 51 entries, 34 of them at or above 2410; at HEAD it has 129 and 101. `artifacts/api-server/src/lib/capability/production-applied-migrations.json:447#2795_trip_kernel_write_guards` (20260916210136), `:451#2796_trip_reservation_history_security_definer` (20260917031001). |
 | census-trips | §74.1, line 8836 | "not one of 2760-2795 appears in it". Written 2026-09-16 at a97bfdac0; true there. | "true at a97bfdac0: every one of 2760–2795 now appears in that file, stamped 2026-09-16 between 20:14 and 21:01 UTC, and 2796 at 2026-09-17 03:10 … the two flags, both FALSE …, are what the W rows wait on. No verdict moves." | The file at a97bfdac0 holds none of 2760–2796, and none of 2450, 2500 or 2590. At HEAD all 37 of 2760–2796 are present. |
-| census-input-intelligence | G359, line 1055, in §52's table. G359's last statement is line 3057 (W), which was not edited. | "the one new duplicate inside the platform is still there: compassPrompt.ts re-implements the Compass starter set client-side under the same name as the server's buildCompassStarters (projection.ts line 258), and app/(tabs)/ai.tsx line 399 calls the client one." | A dated correction after that sentence, in italics. The clause was true when first written, on 2026-09-09. It has been false since e0d858f28 (2026-09-20, census-compass CG-01), and was already false when 2c95647f1 re-verified it on 2026-09-21. The client module keeps only an adapter over the server's rows. The screen feeds CompassStarters from the gateway at ai.tsx line 413, and line 399 is a closing bracket. The server's builder is now at projection.ts line 346. The W never rested on the duplicate alone: the unmigrated engines G6 names and the missing ratchet both still hold. | `travel-buddy-standalone/src/platform/input-assistance/compass/compassPrompt.ts:33#export function startersFromSuggestions` is the module's first function, and the module has no builder; its own suite asserts that the source does not contain buildCompassStarters. The call site is `travel-buddy-standalone/app/(tabs)/ai.tsx:404#starters={startersFromSuggestions(starterAssist.suggestions)}`. At 42aeac38e, ai.tsx line 399 read starters={buildCompassStarters(…)}. For the W: useGooglePlacesAutocomplete, usePlaceSearch and MentionInput still exist outside the platform, and no check in the server's or the client's scripts fails on a new engine (the two input scripts there measure and report). |
+| census-input-intelligence | G359, line 1055, in §52's table. G359's last statement is line 3057 (W), which was not edited. | "the one new duplicate inside the platform is still there: compassPrompt.ts re-implements the Compass starter set client-side under the same name as the server's buildCompassStarters (projection.ts line 258), and app/(tabs)/ai.tsx line 399 calls the client one." | A dated correction after that sentence, in italics. The clause was true when first written, on 2026-09-09. It has been false since e0d858f28 (2026-09-20, census-compass CG-01), and was already false when 2c95647f1 re-verified it on 2026-09-21. The client module keeps only an adapter over the server's rows. The screen feeds CompassStarters from the gateway at ai.tsx line 413, and line 399 is a closing bracket. The server's builder is now at projection.ts line 346. The W never rested on the duplicate alone: the unmigrated engines G6 names and the missing ratchet both still hold. | `travel-buddy-standalone/src/platform/input-assistance/compass/compassPrompt.ts:33#export function startersFromSuggestions` is the module's first function, and the module has no builder; its own suite asserts that the source does not contain buildCompassStarters. The call site is `travel-buddy-standalone/app/(tabs)/ai.tsx:412#starters={startersFromSuggestions(starterAssist.suggestions)}`. At 42aeac38e, ai.tsx line 399 read starters={buildCompassStarters(…)}. For the W: useGooglePlacesAutocomplete, usePlaceSearch and MentionInput still exist outside the platform, and no check in the server's or the client's scripts fails on a new engine (the two input scripts there measure and report). |
 | census-sensing | §22.1 (S92), line 4835 | "the scheduler is started from [index.ts line 58, anchor 'import']". Right when written on 2026-09-26 at d7312709d. | The citation now reads index.ts line 59, anchored on startMemoryProjectionScheduler (its import), and adds the call at line 185. The old anchor stays in a "was" note, which says that dbf804b9f added a line above it the same day, and that line 58 is now registerScopedTrustApplier's import. | `artifacts/api-server/src/index.ts:63#startMemoryProjectionScheduler`, `:191#startMemoryProjectionScheduler();`. At d7312709d the import was at line 58; at dbf804b9f it is at 59. See §38.3 for why the anchor names the import. |
 | census-discovery | §37.1 (the travel term's provenance), lines 4908 and 4913 | "landsideLeg is the port; LAYOVER_TRAVEL_TIME_PROVIDER is noRoutedProvider, so every answer is { minutes: null, source: "unmeasured", reason: "NO_ROUTED_PROVIDER" } at zero I/O cost." Written 2026-09-15; true then. | Line 4908 marks the clause "true when written; corrected 2026-09-27 at the end of this paragraph". Line 4913: since 74890f906 (2026-09-22) the constant is corridorTravelTimeProvider(googleRoutesCorridorProvider). The corridor provider refuses before it builds any request unless LAYOVER_ROUTED_CORRIDOR_ENABLED is affirmative and GOOGLE_MAPS_API_KEY is present. The adapter reports that refusal as NO_ROUTED_PROVIDER, so with either switch unset every answer is still the unmeasured one, plus a detail field. This correction read the code, not any deployment's environment. | `artifacts/api-server/src/services/airport/LayoverTravelTime.ts:83#export const LAYOVER_TRAVEL_TIME_PROVIDER: TravelTimeProvider = corridorTravelTimeProvider(googleRoutesCorridorProvider);`. The two gates come in this order, before the request body: `artifacts/api-server/src/lib/providers/googleRoutesCorridorProvider.ts:286#const notEnabled` then `:288#noKey`. The refusal's mapping is at `artifacts/api-server/src/lib/providers/corridorTravelTimeAdapter.ts:128#PROVIDER_NOT_ENABLED: "NO_ROUTED_PROVIDER",`. landsideLeg passes the reason and detail through unchanged. |
 | census-discovery | A14 row, line 4966, A14's last statement (W) | "because LAYOVER_TRAVEL_TIME_PROVIDER is noRoutedProvider and no dwell source exists for a place nobody has planned." Written 2026-09-15; true then. | A dated correction after that sentence, in italics, verdict unmoved. Since 74890f906 the constant is the corridor adapter. It answers NO_ROUTED_PROVIDER unless both switches are set, so with either unset the admitted set is unchanged. And with no dwell source either way, a place nobody has planned still cannot be admitted. | `artifacts/api-server/src/services/airport/LayoverTravelTime.ts:83#export const LAYOVER_TRAVEL_TIME_PROVIDER`. The dwell half was re-checked: §37.1's grep for typicalDuration, visit_duration, dwell_minutes and expectedDuration still finds nothing under the server's src. The clause's conclusion, that unplanned places are not admitted, holds on the dwell source alone. |
-| census-passport | P87 row, line 348 | "app/(tabs)/ai.tsx lines 98-104 consumes prefillMessage and sends it." Right at 42aeac38e. | "(corrected 2026-09-27, verdict unmoved: 98–104 was right at 42aeac38e; e0d858f28 moved the effect 14 lines down, to [ai.tsx lines 112-118])" | `travel-buddy-standalone/app/(tabs)/ai.tsx:113-119#if (!prefillMessage`. Line 112 is the guard and line 118 is the send. At 42aeac38e the same two lines were 98 and 104. |
-| census-passport | P168 row, line 516 | "Compass (SharedContextScreen.tsx line 217 → app/(tabs)/ai.tsx line 104)" | "…, now [ai.tsx line 118] after e0d858f28 moved it 14 lines down; corrected 2026-09-27, verdict unmoved" | `travel-buddy-standalone/app/(tabs)/ai.tsx:119#send(prefillMessage,`. |
+| census-passport | P87 row, line 348 | "app/(tabs)/ai.tsx lines 98-104 consumes prefillMessage and sends it." Right at 42aeac38e. | "(corrected 2026-09-27, verdict unmoved: 98–104 was right at 42aeac38e; e0d858f28 moved the effect 14 lines down, to [ai.tsx lines 112-118])" | `travel-buddy-standalone/app/(tabs)/ai.tsx:118-124#if (!prefillMessage`. Line 112 is the guard and line 118 is the send. At 42aeac38e the same two lines were 98 and 104. |
+| census-passport | P168 row, line 516 | "Compass (SharedContextScreen.tsx line 217 → app/(tabs)/ai.tsx line 104)" | "…, now [ai.tsx line 118] after e0d858f28 moved it 14 lines down; corrected 2026-09-27, verdict unmoved" | `travel-buddy-standalone/app/(tabs)/ai.tsx:124#send(prefillMessage,`. |
 | census-wall | W118 row, line 380 | "(imported 41-45)" | "; corrected 2026-09-27, verdict unmoved: the block is at [WallCandidateLoaders.ts lines 42-46] and closes at [line 46], where it already was at 42aeac38e, the earliest commit this row exists at" | `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:42-46#import {` and `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:46#} from "../media/MediaProjectionService.js";`. So 41–45 was one line off at every commit this row can be read at; it did not drift. loadVideoMediaCandidates (line 538) still calls resolveViewer, loadEligibleCandidates and projectCandidatesProtected, so the C holds. |
 | census-passport | §19.3, line 1887 | "Whether the ruling moves P45 from W is a re-measurement, and a re-measurement is not what a correction section may do." Wrong when written: §16.1 had recorded C since 2026-09-14. | "(Corrected 2026-09-27, no letter moved: this sentence lags its own census. P45's last statement is §16.1's row, which records C, moved W → C on 2026-09-14 and corrected in place on 2026-09-22 with the verdict unmoved, so the ruling had no W to move P45 from. It made P45's explainability clause stricter; P50 and P154 stay W on the band.)" | census-passport line 1406 is P45's last statement. The integrity dump reads it as C there, and reads P50 (line 1447) and P154 (line 1454) as W. §32.15's P45 paragraph says the same. The 2026-09-22 passport ledger note lags in the same way; the ledger was not edited. |
 
@@ -13761,11 +13761,11 @@ Four things follow from that output:
 skips, and `run-tests.sh` refuses a run with any skip. Each property is listed
 below.
 
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:253#it("G1-0`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:256#it("G1-0`
   3362 is in force, so the refusals below cannot be vacuous. Every column of
   posts is classified once. A new column turns this red until someone decides
   which side it goes.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:265#it("G1-1`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:268#it("G1-1`
   anon, a stranger and the author are each refused exactly the 35 withheld
   columns:
   - selected one statement per column;
@@ -13773,7 +13773,7 @@ below.
   - through `SELECT *`, `WHERE original_lat > 48` and `ORDER BY user_gps_lat`.
 
   The service role reads the same values, so a refusal is never "no row".
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:282#it("G1-2`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:285#it("G1-2`
   Each client role can read exactly the 40 granted columns, and the whole list
   in one SELECT. The inventory's reads also hold:
   - the live suite's anon feed read;
@@ -13781,22 +13781,22 @@ below.
   - the author's post_media INSERT, through the owner policy's WITH CHECK;
   - a stranger's INSERT, refused by row-level security rather than by a
     privilege.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:309#it("G1-3`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:312#it("G1-3`
   The rows are unchanged:
   - anon and a stranger see the public posts;
   - a follower also sees followers_only;
   - the author also sees their own hidden post
-    (`artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:314#assert.deepEqual(visible({ role: "anon" }, ids), [PUB].sort()`).
+    (`artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:317#assert.deepEqual(visible({ role: "anon" }, ids), [PUB].sort()`).
 
   Since 3925 (PR #802) the pending delayed post is visible to its author only,
   which closes §44.7 item 1's row gap for posts. The policy catalog is byte-identical
   across rollback and re-apply, in a rolled-back transaction.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:341#it("G1-4`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:344#it("G1-4`
   The author reads their own hidden row's granted columns as before. Their own
   `original_lat` is refused to their client, and reaches them through the API's
   role, which reads all 75 columns. GET /posts/pending serves the owner
   `location_lat`, `location_lng` and `venue_name` that way.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:360#it("G1-5`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:363#it("G1-5`
   The rollback restores the table ACL to today's plus
   `anon=r/<owner>,authenticated=r/<owner>`, with no column ACL. 3362 re-applied
   on top reproduces today's catalog byte for byte. The database is left
@@ -15116,7 +15116,7 @@ kept everywhere, as mapPublicPost keeps them.
 - Every consumer of the page was traced. They all receive the stripped page,
   because all of them call buildFeed or buildSection:
   - `/compass/feed`, which caches what it serves
-    (`artifacts/api-server/src/routes/compass.ts:612#void setCachedFeed(sc, user.id, cacheBuild, cacheKey, "feed", enrichedFeed);`);
+    (`artifacts/api-server/src/routes/compass.ts:614#void setCachedFeed(sc, user.id, cacheBuild, cacheKey, "feed", enrichedFeed);`);
   - `/compass/feed/section`;
   - the front-load first page
     (`artifacts/api-server/src/compass/CompassFrontLoadEngine.ts:348#let   feed    = await buildFeed(items_, profile, context, db, null);`);
@@ -15874,7 +15874,7 @@ No row has code left that can be written on this branch without a decision.
   they are corrected here. Both said the Compass screen calls a client
   `buildCompassStarters`. e0d858f28 removed that builder, and the screen now
   renders the server's starters
-  (`travel-buddy-standalone/app/(tabs)/ai.tsx:404#starters={startersFromSuggestions(starterAssist.suggestions)}`).
+  (`travel-buddy-standalone/app/(tabs)/ai.tsx:412#starters={startersFromSuggestions(starterAssist.suggestions)}`).
   Neither line carries CG-01's last statement, which is §26.13, so no verdict
   moves. Each line now carries a dated note, and both edits are line-neutral.
 
@@ -16739,7 +16739,7 @@ and proven by a test that goes red without it.
       `docs/migrations.md`'s 3801 entry names the classes. This census grades none of them.
   - **Tests:**
     - static: `artifacts/api-server/src/test/postsReleaseTimingColumnGrants.test.ts:68#describe("A. 3801 grants 3362's columns minus exactly the two release-timing columns"` (17);
-    - database: `artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts:202#it("R1 — after the exit and the release, nobody's client key reads when` (7, run on the PGlite replica; CI's local-db job runs it on PostgreSQL).
+    - database: `artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts:205#it("R1 — after the exit and the release, nobody's client key reads when` (7, run on the PGlite replica; CI's local-db job runs it on PostgreSQL).
     - 3362's own database suite is restated for the end of the chain, with its lists narrowed by 3801's two.
       Rolled back to 3362's end state, both suites go red (10 cases). Six static mutants each turn a case red.
 - **D82-1 — a `data:` URI carried a held photo past the D-82 hold.** `appMediaRef` accepted any string
@@ -16816,7 +16816,7 @@ without it.
     `updated_at` and `publish_at`, and tells the operator to roll 3801 back first
     (`db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql:59#Roll 3801 back first`).
   - 3801's header and its rollback state the order.
-  - Test: `artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts:288#it("R4b — 3362's rollback refuses while 3801 is in force`.
+  - Test: `artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts:292#it("R4b — 3362's rollback refuses while 3801 is in force`.
     In the documented order the rollback still reaches 2148's state.
   - 3362's own database suite now rolls 3801 back first.
 - **CERT-1 — the supersession mechanism, accepted by the lead with three conditions.**
@@ -16839,7 +16839,7 @@ without it.
   - §50.16's "never restores a table-level `SELECT`" was true of 3801's rollback only (F1 above).
   - "The three functions that read `posts`": the verifier's catalog has four, all `SECURITY DEFINER`.
   - The refusal of a client grant made by a non-owner grantor is now exercised: a second grantor role on the replica
-    (`artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts:310#it("R6`).
+    (`artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts:314#it("R6`).
 
 Cited, not graded (check:census-scope-coverage):
 - NOT-GRADED: artifacts/api-server/src/test/certifyPostconditionSupersession.test.ts — §50.18 cites the rules certify's postcondition supersession is held to; it is CI tooling, and no Media row is graded on it.
@@ -18024,3 +18024,5 @@ No row, total, scope-coverage floor or citation threshold is promoted by this re
 ### November 9 release evidence
 
 The selected original can open over the presenting screen. Eligible video playback observes viewability, app activity, user pause and mute. The normal picker preserves local video bytes through the upload transport, including a tested web/Android body path. Migration 4019 adds an opt-in, owner-bound recording receipt checked against verified stored video bytes and the current Story/post attachment. Its public ID is minted after publication. Four PostgreSQL scenarios passed with no skips. The receipt makes no claim about the depicted scene, location, identity, camera hardware or physical-device certification. See [recording stamps](../media/recording-stamps.md).
+
+The recovered 4000 migration extends the source guard for saving an owned post to Memory to media stored in post_media. Its checksum matches the historical production application receipt (`artifacts/api-server/src/migrations/4000_memory_items_source_post_guard_post_media.sql:78#CREATE OR REPLACE FUNCTION public.memory_items_source_post_guard`).

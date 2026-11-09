@@ -39,9 +39,7 @@ async function freshToken(): Promise<string | null> {
  */
 export function recordExplicitSelection(req: SelectRequest): void {
   try {
-    void recordSelectionWith({ apiBase, getToken: freshToken, fetchImpl: fetch }, req).catch(() => {
-      /* fail-soft — never surfaces */
-    });
+    void recordSelectionWith({ apiBase, getToken: freshToken, fetchImpl: fetch }, req).catch(() => {});
   } catch {
     /* fail-soft — a synchronous throw must never reach the accept path */
   }

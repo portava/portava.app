@@ -101,7 +101,7 @@
  * constant moves. That is the whole refresh.
  */
 /** The capture every reader should grade against. Change this on a refresh. */
-export const PRODUCTION_SNAPSHOT_FILENAME = "20261109-production-schema.json";
+export const PRODUCTION_SNAPSHOT_FILENAME = "20261109-post-4022-production-schema.json";
 
 /** Resolved against this directory, which is where the captures live. */
 export const PRODUCTION_SNAPSHOT_URL = new URL(
@@ -152,3 +152,5 @@ export const PRODUCTION_SNAPSHOT_URL = new URL(
  */
 
 /** The November 9 capture includes 638 public base tables after migrations 4004 through 4020. */
+
+/** After 4022, the verified catalogue contains 504 non-extension functions and 638 public base tables. */

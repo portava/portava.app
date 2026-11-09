@@ -126,7 +126,7 @@ describe("H1 — the Trails reads count the `db/<uuid>` exposures GET /discovery
   test("a place served past the ceiling as `db/<uuid>` takes no exploration slot; the unexposed one does", async () => {
     const [feedViewer, viewer, c] = [user("h1f"), user("h1v"), user("h1c")];
     const t = trail();
-    const [hot, cold] = [randomUUID(), randomUUID()];
+    const [hot, cold] = [canonicalPlace(), canonicalPlace()];
     const mHot = member(t, "place", hot, c, { createdMsAgo: 60_000 });
     const mCold = member(t, "place", cold, c, { createdMsAgo: 120_000 });
     servedRows(feedViewer, `db/${hot}`, TRAIL_EXPLORATION_IMPRESSION_CEILING + 100);
@@ -138,7 +138,7 @@ describe("H1 — the Trails reads count the `db/<uuid>` exposures GET /discovery
   test("`db/` saves order trending_now and make GET …/trending say `trending: true`", async () => {
     const [feedViewer, viewer, c] = [user("h1g"), user("h1w"), user("h1d")];
     const t = trail();
-    const place = randomUUID();
+    const place = canonicalPlace();
     const m = member(t, "place", place, c);
     servedRows(feedViewer, `db/${place}`, 8, "save");
     const mods = await getTrailModules(sc(), t, { viewerId: viewer });

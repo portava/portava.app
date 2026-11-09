@@ -38,7 +38,7 @@ function freeEvents(log: readonly ToolResult[]) {
   return [...names];
 }
 
-export function groundVenueTerms(message: string, payload: Payload, toolLog: readonly ToolResult[], prompt = "") {
+export function groundVenueTerms<A extends { label: string }>(message: string, payload: Payload, toolLog: readonly ToolResult[], prompt = "", actions: readonly A[] = []) {
   const venues = freeEvents(toolLog);
   const violations = new Set<string>();
   function safeText(text: string) {
@@ -73,7 +73,8 @@ export function groundVenueTerms(message: string, payload: Payload, toolLog: rea
       return { ...d, label: safeField(d.label), highlights: Array.isArray(d.highlights) ? d.highlights.map(safeField) : [] };
     }) };
   }
-  return { message: result, payload: safePayload, violations: [...violations], changed: corrected || result !== message };
+  const quickActions = actions.filter(action => safeText(action.label) === action.label);
+  return { message: result, payload: safePayload, quickActions, violations: [...violations], changed: corrected || result !== message || quickActions.length !== actions.length };
 }
 
 /** Send safe complete narrative sentences early. The remaining model JSON is

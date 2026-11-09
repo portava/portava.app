@@ -357,6 +357,12 @@ export async function buildCreationAssistance(
     declaresCheck(policy, 'trip_date_conflict') &&
     (draft.startDate || draft.endDate)
   ) {
+    const dates = { startDate: draft.startDate, endDate: draft.endDate };
+    const local = checkTripDateConflict(dates);
+    if (!local.ok) {
+      out.push(projectTripDateConflict(context, policyVersion, local));
+      return out;
+    }
     const existing = await fetchViewerTripWindows(sc, userId, sessionContext?.tripId).catch(
       () => windowsUnreadable('trips'),
     );
@@ -427,47 +433,31 @@ export async function fetchViewerTripWindows(
   userId: string,
   excludeTripId?: string,
 ): Promise<TripWindowScan> {
-  // SAME defect class as the three duplicate pools above, found in this file
-  // while closing them, and NOT in the swallowed-read inventory (that
-  // measurement walks nine directories and admits it under-counts).
-  //
-  // Both reads answered a failure with the `[]` that means "this traveller has
-  // no other trip". `checkTripDateConflict` against `[]` returns `{ ok: true }`,
-  // buildCreationAssistance then emits NO row, and a field that emits no
-  // date-conflict row is read as "your dates are clear" — a POSITIVE claim,
-  // made out of a read that never ran, about the one thing the traveller asked.
-  //
-  // `trip_members` returning zero ROWS is different and is left as an answer:
-  // a traveller who is on no trip genuinely has no window to clash with.
+  // One joined read for a normal account. The original pair of requests paid
+  // two round trips on every title edit and lost conflicts after its 50th trip.
+  // Only accepted or legacy memberships may disclose another trip's title.
+  const windows: ExistingTripWindow[] = [];
+  const pageSize = 100;
   try {
-    const { data: memberRows, error: memErr } = await sc
-      .from('trip_members')
-      .select('trip_id, role')
-      .eq('user_id', userId)
-      .neq('role', 'invited');
-    if (memErr || !memberRows) return windowsUnreadable('trip_members');
-    if (memberRows.length === 0) return { ok: true, windows: [] };
-    const tripIds = (memberRows as Array<{ trip_id: string }>)
-      .map((r) => r.trip_id)
-      .filter((id) => id !== excludeTripId);
-    if (tripIds.length === 0) return { ok: true, windows: [] };
-
-    const { data: trips, error: tErr } = await sc
-      .from('trips')
-      .select('id, title, start_date, end_date, status')
-      .in('id', tripIds)
-      .in('status', ['active', 'upcoming', 'planning'])
-      .limit(50);
-    if (tErr || !trips) return windowsUnreadable('trips');
-    return {
-      ok: true,
-      windows: (trips as any[]).map((t) => ({
-        id: t.id as string,
-        title: (t.title as string | null) ?? null,
-        startDate: (t.start_date as string | null) ?? null,
-        endDate: (t.end_date as string | null) ?? null,
-      })),
-    };
+    for (let offset = 0; ; offset += pageSize) {
+      let query = sc.from('trip_members')
+        .select('trip_id, trips!inner(id,title,start_date,end_date,status)')
+        .eq('user_id', userId).neq('role', 'invited')
+        .or('status.is.null,status.eq.accepted')
+        .in('trips.status', ['active', 'upcoming', 'planning'])
+        .order('trip_id');
+      if (excludeTripId) query = query.neq('trip_id', excludeTripId);
+      const { data, error } = await query.range(offset, offset + pageSize - 1);
+      if (error || !Array.isArray(data)) {
+        return windowsUnreadable(/\btrips\b/.test(error?.message ?? '') ? 'trips' : 'trip_members');
+      }
+      for (const row of data) {
+        const trip = Array.isArray(row.trips) ? row.trips[0] : row.trips;
+        if (!trip || typeof trip.id !== 'string') return windowsUnreadable('trips');
+        windows.push({ id: trip.id, title: trip.title, startDate: trip.start_date, endDate: trip.end_date });
+      }
+      if (data.length < pageSize) return { ok: true, windows };
+    }
   } catch {
     return windowsUnreadable('trips');
   }

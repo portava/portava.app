@@ -26,6 +26,9 @@ import { buildSuggestBody } from './suggestBody.ts';
 import { parseSuggestBody, isSchemaCompatible, type RawSuggestBody } from './suggestResponse.ts';
 import { CLIENT_SCHEMA_VERSION } from '../contexts/clientCapabilities.ts';
 
+import { withInputBudget, SUGGEST_TIMEOUT_MS } from './requestBudget.ts';
+export { SUGGEST_TIMEOUT_MS } from './requestBudget.ts';
+
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 }
@@ -40,7 +43,7 @@ async function freshToken(): Promise<string | null> {
 
 /** Endpoint statuses that mean "backend not deployed here" → degrade silently. */
 function isUnavailableStatus(status: number): boolean {
-  return status === 404 || status === 501 || status === 405;
+  return status === 404 || status === 405 || status === 408 || status === 429 || status >= 500;
 }
 
 /**
@@ -58,25 +61,17 @@ export async function requestSuggestions(
     return { ok: false, aborted: false, unavailable: true, error: 'API not configured' };
   }
 
-  const token = await freshToken();
-  // No token → treat as unavailable rather than an error; unauthenticated
-  // surfaces still get local zero-state from the hook.
-  if (!token) {
-    return { ok: false, aborted: false, unavailable: true, error: 'Not signed in' };
-  }
-
-  let budget: Budget | null = null;
+  const budget = withInputBudget(signal);
   try {
-    budget = withBudget(signal);
-    const res = await fetch(`${base}/api/input-assistance/suggest`, {
+    const token = await budget.wait(freshToken);
+    if (!token) return { ok: false, aborted: false, unavailable: true, error: 'Not signed in' };
+    if (!budget.current(token)) return { ok: false, aborted: true, unavailable: false, error: 'Account changed' };
+    const res = await budget.wait(() => fetch(`${base}/api/input-assistance/suggest`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(buildSuggestBody(req)),
       signal: budget.signal,
-    });
+    }));
 
     if (!res.ok) {
       return {
@@ -90,7 +85,7 @@ export async function requestSuggestions(
     // The envelope's coercions live in `suggestResponse.ts` — a pure module —
     // because this one imports the Supabase-backed token helper and therefore
     // cannot be reached by a node:test. Inline, they were unprovable.
-    const parsed = parseSuggestBody((await res.json()) as RawSuggestBody);
+    const parsed = parseSuggestBody((await budget.wait(() => res.json())) as RawSuggestBody);
 
     // §48 (census G341) — a serve whose RESPONSE SHAPE is newer than this build
     // is not an error and not an empty result: it is assistance this client
@@ -134,7 +129,7 @@ export async function requestSuggestions(
     // census-discovery §80: a request that ran out of budget is a HUNG gateway,
     // and a hung gateway is an unavailable one (§38) — so the field falls back.
     // Only the CALLER's own abort (a superseded keystroke) is `aborted`.
-    if (budget?.timedOut()) {
+    if (budget.timedOut()) {
       return { ok: false, aborted: false, unavailable: true, error: `Timed out after ${SUGGEST_TIMEOUT_MS} ms` };
     }
     const aborted = e instanceof Error && e.name === 'AbortError';
@@ -142,7 +137,7 @@ export async function requestSuggestions(
     // hard error — the field falls back to local/cached suggestions (§38).
     return { ok: false, aborted, unavailable: !aborted, error: 'Network error' };
   } finally {
-    budget?.done();
+    budget.done();
   }
 }
 
@@ -162,21 +157,22 @@ export async function requestMapSearchPage(
 ): Promise<MapSearchPageResult> {
   const base = apiBase();
   if (!base) return { ok: false, error: 'API not configured' };
-  const token = await freshToken();
-  if (!token) return { ok: false, error: 'Not signed in' };
-  const budget = withBudget(signal);
+  const budget = withInputBudget(signal);
   try {
-    const res = await fetch(`${base}/api/input-assistance/suggest`, {
+    const token = await budget.wait(freshToken);
+    if (!token) return { ok: false, error: 'Not signed in' };
+    if (!budget.current(token)) return { ok: false, error: 'Account changed' };
+    const res = await budget.wait(() => fetch(`${base}/api/input-assistance/suggest`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(buildMapSearchBody(query, opts)),
       signal: budget.signal,
-    });
+    }));
     if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      const body = (await budget.wait(() => res.json()).catch(() => ({}))) as Record<string, unknown>;
       return { ok: false, error: (body.message as string) ?? `HTTP ${res.status}` };
     }
-    return { ok: true, ...parseMapSearchEnvelope(await res.json()) };
+    return { ok: true, ...parseMapSearchEnvelope(await budget.wait(() => res.json())) };
   } catch {
     return { ok: false, error: 'Network error — check your connection' };
   } finally {
@@ -190,36 +186,3 @@ import {
   type MapSearchOpts,
   type MapSearchPageResult,
 } from '../search/mapSearch.ts';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// census-discovery §80 follow-up — the request budget (register D-W10-S1-4,
-// "The timeout"). No request to the suggest endpoint may wait forever: after
-// SUGGEST_TIMEOUT_MS it is aborted and reported as `unavailable`, which is what
-// starts §38's fallback (E-9's legacy typeahead; the Map sheet's error line).
-// 5 s: two orders of magnitude over GII §33's 100–150 ms debounce, so a slow
-// but live serve is never cut off, and short enough that a person still typing
-// gets the fallback while it is useful.
-// ─────────────────────────────────────────────────────────────────────────────
-export const SUGGEST_TIMEOUT_MS = 5000;
-
-interface Budget {
-  signal: AbortSignal;
-  timedOut: () => boolean;
-  done: () => void;
-}
-
-function withBudget(outer?: AbortSignal): Budget {
-  const ctrl = new AbortController();
-  let expired = false;
-  const timer = setTimeout(() => { expired = true; ctrl.abort(); }, SUGGEST_TIMEOUT_MS);
-  const onOuter = () => ctrl.abort();
-  if (outer) {
-    if (outer.aborted) ctrl.abort();
-    else outer.addEventListener('abort', onOuter);
-  }
-  return {
-    signal: ctrl.signal,
-    timedOut: () => expired,
-    done: () => { clearTimeout(timer); outer?.removeEventListener('abort', onOuter); },
-  };
-}

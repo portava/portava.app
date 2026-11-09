@@ -58,6 +58,7 @@ jest.mock('../sensingTransport.ts', () => ({
 }));
 // NOTE: exhaustive-by-design — expo-sensors / expo-location / the microphone are not available under jest.
 jest.mock('../deviceSensorSources.ts', () => ({
+  onAreaLocationGranted: () => () => {},
   createDeviceMotionSource: () => null,
   createDeviceLocationSource: () => null,
 }));
@@ -155,6 +156,21 @@ describe('installSensingCapture obeys OD-MAP-6 on the device', () => {
     await changeConsent({ capture: false, upload: false, surface: false });
     expect(mockStop).toHaveBeenCalled();
     expect(mockZoneSources[mockZoneSources.length - 1]).toBeNull();
+  });
+
+  it('recovers during the same foreground session after a transient consent read failure', async () => {
+    jest.useFakeTimers();
+    mockConsent = 'unreadable';
+    const handle = installSensingCapture();
+    try {
+      await jest.advanceTimersByTimeAsync(1);
+      expect(mockStarts).toBe(0);
+      mockConsent = { capture: true, upload: false, surface: false };
+      await jest.advanceTimersByTimeAsync(2_000);
+      expect(mockStarts).toBe(1);
+      await mockCaptureDeps!.submit(PAYLOAD);
+      expect(mockTransportSubmit).not.toHaveBeenCalled();
+    } finally { handle.dispose(); jest.useRealTimers(); }
   });
 
   it('a consent that becomes unreadable on re-check stops the loop and sends nothing', async () => {

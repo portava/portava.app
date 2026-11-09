@@ -53,11 +53,8 @@ import {
   useGooglePlacesAutocomplete,
   fetchGooglePlaceDetails,
 } from '../../hooks/useGooglePlacesAutocomplete.ts';
-// ── Global Input Intelligence — Phase 2 (Geographic Core), ADDITIVE ────────────
-// When a caller opts in via `assistContext`, the picker ALSO sources canonical
-// suggestions from the P1 gateway and captures the §17/§53 binding on select.
-// Every one of these code paths is guarded on `assistContext` being set, so the
-// ~25 existing surfaces that pass none get byte-identical behavior.
+import { fieldForPlacePicker, GEO_FIELD_CONTEXTS } from '../../platform/input-assistance/geographic/geoFields.ts';
+import { emitInputEvent } from '../../platform/input-assistance/services/inputTelemetry.ts';
 import { useInputAssistance } from '../../platform/input-assistance/hooks/useInputAssistance.ts';
 import { suggestionToPlace, zeroStateSectionLabel, ZERO_STATE_TYPES, approximateAreaOf, type ApproximateAreaPick } from '../../platform/input-assistance/geographic/geoSuggestions.ts';
 import { captureCanonicalBinding } from '../../platform/input-assistance/geographic/canonicalBinding.ts';
@@ -114,11 +111,8 @@ interface Props {
   /** Caller-provided sections, e.g. trip destinations or saved places. */
   contextSections?: PlacePickerContextSection[];
 
-  // ── Global Input Intelligence opt-in (Phase 2), ALL OPTIONAL + ADDITIVE ──────
-  /** Opt in to gateway-sourced canonical suggestions for this geographic field.
-   *  When set, `/input-assistance/suggest` results are merged (canonical-first)
-   *  into the search rows and the §17/§53 binding is captured on select. When
-   *  omitted (the ~25 existing surfaces), the picker behaves exactly as before. */
+  /** Explicit policy for this location field. Named location pickers can also
+   * resolve their canonical policy through the registered `usedFor` purpose. */
   assistContext?: InputContext;
   /** Registered field id for policy/cache/telemetry. Defaults to assistContext. */
   assistFieldId?: string;
@@ -148,8 +142,11 @@ type SelectionIntent = Readonly<{
 export function GlobalPlacePicker({
   visible, onSelect, onClose, title, allowGPS = true, countryCode, placeholder, usedFor,
   mode = 'all', contextSections,
-  assistContext, assistFieldId, sessionContext, onCanonicalBinding, onApproximateArea, onDropPin, onAddNew,
+  assistContext: declaredContext, assistFieldId: declaredFieldId, sessionContext, onCanonicalBinding, onApproximateArea, onDropPin, onAddNew,
 }: Props) {
+  const registered = declaredContext ? undefined : fieldForPlacePicker(usedFor);
+  const assistContext = declaredContext ?? (registered && GEO_FIELD_CONTEXTS[registered]);
+  const assistFieldId = declaredFieldId ?? registered;
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const [gpsState, setGpsState] = useState<GpsState>('idle');
@@ -226,14 +223,14 @@ export function GlobalPlacePicker({
   const [searchRetry, setSearchRetry] = useState(0);
 
   const cityMode = mode === 'city';
-  const { results: searchResults, loading: searching, error: searchError } = usePlaceSearch(query, {
+  const { results: searchResults, loading: searching, error: searchError } = usePlaceSearch(visible ? query : '', {
     countryCode,
     type: cityMode ? 'city' : undefined,
     lat: nearbyCoords?.lat,
     lng: nearbyCoords?.lng,
     refreshKey: searchRetry,
   });
-  const { places: googlePlaces, loading: googleLoading } = useGooglePlacesAutocomplete(query, {
+  const { places: googlePlaces, loading: googleLoading } = useGooglePlacesAutocomplete(visible ? query : '', {
     countryCode,
     type: cityMode ? 'city' : 'all',
   });
@@ -246,19 +243,19 @@ export function GlobalPlacePicker({
 
   // ── Gateway-sourced canonical suggestions (Phase 2, opt-in) ──────────────────
   // The hook is called unconditionally (Rules of Hooks) but only fetches when a
-  // caller opted in via `assistContext`. It degrades gracefully: a missing /
+  // location field has a registered purpose or context. It degrades gracefully: a missing /
   // undeployed endpoint yields zero suggestions and the picker falls back to its
   // existing provider search (§38). Coordinates from silent nearby detection are
   // folded into the bounded session context for geographic ranking (§15).
   const assistSession = React.useMemo<InputSessionContext | undefined>(() => {
     if (!assistContext) return undefined;
     const base = sessionContext ?? {};
-    if (nearbyCoords && base.lat == null && base.lng == null) {
+    if ((allowGPS || declaredContext) && nearbyCoords && base.lat == null && base.lng == null) {
       return { ...base, lat: nearbyCoords.lat, lng: nearbyCoords.lng };
     }
     return base;
-  }, [assistContext, sessionContext, nearbyCoords]);
-  const { suggestions: gatewaySuggestions, policy: assistPolicy, answeredText: assistAnsweredText } = useInputAssistance({
+  }, [assistContext, declaredContext, sessionContext, nearbyCoords, allowGPS]);
+  const { suggestions: gatewaySuggestions, policy: assistPolicy, answeredText: assistAnsweredText, loading: assistLoading, requestId: assistRequestId } = useInputAssistance({
     fieldId: assistFieldId ?? assistContext ?? '__geo_no_assist__',
     text: query,
     context: assistContext,
@@ -380,7 +377,9 @@ export function GlobalPlacePicker({
       // awaits, never throws, and never gates the selection above.
       const originating = gatewayById.get(place.id);
       if (!isCurrentSelection(intent)) return;
-      if (originating) {
+      if (originating && assistPolicy) {
+        emitInputEvent('suggestion_selected', assistPolicy.fieldId, assistPolicy.context,
+          { suggestionType: originating.type, source: originating.source }, assistPolicy.telemetryPolicy, assistRequestId);
         recordSuggestionSelection(originating, { policy: assistPolicy, query });
       }
       // §33/§53 census G209 — a CANONICAL selection warms the declared next
@@ -397,7 +396,7 @@ export function GlobalPlacePicker({
         setResolvingId(null);
       }
     }
-  }, [onSelect, dismiss, saveRecent, usedFor, beginSelection, isCurrentSelection, ownsSelectionSlot, onCanonicalBinding, gatewayById, assistPolicy, query, assistContext, assistFieldId]);
+  }, [onSelect, dismiss, saveRecent, usedFor, beginSelection, isCurrentSelection, ownsSelectionSlot, onCanonicalBinding, gatewayById, assistPolicy, assistRequestId, query, assistContext, assistFieldId]);
 
   async function useGPS() {
     const intent = beginSelection('gps');
@@ -467,10 +466,11 @@ export function GlobalPlacePicker({
   // I type" happened). Raw-text fallback only when the query has settled with
   // zero suggestions.
   function submitSearch() {
-    if (searching || googleLoading) return;
-    // Canonical (gateway) matches win over provider rows when present — but this
-    // still NEVER commits raw text over a live suggestion list (§19).
-    if (assistContext && gatewayPlaces.length > 0) { void select(gatewayPlaces[0]); return; }
+    if (assistContext && assistAnsweredText === query.trim() && gatewayPlaces.length > 0) {
+      void select(gatewayPlaces[0]);
+      return;
+    }
+    if (searching || googleLoading || assistLoading) return;
     const top = selectSearchRows({ googlePlaces, searchResults, cityMode }).rows[0];
     if (top) { void select(top); return; }
     commitFreeText();
@@ -640,7 +640,7 @@ export function GlobalPlacePicker({
               returnKeyType="search"
               onSubmitEditing={submitSearch}
             />
-            {(searching || googleLoading) && <ActivityIndicator size="small" color={color.signal} />}
+            {(searching || googleLoading || assistLoading) && <ActivityIndicator size="small" color={color.signal} />}
             {query.length > 0 && !searching && (
               <Pressable onPress={() => setQuery('')} hitSlop={8}>
                 <X size={14} color={color.mute} />
@@ -822,7 +822,7 @@ export function GlobalPlacePicker({
               );
             }}
             ListEmptyComponent={
-              showSearch && !searching && !searchError ? (
+              showSearch && !searching && !googleLoading && !assistLoading && !searchError ? (
                 <View style={s.empty}>
                   <Text style={s.emptyText}>No places found. Type to enter a custom city.</Text>
                 </View>

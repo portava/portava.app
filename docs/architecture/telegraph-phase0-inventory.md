@@ -32,7 +32,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 
 ### 2. Migrations that touch a messaging table
 
-43 of 866 migration files reference at least one messaging table.
+51 of 878 migration files reference at least one messaging table.
 
 MEASURED ON THE SQL WITH COMMENTS STRIPPED. A table named only in a `--` or
 `/* */` comment is not counted; before this, 13 of the 37 files listed here
@@ -84,6 +84,13 @@ touch no messaging table.
 - `src/migrations/3763_trip_membership_thread_atomic.sql`
 - `src/migrations/3770_trip_hard_delete_thread_guard.sql`
 - `src/migrations/3825_telegraph_message_link_previews.sql`
+- `src/migrations/3934_telegraph_member_removed_at.sql`
+- `src/migrations/3935_telegraph_member_window_sequence.sql`
+- `src/migrations/3936_telegraph_message_content_ref.sql`
+- `src/migrations/3937_telegraph_slo_duplicate_canonical.sql`
+- `src/migrations/3938_telegraph_conversation_action_refs_writer.sql`
+- `src/migrations/3939_telegraph_member_window_sequence_definer.sql`
+- `src/migrations/3940_telegraph_member_cursor_column_privileges.sql`
 - `src/migrations/3941_telegraph_member_private_state_column_privileges.sql`
 - `src/migrations/3998_telegraph_conversation_snapshots.sql`
 - `src/migrations/4004_reported_content_audited_removal.sql`
@@ -91,6 +98,7 @@ touch no messaging table.
 - `src/migrations/4015_telegraph_memory_sources.sql`
 - `src/migrations/4016_telegraph_attachment_forwards.sql`
 - `src/migrations/4017_telegraph_outcome_feedback.sql`
+- `src/migrations/4022_telegraph_receipt_and_window_compatibility.sql`
 
 ### 3. Server routes that read or write a messaging table
 

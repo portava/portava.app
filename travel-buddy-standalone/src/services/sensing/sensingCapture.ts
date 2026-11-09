@@ -30,6 +30,7 @@ import {
   type RawSensingWindow,
   type ReducedWindow,
 } from '../../lib/sensing/normalizedFeatures.ts';
+import { encodeSpatialBucket } from '../../lib/sensing/spatialBucket.ts';
 import {
   buildContributionPayload,
   type PayloadRefusal,
@@ -130,6 +131,7 @@ export function startSensingCapture(deps: SensingCaptureDeps): SensingCaptureHan
 
   let windowStart = deps.now();
   let previousZone: string | null = null;
+  let currentArea: string | null = null;
   let priorDwellMs = 0;
   let stopped = false;
 
@@ -137,7 +139,13 @@ export function startSensingCapture(deps: SensingCaptureDeps): SensingCaptureHan
   // A failed hardware source does not prevent the other sources from running.
   // Late native callbacks after unsubscribe must never refill discarded buffers.
   try { if (deps.motion) unsubs.push(deps.motion.subscribe((s) => { if (!stopped) push(motionBuf, s); })); } catch {}
-  try { if (deps.location) unsubs.push(deps.location.subscribe((s) => { if (!stopped) push(locationBuf, s); })); } catch {}
+  try { if (deps.location) unsubs.push(deps.location.subscribe((sample) => {
+    if (stopped) return;
+    const area = encodeSpatialBucket(sample.lat, sample.lng, deps.spatialPrecision);
+    if (!area) return;
+    push(locationBuf, sample);
+    currentArea = area;
+  })); } catch {}
   try { if (deps.acoustic) unsubs.push(deps.acoustic.subscribe((s) => { if (!stopped) push(acousticBuf, s); })); } catch {}
 
   async function closeWindow(): Promise<void> {
@@ -164,6 +172,9 @@ export function startSensingCapture(deps: SensingCaptureDeps): SensingCaptureHan
     windowStart = endedAtMs;
 
     if (!hadEvidence) {
+      currentArea = null;
+      previousZone = null;
+      priorDwellMs = 0;
       deps.onRefusal?.('no_window_evidence');
       return;
     }
@@ -173,6 +184,7 @@ export function startSensingCapture(deps: SensingCaptureDeps): SensingCaptureHan
       temporalBucketMinutes: deps.temporalBucketMinutes,
     });
     previousZone = reduced.features.spatial_bucket.zone;
+    currentArea = previousZone;
     priorDwellMs = reduced.dwellMs ?? 0;
 
     // Acoustic is re-gated per window, on the permission as it is NOW: a user
@@ -199,12 +211,13 @@ export function startSensingCapture(deps: SensingCaptureDeps): SensingCaptureHan
   }, windowMs);
 
   return {
-    currentZone: () => (stopped ? null : previousZone),
+    currentZone: () => (stopped ? null : currentArea),
     flush: closeWindow,
     stop() {
       if (stopped) return;
       stopped = true;
       previousZone = null;
+      currentArea = null;
       priorDwellMs = 0;
       try { cancelTick(); } catch {}
       for (const u of unsubs) {

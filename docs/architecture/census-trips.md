@@ -760,7 +760,7 @@ because there is no stage.*
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | TR101 | Roles are coarse; capabilities derive from role + trip policy + plan membership + privacy scope | **W** | Two of the four inputs are real: `lib/http.ts:554#canEditPlan` combines role with the trip's `plan_edit_permission` setting (`0021_plan_edit_permission.sql`), and `lib/http.ts:614#canEditPlanItem` adds item authorship. Plan membership does not exist (TR83) and privacy scope is a two-value column (TR82), so half the derivation has no inputs. |
-| TR102 | Application code calls policy functions rather than scattering host checks | **W** | True for plans — `canEditPlan`/`canEditPlanItem` are centralised in `lib/http.ts` and called from `routes/trips.ts:1467,1523-1527,1591` and `compass/CompassTools.ts:1738#const permitted = await canEditPlan(sc, tripId, userId);`. False elsewhere: `routes/trips-expansion.ts:514` (`owner_id !== user.id`), `:537`, `:589`, `routes/tripReservations.ts:426-429` and `routes/tripCrewLocation.ts:170` each inline their own ownership or role check. Scattered host checks are exactly what the rule names. |
+| TR102 | Application code calls policy functions rather than scattering host checks | **W** | True for plans — `canEditPlan`/`canEditPlanItem` are centralised in `lib/http.ts` and called from `routes/trips.ts:1467,1523-1527,1591` and `compass/CompassTools.ts:1739#const permitted = await canEditPlan(sc, tripId, userId);`. False elsewhere: `routes/trips-expansion.ts:514` (`owner_id !== user.id`), `:537`, `:589`, `routes/tripReservations.ts:426-429` and `routes/tripCrewLocation.ts:170` each inline their own ownership or role check. Scattered host checks are exactly what the rule names. |
 | TR103 | `canViewTrip(actor, trip)` | **W** | The behaviour exists and the function does not: `routes/trips-expansion.ts:2582` `GET /trips/:tripId` resolves visibility inline and `src/test/tripPrivacy.test.ts:7-15` proves the outcomes (non-member → preview, accepted member → full, removed member → preview on the next request, private non-member → locked sentinel). A tested inline gate, not a policy function. |
 | TR104 | `canInviteParticipant(actor, trip)` | **W** | Inline at `routes/trips.ts:930` and `routes/trips-expansion.ts:898`; no named policy. |
 | TR105 | `canEditTrip(actor, trip)` | **W** | Inline owner checks at `routes/trips.ts:686#router.get("/me/trip-invites/pending", async (req, res) => {` and `routes/trips-expansion.ts:357`; no named policy. |
@@ -828,7 +828,7 @@ because there is no stage.*
 | TR152 | A subgroup can own a meetup, shared transport and temporary presence sharing while the parent Trip remains canonical | **N** | Absent. `services/tripCrew/` operates on the whole crew; `trip_crew_location_sessions` is per-user, not per-subgroup. |
 | TR153 | The `TripProposal` contract (type, proposedBy, affectedObjects, rationale, impactSummary, decisionRule, status, expiresAt) | **N** | No proposal table or type (TR26). |
 | TR154 | `decisionRule = HOST \| MAJORITY \| UNANIMOUS \| ANYONE` | **N** | No voting or decision-rule concept. The only trip-level governance is `plan_edit_permission` (`0021_plan_edit_permission.sql`), a binary who-may-edit setting. |
-| TR155 | Compass may create a proposal but cannot silently mutate other participants' commitments | **C** | The one §9 requirement that is genuinely met, and met deliberately: `compass/CompassTools.ts:37#add_to_trip` — *"`add_to_trip` proposes only. The server holds the proposal; nothing is [written]"* — `compass/CompassTools.ts:482#PROPOSE adding a place or activity` says it returns a pending proposal requiring explicit confirmation, `compass/CompassTools.ts:642#add_to_trip only creates a PENDING PROPOSAL.` instructs the model *"never claim the item was added"*, and `compass/CompassTools.ts:1736-1738#const member = await isAcceptedTripMember(sc, tripId, userId);` runs membership plus plan-edit authorization before proposing. Built for the Compass programme, not this spec, but it satisfies this requirement exactly. |
+| TR155 | Compass may create a proposal but cannot silently mutate other participants' commitments | **C** | The one §9 requirement that is genuinely met, and met deliberately: `compass/CompassTools.ts:37#add_to_trip` — *"`add_to_trip` proposes only. The server holds the proposal; nothing is [written]"* — `compass/CompassTools.ts:482#PROPOSE adding a place or activity` says it returns a pending proposal requiring explicit confirmation, `compass/CompassTools.ts:642#add_to_trip only creates a PENDING PROPOSAL.` instructs the model *"never claim the item was added"*, and `compass/CompassTools.ts:1737-1739#const member = await isAcceptedTripMember(sc, tripId, userId);` runs membership plus plan-edit authorization before proposing. Built for the Compass programme, not this spec, but it satisfies this requirement exactly. |
 | TR156 | §9.4 Impact preview before accepting a proposal that changes a confirmed plan (affected reservations, transport, participants, commitment conflicts, cancellation costs, safety/return implications) | **N** | Nothing computes downstream impact. `trip_reservations.cancellation_deadline_at` (`0172:21`) is stored and is read by nothing on any change path — `grep`ing its readers finds the readiness engine's own defensive read (`domain/trips/services/tripReadiness.ts:14-18`) and the index at `0172:35-36`, not an impact preview. |
 
 ### §10 Presence, Location and Crew State
@@ -4573,7 +4573,7 @@ the merge, the apply, Batch C and two flags.
   `consistency.findings` emit `TRIP_SPATIAL_*` (TR444 has held N since §38).
 - **§12.1** — `get_commitments` (`compass/CompassTools.ts:333#name: "get_commitments"`)
   under the gate that owns `trip_commitments`, and `get_saved_ideas`
-  (`compass/CompassTools.ts:346#name: "get_saved_ideas"`) now consumes the typed saved-ideas projection (`compass/CompassTools.ts:1452#const built = await buildTripCompassSavedIdeasProjection(sc, t.id, userId);`) through the existing envelope rule (`compass/CompassTools.ts:1454#const decision = acceptTripProjection(built.projection,`).
+  (`compass/CompassTools.ts:346#name: "get_saved_ideas"`) now consumes the typed saved-ideas projection (`compass/CompassTools.ts:1453#const built = await buildTripCompassSavedIdeasProjection(sc, t.id, userId);`) through the existing envelope rule (`compass/CompassTools.ts:1455#const decision = acceptTripProjection(built.projection,`).
   Names remain wrapped as user content; the unchanged dispatcher still strips notes. Unread or malformed saved rows return unknown, not a certified empty list. The unchanged count means returned rows, not a complete total; no new cap, flag, privacy rule or verdict change.
 
 **Seen red.** 262 tests over the touched suites, 0 skipped, after: the
@@ -4877,7 +4877,7 @@ route writes goes through the kernel as a command that already exists
   freedom window as it would be after; judged, never written
   (`POST /trips/:tripId/simulate`,
   `server/trips/readRoutes/tripProjections.ts:503#/trips/:tripId/simulate`; Compass
-  `simulate_plan`, `compass/CompassTools.ts:1492#toolSimulatePlan`).
+  `simulate_plan`, `compass/CompassTools.ts:1493#toolSimulatePlan`).
 - **§11.3 replan today, §12.1 createProposal** — `domain/trips/services/TripReplan.ts:107#replanDay`
   produces the candidate diff: keep / move / cancel / add
   (`domain/trips/services/TripReplan.ts:32#REPLAN_OPS`), each entry with its reason
@@ -4894,9 +4894,9 @@ route writes goes through the kernel as a command that already exists
   `proposal_type: replan_<op>`, the suggested decision rule, an idempotency
   key from the day, the op, the plan and the target time, `source: "replan"`
   on the payload — and says `trip_kernel_enabled is false` by name when it
-  is not. Compass `replan_day` (`compass/CompassTools.ts:1587#toolReplanDay`)
+  is not. Compass `replan_day` (`compass/CompassTools.ts:1588#toolReplanDay`)
   carries the same diff and names `create_proposal`
-  (`compass/CompassTools.ts:1530#toolCreateProposal`) for the shared
+  (`compass/CompassTools.ts:1531#toolCreateProposal`) for the shared
   mutations; that tool goes through `CREATE_PROPOSAL` with
   `source: "compass"` and is refused by name without the kernel — TR210's
   unpersisted proposal object is gone.
@@ -4908,7 +4908,7 @@ route writes goes through the kernel as a command that already exists
   UNCERTAIN experiences (`domain/trips/services/TripValueOfInformation.ts:67#unknownsFromExperiences`):
   one that could beat the best executable is worth a question, one that
   could not is not. `get_opportunities` carries the answer as
-  `questionsWorthAsking` (`compass/CompassTools.ts:1485#questionsWorthAsking:`).
+  `questionsWorthAsking` (`compass/CompassTools.ts:1486#questionsWorthAsking:`).
 - **§14.3 the meeting point** — `domain/trips/services/TripMeetingPoint.ts:94#findMeetingPoint`:
   least group burden, each journey weighted by the mode's reliability; the
   six constraints applied by name — next commitments, accessibility, party
@@ -4923,7 +4923,7 @@ route writes goes through the kernel as a command that already exists
   plans with a public point (`domain/trips/services/TripReplanService.ts:56#computeMeetingPoint`).
   `POST /trips/:tripId/meeting-point`
   (`server/trips/readRoutes/tripProjections.ts:580#/trips/:tripId/meeting-point`); Compass
-  `find_meeting_point` (`compass/CompassTools.ts:1614#toolFindMeetingPoint`).
+  `find_meeting_point` (`compass/CompassTools.ts:1615#toolFindMeetingPoint`).
 - **§17.3 rescue** — `domain/trips/services/TripRescue.ts:66#planRescue` over the
   seven typed problems (`domain/trips/services/TripRescue.ts:18#RESCUE_PROBLEMS`):
   each plan declares a disruption at a severity, orders its steps by who
@@ -4935,7 +4935,7 @@ route writes goes through the kernel as a command that already exists
   (`server/trips/readRoutes/tripProjections.ts:596#/trips/:tripId/rescue`) returns the plan
   (201) and declares the disruption through `DECLARE_DISRUPTION` — §17.2's
   switch — when the kernel is on, skipped by name when not; an unknown
-  problem is 400. Compass `get_rescue_plan` (`compass/CompassTools.ts:1573#toolGetRescuePlan`)
+  problem is 400. Compass `get_rescue_plan` (`compass/CompassTools.ts:1574#toolGetRescuePlan`)
   is read-only.
 - **§23, two scenarios as tests** — `src/test/tripScenarios.test.ts:26#TR420`:
   a 75-minute ETA shift fires `tight_arrival`, names the downstream dinner
@@ -5769,7 +5769,7 @@ called half-proved (TR418, TR419). No migration.
   ladder; the Today suite reads `idle` on the base fixture. Nothing here
   turns sensing on: a client with location off has nothing to sample.
 - **§12.1 `getCrewState(tripId)` (TR204)** — Compass had `who_is_around`, a
-  Circle-scoped presence tool, and nothing trip-scoped. `compass/CompassTools.ts:1669#toolGetCrewState(`
+  Circle-scoped presence tool, and nothing trip-scoped. `compass/CompassTools.ts:1670#toolGetCrewState(`
   reads the crew map (`getCrewMap`, which decides §6.1's presence rules per
   member) for the current or a named trip the user is an accepted member
   of, and hands the conversation each member's status label, area,
@@ -6545,7 +6545,7 @@ code changes in this section.
   (`travel-buddy-standalone/src/features/map/cache/mapCache.ts:508#rehydrate(`).
   The points of an event's map are cached; the map is not. W.
 - **TR133 holds W, at two of four.** Compass's `get_freedom_windows`
-  (`compass/CompassTools.ts:2479#case "get_freedom_windows":`) consumes the
+  (`compass/CompassTools.ts:2481#case "get_freedom_windows":`) consumes the
   engine, and so do Saved Ideas: the opportunity projection compiles the
   crew's saved places against each window rather than computing free time
   of its own (`domain/trips/projections/TripOpportunityProjection.ts:292#from("trip_saved_places")`).
@@ -6618,14 +6618,14 @@ rows stay W with the reason narrowed to the gate alone.
   (`compass/CompassTools.ts:971#async function resolveTripAttention(`) and
   filter their ranked candidates
   (`compass/CompassTools.ts:1044#const held = applyAttentionSuppression(candidates, attention, (p: any) => [p.category, p.primary_category]);`,
-  `compass/CompassTools.ts:1132#const held = applyAttentionSuppression(candidates, attention, (e: any) => [e.category]);`);
+  `compass/CompassTools.ts:1133#const held = applyAttentionSuppression(candidates, attention, (e: any) => [e.category]);`);
   the result carries `attention` (consulted, mode, suppressed, reason,
   withheld) and both tool declarations name `tripId`. The trip brief —
   `GET /compass/recommendations?surface=trip&tripId=` — consults the same
-  switch (`routes/compass.ts:4349#tripAttention = await readTripAttention(sc, tripId, user.id);`)
+  switch (`routes/compass.ts:4393#tripAttention = await readTripAttention(sc, tripId, user.id);`)
   after the member partition and before the static safety note, which is
   therefore never withheld, and returns the reading
-  (`routes/compass.ts:4497#attention: attentionOnTheWire(tripAttention, attentionWithheld)`);
+  (`routes/compass.ts:4541#attention: attentionOnTheWire(tripAttention, attentionWithheld)`);
   the client shows it as read — one line, even with nothing left to show
   (`travel-buddy-standalone/src/components/TripPage.tsx:861#testID="compass-brief-attention"`).
   Tests through `executeCompassTool` with the health fixture's open regroup
@@ -6895,7 +6895,7 @@ state, which is why TR437 moves to W and not to C.
   plan item. Served at `GET /trips/:tripId/route-chain` under the gate
   (`server/trips/readRoutes/tripProjections.ts:253#router.get("/trips/:tripId/route-chain"`)
   and to Compass as `get_route_chain`
-  (`compass/CompassTools.ts:1320#export async function toolGetRouteChain(`).
+  (`compass/CompassTools.ts:1321#export async function toolGetRouteChain(`).
 - **A route plan on a trip is a view over the plan.** Under the gate,
   `POST /route-plans` with a `tripId` refuses any stop that is not one of
   that trip's plan items — `409`, reason `TRIP_IDENTITY_STOP_NOT_IN_PLAN`
@@ -8143,7 +8143,7 @@ the work.
 | TR160 | `tripCrewLocation.ts` line 142 is `liveShareExpiresAt` | the accuracy-banding comment again | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:225#expires_at` |
 | TR170 | `tripCrewLocation.ts` lines 155-156 is `checkInStatus` | the `exactCoords` doc comment | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:286#shareSafeReturnStatus` is the nearest real code; the check-in fields are at lines 59-60, which the row also cites and which IS right |
 | TR214 | `CompassTools.ts` lines 245-249 "is exactly this instruction set" | JSON-schema boilerplate (`parameters: { type: "object" …`) | `artifacts/api-server/src/compass/CompassTools.ts:640#explain` |
-| TR215 | `CompassTools.ts` lines 734-738 runs the gates, line 821 is the relationship gate | a comment about trip selection; a `discovery_places` query | `artifacts/api-server/src/compass/CompassTools.ts:1738#canEditPlan` and `artifacts/api-server/src/compass/CompassTools.ts:1985#Relationship gate` |
+| TR215 | `CompassTools.ts` lines 734-738 runs the gates, line 821 is the relationship gate | a comment about trip selection; a `discovery_places` query | `artifacts/api-server/src/compass/CompassTools.ts:1739#canEditPlan` and `artifacts/api-server/src/compass/CompassTools.ts:1986#Relationship gate` |
 | TR216 | `CompassTools.ts` lines 261-269 strips coordinate-shaped keys | JSON-schema boilerplate | `artifacts/api-server/src/compass/CompassTools.ts:660#sanitizeToolResult` |
 | TR289 | `tripReservations.ts` line 118 paste-import, line 189 manual create | neither is a route | `artifacts/api-server/src/routes/tripReservations.ts:357#router.post` (and line 145) |
 | TR296 | `tripReservations.ts` line 309, line 390, line 416 are confirm / dismiss / delete | line 309 is a **blank line**; none of the three is a route | `artifacts/api-server/src/routes/tripReservations.ts:506#confirm` (dismiss line 500, delete line 526) |
@@ -9099,7 +9099,7 @@ unconstrained rule inside jsonb.
 
 `artifacts/api-server/src/server/trips/readRoutes/tripProjections.ts:551#payload_json: proposalContractPayload(`
 and
-`artifacts/api-server/src/compass/CompassTools.ts:1557#payload_json: proposalContractPayload(`
+`artifacts/api-server/src/compass/CompassTools.ts:1558#payload_json: proposalContractPayload(`
 are the two writers. The replan was **discarding a rationale and an impact
 summary it had already computed** — the entry's own `detail` and the impact
 preview's `summary` — and the Compass tool's description already told the model to
@@ -9725,7 +9725,7 @@ The trip page mounts the queue for a co-host
 - **Create trip:** a multi-city stop that did not save was ignored, and a stop request that threw
   printed a network error under the form for a trip that already existed, which invites a second tap
   and a duplicate trip. Each stop is now tried on its own; the trip opens and the unsaved stops are
-  named (`travel-buddy-standalone/app/trip/new.tsx:289#const unsavedStops`).
+  named (`travel-buddy-standalone/app/trip/new.tsx:295#const unsavedStops`).
 - **Share Trip** (owner only) fell back, silently, to the trip's page URL when the invite link could
   not be created: a link a friend cannot join a private trip through. It now shares nothing and says
   so (`travel-buddy-standalone/app/trip/[id].tsx:274#Could not create an invite link`).
@@ -10342,9 +10342,9 @@ count public rows only; each door back on its raw read) each turn the named case
   nobody it is withheld from its creator, VC4 R5's over-closure) and gives another member nothing of it; the route
   chain, `get_freedom_windows` and `simulate_plan`'s freedom read run their Routes budget as the caller (§82), never as
   nobody. Dropping the viewer at
-  `artifacts/api-server/src/compass/CompassTools.ts:1331#const built = await buildTripRouteChainProjection(sc, id, { viewerId: userId });`,
-  `artifacts/api-server/src/compass/CompassTools.ts:1291#const built = await buildTripFreedomProjection(sc, trip.id, { viewerId: userId });`
-  or `artifacts/api-server/src/compass/CompassTools.ts:1515#const freedom = await buildTripFreedomProjection(sc, t.id, { viewerId: userId });`
+  `artifacts/api-server/src/compass/CompassTools.ts:1332#const built = await buildTripRouteChainProjection(sc, id, { viewerId: userId });`,
+  `artifacts/api-server/src/compass/CompassTools.ts:1292#const built = await buildTripFreedomProjection(sc, trip.id, { viewerId: userId });`
+  or `artifacts/api-server/src/compass/CompassTools.ts:1516#const freedom = await buildTripFreedomProjection(sc, t.id, { viewerId: userId });`
   turns its case red.
 - **F6. Six PUT doors, not one.** §88 F5 called `/transport-policy` the retained-record guard's only PUT door; there are
   six under `/trips/:tripId` (transport-policy, crew/location-preferences, travelers/me/passport, area-preferences,
@@ -11343,7 +11343,7 @@ Measured on branch `claude/census-regrade-20261017` (stacked on PR #762) on 2026
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| TR153 `TripProposal` contract | W | **C** | **Code fix: the one proposal writer that runs with the kernel flag off now writes the contract.** §75.4 built the contract and its two server writers (`artifacts/api-server/src/server/trips/readRoutes/tripProjections.ts:551#payload_json: proposalContractPayload(`, `artifacts/api-server/src/compass/CompassTools.ts:1557#payload_json: proposalContractPayload(`), but both run only under `trip_kernel_enabled`. `POST /trips/:tripId/commands` issues CREATE_PROPOSAL whatever the flag says (`artifacts/api-server/src/server/trips/commandRoute.ts:80#"CREATE_PROPOSAL", "VOTE_ON_PROPOSAL"`) and passed a caller's `payload_json` through verbatim, so `affectedObjects` could be stored as a string or under a sixth spelling. The door now validates the three payload fields and re-writes them under their one key through the same writer (`artifacts/api-server/src/server/trips/commandRoute.ts:179#const proposalDoor = type === "CREATE_PROPOSAL" ? proposalCommandPayload(body.payload) : null;`, `artifacts/api-server/src/domain/trips/contracts/TripProposalContract.ts:250#export function proposalCommandPayload(raw: unknown): ProposalCommandPayload {`, `artifacts/api-server/src/domain/trips/contracts/TripProposalContract.ts:275#return { ok: true, payload: { ...raw, payload_json: proposalContractPayload(change, fields) } };`); a malformed field is refused 400 before the kernel. All eight fields: `type`, `status` and `expiresAt` are 2763 columns, `decisionRule` and `proposedBy` are 2774 columns written by 2775 (`proposedBy` is always the actor), and the other three are documented payload keys. All four migrations are applied to production (`artifacts/api-server/src/lib/capability/production-applied-migrations.json:319#2763_trip_presence_proposals_snapshots_outcomes`, `:363#2774_trip_proposal_governance`, `:367#2775_trip_kernel_proposal_governance_and_apply`). The one reader serves all eight (`artifacts/api-server/src/routes/tripDecisions.ts:246#const contracts = new Map(`, `artifacts/api-server/src/routes/tripDecisions.ts:331#rationale: c.rationale,`, `artifacts/api-server/src/routes/tripDecisions.ts:332#impactSummary: c.impactSummary,`). **The client half is fixed too:** the app's board type now carries the three fields (`travel-buddy-standalone/src/features/trips/planning/tripDecisions.ts:77#affectedObjects?: string[]; rationale?: string`), and the ballot shows why and what it changes (`travel-buddy-standalone/src/features/trips/planning/TripBallotsCard.tsx:113#ballot-why-`, `:114#ballot-impact-`). Its title also read `payload.rationale`, which the server lifts out of `payload`, so that branch never fired (`travel-buddy-standalone/src/features/trips/planning/tripBallots.ts:101#const v = k === 'rationale' ? (p.rationale ?? payload[k]) : payload[k];`). Tests: `artifacts/api-server/src/test/tripCommandsEndpoint.test.ts:250#describe("CREATE_PROPOSAL: §9.3's contract fields, canonical at the door (TR153)"`, `travel-buddy-standalone/src/features/trips/planning/__tests__/tripBallots.test.ts:80#a proposal with no title or summary is described by the rationale the server serves beside the payload`, `travel-buddy-standalone/src/features/trips/planning/__tests__/TripBallotsCard.component.test.tsx:84#rationale and impact summary`. |
+| TR153 `TripProposal` contract | W | **C** | **Code fix: the one proposal writer that runs with the kernel flag off now writes the contract.** §75.4 built the contract and its two server writers (`artifacts/api-server/src/server/trips/readRoutes/tripProjections.ts:551#payload_json: proposalContractPayload(`, `artifacts/api-server/src/compass/CompassTools.ts:1558#payload_json: proposalContractPayload(`), but both run only under `trip_kernel_enabled`. `POST /trips/:tripId/commands` issues CREATE_PROPOSAL whatever the flag says (`artifacts/api-server/src/server/trips/commandRoute.ts:80#"CREATE_PROPOSAL", "VOTE_ON_PROPOSAL"`) and passed a caller's `payload_json` through verbatim, so `affectedObjects` could be stored as a string or under a sixth spelling. The door now validates the three payload fields and re-writes them under their one key through the same writer (`artifacts/api-server/src/server/trips/commandRoute.ts:179#const proposalDoor = type === "CREATE_PROPOSAL" ? proposalCommandPayload(body.payload) : null;`, `artifacts/api-server/src/domain/trips/contracts/TripProposalContract.ts:250#export function proposalCommandPayload(raw: unknown): ProposalCommandPayload {`, `artifacts/api-server/src/domain/trips/contracts/TripProposalContract.ts:275#return { ok: true, payload: { ...raw, payload_json: proposalContractPayload(change, fields) } };`); a malformed field is refused 400 before the kernel. All eight fields: `type`, `status` and `expiresAt` are 2763 columns, `decisionRule` and `proposedBy` are 2774 columns written by 2775 (`proposedBy` is always the actor), and the other three are documented payload keys. All four migrations are applied to production (`artifacts/api-server/src/lib/capability/production-applied-migrations.json:319#2763_trip_presence_proposals_snapshots_outcomes`, `:363#2774_trip_proposal_governance`, `:367#2775_trip_kernel_proposal_governance_and_apply`). The one reader serves all eight (`artifacts/api-server/src/routes/tripDecisions.ts:246#const contracts = new Map(`, `artifacts/api-server/src/routes/tripDecisions.ts:331#rationale: c.rationale,`, `artifacts/api-server/src/routes/tripDecisions.ts:332#impactSummary: c.impactSummary,`). **The client half is fixed too:** the app's board type now carries the three fields (`travel-buddy-standalone/src/features/trips/planning/tripDecisions.ts:77#affectedObjects?: string[]; rationale?: string`), and the ballot shows why and what it changes (`travel-buddy-standalone/src/features/trips/planning/TripBallotsCard.tsx:113#ballot-why-`, `:114#ballot-impact-`). Its title also read `payload.rationale`, which the server lifts out of `payload`, so that branch never fired (`travel-buddy-standalone/src/features/trips/planning/tripBallots.ts:101#const v = k === 'rationale' ? (p.rationale ?? payload[k]) : payload[k];`). Tests: `artifacts/api-server/src/test/tripCommandsEndpoint.test.ts:250#describe("CREATE_PROPOSAL: §9.3's contract fields, canonical at the door (TR153)"`, `travel-buddy-standalone/src/features/trips/planning/__tests__/tripBallots.test.ts:80#a proposal with no title or summary is described by the rationale the server serves beside the payload`, `travel-buddy-standalone/src/features/trips/planning/__tests__/TripBallotsCard.component.test.tsx:84#rationale and impact summary`. |
 | TR139 goals personal or shared, weighted, without forcing shared priorities | W | **C** | **Code fix: a personal goal is its owner's alone on every reader, not only under RLS.** 2783 gives `scope`, `owner_user_id` and `weight` (`artifacts/api-server/src/migrations/2783_trip_goal_scope_and_member_permissions_version.sql:41#ADD COLUMN scope`, `artifacts/api-server/src/migrations/2783_trip_goal_scope_and_member_permissions_version.sql:43#ADD COLUMN weight`), owner-only RLS (`artifacts/api-server/src/migrations/2783_trip_goal_scope_and_member_permissions_version.sql:53#USING (authz.is_trip_crew(trip_id) AND (scope = 'shared' OR owner_user_id = auth.uid()));`) and owner-only edits in the kernel (`artifacts/api-server/src/migrations/2783_trip_goal_scope_and_member_permissions_version.sql:91#'reason', 'TRIP_AUTH_NOT_CREATOR'`). 2783 is applied to production (`artifacts/api-server/src/lib/capability/production-applied-migrations.json:399#2783_trip_goal_scope_and_member_permissions_version`). RLS does not reach the server, and every `trip_goals` reader uses the service client. The decision surface served every member's personal goals to the whole crew and argued their recommendations from them, and the pulse and opportunity projections weighed them for every viewer. All three now apply the policy, from one module (`artifacts/api-server/src/domain/trips/policies/tripGoalVisibility.ts:34#export function goalVisibleTo(row: GoalVisibilityRow, viewerId: string | null): boolean {`, `artifacts/api-server/src/domain/trips/policies/tripGoalVisibility.ts:36#if (row.scope !== "personal") return false;`): `artifacts/api-server/src/routes/tripDecisions.ts:134#const goalRows = goalsVisibleTo(`, `artifacts/api-server/src/domain/trips/projections/TripPulseProjection.ts:198#goalsVisibleTo(goalsR.rows, viewerId)`, `artifacts/api-server/src/domain/trips/projections/TripOpportunityProjection.ts:329#goalsVisibleTo((goalRows ?? []) as any[], viewerId)`. Scope and weight are served (`artifacts/api-server/src/routes/tripDecisions.ts:292#scope: g.scope, weight: g.weight ?? null,`). An unread or unknown scope is withheld. Tests: `artifacts/api-server/src/test/tripDecisionsRoute.test.ts:640#each member is served the shared goals and their OWN personal goals`, `artifacts/api-server/src/test/tripDecisionsRoute.test.ts:651#a recommendation is not argued from another member's personal goal`, `artifacts/api-server/src/test/tripPulseProjection.test.ts:247#2783 — the pulse reads the viewer's goals`, `artifacts/api-server/src/test/tripOpportunityProjection.test.ts:386#2783 — opportunities read the viewer's goals`. The kernel half runs on a real schema in CI's local-db tier (`artifacts/api-server/src/test/db/tripLedgerGoalsReservations.db.test.ts:61#const personal = ok(alice, { type: "ADD_GOAL"`, `artifacts/api-server/src/test/db/tripLedgerGoalsReservations.db.test.ts:66#the owner of the TRIP read alice's personal goal`). That tier was not run here: there is no PostgreSQL in this environment. |
 | TR84 `trip_goals` | W | **C** | §5.1's key columns (`artifacts/api-server/src/migrations/2762_trip_goals_decisions_risks.sql:45#CREATE TABLE public.trip_goals (`). The writer is 2766, issued with the flag off (`artifacts/api-server/src/server/trips/commandRoute.ts:74#"ADD_GOAL", "UPDATE_GOAL", "REMOVE_GOAL",`). Both are applied to production (`artifacts/api-server/src/lib/capability/production-applied-migrations.json:315#2762_trip_goals_decisions_risks`, `:331#2766_trip_kernel_goal_decision_risk_families`). The reader is unflagged (`artifacts/api-server/src/routes/tripDecisions.ts:102#router.get("/trips/:tripId/decisions"`), and since TR139's fix it applies 2783's owner-only rule. The card is mounted for any signed-in member (`travel-buddy-standalone/app/trip/[id].tsx:629#<TripDecisionsCard tripId={trip.id} />`). The stated blocker, *"2762 … portava-ci only"* (§68.2), is false. Tests: `artifacts/api-server/src/test/tripCommandsEndpoint.test.ts:236#reaches trip_kernel_execute while trip_kernel_enabled is FALSE`, `artifacts/api-server/src/test/tripDecisionsRoute.test.ts:607#goals, decision tasks and risks are read and served`, plus TR139's tests and the local-db ADD_GOAL test. |
 | TR78 `trip_stages` | W | **C** | The one stated blocker, *"no database has 2764"*, is false. 2760 and 2764 are applied to production (`artifacts/api-server/src/lib/capability/production-applied-migrations.json:307#2760_trip_stages`, `:323#2764_trip_kernel_stage_family`). ADD_STAGE and START_STAGE were executed against production's kernel in the runbook's rolled-back probes (`docs/TRIPS-PRODUCTION-ACTIVATION.md:77#happy path`, `:85#lifecycle`). The live tier writes and reads two stages on portava-ci (`artifacts/api-server/src/test/tripKernelLive.test.ts:164#type: "ADD_STAGE", idempotencyKey: key("stage-1")`, `artifacts/api-server/src/test/tripKernelLive.test.ts:305#trip_stages: 2, trip_legs: 1, trip_commitments: 1`). The writer is issued with the flag off (`artifacts/api-server/src/server/trips/commandRoute.ts:70#"ADD_STAGE", "UPDATE_STAGE", "REMOVE_STAGE",`), and the reader takes no flag and selects §5.1's columns (`artifacts/api-server/src/routes/tripStructure.ts:110#.select("id, stage_type, place_id, city_id, timezone, starts_at, ends_at, state, sequence")`). Both are registered unconditionally (`artifacts/api-server/src/routes/index.ts:179#router.use(tripStructureRouter);`, `:182#router.use(tripCommandsRouter);`), and the screen is mounted for any signed-in member (`travel-buddy-standalone/app/trip/[id].tsx:636#<TripStageSpineCard tripId={trip.id} />`). Pins, both flags FALSE: `artifacts/api-server/src/test/tripStructureRoute.test.ts:487#trip_stages is read and served, with its legs and commitments joined`, `artifacts/api-server/src/test/tripCommandsEndpoint.test.ts:236#reaches trip_kernel_execute while trip_kernel_enabled is FALSE`. |

@@ -312,24 +312,26 @@ export async function generateSuggestions(
   // verdict and the §15 TripFit term, so a field inside a Bangkok Trip no
   // longer behaves as though it exists in isolation. A session with no task
   // issues no query and produces the identity transform.
-  const taskConstraint: TaskConstraint =
-    sessionContext?.cityId || sessionContext?.tripId
-      ? await resolveTaskConstraint(sc, sessionContext).catch(() => EMPTY_TASK_CONSTRAINT)
-      : EMPTY_TASK_CONSTRAINT;
+  const needsTypedCandidates = wantsEntities && q.length >= Math.max(2, policy.minChars);
+  const taskConstraintReady = needsTypedCandidates && (sessionContext?.cityId || sessionContext?.tripId)
+    ? resolveTaskConstraint(sc, sessionContext).catch(() => EMPTY_TASK_CONSTRAINT)
+    : Promise.resolve(EMPTY_TASK_CONSTRAINT);
 
-  const personalizationOn = policy.allowPersonalization === true; let memoryUnreadable = false; // VERIFY-D2e F5: a memory read that FAILED is not "no recents"
-  const acceptanceMemory: SelectionMemory = personalizationOn
-    ? await fetchSelectionMemory(sc, { userId, context, max: 200, onUnreadable: () => { memoryUnreadable = true; } }).catch(() => { memoryUnreadable = true; return emptyMemory(); })
-    : emptyMemory();
-  // §45 OUTCOME LEARNING (OD-INPUT-1/2). Only for a field that already allows
-  // personalization, only when the device HINTS that its account opted in, and
-  // then only if the flag is on AND the stored consent is valid. The hint keeps
-  // the hot path free of extra round trips for everyone who never opted in
-  // (OD-INPUT-7's latency rule); it can only cost a ranking boost, never grant
-  // one. Any other state — including a failed read — is acceptance-only.
-  const memory: SelectionMemory = personalizationOn && outcomeLearning === true
-    ? await attachOutcomeMemory(sc, acceptanceMemory, userId, context)
-    : acceptanceMemory;
+  const personalizationOn = policy.allowPersonalization === true;
+  let memoryUnreadable = false;
+  // Start the owner's history alongside candidate retrieval. Short inputs that
+  // can only miss minChars and writing-sigil takeovers never consume it.
+  const needsMemory = personalizationOn && (
+    context === 'telegraph_recipient' || (q.length === 0 && (wantsRecent || wantsPersonalized || isGeoPicker && wantsEntities))
+    || q.length >= policy.minChars && !(WRITING_CONTEXTS.has(context) && (isHandle || isHashSigil))
+  );
+  const memoryReady: Promise<SelectionMemory> = needsMemory
+    ? fetchSelectionMemory(sc, { userId, context, max: 200, onUnreadable: () => { memoryUnreadable = true; } })
+        .catch(() => { memoryUnreadable = true; return emptyMemory(); })
+        .then(acceptance => outcomeLearning === true
+          ? attachOutcomeMemory(sc, acceptance, userId, context).catch(() => acceptance)
+          : acceptance)
+    : Promise.resolve(emptyMemory());
   const personalQueryKey = selectionQueryKey(trimmed);
 
   // ── §14 zero-character assistance (geographic pickers) ──────────────────────
@@ -343,6 +345,7 @@ export async function generateSuggestions(
       city,
       max: policy.maxSuggestions, onUnreadable: (lane) => noteTypeUnreadable(coverage, lane === 'trips' ? ZERO_STATE_LANE.trips : ZERO_STATE_LANE.currentCity), // VERIFY-D2e F5: a failed Trip read is a partial refusal, never "no Trips"
     }).catch(() => { noteTypeUnreadable(coverage, ZERO_STATE_LANE.trips); return []; });
+    const memory = await memoryReady;
     const projected = defaults.map((d, i) => projectGeoDefault(d, context, POLICY_VERSION, i));
     const existingIds = new Set(projected.map((s) => s.entityId).filter((x): x is string => !!x)); if (memoryUnreadable) noteTypeUnreadable(coverage, ZERO_STATE_LANE.recents); // VERIFY-D2e F5
     const recents = personalizationOn
@@ -415,7 +418,7 @@ export async function generateSuggestions(
     (wantsRecent || wantsPersonalized)
   ) {
     const recents = await buildSelectionRecents(sc, {
-      memory,
+      memory: await memoryReady,
       context,
       isGeoPicker: false,
       policyVersion: POLICY_VERSION,
@@ -481,7 +484,7 @@ export async function generateSuggestions(
     // states for every remembered person: re-ranked among candidates that are
     // already there, never surfaced on its own.
     const boostedRecips = personalizationOn
-      ? applyPriorSelectionBoost(recips, memory, personalQueryKey)
+      ? applyPriorSelectionBoost(recips, await memoryReady, personalQueryKey)
       : recips;
     return dropDeadRows(
       orderSuggestions(
@@ -524,8 +527,10 @@ export async function generateSuggestions(
   // by the typed NAME *and* the creation draft (dates / city / country), so the
   // draft-only validators (trip date conflict, city-country mismatch) run even
   // below minChars where there is no typed text yet. Fail-soft to [].
-  const creationRows: InputSuggestion[] = isCreationContext(context)
-    ? await buildCreationAssistance(sc, {
+  // Date validation and opt-in title writing have independent inputs. Start
+  // validation now and join it when its rows are merged into the answer.
+  const creationReady: Promise<InputSuggestion[]> = isCreationContext(context)
+    ? buildCreationAssistance(sc, {
         context,
         policy,
         text: trimmed,
@@ -538,12 +543,13 @@ export async function generateSuggestions(
         policyVersion: POLICY_VERSION,
         max: policy.maxSuggestions,
       }).catch(() => [] as InputSuggestion[])
-    : [];
+    : Promise.resolve([]);
 
   // Honor minChars (§33). compass_prompt has minChars:0 so it still yields
   // starter prompts on an empty field (§14 zero-character assistance). Creation
   // validators are draft-driven, so surface them even below minChars.
   if (q.length < policy.minChars) {
+    const creationRows = await creationReady;
     return creationRows.length > 0
       ? dropDeadRows(orderSuggestions(creationRows, Math.min(limit, policy.maxSuggestions), trustCtx))
       : [];
@@ -597,6 +603,7 @@ export async function generateSuggestions(
   }
 
   if (wantsEntities && dispatchTypes.length > 0 && q.length >= 2) {
+    const taskConstraint = await taskConstraintReady;
     if (isGeoPicker) {
       // ── Geographic picker path (§12/§17/§19/§53) ────────────────────────────
       // Cities resolve to canonical entities that BIND the field on selection.
@@ -814,6 +821,7 @@ export async function generateSuggestions(
   // never outranks a canonical match (§9). Only public geo entities are injected;
   // a remembered person/place is re-surfaced only by re-ranking a candidate that
   // already passed the privacy gate, never injected around it.
+  const memory = await memoryReady;
   if (personalizationOn && (wantsEntities || wantsPersonalized) && q.length >= 1) {
     const existingIds = new Set(suggestions.map((s) => s.entityId).filter((x): x is string => !!x));
     const injected = await buildLearnedGeoInjections(sc, {
@@ -834,6 +842,7 @@ export async function generateSuggestions(
   // §37: only when NOTHING canonical resolved do we offer context-appropriate
   // fallback actions — policy-gated so a canonical city picker never offers them.
   if (isCreationContext(context)) {
+    const creationRows = await creationReady;
     const hasEntity = suggestions.some((s) => s.type === 'entity'); creationRows.push(...buildApproximateAreaRows(context, policy, POLICY_VERSION, suggestions)); creationRows.push(...(await buildStructuredValueRows(sc, { context, policy, text: trimmed, tz: tz ?? null, policyVersion: POLICY_VERSION }).catch(() => [] as InputSuggestion[]))); // §24/§36 G136; §7 G46 structured values (structuredValues.ts, flag seeded OFF)
     const hasDuplicate = creationRows.some((s) => s.type === 'disambiguation');
     if (!hasEntity && !hasDuplicate && q.length >= 2) {

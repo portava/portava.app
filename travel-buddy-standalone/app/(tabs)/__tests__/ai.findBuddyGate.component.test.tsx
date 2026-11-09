@@ -10,6 +10,7 @@
  * The answer arrives the way Layover's "Ask locals" hands one in: a `prefillMessage` route param is sent once.
  */
 import React from 'react';
+import { registerSensingZoneSource } from '../../../src/services/sensing/sensingZoneHint.ts';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 
 const mockRab = { enabled: false };
@@ -110,7 +111,8 @@ describe('Compass composer', () => {
     const { postCompassAskStream } = jest.requireMock('../../../src/services/compass');
     const originalImplementation = postCompassAskStream.getMockImplementation();
     postCompassAskStream.mockImplementation(service.postCompassAskStream);
-    const turns: Array<{ prompt: string; conversationId?: string }> = [];
+    registerSensingZoneSource(() => 'u4pruy');
+    const turns: Array<{ prompt: string; conversationId?: string; sensingZoneIds?: string[] }> = [];
     service._setTestAuthToken('test-token');
     service._setTestStreamFetch((async (url, init) => {
       expect(url).toBe('http://test.local/api/compass/ask');
@@ -131,15 +133,18 @@ describe('Compass composer', () => {
       await fireEvent.press(screen.getByLabelText('Send message'));
       expect(await screen.findByText('Start near the river.')).toBeTruthy();
       await fireEvent.changeText(field, 'And how do I return?');
+      await fireEvent.press(screen.getByLabelText('Include my approximate area in this Compass reply'));
       await fireEvent(field, 'submitEditing');
       await fireEvent.press(await screen.findByText('Retry'));
       expect(await screen.findByText('Return by tram.')).toBeTruthy();
       expect(screen.getAllByText('And how do I return?')).toHaveLength(1);
       expect(screen.queryByText('Retry')).toBeNull();
+      expect(turns.map(({ sensingZoneIds }) => sensingZoneIds)).toEqual([undefined, ['u4pruy'], undefined]);
       expect(turns.map(({ prompt, conversationId }) => [prompt, conversationId])).toEqual([
         ['Where should I walk?', undefined], ['And how do I return?', 'c-1'], ['And how do I return?', 'c-1'],
       ]);
     } finally {
+      registerSensingZoneSource(null);
       service._setTestAuthToken(null);
       service._setTestStreamFetch(undefined);
       postCompassAskStream.mockImplementation(originalImplementation);

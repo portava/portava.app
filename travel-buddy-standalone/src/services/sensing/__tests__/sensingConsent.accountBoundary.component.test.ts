@@ -65,3 +65,14 @@ it('a recorded withdrawal hold remains denied after the hold module reloads', as
   jest.isolateModules(() => { fresh = require('../withdrawalHold.ts'); });
   expect(await fresh.readSensingWithdrawalHolds(owner)).toEqual(['capture']);
 });
+
+it('a stalled settings read times out and can be retried without changing consent', async () => {
+  jest.useFakeTimers();
+  try {
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: () => new Promise(() => {}) });
+    const waiting = readSensingConsent();
+    await jest.advanceTimersByTimeAsync(10_001);
+    expect(await waiting).toEqual({ status: 'unreadable', reason: 'network' });
+    expect((await readSensingConsent()).status).toBe('ok');
+  } finally { jest.useRealTimers(); }
+});

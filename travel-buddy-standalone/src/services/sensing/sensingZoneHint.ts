@@ -26,21 +26,12 @@ export function sensingZoneHint(): string | null {
   }
 }
 
-/**
- * The ask-body rule (census-sensing S39, §21.4 blocker #3): a Compass turn
- * names the zone its own device is in, so the server can read that zone's
- * k-gated presence aggregate — behind the `surface` scope and the
- * presence-context flag, both off today. An explicit `sensingZoneIds` wins;
- * an explicit empty array sends nothing; otherwise the live hint, if any.
- * PURE, so it is testable under node where `services/compass` is not.
+/** Only an area explicitly chosen for this turn may travel with an identified ask.
+ * A device-local capture grant grants no permission to send its location to Compass.
  */
 export function withSensingZone<T extends { sensingZoneIds?: string[] }>(opts: T): T {
-  if (opts.sensingZoneIds !== undefined) {
-    if (opts.sensingZoneIds.length > 0) return opts;
-    const { sensingZoneIds: _drop, ...rest } = opts;
-    void _drop;
-    return rest as T;
-  }
-  const zone = sensingZoneHint();
-  return zone ? { ...opts, sensingZoneIds: [zone] } : opts;
+  if (opts.sensingZoneIds === undefined || opts.sensingZoneIds.length > 0) return opts;
+  const { sensingZoneIds: unused, ...rest } = opts;
+  void unused;
+  return rest as T;
 }

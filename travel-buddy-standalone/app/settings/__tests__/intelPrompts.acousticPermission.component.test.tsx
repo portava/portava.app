@@ -3,6 +3,7 @@ import { act, fireEvent, render, within } from '@testing-library/react-native';
 import { ACOUSTIC_PERMISSION_STORAGE_KEY, ACOUSTIC_SENSING_SCOPE, acousticCaptureAllowed } from '../../../src/lib/sensing/acousticPermission';
 
 const mockReadConsent = jest.fn();
+let mockCaptureAllowed = true;
 const mockGet = jest.fn();
 const mockSet = jest.fn();
 const mockOsRead = jest.fn();
@@ -31,7 +32,13 @@ jest.mock('../../../src/services/intelConsent', () => ({
 }));
 jest.mock('../../../src/services/sensingConsent', () => ({
   ...jest.requireActual('../../../src/services/sensingConsent'),
-  readSensingConsent: async () => ({ status: 'unreadable', reason: 'not_configured' }),
+  readSensingConsent: async () => ({
+    status: 'ok',
+    state: { available: true, consents: Object.fromEntries(['capture', 'upload', 'surface'].map(scope => [scope, {
+      scope, granted: scope === 'capture' && mockCaptureAllowed, current: true, effective: scope === 'capture' && mockCaptureAllowed,
+      currentVersion: 'sensing_' + scope + '_v1', disclosureVersion: null,
+    }])) },
+  }),
 }));
 jest.mock('@react-native-async-storage/async-storage', () => ({
   ...jest.requireActual('@react-native-async-storage/async-storage'),
@@ -79,6 +86,7 @@ beforeEach(() => {
   mockSet.mockReset().mockImplementation(async (key, value) => { mockStorage.set(key, value); });
   mockOsRead.mockReset().mockResolvedValue({ granted: true });
   mockOsRequest.mockReset().mockResolvedValue({ granted: true });
+  mockCaptureAllowed = true;
   mockReadConsent.mockReset().mockResolvedValue({ status: 'ok', state: general });
   jest.isolateModules(() => { require('../../../src/services/discoveryViewerScope').setDiscoveryViewerFromSession('sensing-test-user'); mockPermission = jest.requireActual('../../../src/services/sensing/acousticSensingPermission'); });
 });
@@ -154,7 +162,14 @@ describe('Mounted sound-level permission truth and lifetime', () => {
     await screen.unmount(); await act(async () => { callback({ nativeEvent: { value: true } }); });
     expect(mockOsRequest).not.toHaveBeenCalled(); expect(mockSet).not.toHaveBeenCalled();
   });
-  test.each(['off', 'unreadable'] as const)('general consent %s prevents grants but never blocks withdrawing saved purpose', async (status) => {
+  test('area capture permits an explicit sound-level choice when Quick Signals are off', async () => {
+    mockReadConsent.mockResolvedValue({ status: 'ok', state: { ...general, enabled: false } });
+    const screen = await mount(false);
+    await act(async () => { fireEvent(soundSwitch(screen), 'valueChange', true); });
+    expect(mockOsRequest).toHaveBeenCalledTimes(1);
+  });
+  test.each(['off', 'unreadable'] as const)('area capture off prevents grants while general consent is %s and still permits withdrawal', async (status) => {
+    mockCaptureAllowed = false;
     mockReadConsent.mockResolvedValue(status === 'off' ? { status: 'ok', state: { ...general, enabled: false } } : { status: 'unreadable', reason: 'network' });
     const screen = await mount(); expect(soundSwitch(screen).props.disabled).toBe(false);
     await act(async () => { fireEvent(soundSwitch(screen), 'valueChange', false); });

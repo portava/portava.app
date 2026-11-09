@@ -19,7 +19,7 @@
  *     cursor   — pagination cursor
  */
 import { randomUUID } from "node:crypto";
-import { itineraryOutline } from "../compass/CompassItineraryOutline.js";
+import { itineraryOutline, itineraryPromptForTurn, requestedItineraryCity } from "../compass/CompassItineraryOutline.js";
 import { CompassVenueStream, groundVenueTerms } from "../compass/CompassVenueTerms.js";
 import { Router } from "express";
 import { z } from "zod";
@@ -1323,9 +1323,15 @@ async function runToolCallingLoop(
   const toolLog: ToolExecution[] = trackPartialToolLog<ToolExecution>(messages); // H266: readable by the caller if a model call below throws
   const proposals: AddToTripProposal[] = [];
 
+  if (itinerary) {
+    const city = requestedItineraryCity(itinerary.prompt, undefined, itinerary.city);
+    const clarification = itineraryOutline(itinerary.prompt, city);
+    if (clarification?.payload === null) return { finalRaw: JSON.stringify(clarification), toolLog, proposals };
+  }
+  let endSearch = false;
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
     if (signal?.aborted) throw new ClientDisconnectedError();
-    const forceFinal = round === MAX_TOOL_ROUNDS;
+    const forceFinal = endSearch || round === MAX_TOOL_ROUNDS;
     const requestOpts = {
       model: "gpt-5-mini",
       max_completion_tokens: 1200,
@@ -1378,6 +1384,12 @@ async function runToolCallingLoop(
       let args: Record<string, unknown> = {};
       try { args = JSON.parse(tc?.function?.arguments ?? "{}"); } catch { /* empty args */ }
 
+      const requestedCity = itinerary && name === "search_places" ? requestedItineraryCity(itinerary.prompt, args.city, itinerary.city) : undefined;
+      if (requestedCity) args.city = requestedCity;
+      if (endSearch && name === "search_places") {
+        convo.push({ role: "tool", tool_call_id: tc.id, content: "City-wide search already returned no matching places." });
+        continue;
+      }
       let result = await executeCompassTool(sc, userId, profile as any, name, args);
       toolLog.push({ name, arguments: args, result });
       if (itinerary && name === "search_places") {
@@ -1385,8 +1397,6 @@ async function runToolCallingLoop(
           const row = value as { catalogEmpty?: boolean; liveListings?: unknown[] };
           return row?.catalogEmpty === true && !row.liveListings?.length;
         };
-        const requestedCity = typeof args.city === "string" && itinerary.prompt.toLowerCase().includes(args.city.toLowerCase())
-          ? args.city : itinerary.city && itinerary.prompt.toLowerCase().includes(itinerary.city.toLowerCase()) ? itinerary.city : undefined;
         if (empty(result) && requestedCity && typeof args.query === "string" && args.query.trim()) {
           const broadArgs = { city: requestedCity };
           result = await executeCompassTool(sc, userId, profile as any, name, broadArgs);
@@ -1397,7 +1407,8 @@ async function runToolCallingLoop(
           return (tool.name === "search_places" || tool.name === "search_events") && (row?.candidates?.length || row?.liveListings?.length);
         })) {
           const outline = itineraryOutline(itinerary.prompt, requestedCity);
-          if (outline) return { finalRaw: JSON.stringify(outline), toolLog, proposals };
+          if (outline && toolCalls.length === 1) return { finalRaw: JSON.stringify(outline), toolLog, proposals };
+          endSearch = true;
         }
       }
       const proposal = (result as any)?.proposal;
@@ -1406,6 +1417,7 @@ async function runToolCallingLoop(
       log.info({ userId, tool: name }, "compass/ask: tool executed");
       convo.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(result) });
     }
+    if (endSearch) convo.push({ role: "system", content: "The available place searches are exhausted. In the traveler’s language, offer a useful generic day-by-day itinerary honoring all their stated constraints. Do not invent venues, hours or prices. If the destination or duration is missing, clarify it instead of assuming the phone’s city or one day. No further tools are needed." });
   }
   // Unreachable, but keeps TS happy.
   return { finalRaw: "", toolLog, proposals };
@@ -1979,6 +1991,9 @@ router.post("/compass/ask", async (req, res) => {
   const userMessageWithContext = `${prompt}\n\n${ctxLines.join("\n")}`;
 
   // ── Build messages array ──────────────────────────────────────────────────
+  const planningPrompt = itineraryPromptForTurn(prompt, modelTurns(history));
+  const itineraryRequest = isItineraryIntent || (planningPrompt !== prompt && /\b(?:plan|itinerary|weekend)\b/i.test(planningPrompt))
+    ? { prompt: planningPrompt, city } : undefined;
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: "system", content: COMPASS_ASK_PROMPT },
     { role: "system", content: COMPASS_TOOLS_PROMPT_ADDENDUM },
@@ -2040,15 +2055,15 @@ router.post("/compass/ask", async (req, res) => {
         sc, user.id, guardProfile, messages as any, req.log,
         delta => venueStream.push(delta),
         clientAbort.signal,
-        isItineraryIntent ? { prompt, city } : undefined,
+        itineraryRequest,
       ));
       const _parsed = _parseModelResponse(finalRaw);
       const _rawMessage  = finalRaw === "" ? compassAiFailureFallback(toolLog, SUMMARISE_EMPTY_FALLBACK_MESSAGE).message : _parsed.message;
       // Validate venue terms before handing structured itinerary data to the client.
-      const venue = groundVenueTerms(_rawMessage, _parsed.payload, toolLog, prompt);
+      const venue = groundVenueTerms(_rawMessage, _parsed.payload, toolLog, prompt, _parsed.quickActions);
       const _grounded    = groundCompassAnswer(venue.message, toolLog, liveClaimEvidence);
       const message      = _grounded.text;
-      venueStream.finish(venue.changed ? { message, payload: venue.payload, quickActions: _parsed.quickActions } : undefined);
+      venueStream.finish(venue.changed ? { message, payload: venue.payload, quickActions: venue.quickActions } : undefined);
       if (_grounded.correction && !res.writableEnded) {
         req.log.warn(
           { userId: user.id, violations: _grounded.violations.map((v) => v.kind) },
@@ -2057,7 +2072,7 @@ router.post("/compass/ask", async (req, res) => {
         if (!venue.changed) res.write(`data: ${JSON.stringify({ delta: `\n\n${_grounded.correction}` })}\n\n`);
       }
       const payload      = venue.payload;
-      const quickActions = _parsed.quickActions;
+      const quickActions = venue.quickActions;
       // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
       // outMeta tracks how many model-declared ids were not found in the tool log
       // (hallucinated references). When no blocks were declared, synthesis runs
@@ -2115,13 +2130,13 @@ router.post("/compass/ask", async (req, res) => {
   try {
     const { finalRaw, toolLog, proposals } = await withAskProjections(() => runToolCallingLoop(
       sc, user.id, guardProfile, messages as any, req.log, undefined, undefined,
-      isItineraryIntent ? { prompt, city } : undefined,
+      itineraryRequest,
     ));
     const _parsed = _parseModelResponse(finalRaw);
     const _rawMessage  = finalRaw === "" ? compassAiFailureFallback(toolLog, SUMMARISE_EMPTY_FALLBACK_MESSAGE).message : _parsed.message;
     // Sensing `:148` — the same boundary the streamed branch applies, on the
     // same tool log, so the two branches cannot publish different answers.
-    const venue = groundVenueTerms(_rawMessage, _parsed.payload, toolLog, prompt);
+    const venue = groundVenueTerms(_rawMessage, _parsed.payload, toolLog, prompt, _parsed.quickActions);
     const _grounded    = groundCompassAnswer(venue.message, toolLog, liveClaimEvidence);
     const message      = _grounded.text;
     if (_grounded.correction) {
@@ -2131,7 +2146,7 @@ router.post("/compass/ask", async (req, res) => {
       );
     }
     const payload      = venue.payload;
-    const quickActions = _parsed.quickActions;
+    const quickActions = venue.quickActions;
     // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
     // outMeta tracks how many model-declared ids were not found in the tool log
     // (hallucinated references). When no blocks were declared, synthesis runs

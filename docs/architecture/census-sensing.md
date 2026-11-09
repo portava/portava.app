@@ -5045,12 +5045,12 @@ pass verified it, in the order the RED WHEN demands — claims into the context
 FIRST, checker over that context SECOND, *"because a checker over an empty
 context is vacuous"*:
 
-* The context half. `` `artifacts/api-server/src/routes/compass.ts:1856#liveClaimEvidence = live.evidence;` ``
+* The context half. `` `artifacts/api-server/src/routes/compass.ts:1891#liveClaimEvidence = live.evidence;` ``
   — `buildLiveClaimContext` pushes its lines onto the prompt and keeps the
   per-subject band it derived, on the request path, before any answer exists.
 * The checker half, on BOTH branches so streamed and non-streamed answers
-  cannot drift: `` `artifacts/api-server/src/routes/compass.ts:2023#groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence)` ``
-  and `` `artifacts/api-server/src/routes/compass.ts:2096#groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence)` ``.
+  cannot drift: `` `artifacts/api-server/src/routes/compass.ts:2064#groundCompassAnswer(venue.message, toolLog, liveClaimEvidence)` ``
+  and `` `artifacts/api-server/src/routes/compass.ts:2140#groundCompassAnswer(venue.message, toolLog, liveClaimEvidence)` ``.
   `groundCompassAnswer` merges the tool-log evidence with the context band
   and hands the union to `enforceCompassGroundingEnvelope`.
 * The proof is a REGISTERED suite, not a reading: `` `artifacts/api-server/src/test/compassGroundingLiveClaims.test.ts:99#describe("S79 part 1` ``
@@ -5087,7 +5087,7 @@ no world state, no opportunities, no disruptions, no sessions"*. Re-derived:
   `ExperienceSession` and the crew on the trip itself.
 * It is on the request path, handed the same kernel and the same admitted
   opportunities the prompt gets, so the trip world cannot show a different
-  world from the ranker: `` `artifacts/api-server/src/routes/compass.ts:1938#const tripWorld = await buildTripWorldContext(sc, user.id, {` ``.
+  world from the ranker: `` `artifacts/api-server/src/routes/compass.ts:1973#const tripWorld = await buildTripWorldContext(sc, user.id, {` ``.
 * The suite: `` `artifacts/api-server/src/test/sensingConsumersTripWorld.test.ts:88#describe("S83 — the projection carries all five named parts"` ``
   — builds all five from a stub client that FILTERS per table, asserts a
   closed session is not an open one, that the disruption claim types are the
@@ -5623,7 +5623,7 @@ client build is not shipped, 3312 is on `portava-ci` only, and the ingest
 refuses every caller in production without its pepper (S18/S32).
 
 **On the device.** The capture loop
-`` `travel-buddy-standalone/src/services/sensing/sensingCapture.ts:123#export function startSensingCapture(deps: SensingCaptureDeps): SensingCaptureHandle {` ``
+`` `travel-buddy-standalone/src/services/sensing/sensingCapture.ts:124#export function startSensingCapture(deps: SensingCaptureDeps): SensingCaptureHandle {` ``
 holds raw motion and location samples in a closure nothing outside can read,
 closes a window, reduces it on the device
 (`` `travel-buddy-standalone/src/lib/sensing/normalizedFeatures.ts:445#export function reduceSensingWindow(` ``)
@@ -5632,7 +5632,7 @@ to the nine named features — spatial bucket
 capped at ~1.2 km × 0.6 km cells), temporal bucket, movement class, motion
 energy, periodicity, dwell bucket, transition, transport-mode likelihood and
 sensor health — and empties the raw buffers the moment the window closes.
-`` `travel-buddy-standalone/src/services/sensing/__tests__/sensingCapture.test.ts:244#  test('no sentinel coordinate or accelerometer axis reaches `submit`', async () => {` ``
+`` `travel-buddy-standalone/src/services/sensing/__tests__/sensingCapture.test.ts:247#  test('no sentinel coordinate or accelerometer axis reaches `submit`', async () => {` ``
 pins that no coordinate and no axis reaches the transport; the nine features
 are pinned at `` `travel-buddy-standalone/src/services/sensing/__tests__/sensingCapture.test.ts:164#  test('a window of real samples is submitted as the nine named features', async () => {` ``.
 The loop is mounted for the app in `` `travel-buddy-standalone/app/_layout.tsx:276#    const handle = installSensingCapture();` ``,
@@ -5650,7 +5650,7 @@ required IN ADDITION and never instead, and the extractor
 produces a coarse energy bucket and a rhythm class — never a recording. The
 permission is re-read PER WINDOW, so a revocation between windows drops the
 pair from the very next one
-(`` `travel-buddy-standalone/src/services/sensing/__tests__/sensingCapture.test.ts:311#  test('a revocation between windows drops the acoustic pair from the very next one', async () => {` ``),
+(`` `travel-buddy-standalone/src/services/sensing/__tests__/sensingCapture.test.ts:314#  test('a revocation between windows drops the acoustic pair from the very next one', async () => {` ``),
 and 3312's `_acoustic_pair` CHECK makes a half-record unrepresentable in the store.
 
 **The commitment, so the device can withdraw.** The device mints a 32-byte
@@ -5729,7 +5729,7 @@ owner's and is not.
 | # | §21.4 blocker | Now |
 |---|---|---|
 | 2 | *"Nothing publishes. `publishThroughDifferencingGate` has no caller outside tests."* | `lib/sensingPublicationScheduler` is that caller: on its own clock, per live cohort of the current and previous privacy bucket, `readSensingCohort` → `aggregateSensingCohort` → `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:226#    const decision = await publishThroughDifferencingGate(` ``. A cohort the k-gate withholds never reaches the gate or the store (`` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:220#    if (aggregate.publishable !== true) {` ``). Started at boot: `` `artifacts/api-server/src/index.ts:168#  startSensingPublicationScheduler();` ``. |
-| 3 | *"A Compass turn carries a city, not a sensing `zone_id`."* | The turn now carries the device's OWN coarse zone — the spatial bucket its capture stamps on its contributions, present only while capture runs (`` `travel-buddy-standalone/src/services/sensing/sensingCapture.ts:103#  currentZone(): string | null;` ``, registered by `` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:148#    registerSensingZoneSource(() => running.currentZone());` ``, sent on both ask paths per `` `travel-buddy-standalone/src/services/__tests__/compass.sensingZone.test.ts:68#describe('the wiring, by source: both ask paths apply the rule to the body they send', () => {` ``). The route accepts it (`` `artifacts/api-server/src/routes/compass.ts:1134#  sensingZoneIds:      z.array(z.string().min(1).max(64)).max(5).optional(),` ``), turns it into the cohort refs of the current and previous bucket (`` `artifacts/api-server/src/compass/CompassSensingPresenceProducer.ts:254#export function sensingCohortRefsForZones(` ``, pure, bounded by the zone cap on the READS) and hands them to the producer (`` `artifacts/api-server/src/routes/compass.ts:1878#        sensingCohortRefsForZones(sensingZoneIds, turnNowMs),` ``). |
+| 3 | *"A Compass turn carries a city, not a sensing `zone_id`."* | The turn now carries the device's OWN coarse zone — the spatial bucket its capture stamps on its contributions, present only while capture runs (`` `travel-buddy-standalone/src/services/sensing/sensingCapture.ts:104#  currentZone(): string | null;` ``, registered by `` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:167#    registerSensingZoneSource(() => running.currentZone());` ``, sent on both ask paths per `` `travel-buddy-standalone/src/services/__tests__/compass.sensingZone.test.ts:68#describe('the wiring, by source: both ask paths apply the rule to the body they send', () => {` ``). The route accepts it (`` `artifacts/api-server/src/routes/compass.ts:1136#  sensingZoneIds:      z.array(z.string().min(1).max(64)).max(5).optional(),` ``), turns it into the cohort refs of the current and previous bucket (`` `artifacts/api-server/src/compass/CompassSensingPresenceProducer.ts:254#export function sensingCohortRefsForZones(` ``, pure, bounded by the zone cap on the READS) and hands them to the producer (`` `artifacts/api-server/src/routes/compass.ts:1913#        sensingCohortRefsForZones(sensingZoneIds, turnNowMs),` ``). |
 | 1 | *"`surface` is not in `SENSING_ANON_GRANTED_SCOPES`"* | **Unchanged, deliberately.** Both the publisher and the producer test the scope BEFORE reading their flag and before any read: `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:153#  if (!sensingPublicationScopeGranted(opts.policy ?? SENSING_ANON_POLICY_V1)) {` `` precedes `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:161#  if (!(await isFlagEnabled(db, SENSING_PUBLICATION_FLAG))) return SKIPPED("capability_off");` ``. The frozen constant was not edited. |
 
 **Proven with the scope INJECTED through the seam, never granted.**
@@ -6458,7 +6458,7 @@ applied, flipped or deployed: 3703 is applied nowhere and `sensing_consent_split
   (`artifacts/api-server/src/lib/sensingConsentGrants.ts:178#if (granted && displayedVersion !== version) return`).
 - **Revocable.** Granting needs the flag ON; withdrawing never does
   (`artifacts/api-server/src/routes/sensingConsent.ts:91#if (parsed.data.granted) {`;
-  `artifacts/api-server/src/test/sensingConsentGrants.test.ts:265#it("PUT WITHDRAW is always accepted`).
+  `artifacts/api-server/src/test/sensingConsentGrants.test.ts:266#it("PUT WITHDRAW is always accepted`).
 - **The issuer obeys it, and nothing else.** No session without the flag
   (`artifacts/api-server/src/routes/sensingSession.ts:102#const split = await readFlagState(db, "sensing_consent_split_enabled");`)
   or without capture AND upload; `surface` only on its own grant AND the policy in force
@@ -6467,9 +6467,9 @@ applied, flipped or deployed: 3703 is applied nowhere and `sensing_consent_split
   The bundled Quick Signals / v2 path is no longer read: OD-MAP-6 forbids one grant for all three.
 - **The device obeys it.** The capture loop starts only under capture and drops every send unless upload
   is in effect, re-checking on foreground and on every Settings change
-  (`travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:141#if (disposed || generation !== captureGeneration || !uploadAllowed) return;`);
+  (`travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:160#if (disposed || generation !== captureGeneration || !uploadAllowed) return;`);
   three switches in Settings, each OFF until turned on, OFF always reachable
-  (`travel-buddy-standalone/src/components/intel/SensingConsentSection.tsx:45#export function SensingConsentSection() {`).
+  (`travel-buddy-standalone/src/components/intel/SensingConsentSection.tsx:83#export function SensingConsentSection() {`).
 
 ### 33.2 The words (Q-L20)
 
@@ -6522,7 +6522,7 @@ No row moves. S18, S24, S32 and S39 stay `W` for §33.3's reasons.
 
 The real `installSensingCapture` now runs against stand-ins: a fake consent reader with its change channel, a
 fake capture loop that records the `submit` the installer gives it, and a fake transport
-(`travel-buddy-standalone/src/services/sensing/__tests__/installSensingCapture.component.test.ts:110#describe('installSensingCapture obeys OD-MAP-6 on the device'`,
+(`travel-buddy-standalone/src/services/sensing/__tests__/installSensingCapture.component.test.ts:111#describe('installSensingCapture obeys OD-MAP-6 on the device'`,
 8 cases). The test shows:
 
 - **No loop starts** when capture is not granted, or when the consent cannot be read.
@@ -6658,3 +6658,7 @@ No row, total, scope-coverage floor or citation threshold is promoted by this re
 ### November 9 release evidence
 
 The recording stamp certifies the uploaded video and its publication through a separate opt-in recording challenge. It creates no sensing observation and assigns no location, corroboration, presence, identity or trust evidence. Sensing collection and publication criteria are outside this attestation.
+
+Sensing requests use a session-aware bounded transport. The change covers local cancellation and stale results. Physical sensor availability and deployed latency still require separate measurement.
+
+Foreground area location is requested from the Area sensing settings control. Acoustic metering has a separate off-by-default control and still requires microphone permission and applicable capture consent. Session generations fence stale callbacks. Bounded transport ends waits and retries eligible transient failures. See `travel-buddy-standalone/src/components/intel/SensingConsentSection.tsx:71#areaLocationAccess(true)`, `travel-buddy-standalone/src/components/intel/AcousticSensingSection.tsx:16#export function AcousticSensingSection` and `travel-buddy-standalone/src/services/sensing/sensingRequest.ts:16#return await Promise.race`. The transport and permission fixtures do not establish real-device measurements.

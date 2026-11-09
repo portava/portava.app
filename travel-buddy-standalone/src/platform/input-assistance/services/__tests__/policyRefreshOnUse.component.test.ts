@@ -122,3 +122,31 @@ it('a call made while an attempt is IN FLIGHT shares it: one fetch, and both cal
   expect(await second).toBe('installed');
   expect(fetchPolicies).toHaveBeenCalledTimes(1);
 });
+
+it('new auth beats a late startup identity and a previous account’s late policy table', async () => {
+  const store = new PolicyStore();
+  let observe!: (id: string | null) => void;
+  let initial!: (id: string | null) => void;
+  const replies: Array<(value: typeof OK) => void> = [];
+  const fetchPolicies = jest.fn(() => new Promise<typeof OK>(resolve => replies.push(resolve)));
+  const dispose = installInputPolicySync({
+    store, fetchPolicies, cache: { clear() {} }, recents: { clear() {} },
+    subscribeAuth: cb => { observe = cb; return () => {}; },
+    currentUserId: () => new Promise(resolve => { initial = resolve; }),
+  });
+  observe('former');
+  await Promise.resolve();
+  observe('current');
+  await Promise.resolve();
+  initial('former');
+  const onUse = refreshPolicyOnUse();
+  expect(fetchPolicies).toHaveBeenCalledTimes(2);
+  replies[1]({ ...OK, policyVersion: 'current-policy' });
+  expect(await onUse).toBe('installed');
+  replies[0]({ ...OK, policyVersion: 'former-policy' });
+  await Promise.resolve();
+  expect(store.activeAccount()).toBe('current');
+  expect(store.heldAccount()).toBe('current');
+  expect(store.heldVersion()).toBe('current-policy');
+  dispose();
+});

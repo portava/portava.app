@@ -36,6 +36,7 @@ import NewTrip from '../../../app/trip/new.tsx';
 
 // NOTE: intentionally exhaustive — expo-router pulls native navigation internals.
 jest.mock('expo-router', () => ({
+  useFocusEffect: (effect: () => void | (() => void)) => require('react').useEffect(effect, [effect]),
   router: { replace: jest.fn(), push: jest.fn() },
 }));
 

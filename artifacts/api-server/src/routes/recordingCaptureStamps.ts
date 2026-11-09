@@ -8,7 +8,7 @@ import { excludePrivateAuthorPosts } from '../lib/privacyFilter.js';
 import { readPairDirections } from '../lib/exclusionSet.js';
 import { resolveAccountRestriction } from '../lib/accountStateGate.js';
 import { authorizeMediaAccess } from '../lib/mediaAccess.js';
-import { checkStoryAccess, STORY_COLS } from './stories.js';
+import { checkStoryAccess } from './stories.js';
 import { issueRecordingStamp, openRecordingCapture, recordingStampDescriptor, type RecordingTarget } from '../services/stamps/recordingCapture.js';
 
 const router = Router();
@@ -21,7 +21,7 @@ function refusal(res: Response, err: unknown) {
 }
 async function publicationReadable(sc: any, viewer: string, type: RecordingTarget, id: string) {
   if (type === 'story') {
-    const read = await sc.from('stories').select(STORY_COLS).eq('id',id).maybeSingle();
+    const read = await sc.from('stories').select('owner_id,state,expires_at,visibility,close_friends_only,trip_id,allowed_user_ids,hidden_user_ids').eq('id',id).maybeSingle();
     if (read.error) throw read.error;
     if (!read.data || read.data.state !== 'active' || !(Date.parse(read.data.expires_at)>Date.now())) return false;
     const access = await checkStoryAccess(sc, read.data, viewer);

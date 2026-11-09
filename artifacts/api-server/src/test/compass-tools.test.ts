@@ -433,13 +433,13 @@ after(() => {
 beforeEach(() => invalidateFlagsCache());
 afterEach(() => _setTestOpenAI(null));
 
-async function post(path: string, body: Record<string, unknown>) {
+async function post<T = Record<string, unknown>>(path: string, body: Record<string, unknown>) {
   const r = await fetch(`http://127.0.0.1:${port}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" },
     body: JSON.stringify(body),
   });
-  return { status: r.status, body: (await r.json()) as Record<string, unknown> };
+  return { status: r.status, body: (await r.json()) as T };
 }
 
 /** OpenAI mock: classifier low-confidence; main LLM does one search_places tool round then answers from the candidates. */
@@ -1109,6 +1109,12 @@ describe("D-65 — the confirm route's duplicate guard is not an oracle for anot
   });
 });
 
+interface AuditedItineraryResponse {
+  message: string;
+  payload: { destination?: string; days: { highlights: string[] }[] } | null;
+  meta: { toolsUsed: string[] };
+}
+
 describe("Compass venue prices, hours and itineraries on the published path", () => {
   const prompt = "Give the verified closing time and price at Lantern Vault in Da Nang";
   const raw = JSON.stringify({
@@ -1162,6 +1168,23 @@ describe("Compass venue prices, hours and itineraries on the published path", ()
     assert.match(groundVenueTerms("Lantern Vault is free, unlike River Fair.", null, log).message, /^River Fair is listed with free admission\.$/);
   });
 
+  it("uses the named trip city ahead of device location, asks for a missing duration, and delegates unfamiliar constraints and languages", async () => {
+    const { requestedItineraryCity, itineraryOutline, itineraryPromptForTurn } = await import("../compass/CompassItineraryOutline.js");
+    const named = "Plan two days in Hội An. Keep day two indoors.";
+    const city = requestedItineraryCity(named, "Da Nang", "Da Nang");
+    assert.equal(city, "Hội An");
+    assert.equal(itineraryOutline(named, city)?.payload?.destination, "Hội An");
+    assert.match(itineraryOutline("Plan a trip to Kyoto.", "Kyoto")!.message, /How many days/);
+    const retry = itineraryPromptForTurn("Please try again.", [{ role: "user", content: "Help me plan a visit to Da Nang." }]);
+    assert.equal(requestedItineraryCity(retry, undefined, "Kyoto"), "Da Nang");
+    assert.match(itineraryOutline(retry, "Da Nang")!.message, /How many days/);
+    assert.equal(itineraryOutline("Plan a month in Kyoto.", "Kyoto"), null);
+    assert.equal(itineraryOutline("Plan two days in Kyoto with wheelchair access.", "Kyoto"), null);
+    assert.equal(itineraryOutline("Plan dos días en Da Nang.", "Da Nang"), null);
+    assert.equal(requestedItineraryCity("Plan two days.", "Da Nang", "Da Nang"), undefined);
+    assert.equal(requestedItineraryCity("Plan two days near me.", undefined, "Da Nang"), "Da Nang");
+  });
+
   it("builds the requested indoor second day with a budget after a city-wide empty search", async () => {
     _setTestClient(makeClient(makeDb()), true);
     let mainCalls = 0;
@@ -1170,9 +1193,10 @@ describe("Compass venue prices, hours and itineraries on the published path", ()
       mainCalls++;
       return { choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "test", type: "function", function: { name: "search_places", arguments: '{"city":"Da Nang","query":"indoor"}' } }] } }] };
     } } } } as any);
-    const { status, body } = await post("/api/compass/ask", { prompt: "Plan two days in Da Nang. Keep day two indoors. I have a $20 limit.", city: "Da Nang" });
+    const { status, body } = await post<AuditedItineraryResponse>("/api/compass/ask", { prompt: "Plan two days in Da Nang. Keep day two indoors. I have a $20 limit.", city: "Da Nang" });
     assert.equal(status, 200);
     assert.equal(mainCalls, 1);
+    assert.ok(body.payload);
     assert.equal(body.payload.destination, "Da Nang");
     assert.equal(body.payload.days.length, 2);
     assert.match(body.payload.days[1].highlights.join(" "), /indoor/i);
@@ -1180,4 +1204,24 @@ describe("Compass venue prices, hours and itineraries on the published path", ()
     assert.match(body.message, /couldn’t verify specific venues/);
     assert.deepEqual(body.meta.toolsUsed, ["search_places", "search_places"]);
   });
+  for (const scenario of [
+    { prompt: "Plan two days in Hội An. Keep day two indoors.", destination: "Hội An", delegated: false },
+    { prompt: "Plan a trip to Kyoto.", question: /How many days.*Kyoto/, delegated: false },
+    { prompt: "Prepare um roteiro de vários dias em Lisboa para uma cadeira de rodas.", question: /quantos dias/i, delegated: true },
+  ]) it(`keeps the traveler's requested destination, duration and language for “${scenario.prompt}”`, async () => {
+    _setTestClient(makeClient(makeDb()), true);
+    let mainCalls = 0;
+    _setTestOpenAI({ chat: { completions: { async create(opts: any) {
+      if (opts.max_completion_tokens === 256) return { choices: [{ message: { content: '{"intent":"itinerary","confidence":0.99}' } }] };
+      mainCalls++;
+      if (opts.tools) return { choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "wrong-city", type: "function", function: { name: "search_places", arguments: '{"city":"Da Nang"}' } }] } }] };
+      assert.match(opts.messages.at(-1).content, /traveler’s language/);
+      return { choices: [{ message: { role: "assistant", content: JSON.stringify({ message: "Quantos dias pretende passar em Lisboa? Vou considerar a acessibilidade.", payload: null, quickActions: [] }) } }] };
+    } } } } as any);
+    const { body } = await post<AuditedItineraryResponse>("/api/compass/ask", { prompt: scenario.prompt, city: "Da Nang" });
+    assert.equal(mainCalls, scenario.delegated ? 2 : scenario.destination ? 1 : 0);
+    if (scenario.destination) { assert.ok(body.payload); assert.equal(body.payload.destination, scenario.destination); }
+    if (scenario.question) { assert.equal(body.payload, null); assert.match(body.message, scenario.question); }
+  });
+
 });

@@ -36,7 +36,7 @@ describe('sensingZoneHint', () => {
   });
 });
 
-describe('withSensingZone — the ask carries the zone only while capture is running', () => {
+describe('withSensingZone — a local sensor reading stays local until a traveler selects an area', () => {
   /** The shape the two ask paths pass: production hands in a typed options object, never a bare literal. */
   type Ask = { city?: string; conversationId?: string; sensingZoneIds?: string[] };
 
@@ -47,11 +47,11 @@ describe('withSensingZone — the ask carries the zone only while capture is run
     assert.deepEqual(out, { city: 'Lisbon' });
   });
 
-  it('a running capture ⇒ sensingZoneIds is exactly [its current zone], other fields untouched', () => {
+  it('capture alone never adds the device zone to a signed-in Compass prompt', () => {
     registerSensingZoneSource(() => 'u4pruy');
     const opts: Ask = { city: 'Lisbon', conversationId: 'c1' };
     const out = withSensingZone(opts);
-    assert.deepEqual(out, { city: 'Lisbon', conversationId: 'c1', sensingZoneIds: ['u4pruy'] });
+    assert.deepEqual(out, { city: 'Lisbon', conversationId: 'c1' });
   });
 
   it('an explicit sensingZoneIds wins over the hint; an explicit [] sends nothing', () => {

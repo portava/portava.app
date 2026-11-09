@@ -39,8 +39,9 @@ import type {
 export const MOTION_SAMPLE_INTERVAL_MS = 50;
 /** Minimum seconds between position fixes. Deliberately not continuous GPS. */
 export const LOCATION_INTERVAL_MS = 30_000;
-/** Minimum metres of movement before a new fix is delivered. */
-export const LOCATION_DISTANCE_M = 25;
+// A stationary traveler still needs a current area. Throttle fixes by time
+// because an iOS watch may deliver more often than the requested cadence.
+const LOCATION_DISTANCE_M = 0;
 
 type AnyModule = Record<string, any>;
 
@@ -107,6 +108,26 @@ export function createDeviceMotionSource(): MotionSource | null {
   };
 }
 
+type AreaLocationAccess = 'granted' | 'requestable' | 'settings' | 'unavailable';
+const locationListeners = new Set<() => void>();
+export function onAreaLocationGranted(listener: () => void): () => void {
+  locationListeners.add(listener);
+  return () => { locationListeners.delete(listener); };
+}
+
+/** Ask the OS only when the traveler presses the foreground location row. */
+export async function areaLocationAccess(request = false): Promise<AreaLocationAccess> {
+  if (Platform.OS === 'web') return 'unavailable';
+  try {
+    const location = require('expo-location') as AnyModule;
+    const access = request ? await location.requestForegroundPermissionsAsync() : await location.getForegroundPermissionsAsync();
+    if (access?.granted === true) {
+      if (request) for (const listener of locationListeners) listener();
+      return 'granted';
+    }
+    return access?.canAskAgain === false ? 'settings' : 'requestable';
+  } catch { return 'unavailable'; }
+}
 /**
  * `expo-location`'s watch as a `LocationSource`. Subscription is asynchronous,
  * so the returned unsubscribe cancels a watch that may not have started yet —
@@ -121,6 +142,7 @@ export function createDeviceLocationSource(): LocationSource {
     subscribe(onSample): Unsubscribe {
       let cancelled = false;
       let remove: (() => void) | null = null;
+      let lastFixAt = -Infinity;
 
       void (async () => {
         try {
@@ -136,9 +158,13 @@ export function createDeviceLocationSource(): LocationSource {
             },
             (pos: any) => {
               const c = pos?.coords;
-              if (cancelled || !c) return;
+              if (cancelled || !c || !Number.isFinite(c.latitude) || !Number.isFinite(c.longitude)) return;
+              const now = Date.now();
+              const timestamp = Number.isFinite(pos.timestamp) ? pos.timestamp : now;
+              if (timestamp > now || now - timestamp > LOCATION_INTERVAL_MS || timestamp - lastFixAt < LOCATION_INTERVAL_MS) return;
+              lastFixAt = timestamp;
               onSample({
-                t: typeof pos.timestamp === 'number' ? pos.timestamp : Date.now(),
+                t: timestamp,
                 lat: c.latitude,
                 lng: c.longitude,
                 accuracyM: typeof c.accuracy === 'number' ? c.accuracy : null,

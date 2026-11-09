@@ -691,7 +691,7 @@ export interface CompassAskResponse {
 export type CompassAskRecommendation = CompassAskResponse;
 
 // S39: both ask paths spread `withSensingZone(opts)` (services/sensing/
-// sensingZoneHint) so the device's own coarse zone rides on the turn while
+// sensingZoneHint) so only an area explicitly chosen for the current turn travels while
 // capture runs. The rule lives in that module so it is testable under node.
 export async function postCompassAsk(
   prompt:  string,

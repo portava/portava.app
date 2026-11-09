@@ -235,7 +235,7 @@ describe("W6 — DV-74: a suppressing trend review reaches GET …/trending", { 
   test("recorded with its audit row; the Trail answers not trending with no items; a later `cleared` lifts it", async () => {
     const [admin, viewer, feed] = [user("w6a"), user("w6v"), user("w6f")];
     const t = trail();
-    const pl = randomUUID();
+    const pl = canonicalPlace();
     member(t, "place", pl, null);
     exec(`INSERT INTO public.rank_events (user_id, item_id, item_kind, position, features, outcome, served_at, outcome_at, surface, schema_version, privacy_class)
           SELECT '${feed}', 'db/${pl}', 'gem', 0, '{}'::jsonb, 'save', now() - make_interval(mins => 60) - make_interval(secs => g), now() - make_interval(mins => 59), 'discovery', 1, 'raw_behavioral_event' FROM generate_series(1, 8) g;`);
@@ -268,7 +268,7 @@ describe("W8 — DC-04 / DV-21 / DV-22: the flag-on modules path, on the real sc
   test("a just_arrived member past its horizon is served as growing, moved through 3381 with 3486's stamp, and the page's serves are counted", async () => {
     const viewer = user("w8v");
     const t = trail();
-    const [old, fresh] = [randomUUID(), randomUUID()];
+    const [old, fresh] = [canonicalPlace(), canonicalPlace()];
     const mOld = member(t, "place", old, null, { createdMsAgo: 10 * 86_400_000 });
     const mFresh = member(t, "place", fresh, null, { createdMsAgo: 60_000 });
     exec(`UPDATE public.feature_flags SET enabled = true WHERE flag = '${TRAIL_EXPLORATION_FLAG}';`);

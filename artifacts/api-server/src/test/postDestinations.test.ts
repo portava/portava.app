@@ -95,13 +95,7 @@ it('unknown private-account follow state never grants a saved reference audience
   assert.equal((await readReferenceSource(client(),post,viewer)).available,false);
 });
 
-it('projects ordered first-party media and revokes it after moderation, without resurrecting legacy copies',async(t)=>{
- const originalOrigin = process.env.SUPABASE_URL;
- process.env.SUPABASE_URL = 'https://storage.example.test';
- t.after(() => {
-   if (originalOrigin === undefined) delete process.env.SUPABASE_URL;
-   else process.env.SUPABASE_URL = originalOrigin;
- });
+it('projects ordered first-party media and revokes it after moderation, without resurrecting legacy copies',async()=>{
  const video='post-media/'+author+'/clip.mp4',photo='post-media/'+author+'/photo.jpg';
  rows.posts[0].media_urls=[photo];
  rows.post_media=[{post_id:post,media_type:'video',public_url:video,storage_path:author+'/clip.mp4',sort_order:1,processing_status:'ready',moderation_status:'approved'},

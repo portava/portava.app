@@ -29,7 +29,7 @@ const server = readFileSync(join(CLIENT, '../artifacts/api-server/src/lib/sensin
 
 const ok = (capture: boolean, upload: boolean, surface = false) => ({
   status: 'ok' as const,
-  state: { consents: { capture: { effective: capture }, upload: { effective: upload }, surface: { effective: surface } } },
+  state: { available: true, consents: { capture: { effective: capture }, upload: { effective: upload }, surface: { effective: surface } } },
 });
 
 describe('OD-MAP-6 — the three consents on the device', () => {
@@ -62,6 +62,8 @@ describe('OD-MAP-6 — the three consents on the device', () => {
     assert.deepEqual(sensingCaptureDecision(ok(true, false)), { capture: true, upload: false });
     assert.deepEqual(sensingCaptureDecision(ok(false, true)), { capture: false, upload: false }, 'upload never outruns capture');
     assert.deepEqual(sensingCaptureDecision(ok(true, true, true)), { capture: true, upload: true });
+    const stale = ok(true, true, true);
+    assert.deepEqual(sensingCaptureDecision({ ...stale, state: { ...stale.state, available: false } }), { capture: false, upload: false });
     assert.deepEqual(sensingCaptureDecision({ status: 'unreadable' }), { capture: false, upload: false });
     assert.deepEqual(sensingCaptureDecision(null), { capture: false, upload: false });
   });

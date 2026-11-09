@@ -1,6 +1,8 @@
 import { negotiateStoredMessageRows, decoratePlatformReads } from '../services/telegraph/platformReadDecorations.js';
 import { makeFakeClient } from './telegraphCertificationHarness.js';
 import { describe, it } from 'node:test';
+import { readFileSync } from 'node:fs';
+import { PGlite } from '@electric-sql/pglite';
 import assert from 'node:assert/strict';
 import { encodeObjectReference, decodeObjectReference } from '../services/telegraph/objectReference.js';
 import { prepareLegacyCardWrite } from '../services/telegraph/legacyCardWrite.js';
@@ -15,6 +17,41 @@ describe('versioned canonical references', () => {
     const ref = {objectType:'PLACE' as const,objectId:ID};
     assert.deepEqual(decodeObjectReference(encodeObjectReference(ref)),ref);
     for (const value of ['portava-object.v2:PLACE:x','portava-object.v1:FUTURE:x','portava-object.v1:PLACE:%','portava-object.v1:PLACE:%00','portava-object.v1:PLACE:'+'x'.repeat(201)]) assert.equal(decodeObjectReference(value),null);
+  });
+  it('reads 3936 trigger references and withholds altered source identities', () => {
+    for (const kind of ['POST', 'MEDIA'] as const) {
+      const source = buildPortavaObjectBody(kind, ID);
+      assert.deepEqual(parsePortavaObjectRow({ body: source, content_ref: `portava:${kind}:${ID}` }), source);
+      for (const contentRef of [`portava:PLACE:${ID}`, `portava:${kind}:different`, `portava:${kind}:%2F`]) {
+        assert.equal(parsePortavaObjectRow({ body: source, content_ref: contentRef }), null);
+      }
+    }
+    assert.equal(decodeObjectReference('portava:FUTURE:one'), null);
+    assert.equal(decodeObjectReference('portava:POST:' + 'a'.repeat(129)), null);
+  });
+  it('renders the pointer actually stored by the 3936 trigger and clears it on retraction', async () => {
+    const db = new PGlite();
+    try {
+      await db.exec(`
+        CREATE ROLE anon;
+        CREATE ROLE authenticated;
+        CREATE TABLE public.feature_flags (flag text PRIMARY KEY, enabled boolean);
+        INSERT INTO public.feature_flags VALUES ('telegraph_message_kernel_enabled', true);
+        CREATE TABLE public.messages (id uuid PRIMARY KEY, content_ref text, body text, msg_type text, deleted_at timestamptz, unsent_at timestamptz);
+      `);
+      await db.exec(readFileSync(new URL('../migrations/3936_telegraph_message_content_ref.sql', import.meta.url), 'utf8'));
+      const object = buildPortavaObjectBody('POST', ID);
+      const { rows } = await db.query<{ body: string; content_ref: string }>(
+        'INSERT INTO messages(id,body,msg_type,content_ref) VALUES($1,$2,$3,$4) RETURNING body,content_ref',
+        [ID, JSON.stringify(object), 'portava_object', encodeObjectReference(object)],
+      );
+      assert.equal(rows[0]!.content_ref, `portava:POST:${ID}`);
+      assert.deepEqual(parsePortavaObjectRow(rows[0]!), object);
+      const retracted = await db.query<{ content_ref: string | null }>('UPDATE messages SET unsent_at = now() WHERE id = $1 RETURNING content_ref', [ID]);
+      assert.equal(retracted.rows[0]!.content_ref, null);
+    } finally {
+      await db.close();
+    }
   });
   it('stamps legacy writes and normalizes their canonical pointer while leaving plain text alone', () => {
     const prepared=prepareLegacyCardWrite({body,msg_type:'system',subtype:'discovery_card'});

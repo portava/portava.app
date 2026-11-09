@@ -223,18 +223,21 @@ describe('S28 — the running loop produces the nine features', () => {
   });
 });
 
-describe('S39 — the handle names the zone of its LAST REDUCED window, and nothing finer', () => {
-  test('null before the first window closes; the submitted zone after; null again after stop()', async () => {
+describe('S39 — the device can use a fresh coarse area without waiting for an upload', () => {
+  test('names the first local fix immediately and clears a zone when a new window has no evidence', async () => {
     const h = harness();
     assert.equal(h.handle.currentZone(), null);
     h.motion.emit(200);
     h.location.emit(5);
+    assert.ok(h.handle.currentZone(), 'current coarse area is available before the first upload');
     await h.handle.flush();
     assert.equal(h.submitted.length, 1);
     assert.equal(h.handle.currentZone(), h.submitted[0].zone_id);
     assert.equal(typeof h.handle.currentZone(), 'string');
     // A zone label, not a coordinate: no digit-dot-digit, no sign, no comma pair.
     assert.doesNotMatch(String(h.handle.currentZone()), /-?\d+\.\d+/);
+    await h.handle.flush();
+    assert.equal(h.handle.currentZone(), null, 'a window without new evidence expires the area');
     h.handle.stop();
     assert.equal(h.handle.currentZone(), null);
   });
@@ -388,6 +391,55 @@ describe('§3 — eligibility carries the identity; ingest carries the credentia
   ) as { payload: SensingContributionPayload; identity: { commitment: string; rotationEpoch: number }; body: Record<string, unknown> };
   const payload = CONTRACT.payload;
 
+  test('one long session supports observations across two hourly rotations', async () => {
+    const { transport, calls } = transportHarness();
+    await transport.submit(payload);
+    transport.reset({ keepCredential: true }); // foreground resumes after a fresh consent read
+    const next = { ...payload, observed_at_ms: payload.observed_at_ms + 3_600_000 };
+    assert.deepEqual(await transport.submit(next), { ok: true });
+    assert.equal(calls.filter(call => call.url.endsWith('/session')).length, 1);
+    const request = calls.at(-1)!;
+    assert.equal(JSON.parse(request.body).rotationEpoch, CONTRACT.identity.rotationEpoch + 1);
+    assert.equal(request.headers.Authorization, undefined);
+  });
+
+  test('scope issuance honors local withdrawal, even if the server still has an older grant', async () => {
+    const requested: unknown[] = [];
+    let surface = true;
+    const transport = createSensingTransport({
+      baseUrl: 'https://api.example.test', now: () => T_START, surfaceAllowed: () => surface,
+      getEligibilityToken: async () => 'synthetic', commitmentFor: async () => CONTRACT.identity.commitment,
+      fetchImpl: async (url, init) => {
+        if (!String(url).endsWith('/session')) return new Response(null, { status: 201 });
+        requested.push(JSON.parse(String(init?.body)));
+        return Response.json({ credential: 'opaque', rotationEpoch: CONTRACT.identity.rotationEpoch, expiresAt: new Date(T_START + 60_000).toISOString() });
+      },
+    });
+    await transport.submit(payload);
+    surface = false;
+    transport.reset();
+    await transport.submit(payload);
+    assert.deepEqual(requested, [{}, { purposeScopes: ['collect', 'retain', 'aggregate'] }]);
+  });
+
+  test('a stalled token refresh releases the slot, and the next window retries', async () => {
+    let first = true;
+    let requests = 0;
+    const transport = createSensingTransport({
+      baseUrl: 'https://api.example.test', now: () => T_START, requestTimeoutMs: 20,
+      getEligibilityToken: () => { if (first) { first = false; return new Promise(() => {}); } return Promise.resolve('test'); },
+      commitmentFor: async () => CONTRACT.identity.commitment,
+      fetchImpl: async url => {
+        requests++;
+        return String(url).endsWith('/session')
+          ? Response.json({credential: 'opaque', rotationEpoch: CONTRACT.identity.rotationEpoch, expiresAt: new Date(T_START + 60_000).toISOString()})
+          : new Response(null, { status: 201 });
+      },
+    });
+    assert.deepEqual(await transport.submit(payload), { ok: false, reason: 'no_credential' });
+    assert.equal(requests, 0);
+    assert.deepEqual(await transport.submit(payload), { ok: true });
+  });
   for (const stage of ['session', 'contributions'] as const) {
     test(`reset aborts the active ${stage} request, not only its response handler`, async () => {
       let signal!: AbortSignal; let entered!: () => void;

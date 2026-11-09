@@ -40,6 +40,7 @@ import {
 } from './sensingCapture.ts';
 import {
   createDeviceLocationSource,
+  onAreaLocationGranted,
   createDeviceMotionSource,
 } from './deviceSensorSources.ts';
 import { createAcousticMeterSource } from './acousticMeterSource.ts';
@@ -68,16 +69,20 @@ export function installSensingCapture(): SensingCaptureInstallation {
   let disposed = false;
   let reconciliation = 0;
   let captureGeneration = 0;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  let retryDelay = 2_000;
   let foreground = AppState.currentState === 'active';
   let owner = currentDiscoveryScope().viewer;
   const hasOwner = () => typeof owner === 'string' && owner.startsWith('u:');
   let acoustic: AcousticPermission = ACOUSTIC_PERMISSION_DENIED;
   /** Whether the person's upload consent is in effect. Checked before EVERY send. */
   let uploadAllowed = false;
+  let surfaceAllowed = false;
 
   const transport = createSensingTransport({
     baseUrl: apiBase(),
     getEligibilityToken: freshToken,
+    surfaceAllowed: () => surfaceAllowed,
     commitmentFor: async (epoch) => {
       const secret = await sensingDeviceSecret();
       return secret ? deviceCommitment(secret, epoch) : null;
@@ -96,11 +101,13 @@ export function installSensingCapture(): SensingCaptureInstallation {
     registerSensingZoneSource(null);
   }
 
-  async function recheck(): Promise<void> {
+  async function recheck(keepCredential = false): Promise<void> {
     if (disposed) return;
+    clearTimeout(retryTimer);
     const expected = ++reconciliation;
     uploadAllowed = false;
-    transport.reset();
+    surfaceAllowed = false;
+    transport.reset({ keepCredential });
     // Revalidation never leaves an old consent's sensors running while a slow
     // read decides whether this account still authorizes capture.
     stop();
@@ -109,9 +116,21 @@ export function installSensingCapture(): SensingCaptureInstallation {
     const current = () => !disposed && foreground && owner === expectedOwner && expected === reconciliation;
     let decision = { capture: false, upload: false };
     try {
-      if (apiBase() && !await isSensingErasurePending()) decision = sensingCaptureDecision(await readSensingConsent());
+      if (apiBase() && !await isSensingErasurePending()) {
+        const read = await readSensingConsent();
+        if (!current()) return;
+        if (read.status !== 'ok' && read.reason !== 'not_configured') {
+          retryTimer = setTimeout(() => { if (current()) void recheck(keepCredential); }, retryDelay);
+          retryDelay = Math.min(retryDelay * 2, 60_000);
+          return;
+        }
+        retryDelay = 2_000;
+        decision = sensingCaptureDecision(read);
+        surfaceAllowed = decision.upload && read.status === 'ok' && read.state.consents.surface.effective;
+      }
     } catch {}
     if (!current()) return;
+    if (!decision.upload) transport.reset();
     if (!decision.capture) {
       stop();
       return;
@@ -148,6 +167,7 @@ export function installSensingCapture(): SensingCaptureInstallation {
     registerSensingZoneSource(() => running.currentZone());
   }
 
+  const unsubscribeLocation = onAreaLocationGranted(() => { void recheck(true); });
   const unsubscribeErasure = onSensingErasureChange(() => { if (!disposed) void recheck(); });
   const unregisterCredential = registerSensingRevocationCredential(() => transport.revocationCredential?.() ?? null);
   void recheck();
@@ -157,7 +177,7 @@ export function installSensingCapture(): SensingCaptureInstallation {
   // wait for a relaunch.
   const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
     foreground = state === 'active';
-    void recheck();
+    void recheck(true);
   });
   const unsubscribeOwner = onDiscoveryScopeChange(() => {
     const next = currentDiscoveryScope().viewer;
@@ -180,12 +200,14 @@ export function installSensingCapture(): SensingCaptureInstallation {
     dispose() {
       if (disposed) return;
       disposed = true;
+      clearTimeout(retryTimer);
       reconciliation += 1;
       uploadAllowed = false;
       acoustic = ACOUSTIC_PERMISSION_DENIED;
       transport.reset();
       stop();
       unregisterCredential();
+      unsubscribeLocation();
       unsubscribeErasure();
       unsubscribeOwner();
       unsubscribeConsent();

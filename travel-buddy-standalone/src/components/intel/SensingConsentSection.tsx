@@ -18,6 +18,9 @@
  *     and shows whether it is in effect now.
  */
 import React from 'react';
+import { AppState, Linking, Platform } from 'react-native';
+import { areaLocationAccess } from '../../services/sensing/deviceSensorSources.ts';
+import { AcousticSensingSection } from './AcousticSensingSection.tsx';
 import { SensingErasureControl } from './SensingErasureControl.tsx';
 import { useInputAccountEpoch } from '../../platform/input-assistance/hooks/useInputAccountEpoch.ts';
 import { currentDiscoveryScope, isCurrentDiscoveryScope } from '../../services/discoveryViewerScope.ts';
@@ -40,6 +43,41 @@ function subtitleFor(scope: SensingConsentScope, state: SensingConsentState): st
       : 'On under older words — turn this off and on again to review the current ones.'
     : 'Off.';
   return [status, words.what, words.where, words.who, words.needs, words.off].filter(Boolean).join(' ');
+}
+
+function AreaLocationRow() {
+  const [access, setAccess] = React.useState<Awaited<ReturnType<typeof areaLocationAccess>> | null>(null);
+  const [settingsError, setSettingsError] = React.useState(false);
+  const mounted = React.useRef(false);
+  React.useEffect(() => {
+    mounted.current = true;
+    let revision = 0;
+    async function refresh() {
+      const version = ++revision;
+      const result = await areaLocationAccess();
+      if (mounted.current && version === revision) setAccess(result);
+    }
+    void refresh();
+    const subscription = AppState.addEventListener('change', state => { if (state === 'active') void refresh(); });
+    return () => { mounted.current = false; subscription.remove(); };
+  }, []);
+  if (Platform.OS === 'web' || !access || access === 'granted') return null;
+  if (access === 'unavailable') return <FieldHint>Location is unavailable on this device. Portava can’t determine your area.</FieldHint>;
+  const press = async () => {
+    setSettingsError(false);
+    if (access === 'settings') {
+      try { await Linking.openSettings(); } catch { if (mounted.current) setSettingsError(true); }
+    } else {
+      const result = await areaLocationAccess(true);
+      if (mounted.current) setAccess(result);
+    }
+  };
+  return <>
+    <SettingsRow title={access === 'settings' ? 'Open location settings' : 'Allow location while using Portava'}
+      subtitle="Area sensing needs foreground location to identify your approximate area."
+      onPress={() => { void press(); }} testID="sensing-location-access" />
+    {settingsError && <FieldHint tone="error">Open your device settings to change Portava’s location access.</FieldHint>}
+  </>;
 }
 
 export function SensingConsentSection() {
@@ -93,6 +131,7 @@ function SensingConsentSectionForOwner() {
   }, [state]);
 
   return (
+    <>
     <SettingsSection
       title="Area sensing"
       subtitle="Three separate choices. Each is off until you turn it on, and you can turn any of them off here at any time. None of them is part of your general app permissions."
@@ -127,7 +166,10 @@ function SensingConsentSectionForOwner() {
       ) : null}
       {state?.localWithdrawalPending?.length ? <FieldHint tone="error">A withdrawal is waiting to be saved. The affected sensing stays paused on this phone. Turn the setting off again to retry.</FieldHint> : null}
       {writeFailed ? <FieldHint tone="error">{writeFailed}</FieldHint> : null}
+      {state?.available && state.consents.capture.effective && <AreaLocationRow />}
       <SensingErasureControl />
     </SettingsSection>
+    <AcousticSensingSection captureAllowed={state?.available === true && state.consents.capture.effective} />
+    </>
   );
 }

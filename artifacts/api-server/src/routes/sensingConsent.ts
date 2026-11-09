@@ -47,7 +47,7 @@ export function sensingConsentBody(available: boolean, grants: SensingConsentGra
       scope,
       granted: grants[scope].granted,
       current: grants[scope].current,
-      effective: eff[scope],
+      effective: available && eff[scope],
       disclosureVersion: grants[scope].disclosureVersion,
       currentVersion: SENSING_CONSENT_DISCLOSURE_VERSIONS[scope],
       grantedAt: grants[scope].grantedAt,

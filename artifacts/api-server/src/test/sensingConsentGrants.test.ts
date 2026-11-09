@@ -240,8 +240,9 @@ describe("GET/PUT /v1/sensing/consent — the person's own three switches", () =
     assert.deepEqual(on.body.consents.map((c) => [c.scope, c.granted, c.effective, c.currentVersion]), [
       ["capture", true, true, V.capture], ["upload", false, false, V.upload], ["surface", false, false, V.surface],
     ]);
-    const off = await call(store([], { flag: false }), "GET", "/v1/sensing/consent");
+    const off = await call(store([G("capture"), G("upload"), G("surface")], { flag: false }), "GET", "/v1/sensing/consent");
     assert.equal(off.body.available, false);
+    assert.ok(off.body.consents.every((scope: {granted: boolean; effective: boolean}) => scope.granted && !scope.effective));
   });
 
   it("GET: an unreadable flag or grants table is 503 'try again' — never a page of switches all off", async () => {

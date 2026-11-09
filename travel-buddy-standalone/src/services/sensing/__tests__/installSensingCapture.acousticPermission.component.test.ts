@@ -43,6 +43,7 @@ jest.mock('../sensingTransport.ts', () => ({
   ...jest.requireActual('../sensingTransport.ts'), createSensingTransport: () => ({ submit: mockSubmit, reset: mockReset }),
 }));
 jest.mock('../deviceSensorSources.ts', () => ({
+  onAreaLocationGranted: () => () => {},
   ...jest.requireActual('../deviceSensorSources.ts'), createDeviceMotionSource: () => null,
   createDeviceLocationSource: () => ({ subscribe: (callback: (sample: unknown) => void) => {
     mockLocationCallbacks.add(callback); return () => mockLocationCallbacks.delete(callback);
@@ -72,7 +73,7 @@ let changeOwner: (id: string | null) => void;
 let installSensingCapture: typeof import('../installSensingCapture.ts').installSensingCapture;
 let installations: Array<{ dispose(): void }>;
 function consent(capture: boolean, upload: boolean) {
-  return { status: 'ok', state: { consents: {
+  return { status: 'ok', state: { available: true, consents: {
     capture: { effective: capture }, upload: { effective: upload }, surface: { effective: false },
   } } };
 }

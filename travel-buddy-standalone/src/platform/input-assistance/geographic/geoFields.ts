@@ -51,6 +51,37 @@ export const GEO_FIELD_CONTEXTS: Record<GeoFieldId, InputContext> = {
   [GEO_FIELD_IDS.address]: 'address',
 };
 
+// Only named location fields inherit a gateway policy. Private addresses and
+// geofences retain their own explicit location controls.
+const PICKER_FIELDS: Readonly<Partial<Record<string, GeoFieldId>>> = {
+  city_select: GEO_FIELD_IDS.cityPicker,
+  postcard_location: GEO_FIELD_IDS.cityPicker,
+  buddy_search: GEO_FIELD_IDS.cityPicker,
+  buddy_request: GEO_FIELD_IDS.cityPicker,
+  buddy_waitlist: GEO_FIELD_IDS.cityPicker,
+  buddy_service_city: GEO_FIELD_IDS.buddyServiceArea,
+  trip_destination: GEO_FIELD_IDS.tripDestination,
+  route_start: GEO_FIELD_IDS.tripStopPlace,
+  route_end: GEO_FIELD_IDS.tripStopPlace,
+  route_stop: GEO_FIELD_IDS.tripStopPlace,
+  plan_item_location: GEO_FIELD_IDS.tripStopPlace,
+  event_location: GEO_FIELD_IDS.eventLocation,
+  meetup_location: GEO_FIELD_IDS.meetupLocation,
+  gem_place: GEO_FIELD_IDS.gemLocation,
+  gem_location: GEO_FIELD_IDS.gemLocation,
+  pulse_location: GEO_FIELD_IDS.placePicker,
+  highlight_location: GEO_FIELD_IDS.placePicker,
+  // A memory can be private. The address policy has no selection learning and
+  // its sensitive-location results never enter the shared suggestion cache.
+  memory: GEO_FIELD_IDS.address,
+  memory_create_location: GEO_FIELD_IDS.address,
+  memory_edit_location: GEO_FIELD_IDS.address,
+};
+
+export function fieldForPlacePicker(usedFor?: string): GeoFieldId | undefined {
+  return usedFor && Object.hasOwn(PICKER_FIELDS, usedFor) ? PICKER_FIELDS[usedFor] : undefined;
+}
+
 let done = false;
 
 /**

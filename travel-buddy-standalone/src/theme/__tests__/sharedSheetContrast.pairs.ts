@@ -282,7 +282,7 @@ const PP_SEARCH: Needle = [PP, /searchRow: \{[^}]*backgroundColor: color\.paperR
 add({ id: 'placePicker.search.text', fg: color.ink, on: 'sheetPaperRaised', kind: 'text', at: [PP_SEARCH, [PP, 'input: { flex: 1, ...t.body, color: color.ink },']] });
 add({ id: 'placePicker.search.placeholder', fg: color.mute, was: color.faint, on: 'sheetPaperRaised', kind: 'text', at: [PP_SEARCH, [PP, "placeholder={placeholder ?? (cityMode ? 'Search cities…' : 'Search cities, hotels, landmarks…')}\n              placeholderTextColor={color.mute}"]] });
 add({ id: 'placePicker.search.icon', fg: color.mute, on: 'sheetPaperRaised', kind: 'decor', at: [PP_SEARCH, [PP, '<Search size={16} color={color.mute} />']] }); // beside the placeholder
-add({ id: 'placePicker.search.loading', fg: color.signal, on: 'sheetPaperRaised', kind: 'ui', at: [PP_SEARCH, [PP, '{(searching || googleLoading) && <ActivityIndicator size="small" color={color.signal} />}']] });
+add({ id: 'placePicker.search.loading', fg: color.signal, on: 'sheetPaperRaised', kind: 'ui', at: [PP_SEARCH, [PP, '{(searching || googleLoading || assistLoading) && <ActivityIndicator size="small" color={color.signal} />}']] });
 add({ id: 'placePicker.search.clear', fg: color.mute, on: 'sheetPaperRaised', kind: 'ui', at: [PP_SEARCH, [PP, '<X size={14} color={color.mute} />']] });
 add({ id: 'placePicker.search.outline', fg: color.haze, on: 'sheetPaper', kind: 'decor', at: [PP_SEARCH] });
 add({ id: 'placePicker.gpsMessage', fg: color.mute, on: 'sheetPaper', kind: 'text', at: [PP_SHEET, [PP, 'gpsMsg: { ...t.small, color: color.mute, paddingHorizontal: space.xl, paddingBottom: space.sm },']] });

@@ -11,6 +11,8 @@ import {
   postCompassFrontloadEvent, postCompassAskStream,
   confirmCompassProposal, declineCompassProposal,
 } from '../../src/services/compass';
+import { sensingZoneHint } from '../../src/services/sensing/sensingZoneHint';
+import { currentDiscoveryScope, isCurrentDiscoveryScope, type DiscoveryScope } from '../../src/services/discoveryViewerScope';
 import type { CompassAskResponse, CompassPendingProposal, CompassUiPlace } from '../../src/services/compass';
 import { CompassChatBlocks, usePlaceNavigation } from '../../src/components/compass/CompassChatBlocks'; import { solePlaceCard, soleEventCard } from '../../src/lib/compassActionTarget.ts';
 import { AppHeader } from '../../src/components/ui/AppHeader';
@@ -43,6 +45,9 @@ type ChatEntry =
 
 export default function AiChat() {
   const router = useRouter();
+  const [selectedArea, setSelectedArea] = useState<{ zone: string; owner: DiscoveryScope } | null>(null);
+  const area = sensingZoneHint();
+  const areaSelected = Boolean(selectedArea && selectedArea.zone === area && isCurrentDiscoveryScope(selectedArea.owner));
   const { prefillMessage, mediaId } = useLocalSearchParams<{ prefillMessage?: string; mediaId?: string }>();
   const planPicker = usePlanPicker(); const openPlace = usePlaceNavigation();
   // Pre-seed Compass with the user's resolved city (GPS → last-known → home)
@@ -146,6 +151,9 @@ export default function AiChat() {
     const text = (promptOverride ?? input).trim();
     if (!text || streamingRef.current) return;
     streamingRef.current = true;
+    const includeArea = !promptOverride && selectedArea && isCurrentDiscoveryScope(selectedArea.owner)
+      && selectedArea.zone === sensingZoneHint() ? selectedArea.zone : null;
+    setSelectedArea(null);
     if (!promptOverride) setInput('');
 
     const pendingId = 'reply_' + Date.now();
@@ -161,7 +169,7 @@ export default function AiChat() {
       setEntries(prev => prev.map(e => e.id === pendingId ? entry : e));
     }
     try {
-      const result = await postCompassAskStream(text, { city: currentCity, mediaId: mediaIdOverride, conversationId: conversationId.current }, {
+      const result = await postCompassAskStream(text, { city: currentCity, mediaId: mediaIdOverride, conversationId: conversationId.current, ...(includeArea ? { sensingZoneIds: [includeArea] } : {}) }, {
         onDelta: (messageSoFar) => finish({ kind: 'stream', id: pendingId, text: messageSoFar }),
       });
       if (result.data?.conversationId) conversationId.current = result.data.conversationId;
@@ -442,6 +450,18 @@ export default function AiChat() {
         </View>
       ) : null}
 
+      {area && input.trim() ? (
+        <Pressable
+          style={styles.aiOptInBtn}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: areaSelected }}
+          accessibilityLabel="Include my approximate area in this Compass reply"
+          onPress={() => setSelectedArea(areaSelected ? null : { zone: area, owner: currentDiscoveryScope() })}
+        >
+          <Map size={14} color={color.signal} />
+          <Text style={styles.aiOptInText}>{areaSelected ? 'Area included for this reply' : 'Include my area for this reply'}</Text>
+        </Pressable>
+      ) : null}
       <View style={styles.inputBar}>
         <Pressable
           style={styles.layoverBtn}

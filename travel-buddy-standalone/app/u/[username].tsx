@@ -1001,11 +1001,11 @@ function PublicPassportScreenNative() {
         {/* Stats row */}
         <View style={styles.statsRow}>
           {[
-            { n: postcards.length, label: 'Postcards' },
-            { n: countries, label: 'Countries' },
-            { n: cities, label: 'Cities' },
-            { n: follow.followersCount, label: 'Followers', onPress: canOpenFollowLists ? () => openFollowList('followers') : undefined },
-            { n: stampsEarned ?? '—', label: 'Stamps Earned' },
+            { n: postcards.length, label: 'Postcards', singular: 'Postcard' },
+            { n: countries, label: 'Countries', singular: 'Country' },
+            { n: cities, label: 'Cities', singular: 'City' },
+            { n: follow.loading ? '—' : follow.followersCount, label: 'Followers', singular: 'Follower', onPress: canOpenFollowLists ? () => openFollowList('followers') : undefined },
+            { n: stampsEarned ?? '—', label: 'Stamps Earned', singular: 'Stamp Earned' },
           ].map((item, i) => (
             <React.Fragment key={item.label}>
               {i > 0 && <View style={styles.statsDivider} />}
@@ -1017,9 +1017,9 @@ function PublicPassportScreenNative() {
                 testID={item.onPress ? `stats-open-${item.label}` : undefined}
               >
                 <Text style={styles.statsN} testID={`stats-n-${item.label}`}>
-                  {follow.loading && item.label === 'Followers' ? '—' : item.n}
+                  {item.n}
                 </Text>
-                <Text style={styles.statsL}>{item.label}</Text>
+                <Text style={styles.statsL}>{item.n === 1 ? item.singular : item.label}</Text>
               </Pressable>
             </React.Fragment>
           ))}
