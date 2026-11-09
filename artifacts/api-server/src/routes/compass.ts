@@ -19,6 +19,8 @@
  *     cursor   — pagination cursor
  */
 import { randomUUID } from "node:crypto";
+import { itineraryOutline } from "../compass/CompassItineraryOutline.js";
+import { CompassVenueStream, groundVenueTerms } from "../compass/CompassVenueTerms.js";
 import { Router } from "express";
 import { z } from "zod";
 import { COMPASS_QUICK_ACTION_TYPES } from "../lib/compassDecisionActions.js";
@@ -1315,6 +1317,7 @@ async function runToolCallingLoop(
   onDelta?: (delta: string) => void,
   /** Aborts model calls when the SSE client disconnects mid-answer. */
   signal?:  AbortSignal,
+  itinerary?: { prompt: string; city?: string },
 ): Promise<ToolLoopOutcome> {
   const convo: any[] = [...messages];
   const toolLog: ToolExecution[] = trackPartialToolLog<ToolExecution>(messages); // H266: readable by the caller if a model call below throws
@@ -1375,8 +1378,28 @@ async function runToolCallingLoop(
       let args: Record<string, unknown> = {};
       try { args = JSON.parse(tc?.function?.arguments ?? "{}"); } catch { /* empty args */ }
 
-      const result = await executeCompassTool(sc, userId, profile as any, name, args);
+      let result = await executeCompassTool(sc, userId, profile as any, name, args);
       toolLog.push({ name, arguments: args, result });
+      if (itinerary && name === "search_places") {
+        const empty = (value: unknown) => {
+          const row = value as { catalogEmpty?: boolean; liveListings?: unknown[] };
+          return row?.catalogEmpty === true && !row.liveListings?.length;
+        };
+        const requestedCity = typeof args.city === "string" && itinerary.prompt.toLowerCase().includes(args.city.toLowerCase())
+          ? args.city : itinerary.city && itinerary.prompt.toLowerCase().includes(itinerary.city.toLowerCase()) ? itinerary.city : undefined;
+        if (empty(result) && requestedCity && typeof args.query === "string" && args.query.trim()) {
+          const broadArgs = { city: requestedCity };
+          result = await executeCompassTool(sc, userId, profile as any, name, broadArgs);
+          toolLog.push({ name, arguments: broadArgs, result });
+        }
+        if (empty(result) && !toolLog.some(tool => {
+          const row = tool.result as { candidates?: unknown[]; liveListings?: unknown[] };
+          return (tool.name === "search_places" || tool.name === "search_events") && (row?.candidates?.length || row?.liveListings?.length);
+        })) {
+          const outline = itineraryOutline(itinerary.prompt, requestedCity);
+          if (outline) return { finalRaw: JSON.stringify(outline), toolLog, proposals };
+        }
+      }
       const proposal = (result as any)?.proposal;
       if (name === "add_to_trip" && proposal?.proposalId) proposals.push(proposal as AddToTripProposal);
 
@@ -2010,26 +2033,30 @@ router.post("/compass/ask", async (req, res) => {
       // Tool rounds run silently server-side; the FINAL model round streams
       // its content token-by-token as delta events (same contract as before
       // Phase 4). The done event still carries the parsed message fields.
+      const venueStream = new CompassVenueStream(delta => {
+        if (!res.writableEnded) res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+      }, prompt);
       const { finalRaw, toolLog, proposals } = await withAskProjections(() => runToolCallingLoop(
         sc, user.id, guardProfile, messages as any, req.log,
-        (delta) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify({ delta })}\n\n`); },
+        delta => venueStream.push(delta),
         clientAbort.signal,
+        isItineraryIntent ? { prompt, city } : undefined,
       ));
       const _parsed = _parseModelResponse(finalRaw);
       const _rawMessage  = finalRaw === "" ? compassAiFailureFallback(toolLog, SUMMARISE_EMPTY_FALLBACK_MESSAGE).message : _parsed.message;
-      // Sensing `:148`. The tokens are already on the wire — the client rebuilds
-      // the bubble from the accumulated deltas — so the correction is sent as
-      // one more delta rather than by rewriting what was said.
-      const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);
+      // Validate venue terms before handing structured itinerary data to the client.
+      const venue = groundVenueTerms(_rawMessage, _parsed.payload, toolLog, prompt);
+      const _grounded    = groundCompassAnswer(venue.message, toolLog, liveClaimEvidence);
       const message      = _grounded.text;
+      venueStream.finish(venue.changed ? { message, payload: venue.payload, quickActions: _parsed.quickActions } : undefined);
       if (_grounded.correction && !res.writableEnded) {
         req.log.warn(
           { userId: user.id, violations: _grounded.violations.map((v) => v.kind) },
           "compass/ask stream: answer over-claimed against its own tool evidence",
         );
-        res.write(`data: ${JSON.stringify({ delta: `\n\n${_grounded.correction}` })}\n\n`);
+        if (!venue.changed) res.write(`data: ${JSON.stringify({ delta: `\n\n${_grounded.correction}` })}\n\n`);
       }
-      const payload      = _parsed.payload;
+      const payload      = venue.payload;
       const quickActions = _parsed.quickActions;
       // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
       // outMeta tracks how many model-declared ids were not found in the tool log
@@ -2067,7 +2094,7 @@ router.post("/compass/ask", async (req, res) => {
       } catch { /* non-fatal */ }
       // Phase 6: bounded-cadence memory compression (fire-and-forget)
       compressConversationIfDue(sc, user.id, conversationId).catch(() => {});
-      res.write(`data: ${JSON.stringify({ done: true, conversationId, message, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind), toolsUsed: toolLog.map((t) => t.name) }, intent: intentResult })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: true, conversationId, message, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: [..._grounded.violations.map((v) => v.kind), ...venue.violations], toolsUsed: toolLog.map((t) => t.name) }, intent: intentResult })}\n\n`);
       res.end();
     } catch (err) {
       if (clientAbort.signal.aborted) {
@@ -2087,13 +2114,15 @@ router.post("/compass/ask", async (req, res) => {
   // ── Non-streaming (default) ───────────────────────────────────────────────
   try {
     const { finalRaw, toolLog, proposals } = await withAskProjections(() => runToolCallingLoop(
-      sc, user.id, guardProfile, messages as any, req.log,
+      sc, user.id, guardProfile, messages as any, req.log, undefined, undefined,
+      isItineraryIntent ? { prompt, city } : undefined,
     ));
     const _parsed = _parseModelResponse(finalRaw);
     const _rawMessage  = finalRaw === "" ? compassAiFailureFallback(toolLog, SUMMARISE_EMPTY_FALLBACK_MESSAGE).message : _parsed.message;
     // Sensing `:148` — the same boundary the streamed branch applies, on the
     // same tool log, so the two branches cannot publish different answers.
-    const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);
+    const venue = groundVenueTerms(_rawMessage, _parsed.payload, toolLog, prompt);
+    const _grounded    = groundCompassAnswer(venue.message, toolLog, liveClaimEvidence);
     const message      = _grounded.text;
     if (_grounded.correction) {
       req.log.warn(
@@ -2101,7 +2130,7 @@ router.post("/compass/ask", async (req, res) => {
         "compass/ask: answer over-claimed against its own tool evidence",
       );
     }
-    const payload      = _parsed.payload;
+    const payload      = venue.payload;
     const quickActions = _parsed.quickActions;
     // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
     // outMeta tracks how many model-declared ids were not found in the tool log
@@ -2139,7 +2168,7 @@ router.post("/compass/ask", async (req, res) => {
     } catch { /* non-fatal */ }
     // Phase 6: bounded-cadence memory compression (fire-and-forget)
     compressConversationIfDue(sc, user.id, conversationId).catch(() => {});
-    res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind), toolsUsed: toolLog.map((t) => t.name) }, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
+    res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: [..._grounded.violations.map((v) => v.kind), ...venue.violations], toolsUsed: toolLog.map((t) => t.name) }, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
   } catch (err) {
     req.log.error({ err, userId: user.id }, "compass/ask: LLM call failed");
     // spec §1 `system-event`: the conversation records that the assistant was

@@ -108,7 +108,7 @@ function fixture(state: State) {
       { trip_id: TRIP_ID, user_id: CARL, role: "member", status: "accepted" },
     ],
     blocks: [],
-    places: [{ id: PLACE_ID, name: "Sky36 Rooftop", city: "Hanoi", neighborhood: null, primary_category: "bar", status: "active", updated_at: null }],
+    places: [{ id: PLACE_ID, name: "Sky36 Rooftop", city: "Hanoi", neighborhood: null, primary_category: "bar", status: "active", moderation_status: "visible", merged_into_place_id: null, updated_at: null }],
     trust_restrictions: [],
     user_privacy_settings: [],
     profile_privacy_settings: [],

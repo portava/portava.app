@@ -1058,7 +1058,7 @@ async function toolSearchPlaces(
   const liveWire = live.status.reason === "flag_off" ? {} : { liveSearch: live.status, ...(liveKept.length > 0 ? { liveListings: liveKept } : {}) };
   return safeHeld.kept.length > 0 || liveKept.length > 0
     ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire, ...liveWire }
-    : { candidates: [], attention: wire, safetyAttention: safetyWire, ...liveWire, info: withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching places found in the catalog." };
+    : { candidates: [], catalogEmpty: rows.length === 0 && !attention.suppressed && !safety.suppressed && !withheldTotal, attention: wire, safetyAttention: safetyWire, ...liveWire, info: withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching places found in the catalog." };
 }
 
 async function toolSearchEvents(
@@ -1071,7 +1071,7 @@ async function toolSearchEvents(
   const cutoff = new Date(Date.now() - 2 * 3600_000).toISOString();
   let q: any = sc
     .from("events")
-    .select("id, title, description, city, country, starts_at, category, host_id, state, visibility")
+    .select("id, title, description, city, country, starts_at, category, host_id, state, visibility, price_type")
     .eq("visibility", "public")
     // `event_state` is an ENUM: draft | open | full | waitlist | started |
     // completed | cancelled | archived. `deleted` and `banned` are NOT labels,
@@ -1120,6 +1120,7 @@ async function toolSearchEvents(
       city:        e.city ?? null,
       country:     e.country ?? null,
       startsAt:    e.starts_at ?? null,
+      priceType:   e.price_type === "free" ? "free" : null,
       category:    e.category ?? null,
       // Phase 8 — events are host-entered (community) data read live from the DB.
       confidence:  makeConfidence("community_reported"),
@@ -2260,7 +2261,7 @@ async function toolGroupRecommendation(
     const cutoff = new Date(Date.now() - 2 * 3600_000).toISOString();
     let q: any = sc
       .from("events")
-      .select("id, title, description, city, country, starts_at, category, host_id, state, visibility, max_attendees, going_count, age_min, verified_only")
+      .select("id, title, description, city, country, starts_at, category, host_id, state, visibility, price_type, max_attendees, going_count, age_min, verified_only")
       .eq("visibility", "public")
       // Same dead-literal repair as toolSearchEvents above: `deleted` / `banned`
       // are not `event_state` labels, so this read failed 22P02 and the group
@@ -2300,6 +2301,7 @@ async function toolGroupRecommendation(
         description: e.description ? wrapUgc(String(e.description).slice(0, 300)) : null,
         city:        e.city ?? null,
         startsAt:    e.starts_at ?? null,
+      priceType:   e.price_type === "free" ? "free" : null,
         category:    e.category ?? null,
         confidence:  makeConfidence("community_reported"),
       })),

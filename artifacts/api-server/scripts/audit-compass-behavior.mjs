@@ -50,6 +50,7 @@ const answers = {
   recovery: { message: "I can help plan your visit." },
 };
 const tools = {
+  itinerary: ["search_places", { city, query: "Indoor visit" }],
   missing: ["search_places", { city, query: "Lantern Vault" }],
   private: ["search_events", { city }],
   action: ["add_to_trip", { tripId: trip, title: "Indoor visit", day: 2 }],

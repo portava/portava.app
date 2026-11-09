@@ -1108,3 +1108,76 @@ describe("D-65 — the confirm route's duplicate guard is not an oracle for anot
     assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], []);
   });
 });
+
+describe("Compass venue prices, hours and itineraries on the published path", () => {
+  const prompt = "Give the verified closing time and price at Lantern Vault in Da Nang";
+  const raw = JSON.stringify({
+    message: "Take time to explore. Lantern Vault closes at 9:37 pm and admission is $14.61.",
+    payload: { type: "itinerary", destination: "Da Nang", days: [{ label: "Day 1", highlights: ["A flexible afternoon", "Confirmed 9:37 pm closing and $14.61 admission."] }] },
+    quickActions: [],
+  });
+  for (const stream of [false, true]) it(`withholds unsupported venue terms in prose, itinerary, storage and wire (stream=${stream})`, async () => {
+    const db = makeDb();
+    _setTestClient(makeClient(db), true);
+    _setTestOpenAI({ chat: { completions: { async create(opts: any) {
+      if (opts.max_completion_tokens === 256) return { choices: [{ message: { content: '{"intent":"question","confidence":0.99}' } }] };
+      if (!opts.stream) return { choices: [{ message: { role: "assistant", content: raw } }] };
+      return { async *[Symbol.asyncIterator]() {
+        for (const s of raw.match(/.{1,15}/gs)!) yield { choices: [{ delta: { content: s } }] };
+      } };
+    } } } } as any);
+    const response = await fetch(`http://127.0.0.1:${port}/api/compass/ask`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" }, body: JSON.stringify({ prompt, stream }) });
+    const wire = await response.text();
+    assert.equal(response.status, 200);
+    assert.doesNotMatch(wire, /9:37|14\.61/);
+    const events = stream ? wire.trim().split("\n\n").map(line => JSON.parse(line.slice(6))) : [];
+    const answer = stream ? events.find(event => event.done) : JSON.parse(wire);
+    assert.ok(answer);
+    if (stream) {
+      const preview = JSON.parse(events.filter(event => typeof event.delta === "string").map(event => event.delta).join(""));
+      assert.equal(preview.message, answer.message);
+      assert.deepEqual(preview.payload, answer.payload);
+    }
+    assert.match(answer.message, /Take time to explore/);
+    assert.deepEqual(answer.meta.groundingViolations.sort(), ["unverified_admission_price","unverified_venue_hours"]);
+    assert.equal(answer.payload.days[0].highlights[0], "A flexible afternoon");
+    const assistantRows = db.compass_conversation_messages.filter(row => row.role === "assistant");
+    assert.ok(assistantRows.length > 0);
+    assert.doesNotMatch(JSON.stringify(assistantRows), /9:37|14\.61/);
+  });
+
+  it("uses only the named event’s listed free admission and preserves budgets, visit times and live open-now evidence", async () => {
+    const { groundVenueTerms } = await import("../compass/CompassVenueTerms.js");
+    const log = [{ name: "search_events", result: { candidates: [
+      { title: "<portava:ugc>River Fair</portava:ugc>", priceType: "free" },
+      { title: "<portava:ugc>Lantern Vault</portava:ugc>", priceType: null },
+    ] } }, { name: "get_place_details", result: { place: { name: "Lantern Vault", liveStatus: { available: true, openNow: true } } } }];
+    const message = "River Fair has free admission. Lantern Vault admission is free. Visit at 3 pm. Your budget is $20. Lantern Vault is open now.";
+    const answer = groundVenueTerms(message, null, log);
+    assert.match(answer.message, /River Fair is listed with free admission/);
+    assert.doesNotMatch(answer.message, /Lantern Vault admission is free/);
+    assert.match(answer.message, /Visit at 3 pm. Your budget is \$20. Lantern Vault is open now/);
+    assert.deepEqual(answer.violations, ["unverified_admission_price"]);
+    assert.match(groundVenueTerms("Lantern Vault closes at 9 pm.", null, log).message, /couldn’t verify/);
+    assert.match(groundVenueTerms("Lantern Vault is free, unlike River Fair.", null, log).message, /^River Fair is listed with free admission\.$/);
+  });
+
+  it("builds the requested indoor second day with a budget after a city-wide empty search", async () => {
+    _setTestClient(makeClient(makeDb()), true);
+    let mainCalls = 0;
+    _setTestOpenAI({ chat: { completions: { async create(opts: any) {
+      if (opts.max_completion_tokens === 256) return { choices: [{ message: { content: '{"intent":"itinerary","confidence":0.99}' } }] };
+      mainCalls++;
+      return { choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "test", type: "function", function: { name: "search_places", arguments: '{"city":"Da Nang","query":"indoor"}' } }] } }] };
+    } } } } as any);
+    const { status, body } = await post("/api/compass/ask", { prompt: "Plan two days in Da Nang. Keep day two indoors. I have a $20 limit.", city: "Da Nang" });
+    assert.equal(status, 200);
+    assert.equal(mainCalls, 1);
+    assert.equal(body.payload.destination, "Da Nang");
+    assert.equal(body.payload.days.length, 2);
+    assert.match(body.payload.days[1].highlights.join(" "), /indoor/i);
+    assert.match(body.message, /\$20 budget/);
+    assert.match(body.message, /couldn’t verify specific venues/);
+    assert.deepEqual(body.meta.toolsUsed, ["search_places", "search_places"]);
+  });
+});
