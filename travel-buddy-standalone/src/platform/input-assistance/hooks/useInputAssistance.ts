@@ -100,17 +100,32 @@ export interface UseInputAssistanceResult {
   requestId: string | null; /** census-discovery §80 — the serve's coverage (DV-83); null when it read everything. */ refusal: SuggestRefusal | null; /** §80 round 3 (D-W10-S1-4) — `policy` came from the authority; false while it is the conservative stand-in (never fetched, failed, expired, superseded, another account). */ policyAuthoritative: boolean; /** §80 round 4 (D-W10-S1-4) — the trimmed text whose SERVED answer (network or exact cache) is on screen; null when none is. A local-tier or zero-state list is not an answer. */ answeredText: string | null;
 }
 
+// React compares external-store snapshots by reference. Keep each field's
+// policy stable until its owner, policy table or expiry changes.
+function createPolicySnapshot(fieldId: string, context?: InputContext) {
+  let lastRevision = -1;
+  let lastEpoch = '';
+  let snapshot: InputFieldPolicy | null = null;
+  return () => {
+    const revision = sharedPolicyStore.getRevision();
+    const epoch = policyEpoch();
+    if (revision !== lastRevision || epoch !== lastEpoch) {
+      snapshot = resolveFieldPolicy(fieldId, context);
+      lastRevision = revision;
+      lastEpoch = epoch;
+    }
+    return snapshot;
+  };
+}
+
 export function useInputAssistance(
   opts: UseInputAssistanceOptions,
 ): UseInputAssistanceResult {
   const { fieldId, text, context, sessionContext, aiAssist, city, draft, tz, capabilities, checkDraft, enabled = true, timeAware } = opts; const tzKey = timeAware === true && typeof tz === 'string' ? tz : ''; // G46
   const accountEpoch = useInputAccountEpoch();
 
-  const policyRevision = useSyncExternalStore(sharedPolicyStore.subscribe, sharedPolicyStore.getRevision, sharedPolicyStore.getRevision);
-  const policy = useMemo(
-    () => resolveFieldPolicy(fieldId, context),
-    [fieldId, context, policyRevision, policyEpoch()], // §80 round 3 (D-W10-S1-4): re-resolved when the policy table lands, ages out or is superseded under a mounted field
-  );
+  const policySnapshot = useMemo(() => createPolicySnapshot(fieldId, context), [fieldId, context]);
+  const policy = useSyncExternalStore(sharedPolicyStore.subscribe, policySnapshot, policySnapshot);
 
   const [suggestions, setSuggestions] = useState<InputSuggestion[]>([]);
   const observedMinute = useTripSearchMinute(enabled && context === 'global_search' && suggestions.some(row => tripSearchType(row.entityType)));
@@ -139,7 +154,7 @@ export function useInputAssistance(
   const authoritative = policy != null && getContextDescriptor(policy.context).authoritative;
   useEffect(() => {
     if (enabled && policy && !authoritative) void refreshPolicyOnUse();
-  }, [enabled, policy, authoritative, trimmed, policyRevision]);
+  }, [enabled, policy, authoritative, trimmed]);
   const lat = sessionContext?.lat;
   const lng = sessionContext?.lng;
   // Round coords for a stable dependency + cache key (~1km).

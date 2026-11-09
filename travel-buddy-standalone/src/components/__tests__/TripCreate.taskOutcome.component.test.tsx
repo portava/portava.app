@@ -31,7 +31,7 @@ const CITY = '22222222-2222-4222-8222-222222222222';
 // NOTE: intentionally exhaustive — expo-router pulls native navigation internals.
 const mockReplace = jest.fn();
 jest.mock('expo-router', () => ({
-  useFocusEffect: (effect: () => void | (() => void)) => require('react').useEffect(effect, [effect]),
+  useFocusEffect: (effect: () => void | (() => void)) => jest.requireActual<typeof import('react')>('react').useEffect(effect, [effect]),
   router: { replace: (...a: unknown[]) => mockReplace(...a), push: jest.fn(), back: jest.fn() },
 }));
 

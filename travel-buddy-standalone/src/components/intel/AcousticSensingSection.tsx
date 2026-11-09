@@ -19,7 +19,10 @@ export function AcousticSensingSection({ captureAllowed }: { captureAllowed: boo
   const [acoustic, setAcoustic] = React.useState<AcousticPermissionSnapshot | undefined>(undefined);
   const acousticAlive = React.useRef(false);
   const acousticGrantAllowed = React.useRef(false);
-  acousticGrantAllowed.current = captureAllowed;
+  React.useLayoutEffect(() => {
+    acousticGrantAllowed.current = captureAllowed;
+    return () => { acousticGrantAllowed.current = false; };
+  }, [captureAllowed]);
   React.useEffect(() => {
     let alive = true;
     acousticAlive.current = true;

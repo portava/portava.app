@@ -145,6 +145,9 @@ const KERNEL_SIDE = new Set([ "test/memoryFromOwnMedia.pglite.test.ts" /* builds
   // post-reference destinations; it never reads the projection family's log.
   "test/postDestinations.native.test.ts",
   "migrations/2711_memory_kernel_execute.sql", "migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql" /* 2711's function re-created with the create's participants and canonical fields (census-highlights-memories §CB) */,
+  // Both revisions of memory_kernel_execute append to the command event log.
+  "migrations/3912_memory_kernel_item_visibility_and_moderation_restore.sql",
+  "migrations/3913_memory_kernel_tag_block_gate.sql",
   "lib/memoryOutbox.ts",
   "test/memoryCommandKernelFake.ts",
   "test/memoryCommandRoutes.test.ts",

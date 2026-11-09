@@ -19,6 +19,7 @@
  *     cursor   — pagination cursor
  */
 import { randomUUID } from "node:crypto";
+import { refuseExplicitTripAdd } from "../compass/CompassTripActionGate.js";
 import { itineraryOutline, itineraryPromptForTurn, requestedItineraryCity } from "../compass/CompassItineraryOutline.js";
 import { CompassVenueStream, groundVenueTerms } from "../compass/CompassVenueTerms.js";
 import { Router } from "express";
@@ -1319,14 +1320,31 @@ async function runToolCallingLoop(
   signal?:  AbortSignal,
   itinerary?: { prompt: string; city?: string },
 ): Promise<ToolLoopOutcome> {
+  if (signal?.aborted) throw new ClientDisconnectedError();
   const convo: any[] = [...messages];
   const toolLog: ToolExecution[] = trackPartialToolLog<ToolExecution>(messages); // H266: readable by the caller if a model call below throws
   const proposals: AddToTripProposal[] = [];
 
+  let seededSearch: { city: string; result: unknown } | null = null;
+  const emptyCity = (value: unknown) => {
+    const row = value as { catalogEmpty?: boolean; liveListings?: unknown[] };
+    return row?.catalogEmpty === true && !row.liveListings?.length;
+  };
   if (itinerary) {
     const city = requestedItineraryCity(itinerary.prompt, undefined, itinerary.city);
-    const clarification = itineraryOutline(itinerary.prompt, city);
-    if (clarification?.payload === null) return { finalRaw: JSON.stringify(clarification), toolLog, proposals };
+    const outline = itineraryOutline(itinerary.prompt, city);
+    if (outline?.payload === null) return { finalRaw: JSON.stringify(outline), toolLog, proposals };
+    if (outline && city) {
+      // The short, explicit plan needs this authorized city search either way.
+      // Do it directly, and preserve the actual result for a richer model answer.
+      const args = { city };
+      const result = await executeCompassTool(sc, userId, profile as any, "search_places", args);
+      toolLog.push({ name: "search_places", arguments: args, result });
+      if (emptyCity(result)) return { finalRaw: JSON.stringify(outline), toolLog, proposals };
+      seededSearch = { city, result };
+      convo.push({ role: "assistant", content: null, tool_calls: [{ id: "itinerary_city_places", type: "function", function: { name: "search_places", arguments: JSON.stringify(args) } }] });
+      convo.push({ role: "tool", tool_call_id: "itinerary_city_places", content: JSON.stringify(result) });
+    }
   }
   let endSearch = false;
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
@@ -1390,19 +1408,16 @@ async function runToolCallingLoop(
         convo.push({ role: "tool", tool_call_id: tc.id, content: "City-wide search already returned no matching places." });
         continue;
       }
-      let result = await executeCompassTool(sc, userId, profile as any, name, args);
-      toolLog.push({ name, arguments: args, result });
+      const repeatedCitySearch = name === "search_places" && seededSearch && args.city === seededSearch.city && Object.keys(args).length === 1;
+      let result = repeatedCitySearch ? seededSearch!.result : await executeCompassTool(sc, userId, profile as any, name, args);
+      if (!repeatedCitySearch) toolLog.push({ name, arguments: args, result });
       if (itinerary && name === "search_places") {
-        const empty = (value: unknown) => {
-          const row = value as { catalogEmpty?: boolean; liveListings?: unknown[] };
-          return row?.catalogEmpty === true && !row.liveListings?.length;
-        };
-        if (empty(result) && requestedCity && typeof args.query === "string" && args.query.trim()) {
+        if (emptyCity(result) && requestedCity && typeof args.query === "string" && args.query.trim()) {
           const broadArgs = { city: requestedCity };
           result = await executeCompassTool(sc, userId, profile as any, name, broadArgs);
           toolLog.push({ name, arguments: broadArgs, result });
         }
-        if (empty(result) && !toolLog.some(tool => {
+        if (emptyCity(result) && !toolLog.some(tool => {
           const row = tool.result as { candidates?: unknown[]; liveListings?: unknown[] };
           return (tool.name === "search_places" || tool.name === "search_events") && (row?.candidates?.length || row?.liveListings?.length);
         })) {
@@ -1607,17 +1622,29 @@ router.post("/compass/ask", async (req, res) => {
   // `history` is already loaded above and was previously not passed, which left
   // the router resolving a pronoun with no antecedent — the standing evaluation
   // set's "What did you mean?" and "Which one is closer?" are exactly that case.
-  let intentResult: IntentClassification | null = null;
-  try {
-    intentResult = await classifyIntent(
-      prompt,
-      modelTurns(history).slice(-CLASSIFIER_CONTEXT_TURNS),
-    );
-  } catch { /* non-fatal — treated as no classification */ }
-  const isItineraryIntent =
-    intentResult !== null &&
-    intentResult.intent === "itinerary" &&
-    intentResult.confidence >= 0.6;
+  const planningPrompt = itineraryPromptForTurn(prompt, modelTurns(history));
+  const refusal = await refuseExplicitTripAdd(sc, user.id, planningPrompt);
+  if (refusal) {
+    try {
+      await appendMessage(sc, conversationId, "user", prompt);
+      await appendMessage(sc, conversationId, "assistant", refusal.message, undefined, COMPASS_ASK_PROMPT_VERSION);
+      await touchConversation(sc, conversationId);
+    } catch { /* The answer remains available if conversation history cannot be updated. */ }
+    const answer = {
+      conversationId, message: refusal.message, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload: null,
+      quickActions: [], pendingProposals: [], uiBlocks: [], intent: null,
+      meta: { toolsUsed: [], groundingViolations: [], droppedInventedIds: 0, actionOutcome: refusal.reason },
+      ...(refusal.retryable ? { fallback: true, fallbackReason: refusal.reason } : {}),
+    };
+    if (stream) {
+      res.set({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "X-Accel-Buffering": "no" });
+      res.end(`data: ${JSON.stringify({ done: true, ...answer })}\n\n`);
+    } else res.json(answer);
+    return;
+  }
+  // Context reads below do not depend on intent. Start classification now and
+  // join it when constructing the provider messages, after the layover gate.
+  const classification = classifyIntent(prompt, modelTurns(history).slice(-CLASSIFIER_CONTEXT_TURNS)).catch(() => null);
 
   // ── Action intent (Phase 4) ───────────────────────────────────────────────
   // Actions no longer short-circuit: the tool-calling loop lets the model
@@ -1991,7 +2018,8 @@ router.post("/compass/ask", async (req, res) => {
   const userMessageWithContext = `${prompt}\n\n${ctxLines.join("\n")}`;
 
   // ── Build messages array ──────────────────────────────────────────────────
-  const planningPrompt = itineraryPromptForTurn(prompt, modelTurns(history));
+  const intentResult: IntentClassification | null = await classification;
+  const isItineraryIntent = intentResult?.intent === "itinerary" && intentResult.confidence >= 0.6;
   const itineraryRequest = isItineraryIntent || (planningPrompt !== prompt && /\b(?:plan|itinerary|weekend)\b/i.test(planningPrompt))
     ? { prompt: planningPrompt, city } : undefined;
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [

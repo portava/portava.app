@@ -22,8 +22,8 @@ import type { SuggestRequest } from '../../platform/input-assistance/types/input
 let mockRefocus: (() => void | (() => void)) | undefined;
 let mockBlur: void | (() => void);
 let mockTripWindow = { start: '2027-01-12', end: '2027-01-15' };
-const mockTitleGateway = jest.fn(async (_req: SuggestRequest) => ({
-  ok: true, requestId: 'dates', policyVersion: 'test', suggestions: [],
+const mockTitleGateway = jest.fn(async (req: SuggestRequest) => ({
+  ok: true, requestId: req.fieldId, policyVersion: 'test', suggestions: [],
 }));
 // NOTE: only the gateway transport is replaced. The mounted form uses its actual field policy, date controls and debounce.
 jest.mock('../../platform/input-assistance/services/inputAssistance.ts', () => ({
@@ -35,7 +35,7 @@ const CITY = '22222222-2222-4222-8222-222222222222';
 // NOTE: intentionally exhaustive — expo-router pulls native navigation internals.
 const mockReplace = jest.fn();
 jest.mock('expo-router', () => ({
-  useFocusEffect: (effect: () => void | (() => void)) => require('react').useEffect(() => {
+  useFocusEffect: (effect: () => void | (() => void)) => jest.requireActual<typeof import('react')>('react').useEffect(() => {
     mockRefocus = effect;
     mockBlur = effect();
     return () => { if (mockBlur) mockBlur(); };
@@ -122,8 +122,8 @@ jest.mock('../../components/selectors/GlobalPlacePicker', () => {
 // NOTE: intentionally exhaustive — GlobalCalendarPicker pulls calendar native modules.
 jest.mock('../../components/selectors/GlobalCalendarPicker', () => ({
   GlobalCalendarPicker: (props: { onConfirm: (dates: { start: string; end: string }) => void }) => {
-    const React = require('react');
-    const { Pressable } = require('react-native');
+    const React = jest.requireActual<typeof import('react')>('react');
+    const { Pressable } = jest.requireActual<typeof import('react-native')>('react-native');
     return React.createElement(Pressable, { testID: 'select-test-trip-dates',
       onPress: () => props.onConfirm(mockTripWindow),
     });

@@ -108,6 +108,13 @@ export function createDeviceMotionSource(): MotionSource | null {
   };
 }
 
+// Loading Expo Location inside the protected native paths keeps an absent
+// native module from breaking web, app startup, or the other sensing sources.
+function locationModule(): typeof import('expo-location') {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- the optional native bridge must load lazily.
+  return require('expo-location');
+}
+
 type AreaLocationAccess = 'granted' | 'requestable' | 'settings' | 'unavailable';
 const locationListeners = new Set<() => void>();
 export function onAreaLocationGranted(listener: () => void): () => void {
@@ -119,7 +126,7 @@ export function onAreaLocationGranted(listener: () => void): () => void {
 export async function areaLocationAccess(request = false): Promise<AreaLocationAccess> {
   if (Platform.OS === 'web') return 'unavailable';
   try {
-    const location = require('expo-location') as AnyModule;
+    const location = locationModule();
     const access = request ? await location.requestForegroundPermissionsAsync() : await location.getForegroundPermissionsAsync();
     if (access?.granted === true) {
       if (request) for (const listener of locationListeners) listener();
@@ -146,8 +153,7 @@ export function createDeviceLocationSource(): LocationSource {
 
       void (async () => {
         try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const Location = require('expo-location') as AnyModule;
+          const Location = locationModule();
           const perm = await Location.getForegroundPermissionsAsync();
           if (cancelled || !perm?.granted) return;
           const sub = await Location.watchPositionAsync(
@@ -156,7 +162,7 @@ export function createDeviceLocationSource(): LocationSource {
               timeInterval: LOCATION_INTERVAL_MS,
               distanceInterval: LOCATION_DISTANCE_M,
             },
-            (pos: any) => {
+            (pos) => {
               const c = pos?.coords;
               if (cancelled || !c || !Number.isFinite(c.latitude) || !Number.isFinite(c.longitude)) return;
               const now = Date.now();

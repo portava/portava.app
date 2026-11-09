@@ -129,7 +129,7 @@
         { "name": "discovery_places_deny_delete_clients", "cmd": "DELETE", "permissive": false, "roles": ["anon","authenticated"] },
         { "name": "discovery_places_deny_insert_clients", "cmd": "INSERT", "permissive": false, "roles": ["anon","authenticated"] },
         { "name": "discovery_places_deny_update_clients", "cmd": "UPDATE", "permissive": false, "roles": ["anon","authenticated"] },
-        { "name": "discovery_places_canonical_moderation", "cmd": "SELECT", "permissive": false, "roles": ["anon","authenticated"] },
+        { "name": "discovery_places_canonical_moderation", "cmd": "SELECT", "permissive": false, "roles": ["public"] },
         { "name": "discovery_places_auth_insert", "cmd": "INSERT", "permissive": true, "roles": ["public"] },
         { "name": "discovery_places_own_delete", "cmd": "DELETE", "permissive": true, "roles": ["public"] },
         { "name": "discovery_places_own_update", "cmd": "UPDATE", "permissive": true, "roles": ["public"] },
