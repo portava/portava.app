@@ -16,7 +16,7 @@ import { space, radius, type as t } from '../../../theme/tokens.ts';
 import { useTelegraphPalette, type TelegraphPalette } from '../theme/telegraphTheme.ts';
 import { parsePortavaObjectBody } from './shareApi.ts';
 import { useShareRevocation, revokedLabel } from './useShareRevocation.ts';
-import { SharedMessageMedia } from './SharedMessageMedia.tsx';
+import { hasSharedMessageMedia, SharedMessageMedia, SharedPostMediaMessage } from './SharedMessageMedia.tsx';
 import { PlaceLiveInformation } from './PlaceLiveInformation.tsx';
 
 const CARD_MAX_WIDTH = 280;
@@ -71,6 +71,10 @@ export function PortavaObjectMessage({ body, mine, threadId, messageId }: Portav
   const subtitle = projection?.subtitle ?? null;
   const deepLink = projection?.deepLink ?? null;
 
+  if (projection && parsed.objectType === 'POST' && hasSharedMessageMedia(projection)) {
+    return <SharedPostMediaMessage projection={projection} messageId={messageId} caption={parsed.caption}
+      width={width} testID="telegraph-portava-object-card" />;
+  }
   const hasMediaCard = projection && (parsed.objectType === 'POST' || parsed.objectType === 'MEDIA');
   if (hasMediaCard) return <View style={[styles.wrap, { width }, mine && styles.wrapMine]} testID="telegraph-portava-object-card">
     <Text style={styles.kind}>{prettyType(parsed.objectType).toUpperCase()}</Text>

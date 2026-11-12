@@ -95,6 +95,20 @@ describe('useThreadMessages — edits reach the recipient (TEL-F07)', () => {
   });
 });
 
+it('a late older poll cannot undo a newer edited message', async () => {
+  Object.defineProperty(AppState, 'currentState', { value: 'active', configurable: true });
+  mockGetThreadMessages.mockResolvedValueOnce({ok:true,data:{messages:[M('m-1','before')]}});
+  const { result } = await renderHook(() => useThreadMessages('t-1'));
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  let release!: (value: unknown) => void;
+  mockGetThreadMessages.mockReturnValueOnce(new Promise(resolve => { release = resolve; }));
+  await act(async () => { for (const listener of realtimeListeners) listener({type:'message.updated',threadId:'t-1'}); });
+  mockGetThreadMessages.mockResolvedValueOnce({ok:true,data:{messages:[M('m-1','after','2026-08-01T10:05:00Z')]}});
+  await act(async () => { for (const listener of realtimeListeners) listener({type:'message.updated',threadId:'t-1'}); });
+  await act(async () => { release({ok:true,data:{messages:[M('m-1','before')]}}); });
+  expect(result.current.messages[0]).toMatchObject({body:'after',displayBody:'after',editedAt:'2026-08-01T10:05:00Z'});
+});
+
 describe('useThreadMessages — foreground return catches up now (TEL-F10)', () => {
   it('reads the thread as soon as the app comes back, not on the next poll tick', async () => {
     mockGetThreadMessages.mockResolvedValue({ ok: true, data: { threadId: 't-1', messages: [M('m-1', 'hi')] } });

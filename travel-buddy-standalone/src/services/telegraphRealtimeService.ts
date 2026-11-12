@@ -15,8 +15,7 @@
  *     once; the underlying connection is reference-counted and shared.
  */
 
-import { supabase } from '../lib/supabase.ts';
-import { freshToken as freshApiToken } from './apiToken.ts';
+import { freshToken as freshApiToken, isCurrentSessionToken } from './apiToken.ts';
 import { cursorHeaderValue } from '../features/telegraph/connection/sequenceCursorStore.ts';
 
 export type TelegraphEventType =
@@ -86,6 +85,21 @@ class TelegraphRealtime {
   private started = false;
   private stopped = false;
   private generation = 0;
+  private viewerId: string | null = null;
+
+  /** Called synchronously by session ownership changes, before cache cleanup. */
+  setViewer(viewerId: string | null) {
+    if (viewerId === this.viewerId) return;
+    this.viewerId = viewerId;
+    this.stopped = true; this.started = false;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.failureCount = 0;
+    this.retireConnection();
+    this.setStatus('idle');
+    if (viewerId && this.eventListeners.size > 0) this.ensureStarted();
+  }
+
 
   /** Subscribe to realtime events. Starts the connection on first subscriber. */
   subscribe(listener: EventListener): () => void {
@@ -111,7 +125,7 @@ class TelegraphRealtime {
   }
 
   private ensureStarted() {
-    if (this.started) return;
+    if (this.started || !this.viewerId) return;
     this.started = true;
     this.stopped = false;
     void this.connect();
@@ -158,19 +172,21 @@ class TelegraphRealtime {
   }
 
   private async connect() {
-    if (this.stopped) return;
+    if (this.stopped || !this.viewerId) return;
+    const viewerId = this.viewerId;
     const generation = ++this.generation;
     const base = apiBase();
     if (!base) { this.setStatus('polling'); return; }
 
     const token = await freshApiToken();
     if (!this.isCurrent(generation)) return;
-    if (!token) {
+    if (!token || !await isCurrentSessionToken(viewerId, token)) {
       // Not signed in yet; retry later without escalating to a hard failure.
       this.scheduleReconnect(generation);
       return;
     }
 
+    if (!this.isCurrent(generation) || this.viewerId !== viewerId) return;
     this.setStatus('connecting');
     if (!this.isCurrent(generation)) return;
     this.parseOffset = 0;

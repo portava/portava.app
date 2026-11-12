@@ -120,6 +120,7 @@ app.listen(port, (err) => {
   startWeatherCacheCleanup();
   startDiscoveryCacheCleanup();
   initTelegraphBroadcast();
+  initCommentTypingBroadcast();
   startSafeReturnScheduler(); startSafetySignalRedriveScheduler(); // Telegraph §19 P0: re-attempts a help request the door could not tell, for 15 minutes (services/telegraph/safetyNotifications.ts foot)
   startTripProjectionWorkers(); // reminders, live-share expiry, retention sweep — server/trips/projectionWorkers
   startDelayedPostPublisher();
@@ -446,3 +447,5 @@ app.listen(port, (err) => {
     logger.warn({ err: startupErr }, "startup: could not query push retry queue health");
   });
 });
+
+import { initCommentTypingBroadcast } from "./lib/commentTyping.js";

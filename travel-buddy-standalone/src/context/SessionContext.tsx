@@ -1,3 +1,4 @@
+import { telegraphRealtime } from '../services/telegraphRealtimeService.ts';
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { AppState } from 'react-native';
 import { getSessionUserId, onAuthChange, signOut as svcSignOut, ensureProfile, reportEnsureProfileFailure } from '../services/auth.ts'; import { clearRailSeenForUser } from '../features/telegraph/sharedContext/railSeenStore.ts'; import { clearThreadCursors } from '../features/telegraph/connection/sequenceCursorStore.ts'; // census-telegraph T264; T233 §71
@@ -104,7 +105,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let active = true; let lastUid: string | null | undefined; let authEpoch = 0;
-    getSessionUserId().then((uid) => { if (active && authEpoch === 0) { lastUid = uid; setDiscoveryViewerFromSession(uid); setUserId(uid); setLoading(false); } });
+    getSessionUserId().then((uid) => { if (active && authEpoch === 0) { lastUid = uid; setDiscoveryViewerFromSession(uid); telegraphRealtime.setViewer(uid); setUserId(uid); setLoading(false); } });
     // The Discovery device caches follow the auth event itself, BEFORE any screen
     // re-renders: a synchronous cache read at mount must never paint the previous
     // account's page (services/discoveryViewerScope.ts).
@@ -112,10 +113,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       const epoch = ++authEpoch;
       const outgoingUserId = lastUid;
       const changed = outgoingUserId !== undefined && uid !== outgoingUserId;
-      if (changed) clearThreadCursors();
+      if (changed) { telegraphRealtime.setViewer(null); clearThreadCursors(); }
       lastUid = uid;
       setDiscoveryViewerFromSession(uid);
-      const publish = () => { if (active && epoch === authEpoch) { setUserId(uid); setLoading(false); } };
+      const publish = () => { if (active && epoch === authEpoch) { telegraphRealtime.setViewer(uid); setUserId(uid); setLoading(false); } };
       if (changed) {
         // Invalidate pending writes immediately; await storage erasure before
         // mounting the replacement account. A cleanup failure cannot prevent logout.
@@ -123,7 +124,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         void Promise.allSettled([clearLayoverOfflineStorage(), outbox]).then(publish);
       } else publish();
     });
-    return () => { active = false; unsub(); };
+    return () => { active = false; unsub(); telegraphRealtime.setViewer(null); };
   }, []);
 
   useEffect(() => {
@@ -322,6 +323,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
     // Discovery pages and community bylines held on the device are per viewer;
     // none of the outgoing account's may be painted after this point.
+    telegraphRealtime.setViewer(null);
     setDiscoveryViewerFromSession(null);
     // Wipe other AsyncStorage keys that may hold private entity data.
     // Lazy-require keeps this from crashing on web (where AsyncStorage is

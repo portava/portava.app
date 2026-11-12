@@ -4,8 +4,8 @@
  * All mutations go through the API server (bearer token auth).
  * Mirrors the pattern from posts.ts: never call supabase directly.
  */
-import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
-import { freshToken as freshApiToken } from './apiToken.ts';
+import { isSupabaseConfigured } from '../lib/supabase.ts';
+import { fetchOwnedApi } from './ownedApiRequest.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -69,10 +69,6 @@ function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 }
 
-async function freshToken(): Promise<string | null> {
-  return freshApiToken();
-}
-
 function isNetworkError(e: unknown): boolean {
   const m = (e instanceof Error ? e.message : String(e)).toLowerCase();
   return (
@@ -92,18 +88,10 @@ async function apiCall<T>(
   if (!isSupabaseConfigured || !apiBase()) {
     return { ok: false, message: 'Backend not configured' };
   }
-  const token = await freshToken();
-  if (!token) return { ok: false, message: 'Please sign in' };
-
   try {
-    const res = await fetch(`${apiBase()}${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(body ? { 'Content-Type': 'application/json' } : {}),
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    });
+    // Pin every read/write to the initiating session, including token refresh
+    // and response decoding. A replaced account cannot inherit this action.
+    const res = await fetchOwnedApi(path, { method, ...(body ? { body } : {}) });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       return { ok: false, message: err?.message ?? `HTTP ${res.status}`, code: err?.error };

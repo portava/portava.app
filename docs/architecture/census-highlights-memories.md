@@ -2040,7 +2040,7 @@ through the Compass feed, the prompt context lines and `lib/discoveryModifiers.t
 tables are in the committed production schema snapshot. The rebuild is **not** on-demand: it
 runs daily from
 `artifacts/api-server/src/lib/intelligenceGraphScheduler.ts:30#REBUILD_INTERVAL_MS`, started at
-boot by `artifacts/api-server/src/index.ts:137#startIntelligenceGraphScheduler`.
+boot by `artifacts/api-server/src/index.ts:138#startIntelligenceGraphScheduler`.
 
 **Defect 1 — §28.10, eligibility.** The gate was `state = 'published' AND visibility <>
 'only_me'`. `memories.visibility` is a **six**-rung ladder, so `<> 'only_me'` admitted four
@@ -5623,7 +5623,7 @@ capability, and none of it can run on any database yet.
 | id | was | now | why |
 |---|---|---|---|
 | H30 | W | **W** (unmoved — reason corrected) | Its reason — *"Written at 2710:191, unapplied, absent from the snapshot"* — is FALSE ON BOTH COUNTS. `production-applied-migrations.json` carries `2710_memory_command_kernel_tables` AND `2711_memory_kernel_execute`, and ALL FOUR tables 2710 creates are present in the 2026-09-22 production capture: `memory_domain_events`, `memory_event_outbox`, `memory_command_receipts`, `memory_command_audit`. The outbox table is deployed and `memory_kernel_execute` writes it inside the canonical transaction. It is not `C` because `memory_kernel_enabled` reads FALSE on production, so the kernel never runs and no outbox row has ever been written, and because the claim/ack/fail functions that drain it live in 2994, which is applied nowhere. |
-| H161 | NB | **W** | Its reason was *"There are no consumers."* There is one: `artifacts/api-server/src/services/memoryProjections/outboxConsumer.ts`, with a production caller at `artifacts/api-server/src/index.ts:202#startMemoryOutboxScheduler();`. Its idempotency is structural rather than careful — upsert rebuild, ack filtered on `published_at IS NULL`, lease plus `FOR UPDATE SKIP LOCKED` so two workers cannot claim one event — and the SQL half was rehearsed against a real PostgreSQL, where a second ack returned 0. Not `C`: those functions are 2994's and 2994 is unapplied, so the consumer claims nothing anywhere. |
+| H161 | NB | **W** | Its reason was *"There are no consumers."* There is one: `artifacts/api-server/src/services/memoryProjections/outboxConsumer.ts`, with a production caller at `artifacts/api-server/src/index.ts:203#startMemoryOutboxScheduler();`. Its idempotency is structural rather than careful — upsert rebuild, ack filtered on `published_at IS NULL`, lease plus `FOR UPDATE SKIP LOCKED` so two workers cannot claim one event — and the SQL half was rehearsed against a real PostgreSQL, where a second ack returned 0. Not `C`: those functions are 2994's and 2994 is unapplied, so the consumer claims nothing anywhere. |
 | H220 | NB | **W** | Its reason was that `projection_lag` is *"Named in one comment"* and that nothing emits a figure. It is emitted now, per event, at `artifacts/api-server/src/services/memoryProjections/outboxConsumer.ts:516#recordProjectionLag(`, measured enqueued-to-rebuild-finished — the slower clock — with `rebuildMs` beside it. Not `C`: the recorded runtime measurement had a zero-row drain and no cross-process exporter. This citation repair does not remeasure deployment, traffic or exporter availability; W is unchanged. |
 
 ### Two reasons corrected, with the verdict unmoved
@@ -7168,7 +7168,7 @@ Same branch, same rules as §AF. `head_commit` is **NOT** re-declared. Controlle
 2. **Open dead letters are retried (H193).**
    - `artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:68#export async function runMemoryDeletionRedrivePass(` re-runs the §21 lifecycle hourly for open letters whose Memory is still deleted or gone.
    - A letter whose Memory is NOT deleted is closed as moot, and no step runs (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:112#if (!stillDeleted) {`).
-   - It is gated by `memory_deletion_redrive_enabled` (3670, seeded FALSE) and started at `artifacts/api-server/src/index.ts:202#startMemoryDeletionRedriveScheduler();`.
+   - It is gated by `memory_deletion_redrive_enabled` (3670, seeded FALSE) and started at `artifacts/api-server/src/index.ts:203#startMemoryDeletionRedriveScheduler();`.
    - It has the house loop shape plus a generation check (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:171#generation === _generation`). That check closes a two-loop leak that a stop() followed by start() during an in-flight pass produced.
    - The tests: `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:848#flag ON: a still-deleted Memory's deletion is re-run to completion`, `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:865#a letter whose Memory is NOT deleted is closed as moot` and `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:838#flag OFF (the seed)`. The lifecycle suite runs on real timers with only `Date` mocked: `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:72#stop() ends the loop, even when it lands while a pass is in flight` and `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:82#stop() then start() while a pass is in flight runs ONE loop`. 7 of 7 mutants were killed.
 
@@ -7182,7 +7182,7 @@ Same branch, same rules as §AF. `head_commit` is **NOT** re-declared. Controlle
 | H10 | BUILT-BUT-WRONG | "2720, unapplied" and "2721" are stale: both are applied, so resurfacing and publication policy are storable and enforced on the Highlights surface. W stands because no personalization path consults any of it (H210), and because the policies are Highlight-scoped: no Memory-level control exists (H36) |
 | H13 | BUILT-BUT-WRONG | "Test-only … 2730 is unapplied" is stale. The service has a production route (`artifacts/api-server/src/routes/memories.ts:1023#router.post("/memories/search"`), and that route registers before it reads (`artifacts/api-server/src/services/memory/memorySearchService.ts:363#export async function ensureDerivative(`), on 2730, which is applied. The one blocker left is semantic retrieval, which has no backend (`SearchEmbedding` NOT_CONFIGURED, H171) |
 | H223 | BUILT-BUT-WRONG | "Storage is 2730 — written, unapplied" is stale: 2730 is applied. W stands on the eighth field, as stated: `projectionName` is null on the command path, and nothing writes a projection log line that carries it |
-| H244 | BUILT-BUT-WRONG | "memory_event_outbox is 2710, unapplied" is stale: 2710 is applied, and a consumer is started (`artifacts/api-server/src/index.ts:202#startMemoryOutboxScheduler();`). W stands for two reasons. The consumer's claim and ack functions are 2994, which is unapplied (H161). And `memory_kernel_enabled` is FALSE in the 2026-09-22 snapshot, so no event is written for a consumer to tolerate |
+| H244 | BUILT-BUT-WRONG | "memory_event_outbox is 2710, unapplied" is stale: 2710 is applied, and a consumer is started (`artifacts/api-server/src/index.ts:203#startMemoryOutboxScheduler();`). W stands for two reasons. The consumer's claim and ack functions are 2994, which is unapplied (H161). And `memory_kernel_enabled` is FALSE in the 2026-09-22 snapshot, so no event is written for a consumer to tolerate |
 
 ### §AG.3 Headline
 
@@ -9933,7 +9933,7 @@ are recorded in `docs/migrations.md` (3911). The rollback restores 2711's defini
   No place edge exists, and no Memory has a place reference. No person edge exists, and no tag is approved. All 80
   Memories read `source_mode = LEGACY_IMPORTED`. `memory_graph_shadow_daily` holds **0** rows.
 - **The outbox drain is unobservable.** It starts at boot with no flag
-  (`artifacts/api-server/src/index.ts:202#startMemoryOutboxScheduler();`), but `/api/healthz/schedulers` lists
+  (`artifacts/api-server/src/index.ts:203#startMemoryOutboxScheduler();`), but `/api/healthz/schedulers` lists
   `startMemoryOutboxScheduler` under `coverage.unobservable`, and there is no `job_health` row. The outbox has had 0 rows
   (§CA.1), so nothing on production shows that it has ever drained.
 

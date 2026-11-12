@@ -1,3 +1,4 @@
+import { AppState } from 'react-native';
 /**
  * useThreadMessages — notifyTyping sends TRANSITIONS, throttled (census T239,
  * re-verification R3, 2026-10-06).
@@ -70,6 +71,7 @@ const realNow = Date.now;
 let clock = 0;
 
 beforeEach(() => {
+  Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'active', writable: true });
   jest.clearAllMocks();
 });
 afterEach(async () => {

@@ -49,13 +49,11 @@ import { MentionInput, type MentionInputHandle } from './MentionInput.tsx';
 import { MentionSuggestionList } from './MentionSuggestionList.tsx';
 import type { AnyMentionSuggestion } from '../services/tagging.ts';
 import {
-  listComments,
   addComment,
   deleteComment,
   editComment,
   likeComment,
   unlikeComment,
-  listReplies,
   addReply,
   type EngagementComment,
   type EngagementReply,
@@ -70,6 +68,10 @@ import { primaryIdentityText } from '../lib/displayIdentity.ts';
 import { VerifiedStamp } from './ui/VerifiedStamp.tsx';
 import { TranslationToggle } from './TranslationToggle.tsx';
 import { useContentTranslation } from '../hooks/useContentTranslation.ts';
+import { useInputAccountEpoch } from '../platform/input-assistance/hooks/useInputAccountEpoch.ts';
+import { useCommentTyping } from '../hooks/useCommentTyping.ts';
+import { useLiveComments, type CommentMutation } from '../hooks/useLiveComments.ts';
+import { useScreenFocused } from '../hooks/useScreenFocused.ts';
 
 // ── Shared contexts ───────────────────────────────────────────────────────────
 
@@ -82,6 +84,7 @@ const CommentReportCtx = React.createContext<{ onReport: (authorId: string, auth
  * CommentsSection (inline) overrides to 12 for thumb comfort.
  */
 const LikeHitSlopCtx = React.createContext<number>(8);
+const CommentMutationCtx = React.createContext<() => CommentMutation | null>(() => null);
 
 // ── Animated FlatList ─────────────────────────────────────────────────────────
 
@@ -159,6 +162,8 @@ interface ReplyThreadProps {
   loaded: boolean;
   open: boolean;
   loading: boolean;
+  error: boolean;
+  onRetry: () => void;
   postId: string;
   onToggle: () => void;
   onDelete: (id: string) => void;
@@ -166,29 +171,28 @@ interface ReplyThreadProps {
   onReplyEdit: (replyId: string, newBody: string, newUpdatedAt: string) => void;
 }
 
-function ReplyThread({ replies, loaded, open, loading, postId, onToggle, onDelete, onLikeChange, onReplyEdit }: ReplyThreadProps) {
+function ReplyThread({ replies, loaded, open, loading, error, onRetry, postId, onToggle, onDelete, onLikeChange, onReplyEdit }: ReplyThreadProps) {
   // Once loaded, keep the toggle visible even when there are zero replies —
   // otherwise tapping "View replies" on a comment with no replies just makes
   // the row vanish with no feedback (looked like the tap did nothing).
   return (
     <View>
-      {(!loaded || replies.length > 0 || loading || open) && (
-        <Pressable style={s.repliesToggle} onPress={onToggle} hitSlop={4}>
+      <Pressable style={s.repliesToggle} onPress={onToggle} hitSlop={4}>
           {loading ? (
             <ActivityIndicator size="small" color={color.signal} />
           ) : (
             <Text style={s.repliesToggleText}>
-              {!loaded
+              {!loaded || !open && replies.length === 0
                 ? 'View replies'
                 : open
                 ? 'Hide replies'
                 : `${replies.length} ${replies.length === 1 ? 'reply' : 'replies'}`}
             </Text>
           )}
-        </Pressable>
-      )}
+      </Pressable>
 
-      {open && !loading && (
+      {error && <Pressable onPress={onRetry} accessibilityRole="button" accessibilityLabel="Retry replies"><Text style={s.liveNotice}>Replies could not refresh. Tap to retry.</Text></Pressable>}
+      {open && (
         <View style={s.repliesContainer}>
           {replies.length > 0 ? (
             replies.map((r) => (
@@ -201,9 +205,9 @@ function ReplyThread({ replies, loaded, open, loading, postId, onToggle, onDelet
                 onEdit={onReplyEdit}
               />
             ))
-          ) : (
+          ) : !loading && !error ? (
             <Text style={s.repliesEmptyText}>No replies yet.</Text>
-          )}
+          ) : null}
         </View>
       )}
     </View>
@@ -229,6 +233,7 @@ function ReplyRow({
   const { userId: currentUserId } = useSession();
   const onAuthorPress = React.useContext(AuthorPressCtx);
   const likeHitSlop = React.useContext(LikeHitSlopCtx);
+  const beginMutation = React.useContext(CommentMutationCtx);
   const likedByMe = reply.likedByMe ?? false;
   const likeCount = reply.likeCount ?? 0;
   const likeGuardRef = useRef(createLikeToggleGuard());
@@ -240,6 +245,8 @@ function ReplyRow({
 
   const handleLike = useCallback(async () => {
     if (likeGuardRef.current.isToggling()) return;
+    const mutation = beginMutation();
+    if (!mutation) return;
     setLiking(true);
     const wasLiked = likedByMe;
     const prevCount = likeCount;
@@ -250,26 +257,35 @@ function ReplyRow({
         const result = wasLiked
           ? await unlikeComment(postId, reply.id)
           : await likeComment(postId, reply.id);
+        if (!mutation.isCurrent()) return;
         if (result) onLikeChange(reply.id, result.likedByMe, result.likeCount);
         else onLikeChange(reply.id, wasLiked, prevCount);
       });
     } finally {
-      setLiking(false);
+      if (mutation.isCurrent()) setLiking(false);
+      mutation.finish();
     }
-  }, [likedByMe, likeCount, reply.id, postId, onLikeChange]);
+  }, [likedByMe, likeCount, reply.id, postId, onLikeChange, beginMutation]);
 
   const handleEditSave = useCallback(async () => {
     if (editSaving || !editText.trim()) return;
+    const mutation = beginMutation();
+    if (!mutation) return;
     setEditSaving(true);
-    const result = await editComment(postId, reply.id, editText);
-    setEditSaving(false);
-    if (result) {
-      setIsEditing(false);
-      onEdit(reply.id, result.body, result.updatedAt);
-    } else {
-      Alert.alert('Error', 'Could not save changes. Please try again.');
+    try {
+      const result = await editComment(postId, reply.id, editText);
+      if (!mutation.isCurrent()) return;
+      if (result) {
+        setIsEditing(false);
+        onEdit(reply.id, result.body, result.updatedAt);
+      } else {
+        Alert.alert('Error', 'Could not save changes. Please try again.');
+      }
+    } finally {
+      if (mutation.isCurrent()) setEditSaving(false);
+      mutation.finish();
     }
-  }, [editSaving, editText, postId, reply.id, onEdit]);
+  }, [editSaving, editText, postId, reply.id, onEdit, beginMutation]);
 
   const isEdited = !!(reply.updatedAt && reply.updatedAt !== reply.createdAt);
 
@@ -382,6 +398,7 @@ function CommentItem({
   repliesLoaded,
   repliesOpen,
   repliesLoading,
+  repliesError,
   onDelete,
   onLikeChange,
   onReply,
@@ -398,6 +415,7 @@ function CommentItem({
   repliesLoaded: boolean;
   repliesOpen: boolean;
   repliesLoading: boolean;
+  repliesError: boolean;
   onDelete: (id: string) => void;
   onLikeChange: (id: string, likedByMe: boolean, likeCount: number) => void;
   onReply: (commentId: string, authorName: string) => void;
@@ -413,6 +431,7 @@ function CommentItem({
   const { userId: currentUserId } = useSession();
   const onAuthorPress = React.useContext(AuthorPressCtx);
   const likeHitSlop = React.useContext(LikeHitSlopCtx);
+  const beginMutation = React.useContext(CommentMutationCtx);
   const { onReport: reportComment } = React.useContext(CommentReportCtx);
   const likedByMe = comment.likedByMe ?? false;
   const likeCount = comment.likeCount ?? 0;
@@ -452,6 +471,8 @@ function CommentItem({
 
   const handleLike = useCallback(async () => {
     if (likeGuardRef.current.isToggling()) return;
+    const mutation = beginMutation();
+    if (!mutation) return;
     setLiking(true);
     const wasLiked = likedByMe;
     const prevCount = likeCount;
@@ -462,13 +483,15 @@ function CommentItem({
         const result = wasLiked
           ? await unlikeComment(postId, comment.id)
           : await likeComment(postId, comment.id);
+        if (!mutation.isCurrent()) return;
         if (result) onLikeChange(comment.id, result.likedByMe, result.likeCount);
         else onLikeChange(comment.id, wasLiked, prevCount);
       });
     } finally {
-      setLiking(false);
+      if (mutation.isCurrent()) setLiking(false);
+      mutation.finish();
     }
-  }, [likedByMe, likeCount, comment.id, postId, onLikeChange]);
+  }, [likedByMe, likeCount, comment.id, postId, onLikeChange, beginMutation]);
 
   const handleToggle = useCallback(() => {
     if (!repliesLoaded) {
@@ -480,16 +503,23 @@ function CommentItem({
 
   const handleEditSave = useCallback(async () => {
     if (editSaving || !editText.trim()) return;
+    const mutation = beginMutation();
+    if (!mutation) return;
     setEditSaving(true);
-    const result = await editComment(postId, comment.id, editText);
-    setEditSaving(false);
-    if (result) {
-      setIsEditing(false);
-      onEdit(comment.id, result.body, result.updatedAt);
-    } else {
-      Alert.alert('Error', 'Could not save changes. Please try again.');
+    try {
+      const result = await editComment(postId, comment.id, editText);
+      if (!mutation.isCurrent()) return;
+      if (result) {
+        setIsEditing(false);
+        onEdit(comment.id, result.body, result.updatedAt);
+      } else {
+        Alert.alert('Error', 'Could not save changes. Please try again.');
+      }
+    } finally {
+      if (mutation.isCurrent()) setEditSaving(false);
+      mutation.finish();
     }
-  }, [editSaving, editText, postId, comment.id, onEdit]);
+  }, [editSaving, editText, postId, comment.id, onEdit, beginMutation]);
 
   const isEdited = !!(comment.updatedAt && comment.updatedAt !== comment.createdAt);
 
@@ -594,6 +624,8 @@ function CommentItem({
         loaded={repliesLoaded}
         open={repliesOpen}
         loading={repliesLoading}
+        error={repliesError}
+        onRetry={() => onLoadReplies(comment.id)}
         postId={postId}
         onToggle={handleToggle}
         onDelete={(replyId) => onReplyDelete(comment.id, replyId)}
@@ -623,9 +655,17 @@ interface SectionProps {
   onInputFocus?: () => void;
 }
 
-export function CommentsSection({ postId, onCountChange, onInputFocus }: SectionProps) {
-  const [comments, setComments] = useState<EngagementComment[]>([]);
-  const [loading, setLoading] = useState(false);
+export function CommentsSection(props: SectionProps) {
+  const { userId } = useSession();
+  const epoch = useInputAccountEpoch();
+  return <CommentsSectionContent key={`${props.postId}:${userId}:${epoch}`} {...props} />;
+}
+function CommentsSectionContent({ postId, onCountChange, onInputFocus }: SectionProps) {
+  const screenFocused = useScreenFocused();
+  const { comments, setComments, loading, error: commentsFailed, newCount, clearNewCount, load,
+    repliesMap, setRepliesMap, repliesLoaded, setRepliesLoaded, repliesOpen, setRepliesOpen,
+    repliesLoading, repliesErrors, loadReplies: handleLoadReplies, beginMutation,
+  } = useLiveComments(postId, screenFocused, onCountChange);
   const [commentsDisabled, setCommentsDisabled] = useState(false);
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -635,37 +675,10 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
   const [mentionLoading, setMentionLoading] = useState(false);
   const [mentionVisible, setMentionVisible] = useState(false);
 
-  const [repliesMap, setRepliesMap] = useState<Record<string, EngagementReply[]>>({});
-  const [repliesLoaded, setRepliesLoaded] = useState<Set<string>>(new Set());
-  const [repliesOpen, setRepliesOpen] = useState<Set<string>>(new Set());
-  const [repliesLoading, setRepliesLoading] = useState<Set<string>>(new Set());
 
   const [previewHandle, setPreviewHandle] = useState<string | null>(null);
   const submitGuardRef = useRef(createSubmitGuard());
   const [reportTarget, setReportTarget] = useState<{ subjectId: string; authorId: string; authorName: string } | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    const data = await listComments(postId);
-    setComments(data);
-    // Keep the post detail counter aligned with the comments actually visible
-    // to this viewer, rather than a stale denormalized server counter.
-    onCountChange(data.length);
-    setLoading(false);
-  }, [postId, onCountChange]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const handleLoadReplies = useCallback(async (commentId: string) => {
-    setRepliesLoading((prev) => new Set(prev).add(commentId));
-    const data = await listReplies(postId, commentId);
-    setRepliesMap((prev) => ({ ...prev, [commentId]: data }));
-    setRepliesLoaded((prev) => new Set(prev).add(commentId));
-    setRepliesOpen((prev) => new Set(prev).add(commentId));
-    setRepliesLoading((prev) => { const s = new Set(prev); s.delete(commentId); return s; });
-  }, [postId]);
 
   const handleToggleReplies = useCallback((commentId: string) => {
     setRepliesOpen((prev) => {
@@ -674,19 +687,18 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
       else s.add(commentId);
       return s;
     });
-  }, []);
+  }, [setRepliesOpen]);
 
   const handleReplyDelete = useCallback(async (commentId: string, replyId: string) => {
-    setRepliesMap((prev) => ({
-      ...prev,
-      [commentId]: (prev[commentId] ?? []).filter((r) => r.id !== replyId),
-    }));
-    const result = await deleteComment(postId, replyId);
-    if (!result) {
-      handleLoadReplies(commentId);
-      Alert.alert('Error', 'Could not delete reply. Please try again.');
-    }
-  }, [postId, handleLoadReplies]);
+    const mutation = beginMutation();
+    if (!mutation) return;
+    try {
+      const result = await deleteComment(postId, replyId);
+      if (!mutation.isCurrent()) return;
+      if (result) setRepliesMap(prev => ({...prev, [commentId]: (prev[commentId] ?? []).filter(row => row.id !== replyId)}));
+      else Alert.alert('Error', 'Could not delete reply. Please try again.');
+    } finally { mutation.finish(); }
+  }, [postId, beginMutation, setRepliesMap]);
 
   const handleReplyLikeChange = useCallback(
     (commentId: string, replyId: string, likedByMe: boolean, likeCount: number) => {
@@ -697,7 +709,7 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
         ),
       }));
     },
-    [],
+    [setRepliesMap],
   );
 
   const handleReply = useCallback((commentId: string, authorName: string) => {
@@ -711,11 +723,14 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
       return;
     }
     if (!trimmed || submitGuardRef.current.isSubmitting()) return;
+    const mutation = beginMutation();
+    if (!mutation) return;
     setSubmitting(true);
     try {
       await submitGuardRef.current.trySubmit(text, async (t) => {
         if (replyingTo) {
           const result = await addReply(postId, replyingTo.id, t);
+          if (!mutation.isCurrent()) return;
           if (result && 'reply' in result) {
             setText('');
             const parentId = replyingTo.id;
@@ -738,6 +753,7 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
           }
         } else {
           const result = await addComment(postId, t);
+          if (!mutation.isCurrent()) return;
           if (result && 'comment' in result) {
             setText('');
             setComments((prev) => [...prev, result.comment]);
@@ -755,19 +771,24 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
         }
       });
     } finally {
-      setSubmitting(false);
+      if (mutation.isCurrent()) setSubmitting(false);
+      mutation.finish();
     }
-  }, [text, postId, replyingTo, onCountChange]);
+  }, [beginMutation, setComments, setRepliesMap, setRepliesLoaded, setRepliesOpen, text, postId, replyingTo, onCountChange]);
 
   const handleDelete = useCallback(
     async (commentId: string) => {
-      const result = await deleteComment(postId, commentId);
-      if (result) {
-        setComments((prev) => prev.filter((c) => c.id !== commentId));
-        onCountChange(result.commentCount);
-      }
+      const mutation = beginMutation();
+      if (!mutation) return;
+      try {
+        const result = await deleteComment(postId, commentId);
+        if (mutation.isCurrent() && result) {
+          setComments((prev) => prev.filter((c) => c.id !== commentId));
+          onCountChange(result.commentCount);
+        }
+      } finally { mutation.finish(); }
     },
-    [postId, onCountChange],
+    [postId, onCountChange, beginMutation, setComments],
   );
 
   const handleLikeChange = useCallback(
@@ -776,7 +797,7 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
         prev.map((c) => (c.id === id ? { ...c, likedByMe, likeCount } : c)),
       );
     },
-    [],
+    [setComments],
   );
 
   const handleCommentEdit = useCallback(
@@ -785,7 +806,7 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
         prev.map((c) => c.id === commentId ? { ...c, body: newBody, updatedAt: newUpdatedAt } : c),
       );
     },
-    [],
+    [setComments],
   );
 
   const handleReplyEdit = useCallback(
@@ -797,24 +818,38 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
         ),
       }));
     },
-    [],
+    [setRepliesMap],
   );
+
+  const typingCount = useCommentTyping(postId, screenFocused && !commentsDisabled, text);
+  useEffect(() => {
+    if (screenFocused) return;
+    // Reset this hidden composer once per navigation transition, never during an active refresh.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setText(''); setSubmitting(false); setReplyingTo(null); setCommentsDisabled(false);
+    setMentionSuggestions([]); setMentionVisible(false); setMentionLoading(false);
+    setPreviewHandle(null); setReportTarget(null);
+    submitGuardRef.current = createSubmitGuard();
+  }, [screenFocused]);
 
   const inputPlaceholder = replyingTo ? `Reply to ${replyingTo.authorName}…` : 'Add a comment…';
 
   return (
+    <CommentMutationCtx.Provider value={beginMutation}>
     <LikeHitSlopCtx.Provider value={12}>
       <AuthorPressCtx.Provider value={setPreviewHandle}>
         <CommentReportCtx.Provider value={{ onReport: (authorId, authorName, commentId) => setReportTarget({ subjectId: commentId, authorId, authorName }) }}>
         <Pressable onPress={() => Keyboard.dismiss()} accessible={false}>
           <View style={sec.wrap}>
+            {commentsFailed && <Pressable onPress={load} accessibilityRole="button" accessibilityLabel="Retry comments"><Text style={s.liveNotice}>Comments could not refresh. Tap to retry.</Text></Pressable>}
+            {newCount > 0 && <Pressable onPress={clearNewCount} accessibilityRole="button" accessibilityLabel="Dismiss new comment notice"><Text accessibilityLiveRegion="polite" style={s.liveNotice}>{newCount} new {newCount === 1 ? 'comment' : 'comments'}</Text></Pressable>}
             {loading ? (
               <View style={sec.center}>
                 <ActivityIndicator color={color.signal} />
               </View>
             ) : comments.length === 0 ? (
               <View style={sec.center}>
-                <Text style={sec.empty}>No comments yet. Start the conversation.</Text>
+                <Text style={sec.empty}>{commentsFailed ? 'Comments are unavailable right now.' : 'No comments yet. Start the conversation.'}</Text>
               </View>
             ) : (
               <View style={sec.list}>
@@ -827,6 +862,7 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
                     repliesLoaded={repliesLoaded.has(item.id)}
                     repliesOpen={repliesOpen.has(item.id)}
                     repliesLoading={repliesLoading.has(item.id)}
+                    repliesError={repliesErrors.has(item.id)}
                     onDelete={handleDelete}
                     onLikeChange={handleLikeChange}
                     onReply={handleReply}
@@ -865,6 +901,7 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
               onSelect={(sg) => mentionRef.current?.insertTag(sg)}
             />
 
+            {typingCount > 0 && <Text accessibilityLiveRegion="polite" style={s.liveNotice}>{typingCount === 1 ? 'Someone is typing…' : `${typingCount} people are typing…`}</Text>}
             {!commentsDisabled && (
               <View style={s.inputRow}>
                 <MentionInput
@@ -922,12 +959,18 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
         </CommentReportCtx.Provider>
       </AuthorPressCtx.Provider>
     </LikeHitSlopCtx.Provider>
+    </CommentMutationCtx.Provider>
   );
 }
 
 // ── CommentsSheet — peek-to-full animated bottom sheet ────────────────────────
 
-export function CommentsSheet({ visible, postId, onClose, onCountChange, onCommentPosted }: Props) {
+export function CommentsSheet(props: Props) {
+  const { userId } = useSession();
+  const epoch = useInputAccountEpoch();
+  return <CommentsSheetContent key={`${props.postId}:${userId}:${epoch}`} {...props} />;
+}
+function CommentsSheetContent({ visible, postId, onClose, onCountChange, onCommentPosted }: Props) {
   const { height: SCREEN_H, width: SCREEN_W } = useWindowDimensions();
   const insets = useSafeAreaInsets();
 
@@ -951,10 +994,14 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange, onComme
   // ── Mount flag — lets us animate out before unmounting the Modal ────────────
   const [mounted, setMounted] = useState(false);
   const isClosingRef = useRef(false);
+  const [closing, setClosing] = useState(false);
 
   // ── Comment data state ──────────────────────────────────────────────────────
-  const [comments, setComments] = useState<EngagementComment[]>([]);
-  const [loading, setLoading] = useState(false);
+  const screenFocused = useScreenFocused();
+  const { comments, setComments, loading, error: commentsFailed, newCount, clearNewCount, load,
+    repliesMap, setRepliesMap, repliesLoaded, setRepliesLoaded, repliesOpen, setRepliesOpen,
+    repliesLoading, repliesErrors, loadReplies: handleLoadReplies, beginMutation,
+  } = useLiveComments(postId, visible && screenFocused && !closing, onCountChange);
   const [commentsDisabled, setCommentsDisabled] = useState(false);
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -963,45 +1010,15 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange, onComme
   const [mentionSuggestions, setMentionSuggestions] = useState<AnyMentionSuggestion[]>([]);
   const [mentionLoading, setMentionLoading] = useState(false);
   const [mentionVisible, setMentionVisible] = useState(false);
-  const [repliesMap, setRepliesMap] = useState<Record<string, EngagementReply[]>>({});
-  const [repliesLoaded, setRepliesLoaded] = useState<Set<string>>(new Set());
-  const [repliesOpen, setRepliesOpen] = useState<Set<string>>(new Set());
-  const [repliesLoading, setRepliesLoading] = useState<Set<string>>(new Set());
   const [previewHandle, setPreviewHandle] = useState<string | null>(null);
   const submitGuardRef = useRef(createSubmitGuard());
-  /**
-   * Set to true whenever a comment is successfully appended optimistically.
-   * Reset to false at the start of each load() call.
-   *
-   * Guards against the stale-GET race: if the user submits while the initial
-   * load() GET is in-flight, that GET started before the POST committed so its
-   * result doesn't include the new comment. Without this guard, load()'s
-   * setComments(data) would overwrite the optimistic state and the new comment
-   * would vanish from the list even though the POST succeeded.
-   */
-  const submittedSinceLoadRef = useRef(false);
   const [reportTarget, setReportTarget] = useState<{ subjectId: string; authorId: string; authorName: string } | null>(null);
-
-  // ── Load comments ───────────────────────────────────────────────────────────
-  const load = useCallback(async () => {
-    setLoading(true);
-    submittedSinceLoadRef.current = false;
-    const data = await listComments(postId);
-    // Use a functional update so we can inspect the flag atomically.
-    // If a submit raced this load the fetched data is stale — keep the
-    // optimistic state rather than overwriting it with the old server snapshot.
-    if (!submittedSinceLoadRef.current) {
-      setComments(data);
-      // The detail-screen count should describe the visible server snapshot.
-      onCountChange(data.length);
-    }
-    setLoading(false);
-  }, [postId, onCountChange]);
 
   // ── Open: visible → mount → animate in ─────────────────────────────────────
   useEffect(() => {
     if (visible && !mounted) {
       isClosingRef.current = false;
+      setClosing(false);
       setMounted(true);
     }
   }, [visible, mounted]);
@@ -1015,12 +1032,8 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange, onComme
     backdropAlpha.value = 0;
     setCommentsDisabled(false);
     setReplyingTo(null);
-    setRepliesMap({});
-    setRepliesLoaded(new Set());
-    setRepliesOpen(new Set());
-    setRepliesLoading(new Set());
     setText('');
-    load();
+    // Live comments load when the sheet becomes visible.
     // Slide up from bottom
     sheetH.value = withSpring(PEEK_H, SHEET_SPRING);
     backdropAlpha.value = withTiming(1, { duration: 280 });
@@ -1032,6 +1045,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange, onComme
   const doClose = useCallback(() => {
     if (isClosingRef.current) return;
     isClosingRef.current = true;
+    setClosing(true);
     Keyboard.dismiss();
     kbOffset.value = withTiming(0, { duration: 160 });
     backdropAlpha.value = withTiming(0, { duration: 220 });
@@ -1097,15 +1111,6 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange, onComme
   });
 
   // ── Reply / like / submit handlers ──────────────────────────────────────────
-  const handleLoadReplies = useCallback(async (commentId: string) => {
-    setRepliesLoading((prev) => new Set(prev).add(commentId));
-    const data = await listReplies(postId, commentId);
-    setRepliesMap((prev) => ({ ...prev, [commentId]: data }));
-    setRepliesLoaded((prev) => new Set(prev).add(commentId));
-    setRepliesOpen((prev) => new Set(prev).add(commentId));
-    setRepliesLoading((prev) => { const s = new Set(prev); s.delete(commentId); return s; });
-  }, [postId]);
-
   const handleToggleReplies = useCallback((commentId: string) => {
     setRepliesOpen((prev) => {
       const s = new Set(prev);
@@ -1113,19 +1118,18 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange, onComme
       else s.add(commentId);
       return s;
     });
-  }, []);
+  }, [setRepliesOpen]);
 
   const handleReplyDelete = useCallback(async (commentId: string, replyId: string) => {
-    setRepliesMap((prev) => ({
-      ...prev,
-      [commentId]: (prev[commentId] ?? []).filter((r) => r.id !== replyId),
-    }));
-    const result = await deleteComment(postId, replyId);
-    if (!result) {
-      handleLoadReplies(commentId);
-      Alert.alert('Error', 'Could not delete reply. Please try again.');
-    }
-  }, [postId, handleLoadReplies]);
+    const mutation = beginMutation();
+    if (!mutation) return;
+    try {
+      const result = await deleteComment(postId, replyId);
+      if (!mutation.isCurrent()) return;
+      if (result) setRepliesMap(prev => ({...prev, [commentId]: (prev[commentId] ?? []).filter(row => row.id !== replyId)}));
+      else Alert.alert('Error', 'Could not delete reply. Please try again.');
+    } finally { mutation.finish(); }
+  }, [postId, beginMutation, setRepliesMap]);
 
   const handleReplyLikeChange = useCallback(
     (commentId: string, replyId: string, likedByMe: boolean, likeCount: number) => {
@@ -1136,7 +1140,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange, onComme
         ),
       }));
     },
-    [],
+    [setRepliesMap],
   );
 
   const handleReply = useCallback((commentId: string, authorName: string) => {
@@ -1150,11 +1154,14 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange, onComme
       return;
     }
     if (!trimmed || submitGuardRef.current.isSubmitting()) return;
+    const mutation = beginMutation();
+    if (!mutation) return;
     setSubmitting(true);
     try {
       await submitGuardRef.current.trySubmit(text, async (t) => {
         if (replyingTo) {
           const result = await addReply(postId, replyingTo.id, t);
+          if (!mutation.isCurrent()) return;
           if (result && 'reply' in result) {
             setText('');
             const parentId = replyingTo.id;
@@ -1178,12 +1185,12 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange, onComme
           }
         } else {
           const result = await addComment(postId, t);
+          if (!mutation.isCurrent()) return;
           if (result && 'comment' in result) {
             setText('');
             onCommentPosted?.();
             // Mark that a successful submit has raced any in-flight load so
             // load()'s setComments won't overwrite the optimistic state.
-            submittedSinceLoadRef.current = true;
             setComments((prev) => [...prev, result.comment]);
             onCountChange(result.commentCount);
           } else if (result && 'error' in result) {
@@ -1199,19 +1206,24 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange, onComme
         }
       });
     } finally {
-      setSubmitting(false);
+      if (mutation.isCurrent()) setSubmitting(false);
+      mutation.finish();
     }
-  }, [text, postId, replyingTo, onCountChange, onCommentPosted]);
+  }, [beginMutation, setComments, setRepliesMap, setRepliesLoaded, setRepliesOpen, text, postId, replyingTo, onCountChange, onCommentPosted]);
 
   const handleDelete = useCallback(
     async (commentId: string) => {
-      const result = await deleteComment(postId, commentId);
-      if (result) {
-        setComments((prev) => prev.filter((c) => c.id !== commentId));
-        onCountChange(result.commentCount);
-      }
+      const mutation = beginMutation();
+      if (!mutation) return;
+      try {
+        const result = await deleteComment(postId, commentId);
+        if (mutation.isCurrent() && result) {
+          setComments((prev) => prev.filter((c) => c.id !== commentId));
+          onCountChange(result.commentCount);
+        }
+      } finally { mutation.finish(); }
     },
-    [postId, onCountChange],
+    [postId, onCountChange, beginMutation, setComments],
   );
 
   const handleLikeChange = useCallback(
@@ -1220,7 +1232,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange, onComme
         prev.map((c) => (c.id === id ? { ...c, likedByMe, likeCount } : c)),
       );
     },
-    [],
+    [setComments],
   );
 
   const handleCommentEdit = useCallback(
@@ -1229,7 +1241,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange, onComme
         prev.map((c) => c.id === commentId ? { ...c, body: newBody, updatedAt: newUpdatedAt } : c),
       );
     },
-    [],
+    [setComments],
   );
 
   const handleReplyEdit = useCallback(
@@ -1241,8 +1253,19 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange, onComme
         ),
       }));
     },
-    [],
+    [setRepliesMap],
   );
+
+  const typingCount = useCommentTyping(postId, visible && screenFocused && !closing && !commentsDisabled, text);
+  useEffect(() => {
+    if (visible && screenFocused && !closing) return;
+    // Reset this hidden composer once per navigation transition, never during an active refresh.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setText(''); setSubmitting(false); setReplyingTo(null); setCommentsDisabled(false);
+    setMentionSuggestions([]); setMentionVisible(false); setMentionLoading(false);
+    setPreviewHandle(null); setReportTarget(null);
+    submitGuardRef.current = createSubmitGuard();
+  }, [visible, screenFocused, closing]);
 
   const inputPlaceholder = replyingTo ? `Reply to ${replyingTo.authorName}…` : 'Add a comment…';
 
@@ -1267,6 +1290,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange, onComme
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
+    <CommentMutationCtx.Provider value={beginMutation}>
     <CommentReportCtx.Provider value={{ onReport: (authorId, authorName, commentId) => setReportTarget({ subjectId: commentId, authorId, authorName }) }}>
     <AuthorPressCtx.Provider value={setPreviewHandle}>
       <Modal
@@ -1325,6 +1349,9 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange, onComme
             </Pressable>
           </View>
 
+          {commentsFailed && <Pressable onPress={load} accessibilityRole="button" accessibilityLabel="Retry comments"><Text style={s.liveNotice}>Comments could not refresh. Tap to retry.</Text></Pressable>}
+            {newCount > 0 && <Pressable onPress={clearNewCount} accessibilityRole="button" accessibilityLabel="Dismiss new comment notice"><Text accessibilityLiveRegion="polite" style={s.liveNotice}>{newCount} new {newCount === 1 ? 'comment' : 'comments'}</Text></Pressable>}
+
           {/* Comment list */}
           {loading ? (
             <View style={s.center}>
@@ -1344,6 +1371,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange, onComme
                   repliesLoaded={repliesLoaded.has(item.id)}
                   repliesOpen={repliesOpen.has(item.id)}
                   repliesLoading={repliesLoading.has(item.id)}
+                    repliesError={repliesErrors.has(item.id)}
                   onDelete={handleDelete}
                   onLikeChange={handleLikeChange}
                   onReply={handleReply}
@@ -1357,7 +1385,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange, onComme
               )}
               ListEmptyComponent={
                 <View style={s.center}>
-                  <Text style={s.empty}>No comments yet. Start the conversation.</Text>
+                  <Text style={s.empty}>{commentsFailed ? 'Comments are unavailable right now.' : 'No comments yet. Start the conversation.'}</Text>
                 </View>
               }
               contentContainerStyle={s.listContent}
@@ -1396,6 +1424,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange, onComme
           />
 
           {/* Input row — safe-area-aware bottom padding */}
+          {typingCount > 0 && <Text accessibilityLiveRegion="polite" style={s.liveNotice}>{typingCount === 1 ? 'Someone is typing…' : `${typingCount} people are typing…`}</Text>}
           {!commentsDisabled && (
             <View style={[s.inputRow, { paddingBottom: insets.bottom > 0 ? insets.bottom : 8 }]}>
               <MentionInput
@@ -1451,6 +1480,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange, onComme
       )}
     </AuthorPressCtx.Provider>
     </CommentReportCtx.Provider>
+    </CommentMutationCtx.Provider>
   );
 }
 
@@ -1550,6 +1580,7 @@ const s = StyleSheet.create({
   likeCount: { fontSize: 10, fontWeight: '700', color: color.mute },
   likeCountActive: { color: color.signalStrong },
   deleteBtn: { paddingLeft: space.xs },
+  liveNotice: { color: color.signal, fontSize: 13, paddingHorizontal: 16, paddingVertical: 8 },
   editedLabel: { fontSize: 10, color: color.mute, fontStyle: 'italic' },
   commentInlineButtons: { flexDirection: 'row', gap: space.md, alignItems: 'center', marginTop: 3 },
   inlineEditWrap: { marginTop: 4, gap: 6 },

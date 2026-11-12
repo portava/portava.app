@@ -46,3 +46,14 @@ const s = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 3, alignSelf: 'flex-end', marginTop: 2, paddingRight: 2 },
   text: { fontSize: 10, fontFamily: 'Courier' },
 });
+
+/** Shared cards and media have the same confirmed metadata as text bubbles. */
+export function MessageMetadata({ createdAt, editedAt, status, isGroup }: {
+  createdAt: string; editedAt?: string | null; status?: OwnMessageStatus | null; isGroup: boolean;
+}) {
+  const palette = useTelegraphPalette();
+  return <View testID="chat-message-metadata" style={{ alignSelf: 'flex-end', paddingTop: 4 }}>
+    <Text style={[s.text, { color: palette.mute }]}>{new Date(createdAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}{editedAt ? ' · edited' : ''}</Text>
+    {status ? <OwnMessageStatusRow status={status} isGroup={isGroup} /> : null}
+  </View>;
+}

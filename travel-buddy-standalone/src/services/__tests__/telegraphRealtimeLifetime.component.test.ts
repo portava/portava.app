@@ -50,8 +50,8 @@ function deferred<Value>() {
   const promise = new Promise<Value>((done) => { resolve = done; });
   return { promise, resolve };
 }
-function session(token = 'current-token') {
-  return { data: { session: { access_token: token, expires_at: 4_000_000_000 } } };
+function session(token = 'current-token', owner = 'viewer-one') {
+  return { data: { session: { access_token: token, expires_at: 4_000_000_000, user: { id: owner } } } };
 }
 async function flush() {
   for (let step = 0; step < 8; step += 1) await Promise.resolve();
@@ -89,6 +89,7 @@ beforeEach(() => {
   tokens = require('../apiToken.ts');
   tokens._setTestSupabase({ auth });
   realtime = require('../telegraphRealtimeService.ts').telegraphRealtime;
+  realtime.setViewer('viewer-one');
   cursors = require('../../features/telegraph/connection/sequenceCursorStore.ts');
 });
 
@@ -458,5 +459,28 @@ describe('Telegraph realtime attempt lifetime with the real token helper', () =>
     instances[instances.length - 1].state(3, ': heartbeat\n\ndata: not-json\n\ndata: {"type":3}\n\n' + frame('message.created'));
     expect(listener).toHaveBeenCalledTimes(1);
     expect(realtime.getStatus()).toBe('open');
+  });
+});
+
+
+describe('Telegraph account ownership', () => {
+  it('retires the old stream before account cleanup and drops all queued old frames', async () => {
+    const { listener } = subscribe(); await flush();
+    const old = instances[0]; const callback = old.onreadystatechange;
+    realtime.setViewer(null);
+    expect(old.aborts).toBe(1); expect(realtime.getStatus()).toBe('idle');
+    old.state(3, frame('typing.started') + frame('read.updated'), callback);
+    expect(listener).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(60_000); expect(instances).toHaveLength(1);
+    auth.getSession.mockResolvedValue(session('second-token', 'viewer-two'));
+    realtime.setViewer('viewer-two'); await flush();
+    expect(instances).toHaveLength(2);
+    expect(instances[1].headers.Authorization).toBe('Bearer second-token');
+    instances[1].state(3, frame('message.created')); expect(listener).toHaveBeenCalledTimes(1);
+  });
+  it('never opens an old viewer request with another account token', async () => {
+    auth.getSession.mockResolvedValue(session('second-token', 'viewer-two'));
+    subscribe(); await flush(); expect(instances).toHaveLength(0);
+    realtime.setViewer(null);
   });
 });

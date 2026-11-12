@@ -5,6 +5,11 @@ import { CommentsSection } from '../CommentsSheet.tsx';
 const mockListComments = jest.fn();
 const mockEditComment = jest.fn();
 const mockTranslate = jest.fn();
+const mockOwner = { ownerId: 'owner', sessionId: 'session', isCurrent: () => true, invalidate: () => {} };
+jest.mock('../../services/messagingOwnerRequest.ts', () => ({ ...jest.requireActual('../../services/messagingOwnerRequest.ts'), captureMessagingOwnerRequest: () => mockOwner }));
+jest.mock('../../platform/input-assistance/hooks/useInputAccountEpoch.ts', () => ({ ...jest.requireActual('../../platform/input-assistance/hooks/useInputAccountEpoch.ts'), useInputAccountEpoch: () => 0 }));
+jest.mock('../../hooks/useCommentTyping.ts', () => ({ ...jest.requireActual('../../hooks/useCommentTyping.ts'), useCommentTyping: () => 0 }));
+jest.mock('../../services/commentActivity.ts', () => ({ ...jest.requireActual('../../services/commentActivity.ts'), readLiveComments: async () => ({ ok: true, comments: await mockListComments() }), readLiveReplies: async () => ({ ok: true, replies: [] }) }));
 jest.mock('../../services/postEngagement', () => ({
   ...jest.requireActual('../../services/postEngagement'),
   listComments: (...args: unknown[]) => mockListComments(...args),
@@ -37,7 +42,12 @@ it('invalidates an edited comment translation, shows the new original while pend
     createdAt: '2024-01-01T10:00:00Z', updatedAt: '2024-01-01T10:00:00Z',
     canDelete: true, likeCount: 0, likedByMe: false,
   }]);
-  mockEditComment.mockResolvedValue({ id: 'comment', body: 'Texto nuevo', updatedAt: '2024-01-01T11:00:00Z' });
+  mockEditComment.mockImplementation(async () => {
+    const result = { id: 'comment', body: 'Texto nuevo', updatedAt: '2024-01-01T11:00:00Z' };
+    const previous = await mockListComments();
+    mockListComments.mockResolvedValue(previous.map((row: Record<string, unknown>) => ({ ...row, ...result })));
+    return result;
+  });
   const response = (body: string) => ({ ok: true, status: 'translated', translatedFields: { body }, translationLabel: 'Translated from Spanish' });
   let finish!: (value: ReturnType<typeof response>) => void;
   mockTranslate.mockResolvedValueOnce(response('Original text')).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));

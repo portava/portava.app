@@ -12,7 +12,7 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react-native';
 
-import { OwnMessageStatusRow } from '../lifecycle/OwnMessageStatusRow.tsx';
+import { OwnMessageStatusRow, MessageMetadata } from '../lifecycle/OwnMessageStatusRow.tsx';
 import { color } from '../../../theme/tokens.ts';
 import { TELEGRAPH_PALETTES } from '../theme/telegraphTheme.ts';
 
@@ -54,4 +54,11 @@ describe('OwnMessageStatusRow', () => {
     await render(<OwnMessageStatusRow status={{ kind: 'failed' }} isGroup={false} />);
     expect(screen.toJSON()).toBeNull();
   });
+});
+
+it('shared-media metadata shows an accepted edit and authoritative seen without inventing a receipt', async () => {
+  const view = await render(<MessageMetadata createdAt="2026-11-12T12:00:00Z" editedAt="2026-11-12T12:01:00Z" status={{kind:'seen',seenBy:2,recipientCount:3}} isGroup />);
+  expect(view.getByText(/edited/)).toBeTruthy(); expect(view.getByText('Seen by 2')).toBeTruthy();
+  await view.rerender(<MessageMetadata createdAt="2026-11-12T12:00:00Z" status={null} isGroup={false} />);
+  expect(view.queryByText(/Seen|Sent|Delivered|edited/)).toBeNull();
 });

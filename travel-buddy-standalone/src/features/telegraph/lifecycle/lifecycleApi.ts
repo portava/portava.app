@@ -29,9 +29,8 @@ export interface MessageReceipt {
  * "Sent"; and a read that failed left it empty, so every message said "Sent".
  * Both screens now go through `useThreadReadState`, which reads receipts from
  * the server, re-reads them when a read lands, and keeps a failed read
- * distinct. `deriveReceiptState` still decides one thing on the client: whether
- * a direct chat's `read.updated` event already covers a message, so "Seen" can
- * show before the refetch confirms it.
+ * distinct. A `read.updated` event asks for a fresh authoritative receipt;
+ * timestamps alone cannot establish membership-window or block eligibility.
  */
 
 /**
