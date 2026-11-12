@@ -77,7 +77,7 @@ const manifests = {
     file: "src/test/postDestinations.native.test.ts",
     suite: "Post reference destinations: real PostgreSQL 17",
     binaryVariable: "PORTAVA_TEST_POSTGRES_BIN",
-    expectedTests: 13,
+    expectedTests: 16,
   },
   "trip-nearby": {
     file: "src/test/tripNearby.native.test.ts",
