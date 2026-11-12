@@ -438,17 +438,18 @@ describe("generateAiSummary — an unreadable cache is not a cache miss", () => 
   };
 
   /** Counts provider calls and captures console.warn, then restores both. */
-  async function withProbe<T>(fn: () => Promise<T>): Promise<{ result: T; calls: number; warns: string[] }> {
+  async function withProbe<T>(fn: () => Promise<T>): Promise<{ result: T; calls: number; requests: Record<string, unknown>[]; warns: string[] }> {
     let calls = 0;
+    const requests: Record<string, unknown>[] = [];
     const warns: string[] = [];
     const realWarn = console.warn;
     console.warn = (...a: unknown[]) => { warns.push(a.map(String).join(" ")); };
     _setTestOpenAI({
-      chat: { completions: { create: async () => { calls++; return { choices: [{ message: { content: "fresh" } }] }; } } },
+      chat: { completions: { create: async (options: Record<string, unknown>) => { requests.push(options); calls++; return { choices: [{ message: { content: "fresh" } }] }; } } },
     } as any);
     try {
       const result = await fn();
-      return { result, calls, warns };
+      return { result, calls, requests, warns };
     } finally {
       _setTestOpenAI(null);
       console.warn = realWarn;
@@ -474,6 +475,29 @@ describe("generateAiSummary — an unreadable cache is not a cache miss", () => 
     assert.equal(result?.text, "fresh");
     assert.equal(calls, 1);
     assert.equal((inserted["place_ai_summaries"] ?? []).length, 1);
+  });
+
+  it("sends a supported GPT-5.4 Mini request and caches its grounded response", async () => {
+    const inserted: Record<string, Record<string, unknown>[]> = {};
+    const client = makeFailClosedClient({ rows: { place_ai_summaries: [] }, inserted });
+    const { result, requests } = await withProbe(() =>
+      generateAiSummary(PLACE, "Cafe Cong", posts, { category: "Coffee shop" }, client),
+    );
+    assert.equal(requests.length, 1);
+    const sent = requests[0]!;
+    assert.equal(sent.model, "gpt-5.4-mini");
+    // This model supports none/low/medium/high/xhigh; minimal is rejected.
+    assert.equal(sent.reasoning_effort, "none");
+    assert.equal(sent.max_completion_tokens, 400);
+    assert.equal("max_tokens" in sent, false);
+    assert.equal("temperature" in sent, false);
+    const prompt = JSON.stringify(sent.messages);
+    for (const input of ["Cafe Cong", "Coffee shop", ...posts.map((post: { caption: string }) => post.caption)]) {
+      assert.ok(prompt.includes(input), `the summary must be grounded on ${input}`);
+    }
+    assert.equal(result?.text, "fresh");
+    assert.match(result?.disclaimer ?? "", /AI-generated/);
+    assert.deepEqual(inserted.place_ai_summaries?.[0]?.post_ids_used, posts.map((post: { id: string }) => post.id));
   });
 
   it("an unreadable place_ai_summaries does not spend a provider call or rewrite the cache", async () => {

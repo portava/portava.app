@@ -114,7 +114,7 @@ export async function generateAiSummary(
       .maybeSingle();
 
     // This cache read is the only thing standing between a place-detail request
-    // and a paid gpt-4o-mini call. Unchecked, an unreadable place_ai_summaries
+    // and a paid gpt-5.4-mini call. Unchecked, an unreadable place_ai_summaries
     // reads as a cache MISS on every request — so for as long as the table is
     // unavailable the TTL stops existing, every viewer of every busy place
     // triggers a fresh generation, and each one upserts over a summary that was
@@ -145,10 +145,10 @@ export async function generateAiSummary(
     const prompt = buildPrompt(placeName, topPosts, officialInfo);
 
     const response = await getOpenAI().chat.completions.create({
-      model:       "gpt-4o-mini",
+      model:       "gpt-5.4-mini",
       messages:    [{ role: "user", content: prompt }],
-      max_tokens:  200,
-      temperature: 0.3,
+      max_completion_tokens: 400,
+      reasoning_effort:      "none",
     });
 
     const text = response.choices[0]?.message?.content?.trim();
