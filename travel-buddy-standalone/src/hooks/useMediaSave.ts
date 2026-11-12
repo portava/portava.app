@@ -6,8 +6,10 @@
  * - `seed` pre-populates state from feed items (skips items already known).
  * - `toggleSave(id)` fires the API and handles rollback.
  */
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { saveMedia, unsaveMedia } from '../services/mediaInteractions.ts';
+import { captureMessagingOwnerRequest } from '../services/messagingOwnerRequest.ts';
+import { usePrivateSurfaceKey } from './usePrivateSurfaceKey.ts';
 
 export interface MediaSaveState {
   /** Pre-seed from feed items — skips items already tracked. */
@@ -17,53 +19,72 @@ export interface MediaSaveState {
   isSaved: (id: string) => boolean;
   /** Direct access for spreading into WatchFeedList props. */
   savedSet: Record<string, boolean>;
+  /** Apply an authoritative result from the collection picker. */
+  setSaved: (id: string, saved: boolean) => void;
 }
 
 export function useMediaSave(): MediaSaveState {
-  const [savedSet, setSavedSet] = useState<Record<string, boolean>>({});
-  const inFlightRef = useRef(new Set<string>());
+  const scope = usePrivateSurfaceKey();
+  const lifetime = useMemo(() => ({ scope, owner: captureMessagingOwnerRequest(), active: true,
+    saved: {} as Record<string, boolean>, pending: new Set<string>(), revisions: new Map<string, number>() }), [scope]);
+  const latest = useRef(lifetime);
+  latest.current = lifetime;
+  const [snapshot, setSnapshot] = useState({ lifetime, saved: lifetime.saved });
+  const current = useCallback(() => lifetime === latest.current && lifetime.active && !!lifetime.owner?.isCurrent(), [lifetime]);
+  useEffect(() => { lifetime.active = true; return () => { lifetime.active = false; }; }, [lifetime]);
+  const publish = useCallback(() => {
+    if (current()) setSnapshot({ lifetime, saved: { ...lifetime.saved } });
+  }, [current, lifetime]);
+  const setSaved = useCallback((id: string, saved: boolean) => {
+    if (!current()) return;
+    lifetime.saved[id] = saved;
+    lifetime.revisions.set(id, (lifetime.revisions.get(id) ?? 0) + 1);
+    publish();
+  }, [current, lifetime, publish]);
 
   const seed = useCallback(
     (items: ReadonlyArray<{ id: string; savedByMe: boolean | null }>) => {
-      setSavedSet((prev) => {
-        const next = { ...prev };
-        let changed = false;
-        for (const item of items) {
-          if (!(item.id in next) && item.savedByMe !== null) {
-            next[item.id] = item.savedByMe;
-            changed = true;
-          }
+      if (!current()) return;
+      let changed = false;
+      for (const item of items) {
+        if (!(item.id in lifetime.saved) && typeof item.savedByMe === 'boolean') {
+          lifetime.saved[item.id] = item.savedByMe;
+          changed = true;
         }
-        return changed ? next : prev;
-      });
+      }
+      if (changed) publish();
     },
-    [],
+    [current, lifetime, publish],
   );
 
   const toggleSave = useCallback(async (id: string): Promise<void> => {
-    if (inFlightRef.current.has(id)) return;
-    inFlightRef.current.add(id);
+    if (!current() || lifetime.pending.has(id)) return;
+    lifetime.pending.add(id);
 
-    const wasSaved = savedSet[id] ?? false;
+    const wasSaved = lifetime.saved[id] ?? false;
+    const revision = lifetime.revisions.get(id) ?? 0;
 
     // Optimistic update
-    setSavedSet((prev) => ({ ...prev, [id]: !wasSaved }));
+    lifetime.saved[id] = !wasSaved;
+    publish();
 
     try {
       const result = wasSaved ? await unsaveMedia(id) : await saveMedia(id);
-      if (!result.ok) {
+      if (current() && !result.ok && revision === (lifetime.revisions.get(id) ?? 0)) {
         // Rollback
-        setSavedSet((prev) => ({ ...prev, [id]: wasSaved }));
+        lifetime.saved[id] = wasSaved;
+        publish();
       }
     } catch {
       // Rollback on unexpected error
-      setSavedSet((prev) => ({ ...prev, [id]: wasSaved }));
+      if (current() && revision === (lifetime.revisions.get(id) ?? 0)) { lifetime.saved[id] = wasSaved; publish(); }
     } finally {
-      inFlightRef.current.delete(id);
+      lifetime.pending.delete(id);
     }
-  }, [savedSet]);
+  }, [current, lifetime, publish]);
 
+  const savedSet = snapshot.lifetime === lifetime && current() ? snapshot.saved : {};
   const isSaved = useCallback((id: string) => savedSet[id] ?? false, [savedSet]);
 
-  return { seed, toggleSave, isSaved, savedSet };
+  return { seed, toggleSave, isSaved, savedSet, setSaved };
 }

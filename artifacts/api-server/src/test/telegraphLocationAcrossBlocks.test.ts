@@ -17,6 +17,7 @@
  *
  * Run: node --import tsx/esm --test src/test/telegraphLocationAcrossBlocks.test.ts
  */
+import { attachTelegraphMemoryDraftFixture } from './helpers/telegraphMemoryDraftFixture.js';
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
@@ -114,13 +115,16 @@ before(async () => {
 });
 after(async () => { _setTestClient(null as any, false); for (const h of harnesses.values()) await h.close(); });
 
-async function view(s: (typeof SURFACES)[number], viewer: string, blocks: Block[], opts: FakeDbOptions) {
-  const client = makeFakeClient(world(blocks), opts);
+async function view(s: (typeof SURFACES)[number], viewer: string, blocks: Block[], opts: FakeDbOptions, kernelEnabled = true) {
+  const data = world(blocks);
+  data.feature_flags = [{ flag: 'memory_kernel_enabled', enabled: kernelEnabled }];
+  const client = makeFakeClient(data, opts);
+  attachTelegraphMemoryDraftFixture(client, client._store);
   _setTestClient(client as any, true);
   const r = await call(harnesses.get(s.router())!.base, s.method, s.path, viewer, s.body);
   // The memory draft's TITLE is written to the store, not only answered: read both.
   const stored = JSON.stringify((client as any)._store.memories ?? []);
-  return { status: r.status, text: JSON.stringify(r.body) + stored };
+  return { status: r.status, text: JSON.stringify(r.body) + stored, memories: client._store.memories ?? [] };
 }
 const leaks = (text: string) => SECRETS.filter((x) => text.includes(x));
 
@@ -135,12 +139,25 @@ for (const s of SURFACES) {
     for (const [why, blocks, opts] of VIEWS) {
       it(`${why}: BOB sees no label, approximate label, place id or coordinates`, async () => {
         const r = await view(s, BOB, blocks, opts);
-        assert.ok(r.status < 300 || r.status === 404, `${r.status} ${r.text.slice(0, 300)}`);
+        if (s.name === 'memory draft') {
+          assert.equal(r.status, 503, 'an unavailable source refuses the transactional draft');
+          assert.deepEqual(r.memories, [], 'a refused source leaves no durable private snapshot');
+        } else assert.ok(r.status < 300 || r.status === 404, `${r.status} ${r.text.slice(0, 300)}`);
         assert.deepEqual(leaks(r.text), [], `${s.name} leaked to BOB (${why}): ${r.text.slice(0, 600)}`);
       });
     }
   });
 }
+
+describe('Memory draft on a deployment without the source writer', () => {
+  it('refuses retryably and never falls back to an unlinked Memory', async () => {
+    const surface = SURFACES.find(s => s.name === 'memory draft')!;
+    const result = await view(surface, CARL, [], {}, false);
+    assert.equal(result.status, 503);
+    assert.deepEqual(result.memories, []);
+    assert.deepEqual(leaks(result.text), []);
+  });
+});
 
 describe("PR-TREL-5 — the sender and unblocked members keep full content on the thread page", () => {
   for (const viewer of [ALICE, CARL]) {

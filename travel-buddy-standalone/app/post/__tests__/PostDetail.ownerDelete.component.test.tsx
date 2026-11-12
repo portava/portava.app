@@ -25,6 +25,8 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 // Mock expo-router so useLocalSearchParams returns a predictable id.
+// NOTE: deliver the native iOS dismissal event before starting an action from the overflow sheet.
+jest.mock('react-native', () => require('../../../src/__fixtures__/modalDismissal.ts').withModalDismissal(jest.requireActual('react-native')));
 jest.mock('expo-router', () => ({
   ...jest.requireActual('expo-router'),
   useLocalSearchParams: () => ({ id: 'post-abc' }),

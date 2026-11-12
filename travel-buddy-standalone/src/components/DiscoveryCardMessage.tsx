@@ -1,3 +1,4 @@
+import { PlaceLiveInformation } from '../features/telegraph/sharing/PlaceLiveInformation.tsx';
 /**
  * DiscoveryCardMessage — renders a discovery_card system message as a rich inline card.
  *
@@ -294,6 +295,7 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
         ) : null}
 
         {/* Caption from sender */}
+        {projection?.objectType === 'PLACE' && <PlaceLiveInformation value={projection.liveIntelligence} textColor={mine ? palette.sentText : undefined} />}
         {payload.caption ? (
           <Text style={[card.caption, mine && card.captionMine]} numberOfLines={2}>
             "{payload.caption}"

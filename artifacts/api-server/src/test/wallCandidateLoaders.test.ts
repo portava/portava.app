@@ -32,11 +32,12 @@ function viewerCtx(over: Partial<ProjectViewerContext> = {}): ProjectViewerConte
 /** Fake supabase whose only table is `blocks` — for driving projectObjects. */
 function blocksClient(rows: Array<{ blocker_id: string; blocked_id: string }> = []) {
   return {
-    from() {
+    from(table: string) {
+      const source = table === "places" ? [{ id: "place-1", moderation_status: "visible", merged_into_place_id: null }] : rows;
       const preds: Array<(r: any) => boolean> = []; const b: any = { // census-telegraph T220: eq/in narrow, as PostgREST does
-        select: () => b,
+        select: () => b, limit: () => b,
         or: () => b, eq: (c: string, v: unknown) => { preds.push((r) => r[c] === v); return b; }, in: (c: string, vs: unknown[]) => { preds.push((r) => vs.includes(r[c])); return b; },
-        then: (onF: any, onR: any) => Promise.resolve({ data: rows.filter((r) => preds.every((p) => p(r))), error: null }).then(onF, onR),
+        then: (onF: any, onR: any) => { const matched = source.filter((r) => preds.every((p) => p(r))); return Promise.resolve({ data: matched, error: null, count: matched.length }).then(onF, onR); },
       };
       return b;
     },
@@ -64,7 +65,7 @@ function tableClient(tables: Record<string, any[] | ((ctx: { eqs: any; ins: any 
       in: (c: string, v: any) => { ins[c] = v; return b; },
       or: () => b, order: () => b, limit: () => b, gte: () => b, lte: () => b, gt: () => b,
       maybeSingle: () => Promise.resolve({ data: rowsFor(table, ctx)[0] ?? null, error: null }),
-      then: (onF: any, onR: any) => Promise.resolve({ data: rowsFor(table, ctx), error: null }).then(onF, onR),
+      then: (onF: any, onR: any) => { const rows = rowsFor(table, ctx); return Promise.resolve({ data: rows, error: null, count: rows.length }).then(onF, onR); },
     };
     return b;
   }
@@ -121,6 +122,20 @@ describe("loadPostcardCandidates (spec §10)", () => {
 
   const client = (over: Record<string, any> = {}) =>
     tableClient({ posts: POSTS, passport_postcards: PASSPORT_POSTCARDS, post_media: POST_MEDIA, profiles: PROFILES, places: PLACES, ...over });
+
+  for (const profiles of [[], [{ ...PROFILES[0], account_status: null }]]) {
+    it('omits postcards with missing author eligibility and reports degraded truth', async () => {
+      const loaded = await loadPostcardCandidates(client({ profiles }), 'for_you', FOLLOWED);
+      assert.deepEqual(loaded.candidates, []);
+      assert.equal(loaded.failed, true);
+    });
+  }
+  it('marks a rejected author-profile batch as degraded, never active', async () => {
+    const sc = client(); const original = sc.from;
+    sc.from = table => table === 'profiles' ? throwingClient().from() : original(table);
+    const loaded = await loadPostcardCandidates(sc, 'for_you', FOLLOWED);
+    assert.deepEqual(loaded.candidates, []); assert.equal(loaded.failed, true);
+  });
 
   it("emits a post as a Postcard ONLY when a live passport_postcards row points at it (D2 ruling)", async () => {
     const loaded = await loadPostcardCandidates(client(), "for_you", FOLLOWED);
@@ -347,6 +362,7 @@ describe("loadVideoMediaCandidates (spec §11)", () => {
       blocks: [],
       user_mutes: [],
       posts: MEDIA_POSTS,
+      places: [{ id: "place-1", moderation_status: "visible", merged_into_place_id: null }],
     });
   }
 
@@ -530,7 +546,7 @@ describe("loadSharedMomentCandidates (spec §12)", () => {
 // ── 4. Merge / dedupe + mixed feed ────────────────────────────────────────────
 
 function cand(over: Partial<WallCandidate>): WallCandidate {
-  return { objectType: "social_post", canonicalObjectId: "x", authorId: "author-1", visibility: "public", publishedAt: "2026-09-01T00:00:00Z", ...over };
+  return { objectType: "social_post", canonicalObjectId: "x", authorId: "author-1", authorAccountStatus: "active", visibility: "public", publishedAt: "2026-09-01T00:00:00Z", ...over };
 }
 function loaded(candidates: WallCandidate[], signals: Array<[string, any]> = [], places: Array<[string, any]> = []): LoadedWallCandidates {
   return { candidates, signals: new Map(signals), placeByObject: new Map(places) };

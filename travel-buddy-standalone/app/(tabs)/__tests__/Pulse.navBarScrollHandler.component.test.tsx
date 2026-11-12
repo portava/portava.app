@@ -271,13 +271,13 @@ describe('Pulse screen — nav-bar clearance architecture (standalone)', () => {
     expect(capturedListProps!.onScroll).toBeUndefined();
   });
 
-  it('FlatList contentContainerStyle.paddingBottom clears the tab pill via useBottomInset (96 + inset)', async () => {
+  it('FlatList contentContainerStyle.paddingBottom clears the tab pill via useBottomInset (96 + scaled label + inset)', async () => {
     await render(<Pulse />);
     await act(async () => {});
 
     expect(capturedListProps).toBeDefined();
     const flat = flattenStyle(capturedListProps!.contentContainerStyle);
-    // useBottomInset() === NAV_BAR_FILLER_HEIGHT (96) + insets.bottom (34) = 130.
-    expect(flat.paddingBottom).toBe(130);
+    // Native Jest fontScale=2 adds 13pt label clearance: 96 + 13 + 34 = 143.
+    expect(flat.paddingBottom).toBe(143);
   });
 });

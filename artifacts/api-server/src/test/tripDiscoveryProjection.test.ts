@@ -126,14 +126,25 @@ describe("TripDiscoveryProjection — the §19.1 envelope and the narrow copy", 
 
 describe("TripDiscoveryProjection — the discoverability rule, once", () => {
   it("public AND show_in_discovery AND status not in draft/cancelled/archived", () => {
-    assert.deepEqual([...TRIP_DISCOVERY_EXCLUDED_STATUSES], ["draft", "cancelled", "archived"]);
-    assert.equal(isTripDiscoverable(row()), true);
-    assert.equal(isTripDiscoverable(row({ visibility: "buddies" })), false);
-    assert.equal(isTripDiscoverable(row({ visibility: "private" })), false);
-    assert.equal(isTripDiscoverable(row({ show_in_discovery: false })), false);
-    assert.equal(isTripDiscoverable(row({ show_in_discovery: null })), false, "an absent flag is not an opt-in");
-    for (const s of ["draft", "cancelled", "archived"]) assert.equal(isTripDiscoverable(row({ status: s })), false, s);
-    for (const s of ["planning", "upcoming", "active", "completed"]) assert.equal(isTripDiscoverable(row({ status: s })), true, s);
+    assert.deepEqual([...TRIP_DISCOVERY_EXCLUDED_STATUSES], ["draft", "completed", "cancelled", "archived"]);
+    assert.equal(isTripDiscoverable(row(), new Date(AT)), true);
+    assert.equal(isTripDiscoverable(row({ visibility: "buddies" }), new Date(AT)), false);
+    assert.equal(isTripDiscoverable(row({ visibility: "private" }), new Date(AT)), false);
+    assert.equal(isTripDiscoverable(row({ show_in_discovery: false }), new Date(AT)), false);
+    assert.equal(isTripDiscoverable(row({ show_in_discovery: null }), new Date(AT)), false, "an absent flag is not an opt-in");
+    for (const s of ["draft", "completed", "cancelled", "archived"]) assert.equal(isTripDiscoverable(row({ status: s }), new Date(AT)), false, s);
+    for (const s of ["planning", "upcoming", "active"]) assert.equal(isTripDiscoverable(row({ status: s }), new Date(AT)), true, s);
+  });
+
+  it("a hidden end date still excludes both the shared trip and its plans when the local day ends", () => {
+    const hidden = row({ status: "active", end_date: "2026-11-01", timezone: "America/Los_Angeles", show_exact_dates: false });
+    const before = projectTripForDiscovery(hidden, "2026-11-02T07:59:59.999Z");
+    const after = projectTripForDiscovery(hidden, "2026-11-02T08:00:00.000Z");
+    assert.equal(before.endDate, null);
+    assert.equal(before.discoverable, true);
+    assert.equal(after.endDate, null);
+    assert.equal(after.discoverable, false);
+    assert.equal(tripDiscoveryAdmits(after, OWNER), false);
   });
 
   it("tripDiscoveryAdmits: a discoverable trip for anyone, the owner's own trip otherwise, never an excluded lifecycle state — Discovery's searchPlans rule, owned here", () => {
@@ -152,7 +163,7 @@ describe("TripDiscoveryProjection — the discoverability rule, once", () => {
 describe("TripDiscoveryProjection — the readers issue the rule in SQL and fail closed", () => {
   it("searchTripDiscoveryProjections: the SQL predicate is the rule (public, show_in_discovery, status denylist of real labels), same ilike escaping as Discovery, ordered by start_date, paged", async () => {
     const sc = fakeClient({ data: [row(), row({ id: T2, title: "Lisbon again", version: 0 })], error: null });
-    const r = await searchTripDiscoveryProjections(sc, { text: "lis%bon,(x)", startsAfter: "2026-09-01T00:00:00Z", startsBefore: "2026-12-01", offset: 20, limit: 10 });
+    const r = await searchTripDiscoveryProjections(sc, { text: "lis%bon,(x)", startsAfter: "2026-09-01T00:00:00Z", startsBefore: "2026-12-01", offset: 0, limit: 10 }, new Date(AT));
     assert.equal(r.ok, true);
     if (!r.ok) return;
     assert.equal(r.projections.length, 2);
@@ -166,18 +177,18 @@ describe("TripDiscoveryProjection — the readers issue the rule in SQL and fail
     const calls = Object.fromEntries(q.calls.map(([m, a]) => [m, a]));
     const pat = tripDiscoveryIlikePattern("lis%bon,(x)");
     assert.equal(pat, "%lis\\%bonx%", "`,()` stripped, LIKE wildcards escaped — the rule Discovery applies today");
-    assert.equal(calls.or[0], `title.ilike.${pat},destination_city.ilike.${pat},destination_country.ilike.${pat}`);
+    assert.equal(q.calls.find(([m]) => m === "or")![1][0], `title.ilike.${pat},destination_city.ilike.${pat},destination_country.ilike.${pat}`);
     assert.deepEqual(q.calls.filter(([m]) => m === "eq").map(([, a]) => a), [["visibility", "public"], ["show_in_discovery", true]]);
-    assert.deepEqual(calls.not, ["status", "in", '("draft","cancelled","archived")'], "real trip_status labels only — a non-label is a 22P02, not an empty match");
-    assert.deepEqual(calls.order, ["start_date", { ascending: true }]);
+    assert.deepEqual(calls.not, ["status", "in", '("draft","completed","cancelled","archived")'], "real trip_status labels only — a non-label is a 22P02, not an empty match");
+    assert.deepEqual(q.calls.filter(([m]) => m === "order").map(([,a])=>a), [["start_date", { ascending:true }],["id",{ ascending:true }]]);
     assert.deepEqual(calls.gte, ["start_date", "2026-09-01"]);
     assert.deepEqual(calls.lt, ["start_date", "2026-12-01"]);
-    assert.deepEqual(calls.range, [20, 29]);
+    assert.deepEqual(calls.range, [0, 9]);
   });
 
   it("readTripDiscoveryProjections: by id, de-duplicated, NOT filtered by discoverability (the consumer applies tripDiscoveryAdmits per viewer); empty input never touches the database", async () => {
     const sc = fakeClient({ data: [row({ id: T1 }), row({ id: T3, visibility: "private", show_in_discovery: false, status: "draft" })], error: null });
-    const r = await readTripDiscoveryProjections(sc, [T1, T3, T1, "", T3]);
+    const r = await readTripDiscoveryProjections(sc, [T1, T3, T1, "", T3], new Date(AT));
     assert.equal(r.ok, true);
     if (!r.ok) return;
     assert.deepEqual(r.projections.map((p: TripDiscoveryProjection) => [p.tripId, p.discoverable]), [[T1, true], [T3, false]]);
@@ -213,4 +224,14 @@ describe("TripDiscoveryProjection — the readers issue the rule in SQL and fail
     assert.equal(s.ok, true);
     if (s.ok) assert.deepEqual(s.projections, []);
   });
+});
+
+
+it("paginates over open trips when the boundary page mixes destination dates", async () => {
+  const {currentTripPage}=await import("../domain/trips/contracts/tripDiscoveryProjection.js");
+  const rows=["Asia/Tokyo","America/Los_Angeles","Asia/Tokyo","America/Los_Angeles"].map((timezone,id)=>({id,status:"active",end_date:"2026-11-01",timezone}));
+  const query = {or(){return this;},order(){return this;},async range(from:number,to:number){return {data:rows.slice(from,to+1),error:null};}};
+  const at = new Date("2026-11-02T03:00:00Z");
+  assert.deepEqual((await currentTripPage(query,0,1,at)).data?.map(row=>row.id),[1]);
+  assert.deepEqual((await currentTripPage(query,1,1,at)).data?.map(row=>row.id),[3]);
 });

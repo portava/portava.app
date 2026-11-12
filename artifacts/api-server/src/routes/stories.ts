@@ -208,7 +208,7 @@ const undecidable = (error: unknown): StoryAccess => ({ allowed: false, reason: 
  * permitted" that nothing could distinguish from the real thing — the six
  * entries this file carries on the unchecked-reads ledger.
  */
-async function checkStoryAccess(sc: any, story: any, viewerId: string): Promise<StoryAccess> {
+export async function checkStoryAccess(sc: any, story: any, viewerId: string): Promise<StoryAccess> {
   if (viewerId === story.owner_id) return ALLOW;
 
   if (await isBlocked(sc, story.owner_id, viewerId)) return DENY;
@@ -281,7 +281,7 @@ function denyStory(req: any, res: any, access: StoryAccess, storyId: string): vo
 }
 
 // Columns returned for a story (no sensitive internal data)
-const STORY_COLS = "id, owner_id, media_url, media_type, caption, visibility, close_friends_only, trip_id, event_id, place_id, expires_at, saved_to_highlight_id, state, hide_viewer_list, created_at, allowed_user_ids, hidden_user_ids";
+export const STORY_COLS = "id, owner_id, media_url, media_type, caption, visibility, close_friends_only, trip_id, event_id, place_id, expires_at, saved_to_highlight_id, state, hide_viewer_list, created_at, allowed_user_ids, hidden_user_ids";
 
 // ── POST /stories — create ────────────────────────────────────────────────────
 

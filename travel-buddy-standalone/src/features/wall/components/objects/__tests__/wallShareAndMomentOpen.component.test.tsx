@@ -35,6 +35,8 @@ jest.mock('../../../../../services/collections.ts', () => ({
   unsaveItem: jest.fn(async () => true),
 }));
 
+jest.mock('react-native-safe-area-context', () => ({ ...jest.requireActual('react-native-safe-area-context'), useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
+
 import { SocialActionRow, resolveActionRoute, wallShareUrl } from '../wallItemShared.tsx';
 import { canonicalUrl } from '../../../../../constants/canonicalUrl.ts';
 import type { WallAction, WallProjection } from '../../../types/wallProjection.ts';
@@ -69,12 +71,21 @@ it('builds the link from the share layer: post page for posts, Moment page for m
   expect(wallShareUrl(projection({ objectType: 'contextual_opportunity' } as Partial<WallProjection>))).toBeNull();
 });
 
-it('Share opens the OS share sheet with the link', async () => {
+it('Share opens the in-app destinations before native sharing', async () => {
   const shareSpy = jest.spyOn(Share, 'share').mockResolvedValue({ action: 'sharedAction' } as any);
   await render(<SocialActionRow projection={projection({ text: 'Sunset at the pier' } as Partial<WallProjection>)} />);
   await fireEvent.press(screen.getByLabelText('Share'));
-  await waitFor(() => expect(shareSpy).toHaveBeenCalledTimes(1));
-  const url = canonicalUrl('/posts/post-1');
-  expect(shareSpy).toHaveBeenCalledWith({ message: `Sunset at the pier\n\n${url}`, url });
+  await waitFor(() => expect(screen.getByText('Send in a chat')).toBeTruthy());
+  expect(screen.getByText('Copy Link')).toBeTruthy();
+  expect(shareSpy).not.toHaveBeenCalled();
   shareSpy.mockRestore();
+});
+
+it('Shared Moment offers chat/link sharing without inventing a post reference', async () => {
+  await render(<SocialActionRow projection={projection({ objectType: 'shared_moment', canonicalObjectId: 'm-9' } as Partial<WallProjection>)} />);
+  await fireEvent.press(screen.getByLabelText('Share'));
+  await waitFor(() => expect(screen.getByText('Send in a chat')).toBeTruthy());
+  expect(screen.getByText('Copy Link')).toBeTruthy();
+  expect(screen.queryByText('Share to profile')).toBeNull();
+  expect(screen.queryByText('Add to Memories')).toBeNull();
 });

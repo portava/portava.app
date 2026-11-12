@@ -1,3 +1,5 @@
+import { PostReferenceCover } from '../../src/components/PostReferenceCard.tsx';
+import { POST_REFERENCE_MEDIA_TYPE } from '../../src/services/postDestinations.ts';
 /**
  * Location Memory Feed — /memory/location
  *
@@ -35,7 +37,7 @@ function MemoryRow({ memory }: { memory: Memory }) {
       style={row.wrap}
       onPress={() => router.push(`/memory/${memory.id}` as any)}
     >
-      {memory.cover?.mediaUrl ? (
+      {memory.cover?.mediaType === POST_REFERENCE_MEDIA_TYPE ? <View style={row.thumb}><PostReferenceCover uri={memory.cover?.mediaUrl} /></View> : memory.cover?.mediaUrl ? (
         <CachedImage source={{ uri: memory.cover.mediaUrl }} style={row.thumb} fallbackLabel="" />
       ) : (
         <View style={[row.thumb, row.thumbFallback]}>

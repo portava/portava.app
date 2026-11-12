@@ -43,6 +43,12 @@ jest.mock('../../../components/settings/SettingsUI.tsx', () => {
   };
 });
 
+// Feedback behavior is covered by outcomeFeedback; here verify reachability.
+jest.mock('../memory/ClearOutcomeFeedback.tsx', () => ({
+  ...jest.requireActual('../memory/ClearOutcomeFeedback.tsx'),
+  ClearOutcomeFeedback: () => require('react').createElement(require('react-native').Text, null, 'Clear my coordination feedback'),
+}));
+
 import { MessageSettingsScreen } from '../settings/MessageSettingsScreen.tsx';
 
 const SETTINGS = {
@@ -60,6 +66,7 @@ it('a failed read is an error with Try again, and shows NO controls', async () =
   await render(<MessageSettingsScreen />);
   await waitFor(() => expect(screen.getByTestId('message-settings-retry')).toBeTruthy());
   expect(screen.queryByTestId('message-privacy-no_one')).toBeNull();
+  expect(screen.getByText('Clear my coordination feedback')).toBeTruthy();
 
   mockGet.mockResolvedValueOnce({ ok: true, data: SETTINGS });
   await fireEvent.press(screen.getByTestId('message-settings-retry'));

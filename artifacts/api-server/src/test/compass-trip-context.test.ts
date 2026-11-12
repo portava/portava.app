@@ -45,6 +45,7 @@ interface FakeState {
   trips?:          Array<Record<string, unknown>>;
   tripMembers?:    Array<Record<string, unknown>>;
   tripPlanItems?:  Array<Record<string, unknown>>;
+  discoveryPlaces?: Array<Record<string, unknown>>;
   /** Tables whose from() call throws synchronously (error-path testing). */
   throwTables?:    string[];
 }
@@ -64,6 +65,7 @@ function makeClient(state: FakeState = {}, callerUserId: string = ALICE_ID) {
     trips:                         state.trips         ?? [],
     trip_members:                  state.tripMembers   ?? [],
     trip_plan_items:               state.tripPlanItems ?? [],
+    discovery_places:              state.discoveryPlaces ?? [],
     blocks:                        [],
     user_follows:                  [],
   };
@@ -390,7 +392,9 @@ describe("C. Trips query failure is fail-soft", () => {
 
 describe("D. Itinerary intent at confidence 0.9 takes the itinerary branch", () => {
   it("injects the itinerary directive and returns the itinerary payload", async () => {
-    const client = makeClient();
+    const client = makeClient({ discoveryPlaces: ["Gothic Quarter", "Barceloneta", "Park Güell", "Gràcia"].map((name, i) => ({
+      id: `aaaa0000-0000-4000-8000-00000000000${i}`, name, city: "Barcelona", category: "culture", verified: true,
+    })) });
     _setTestClient(client, true);
 
     const capture: Capture = { mainMessages: null, mainCalls: 0 };
@@ -416,6 +420,7 @@ describe("D. Itinerary intent at confidence 0.9 takes the itinerary branch", () 
 
     // The itinerary branch is taken: directive present as a system message.
     assert.ok(capture.mainMessages !== null, "main model should be called");
+    assert.ok(capture.mainMessages!.some(message => message.role === "tool" && String(message.content).includes("Gothic Quarter")), "the real city search supplied its authorized candidates to the model");
     const directiveMsg = (capture.mainMessages ?? []).find(
       (m: any) => m.role === "system" && String(m.content ?? "").includes(ITINERARY_DIRECTIVE_MARKER),
     );

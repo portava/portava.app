@@ -150,6 +150,7 @@ describe("MEM-ACL-2 — 3814: memory_saves, memory_likes, memory_tags and memory
 
   after(() => {
     if (!A) return;
+    exec(`DELETE FROM public.highlights WHERE owner_id = '${A}';`);
     exec(`DELETE FROM public.memories WHERE owner_id IN ('${A}', '${S}', '${X}');`);
     for (const u of [A, S, X]) if (u) deleteUser(u);
   });
@@ -261,6 +262,22 @@ describe("MEM-ACL-2 — 3814: memory_saves, memory_likes, memory_tags and memory
       DELETE FROM public.memory_items WHERE memory_id = '${PUB}' AND media_url = 'https://example.test/memacl2-b.jpg';
       SELECT 'items-after=' || count(*) FROM public.memory_items WHERE memory_id = '${PUB}' AND media_url = 'https://example.test/memacl2-b.jpg';`);
     assert.deepEqual(out, [`likes=2`, `saved=1`, `tag=approved`, `item=https://example.test/memacl2-b.jpg`, `items=1`, `items-after=0`]);
+  });
+
+  it("the separate Highlights guard lets the owner publish an ordinary image and refuses a forged source", () => {
+    const insert = (id: string, url: string, type: string) => `INSERT INTO public.highlights
+      (id, owner_id, media_url, media_type) VALUES ('${id}', '${A}', '${url}', '${type}');`;
+    const photo = randomUUID();
+    const normal = psql(prelude(owner()) + insert(photo, "https://example.com/photo.jpg", "photo"), { single: true });
+    assert.equal(normal.status, 0, normal.stderr);
+    assert.equal(scalar(`SELECT count(*) FROM public.highlights WHERE id='${photo}'`), "1");
+    const forged = randomUUID();
+    const bogus = insert(forged, "portava-post-reference:" + forged, "application/vnd.portava.post-reference+json");
+    assert.match(refusal(owner(), bogus), /permission denied for table post_destination_references|post_reference_provenance_required/);
+    const asService = psql("SET LOCAL ROLE service_role;\n" + bogus, { single: true });
+    assert.notEqual(asService.status, 0);
+    assert.match(asService.stderr, /post_reference_provenance_required/);
+    assert.equal(scalar(`SELECT count(*) FROM public.highlights WHERE id='${forged}'`), "0");
   });
 
   it("S6 — the postcondition passes alone; the precondition accepts this chain as it is", () => {

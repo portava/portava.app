@@ -80,7 +80,7 @@ function makeClient(opts: {
           return Promise.resolve({ data: null, error: { message: fail[key] ?? fail[table] } });
         }
         let data: any = rows[table] ?? [];
-        if (["media_assets", "feature_flags", "user_deletion_requests"].includes(table)) {
+        if (["media_assets", "feature_flags", "user_deletion_requests", "map_personal_protected_places", "map_navigation_contributions"].includes(table)) {
           data = data.filter((row: Record<string, any>) => q._filters.every(([operator, column, value]: [string, string, any]) => {
             if (operator === "eq" || operator === "is") return row[column] === value;
             if (operator === "gt") return row[column] > value;
@@ -98,7 +98,7 @@ function makeClient(opts: {
             Object.assign(row, q._values);
             if (table === "media_assets") row.version += 3;
           }
-          if (q._op === "delete") rows[table] = rows[table]!.filter(row => !data.includes(row));
+          if (q._op === "delete") rows[table] = (rows[table] ?? []).filter(row => !data.includes(row));
           if (q._single && data.length > 1) return Promise.resolve({ data: null, error: { message: "Multiple rows" } });
           data = structuredClone(data);
         }
@@ -158,6 +158,32 @@ function makeClient(opts: {
 
 const opFor = (c: any, table: string, op: string) =>
   c._ops.find((o: Op) => o.table === table && o.op === op);
+
+describe("private map controls account erasure", () => {
+  it("erases only the deleting owner's protections and navigation despite the profile tombstone", async () => {
+    const other = "22222222-2222-2222-2222-222222222222";
+    const client = makeClient({ rows: {
+      map_personal_protected_places: [{ owner_user_id: USER_ID }, { owner_user_id: other }],
+      map_navigation_contributions: [{ user_id: USER_ID }, { user_id: other }],
+    } });
+    const outcome = await executeAccountDeletion(client, USER_ID, { actorId: null });
+    assert.equal(outcome.ok, true, JSON.stringify(outcome.steps));
+    assert.deepEqual(client._rows.map_personal_protected_places, [{ owner_user_id: other }]);
+    assert.deepEqual(client._rows.map_navigation_contributions, [{ user_id: other }]);
+    assert.ok(opFor(client, "profiles", "update"), "normal account tombstoning still runs");
+  });
+
+  for (const table of ["map_personal_protected_places", "map_navigation_contributions"]) {
+    it(`keeps deletion pending when ${table} cannot be erased`, async () => {
+      const client = makeClient({ fail: { [`${table}.delete`]: "unavailable" } });
+      const outcome = await executeAccountDeletion(client, USER_ID, { actorId: null });
+      assert.equal(outcome.ok, false);
+      assert.equal(outcome.steps.find(step => step.step === "erase_private_map_controls")?.ok, false);
+      assert.equal(opFor(client, "profiles", "update"), undefined);
+      assert.deepEqual(client._authDeleted, []);
+    });
+  }
+});
 
 describe("account Media fixture integration — truthful retained-source contract", () => {
   it("preserves exact original and thumbnail cleanup with full source rows and returned versions", async () => {

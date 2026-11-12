@@ -205,7 +205,8 @@ export function buddyObject(over: Partial<BuddyProfile> = {}): MapObject {
   return projectBuddy({ ...buddyDto, ...over })!;
 }
 export function tripObject(over: Partial<TripRow> = {}): MapObject {
-  return projectTrip({ ...tripDto, ...over })!;
+  // These card fixtures describe Songkran before the trip ended.
+  return projectTrip({ ...tripDto, ...over }, Date.parse('2026-04-10T12:00:00Z'))!;
 }
 export function friendObject(over: Partial<CircleMemberLocation> = {}): MapObject {
   return projectFriend({ ...friendDto, ...over })!;

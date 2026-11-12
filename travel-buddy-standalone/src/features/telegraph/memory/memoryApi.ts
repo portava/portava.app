@@ -12,7 +12,9 @@
  * / `all` by name as well, because a client-only guarantee is not one.
  */
 import { isSupabaseConfigured } from '../../../lib/supabase.ts';
-import { freshToken } from '../../../services/apiToken.ts';
+import { captureMessagingOwnerRequest } from '../../../services/messagingOwnerRequest.ts';
+import { fetchOwnedApi, type OwnedApiContext } from '../../../services/ownedApiRequest.ts';
+import { telegraphIndexHeaders } from '../negotiation/clientCapabilities.ts';
 
 export const RECAP_CURATE_ACTIONS = [
   'CREATE_MEMORY',
@@ -52,6 +54,23 @@ export interface RecapResponse {
    * made a Memory.
    */
   wrote?: 'nothing';
+  choices?: RecapChoices;
+}
+
+export type RecapMode = 'memory' | 'photos' | 'people';
+export interface RecapChoices {
+  mode: RecapMode;
+  items: Array<{ messageId: string; kind: string; label: string; createdAt: string }>;
+  people: Array<{ userId: string; label: string; deepLink: string }>;
+  sharingEnabled?: boolean;
+  memoryEnabled?: boolean;
+  preview?: MessageMemorySource | null;
+  truncated: boolean;
+}
+
+export interface MessageMemorySource {
+  messageId: string; threadId: string; createdAt: string; body: string | null;
+  media: Array<{ url: string; mediaType: string }>; label: string;
 }
 
 export interface MemoryDraft {
@@ -71,26 +90,19 @@ function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 }
 
-async function call<T>(path: string, init?: RequestInit): Promise<MemoryResult<T>> {
+async function call<T>(path: string, init?: OwnedApiContext & { method?: string; body?: object; headers?: Record<string,string> }): Promise<MemoryResult<T>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'unconfigured' };
-  const token = await freshToken();
-  if (!token) return { ok: false, error: 'unauthenticated' };
+  const owner = init?.owner ?? captureMessagingOwnerRequest();
+  if (!owner) return { ok: false, error: 'unauthenticated' };
   try {
-    const res = await fetch(`${apiBase()}${path}`, {
-      ...init,
-      headers: {
-        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-        Authorization: `Bearer ${token}`,
-        ...(init?.headers ?? {}),
-      },
-    });
+    const res = await fetchOwnedApi(path, { ...init, owner, headers: { ...telegraphIndexHeaders(), ...init?.headers } });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}) as any);
       return { ok: false, error: String(body?.error ?? res.status), message: body?.message };
     }
     return { ok: true, data: (await res.json()) as T };
   } catch (e) {
-    return { ok: false, error: 'network', message: e instanceof Error ? e.message : undefined };
+    return { ok: false, error: owner.isCurrent() ? 'network' : 'unauthenticated', message: e instanceof Error ? e.message : undefined };
   }
 }
 
@@ -104,10 +116,13 @@ async function call<T>(path: string, init?: RequestInit): Promise<MemoryResult<T
 export async function saveMessageAsMemoryDraft(
   messageId: string,
   extra?: { title?: string | null; caption?: string | null },
+  context?: OwnedApiContext,
 ): Promise<MemoryResult<{ draft: MemoryDraft }>> {
   return call<{ draft: MemoryDraft }>(`/api/me/memory-drafts`, {
+    ...context,
     method: 'POST',
-    body: JSON.stringify({ messageId, ...(extra ?? {}) }),
+    headers: { 'Idempotency-Key': `telegraph-memory:${messageId}` },
+    body: { messageId, ...(extra ?? {}) },
   });
 }
 
@@ -115,9 +130,22 @@ export async function saveMessageAsMemoryDraft(
 export async function fetchRecap(
   threadId: string,
   planId?: string | null,
+  context?: OwnedApiContext,
 ): Promise<MemoryResult<RecapResponse>> {
   const qs = planId ? `?planId=${encodeURIComponent(planId)}` : '';
-  return call<RecapResponse>(`/api/threads/${threadId}/recap${qs}`);
+  return call<RecapResponse>(`/api/threads/${encodeURIComponent(threadId)}/recap${qs}`, context);
+}
+
+export function fetchRecapChoices(threadId: string, mode: RecapMode, planId?: string | null, context?: OwnedApiContext) {
+  return call<RecapResponse>(`/api/threads/${encodeURIComponent(threadId)}/recap?curation=${mode}${planId ? `&planId=${encodeURIComponent(planId)}` : ''}`, context);
+}
+
+export function fetchRecapPreview(threadId: string, mode: RecapMode, planId: string | null | undefined, messageId: string, context?: OwnedApiContext) {
+  return call<RecapResponse>(`/api/threads/${encodeURIComponent(threadId)}/recap?curation=${mode}&sourceMessageId=${encodeURIComponent(messageId)}${planId ? `&planId=${encodeURIComponent(planId)}` : ''}`, context);
+}
+
+export function fetchMemoryMessageSource(memoryId: string, context?: OwnedApiContext) {
+  return call<{ source: MessageMemorySource | null }>(`/api/me/memory-drafts/${encodeURIComponent(memoryId)}/source`, context);
 }
 
 /**
@@ -170,3 +198,15 @@ export function curateActionLabel(action: RecapCurateAction): string {
       return action;
   }
 }
+
+export function fetchRecapAvailability(threadId: string, context?: OwnedApiContext) {
+  return call<{available:boolean;planId:string|null}>(`/api/threads/${encodeURIComponent(threadId)}/recap?availability=1`,context);
+}
+export type OutcomeResponse = 'met' | 'did_not_meet';
+export interface OutcomeContext {enabled:boolean;retentionDays?:number;response?:OutcomeResponse|null;evidence?:'self_reported'}
+const outcomePath=(threadId:string,planId:string)=>`/api/threads/${encodeURIComponent(threadId)}/plans/${encodeURIComponent(planId)}/outcome`;
+export function fetchOutcomeContext(threadId:string,planId:string,context?:OwnedApiContext){return call<OutcomeContext>(outcomePath(threadId,planId),context);}
+export function saveOutcomeResponse(threadId:string,planId:string,response:OutcomeResponse,context?:OwnedApiContext){return call<{response:OutcomeResponse}>(outcomePath(threadId,planId),{...context,method:'PUT',body:{response}});}
+export function removeOutcomeResponse(threadId:string,planId:string,context?:OwnedApiContext){return call<{response:null}>(outcomePath(threadId,planId),{...context,method:'DELETE'});}
+
+export function removeAllOutcomeResponses(context?:OwnedApiContext){return call<{removed:true}>('/api/me/coordination-feedback',{...context,method:'DELETE'});}

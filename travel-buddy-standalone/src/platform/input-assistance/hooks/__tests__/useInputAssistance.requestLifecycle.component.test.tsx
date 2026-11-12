@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react-native';
 import { useInputAssistance } from '../useInputAssistance.ts';
 import { registerField, unregisterField } from '../../contexts/fieldRegistry.ts';
-import { _seedPolicyForTests } from '../../services/policyStore.ts';
+import { _seedPolicyForTests, sharedPolicyStore } from '../../services/policyStore.ts';
 import { sharedSuggestionCache } from '../../services/suggestionCache.ts';
 import { setTelemetrySink, resetTelemetrySink } from '../../services/inputTelemetry.ts';
 import type { SuggestResult } from '../../types/inputSuggestion.ts';
@@ -111,4 +111,18 @@ it('unmount prevents late cache writes and completion telemetry even if transpor
   await tick();
   expect(mockRequest).toHaveBeenCalledTimes(2);
   expect(next.result.current.suggestions).toEqual([]);
+});
+
+it('activates already-typed input when the signed-in policy arrives, without another edit', async () => {
+  sharedPolicyStore.clear();
+  const hook = await renderHook(() => useInputAssistance({ fieldId: FIELD, text: 'Hoi An' }));
+  await tick();
+  expect(mockRequest).not.toHaveBeenCalled();
+  await act(async () => { _seedPolicyForTests(['city_picker'], { city_picker: { privacyClass: 'public' } }); });
+  await tick();
+  expect(mockRequest.mock.calls[0][0]).toMatchObject({ fieldId: FIELD, text: 'Hoi An' });
+  await act(async () => { pending[0].resolve(answer('Hoi An')); });
+  expect(hook.result.current.suggestions[0].label).toBe('Hoi An');
+  await act(async () => { sharedPolicyStore.setActiveAccount('other'); });
+  expect(hook.result.current.suggestions).toEqual([]);
 });

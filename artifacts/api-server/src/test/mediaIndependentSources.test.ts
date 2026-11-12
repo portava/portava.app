@@ -37,6 +37,7 @@
  * Run:
  *   node --import tsx/esm --test src/test/mediaIndependentSources.test.ts
  */
+import { makeFakeClient as makeCatalogClient } from './telegraphCertificationHarness.js';
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
@@ -217,6 +218,7 @@ function makeSc(data: Dataset) {
     return rows;
   };
   const builder = (table: string): any => {
+    if (table === "places") return makeCatalogClient({ places: data.places ?? [] }).from(table);
     const filters: any[] = [];
     const b: any = {
       select() { return b; },
@@ -296,7 +298,7 @@ function base(extra: Dataset = {}): Dataset {
   return {
     profiles: [{ id: VIEWER, location_country: "VN", date_of_birth: "1990-01-01", account_status: "active" }],
     blocks: [], user_mutes: [], post_hides: [], user_follows: [],
-    trip_members: [], trips: [], places: [], feature_flags: [],
+    trip_members: [], trips: [], places: [{ id: PLACE }], feature_flags: [],
     ...extra,
   };
 }

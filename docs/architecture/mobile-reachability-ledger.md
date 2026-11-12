@@ -70,7 +70,7 @@ reading the call site, not by matching a name.
 Route paths are not always on the same line as `router.get(`:
 
 ```ts
-router.post(                                   // artifacts/api-server/src/routes/wall.ts:1180
+router.post(                                   // artifacts/api-server/src/routes/wall.ts:1185
   "/wall/action",
 ```
 
@@ -94,11 +94,11 @@ first matching family wins; the ledger applies it in source order.
 | Builder | File | Resolves |
 | --- | --- | --- |
 | `airportUrl(...parts)` | `src/services/layover.ts:27` | all 17 `/api/airport/sessions/*` routes |
-| `planUrl(tripId, ...parts)` | `src/features/trips/planning/tripPlan.ts:23` | 7 `/api/trips/:id/plan*` routes |
+| `planUrl(tripId, ...parts)` | `src/features/trips/planning/tripPlan.ts:24` | 7 `/api/trips/:id/plan*` routes |
 | `trustUrl(...parts)` | `src/services/trustAdmin.ts:28` | 11 `/api/admin/trust/*` routes |
 | `api(path)` | `src/services/appeals.ts:42` | `/api/appeals*` |
 | `api(path)` | `src/services/reviews.ts:67` | `/api/reviews*`, `/api/places/:id/reviews`, ... |
-| `${t.baseUrl}/api/locate-friends${opts.path}` | `src/services/locateFriends.ts:202` | 4 `/api/locate-friends/*` routes |
+| `${t.baseUrl}/api/locate-friends${opts.path}` | `src/services/locateFriends.ts:207` | 4 `/api/locate-friends/*` routes |
 | `INTEL_BASE` constant | `src/services/intelCapture.ts:39`, `intelConsent.ts:14` | 7 `/api/v1/intel/*` routes |
 
 The `reviews.ts` and `INTEL_BASE` families are not in the brief's list - they were found
@@ -118,7 +118,7 @@ served by `router.post("/v1/intel/observations/:id/claims:action")`
 76 `/api/...` mentions in the client sit in comments. Excluding them cuts the legacy list
 from 114 to 39. The canonical case, verified at the call site:
 
-- `app/map/index.tsx:1045` and `app/map/__tests__/projectedPlaces.component.test.tsx:7`
+- `app/map/index.tsx:1054` and `app/map/__tests__/projectedPlaces.component.test.tsx:7`
   both name `GET /api/discovery/places`. **No such route exists on the server.**
 - The real call is `getDiscoveryPlaces()` at `src/services/discovery.ts:474`, which fetches
   `` `${base}/api/discovery?${params}` `` at **`src/services/discovery.ts:521`**.
@@ -136,7 +136,7 @@ Seven comment-only mentions name no route that exists:
 | `/api/threads/:threadId/telegraph` | `src/services/telegraphChat.ts:3` |
 | `/api/admin/trust` | `src/services/trustAdmin.ts:4` |
 | `/api/visuals` | `src/services/visuals.ts:2` |
-| `/api/discovery/places` | `app/map/index.tsx:1045` |
+| `/api/discovery/places` | `app/map/index.tsx:1054` |
 
 ### Reading a chain in the JSON
 
@@ -215,7 +215,7 @@ auth behaviour, and there is no route to wire it to.
 `POST /api/map/compass-command` (`mapSearch.ts:230`) genuinely have no client caller.
 
 **`/api/map/search` was NOT wired, on purpose.** `MapSearchSheet` is not unmounted - it is
-mounted at `app/map/index.tsx:3180` - and it already searches, via `searchUnified()`
+mounted at `app/map/index.tsx:3201` - and it already searches, via `searchUnified()`
 (`src/services/discovery.ts:793`) against `GET /api/discovery/search`
 (`discovery.ts:825`). Re-pointing it would be a regression on two counts:
 
@@ -261,7 +261,7 @@ Spot-checked at the call site, these are genuine but mostly are NOT gaps to wire
 - `getAvailabilityNudges()` (`availability.ts:172`) has no orphan reader because there is
   no nudges surface - showing them means designing a screen, not wiring a call.
 - `leaveLocateFriendsSession()` / `publishLocateFriendsPosition()`
-  (`src/services/locateFriends.ts:881,618`) are referenced only by
+  (`src/services/locateFriends.ts:889,626`) are referenced only by
   `src/features/map/presence/__tests__/locateFriendsService.test.ts`: tested, never shipped.
 
 ### Guard reachability: `useMapEntities.gatewayAsymmetry.test.ts`
@@ -343,9 +343,9 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | POST | `/api/events/:id/telegraph-thread` | `artifacts/api-server/src/routes/events.ts:6359` |
 | GET | `/api/events/city/:city` | `artifacts/api-server/src/routes/events.ts:1177` |
 | GET | `/api/events/share-link/:token/preview` | `artifacts/api-server/src/routes/events.ts:2048` |
-| GET | `/api/healthz` | `artifacts/api-server/src/routes/health.ts:13` |
-| GET | `/api/healthz/cleanup` | `artifacts/api-server/src/routes/health.ts:18` |
-| GET | `/api/healthz/delayed-publish` | `artifacts/api-server/src/routes/health.ts:50` |
+| GET | `/api/healthz` | `artifacts/api-server/src/routes/health.ts:16` |
+| GET | `/api/healthz/cleanup` | `artifacts/api-server/src/routes/health.ts:21` |
+| GET | `/api/healthz/delayed-publish` | `artifacts/api-server/src/routes/health.ts:53` |
 | POST | `/api/input-assistance/select` | `artifacts/api-server/src/routes/inputAssistance.ts:216` |
 | POST | `/api/input-assistance/suggest` | `artifacts/api-server/src/routes/inputAssistance.ts:97` |
 | POST | `/api/location/reverse-geocode` | `artifacts/api-server/src/routes/location.ts:195` |
@@ -361,7 +361,7 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | GET, POST | `/api/me/crypto-devices` | `artifacts/api-server/src/routes/devices.ts:29` |
 | DELETE | `/api/me/crypto-devices/:id` | `artifacts/api-server/src/routes/devices.ts:128` |
 | GET | `/api/me/devices/:deviceId/key-packages/inventory` | `artifacts/api-server/src/routes/keyPackages.ts:91` |
-| GET | `/api/me/hashtag-follows` | `artifacts/api-server/src/routes/hashtags.ts:715` |
+| GET | `/api/me/hashtag-follows` | `artifacts/api-server/src/routes/hashtags.ts:718` |
 | GET, POST | `/api/me/passport-stamps/gps` | `artifacts/api-server/src/routes/location.ts:218` |
 | GET | `/api/me/passport/map` | `artifacts/api-server/src/routes/passportStamps.ts:471` |
 | GET, POST | `/api/me/passport/memories` | `artifacts/api-server/src/routes/passportStamps.ts:238` |
@@ -382,7 +382,7 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | GET | `/api/me/reports` | `artifacts/api-server/src/routes/reports.ts:239` |
 | GET | `/api/me/safe-return/contacts/:userId/passport` | `artifacts/api-server/src/routes/safeReturn.ts:1124` |
 | POST | `/api/me/safe-return/sessions/:id/trigger-missed` | `artifacts/api-server/src/routes/safeReturn.ts:638` |
-| GET | `/api/me/saved-messages` | `artifacts/api-server/src/routes/messaging.ts:2805` |
+| GET | `/api/me/saved-messages` | `artifacts/api-server/src/routes/messaging.ts:2820` |
 | GET | `/api/me/saves` | `artifacts/api-server/src/routes/saves.ts:124` |
 | GET | `/api/me/stamps` | `artifacts/api-server/src/routes/passport.ts:1393` |
 | GET | `/api/media/:id/comments` | `artifacts/api-server/src/routes/mediaFeed.ts:2305` |
@@ -396,21 +396,21 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | GET | `/api/og/:type/:id/image.png` | `artifacts/api-server/src/routes/og.ts:462` |
 | GET | `/api/passport/:userId/journeys` | `artifacts/api-server/src/routes/passport.ts:1554` |
 | GET | `/api/passport/:userId/yearbook` | `artifacts/api-server/src/routes/passport.ts:1638` |
-| POST | `/api/place-recaps` | `artifacts/api-server/src/routes/placeRecaps.ts:73` |
-| GET | `/api/place-recaps/:id` | `artifacts/api-server/src/routes/placeRecaps.ts:155` |
-| POST | `/api/place-recaps/:id/archive` | `artifacts/api-server/src/routes/placeRecaps.ts:144` |
-| POST | `/api/place-recaps/:id/publish` | `artifacts/api-server/src/routes/placeRecaps.ts:112` |
-| POST | `/api/place-recaps/:id/regenerate` | `artifacts/api-server/src/routes/placeRecaps.ts:119` |
-| POST | `/api/place-recaps/:id/remove` | `artifacts/api-server/src/routes/placeRecaps.ts:146` |
-| POST | `/api/place-recaps/:id/restore` | `artifacts/api-server/src/routes/placeRecaps.ts:145` |
-| POST | `/api/place-recaps/:id/review` | `artifacts/api-server/src/routes/placeRecaps.ts:105` |
+| POST | `/api/place-recaps` | `artifacts/api-server/src/routes/placeRecaps.ts:74` |
+| GET | `/api/place-recaps/:id` | `artifacts/api-server/src/routes/placeRecaps.ts:159` |
+| POST | `/api/place-recaps/:id/archive` | `artifacts/api-server/src/routes/placeRecaps.ts:148` |
+| POST | `/api/place-recaps/:id/publish` | `artifacts/api-server/src/routes/placeRecaps.ts:116` |
+| POST | `/api/place-recaps/:id/regenerate` | `artifacts/api-server/src/routes/placeRecaps.ts:123` |
+| POST | `/api/place-recaps/:id/remove` | `artifacts/api-server/src/routes/placeRecaps.ts:150` |
+| POST | `/api/place-recaps/:id/restore` | `artifacts/api-server/src/routes/placeRecaps.ts:149` |
+| POST | `/api/place-recaps/:id/review` | `artifacts/api-server/src/routes/placeRecaps.ts:109` |
 | GET | `/api/places/:id/dedup-groups` | `artifacts/api-server/src/routes/places.ts:1576` |
-| GET | `/api/places/:id/thin-buckets` | `artifacts/api-server/src/routes/placesCanonical.ts:160` |
-| GET | `/api/places/:placeId/recaps` | `artifacts/api-server/src/routes/placeRecaps.ts:148` |
+| GET | `/api/places/:id/thin-buckets` | `artifacts/api-server/src/routes/placesCanonical.ts:147` |
+| GET | `/api/places/:placeId/recaps` | `artifacts/api-server/src/routes/placeRecaps.ts:152` |
 | GET | `/api/places/photo/media` | `artifacts/api-server/src/routes/places.ts:739` |
 | PUT | `/api/postcards/:id/event-link` | `artifacts/api-server/src/routes/postcards.ts:1225` |
 | POST | `/api/postcards/sweep-orphans` | `artifacts/api-server/src/routes/postcards.ts:1337` |
-| POST | `/api/posts/:postId/location-event` | `artifacts/api-server/src/routes/posts.ts:2199` |
+| POST | `/api/posts/:postId/location-event` | `artifacts/api-server/src/routes/posts.ts:2203` |
 | POST | `/api/rent-a-buddy/bookings/:bookingId/change-request` | `artifacts/api-server/src/routes/rentABuddy.ts:7338` |
 | POST | `/api/rent-a-buddy/bookings/:bookingId/pay-deposit` | `artifacts/api-server/src/routes/rentABuddy.ts:2151` |
 | POST | `/api/rent-a-buddy/bookings/:bookingId/pay-full` | `artifacts/api-server/src/routes/rentABuddy.ts:2161` |
@@ -432,33 +432,33 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | POST | `/api/rent-buddy/waitlist` | `artifacts/api-server/src/routes/rentABuddyRollout.ts:1433` |
 | GET | `/api/reports/:id` | `artifacts/api-server/src/routes/reports.ts:211` |
 | GET | `/api/shared-moments/suggestions/mine` | `artifacts/api-server/src/routes/sharedMoments.ts:91` |
-| POST | `/api/tags` | `artifacts/api-server/src/routes/tags.ts:46` |
+| POST | `/api/tags` | `artifacts/api-server/src/routes/tags.ts:47` |
 | GET | `/api/telegraph/commands/:commandId` | `artifacts/api-server/src/routes/telegraphCommands.ts:371` |
 | GET | `/api/telegraph/threads/:threadId/header/:userId` | `artifacts/api-server/src/routes/telegraph.ts:370` |
-| PATCH | `/api/threads/:threadId/messages/:messageId` | `artifacts/api-server/src/routes/messaging.ts:2451` |
-| GET | `/api/trips/:tripId/activity` | `artifacts/api-server/src/routes/trips-expansion.ts:2766` |
-| POST | `/api/trips/:tripId/archive` | `artifacts/api-server/src/routes/trips-expansion.ts:614` |
+| PATCH | `/api/threads/:threadId/messages/:messageId` | `artifacts/api-server/src/routes/messaging.ts:2462` |
+| GET | `/api/trips/:tripId/activity` | `artifacts/api-server/src/routes/trips-expansion.ts:2770` |
+| POST | `/api/trips/:tripId/archive` | `artifacts/api-server/src/routes/trips-expansion.ts:615` |
 | POST | `/api/trips/:tripId/cancel` | `artifacts/api-server/src/routes/trips-expansion.ts:491` |
-| GET, POST | `/api/trips/:tripId/checklists` | `artifacts/api-server/src/routes/trips-expansion.ts:2426` |
-| DELETE, PATCH | `/api/trips/:tripId/checklists/:checklistId` | `artifacts/api-server/src/routes/trips-expansion.ts:2504` |
-| POST | `/api/trips/:tripId/checklists/:checklistId/items` | `artifacts/api-server/src/routes/trips-expansion.ts:2561` |
-| DELETE, PATCH | `/api/trips/:tripId/checklists/:checklistId/items/:itemId` | `artifacts/api-server/src/routes/trips-expansion.ts:2600` |
-| POST | `/api/trips/:tripId/complete` | `artifacts/api-server/src/routes/trips-expansion.ts:565` |
-| GET, POST | `/api/trips/:tripId/documents` | `artifacts/api-server/src/routes/trips-expansion.ts:2016` |
+| GET, POST | `/api/trips/:tripId/checklists` | `artifacts/api-server/src/routes/trips-expansion.ts:2430` |
+| DELETE, PATCH | `/api/trips/:tripId/checklists/:checklistId` | `artifacts/api-server/src/routes/trips-expansion.ts:2508` |
+| POST | `/api/trips/:tripId/checklists/:checklistId/items` | `artifacts/api-server/src/routes/trips-expansion.ts:2565` |
+| DELETE, PATCH | `/api/trips/:tripId/checklists/:checklistId/items/:itemId` | `artifacts/api-server/src/routes/trips-expansion.ts:2604` |
+| POST | `/api/trips/:tripId/complete` | `artifacts/api-server/src/routes/trips-expansion.ts:566` |
+| GET, POST | `/api/trips/:tripId/documents` | `artifacts/api-server/src/routes/trips-expansion.ts:2020` |
 | DELETE, PATCH | `/api/trips/:tripId/documents/:docId` | `artifacts/api-server/src/routes/trips-expansion.ts:2088` |
-| POST | `/api/trips/:tripId/items/reorder` | `artifacts/api-server/src/routes/trips-expansion.ts:1807` |
+| POST | `/api/trips/:tripId/items/reorder` | `artifacts/api-server/src/routes/trips-expansion.ts:1808` |
 | POST | `/api/trips/:tripId/join-requests/:requestId/approve` | `artifacts/api-server/src/routes/trips-expansion.ts:843` |
 | POST | `/api/trips/:tripId/join-requests/:requestId/cancel` | `artifacts/api-server/src/routes/trips-expansion.ts:1043` |
-| POST | `/api/trips/:tripId/join-requests/:requestId/decline` | `artifacts/api-server/src/routes/trips-expansion.ts:964` |
+| POST | `/api/trips/:tripId/join-requests/:requestId/decline` | `artifacts/api-server/src/routes/trips-expansion.ts:965` |
 | GET | `/api/trips/:tripId/members/:userId/passport` | `artifacts/api-server/src/routes/trips.ts:522` |
-| GET | `/api/trips/:tripId/nearby-places` | `artifacts/api-server/src/routes/trips-expansion.ts:1611` |
+| GET | `/api/trips/:tripId/nearby-places` | `artifacts/api-server/src/routes/trips-expansion.ts:1612` |
 | GET, POST | `/api/trips/:tripId/notes` | `artifacts/api-server/src/routes/trips-expansion.ts:2166` |
-| DELETE, PATCH | `/api/trips/:tripId/notes/:noteId` | `artifacts/api-server/src/routes/trips-expansion.ts:2234` |
-| GET, POST | `/api/trips/:tripId/reminders` | `artifacts/api-server/src/routes/trips-expansion.ts:2678` |
-| DELETE | `/api/trips/:tripId/reminders/:reminderId` | `artifacts/api-server/src/routes/trips-expansion.ts:2737` |
-| GET, POST | `/api/trips/:tripId/saved-places` | `artifacts/api-server/src/routes/trips-expansion.ts:2309` |
+| DELETE, PATCH | `/api/trips/:tripId/notes/:noteId` | `artifacts/api-server/src/routes/trips-expansion.ts:2238` |
+| GET, POST | `/api/trips/:tripId/reminders` | `artifacts/api-server/src/routes/trips-expansion.ts:2682` |
+| DELETE | `/api/trips/:tripId/reminders/:reminderId` | `artifacts/api-server/src/routes/trips-expansion.ts:2741` |
+| GET, POST | `/api/trips/:tripId/saved-places` | `artifacts/api-server/src/routes/trips-expansion.ts:2313` |
 | DELETE | `/api/trips/:tripId/saved-places/:placeEntryId` | `artifacts/api-server/src/routes/trips-expansion.ts:2397` |
-| PATCH | `/api/trips/:tripId/settings` | `artifacts/api-server/src/routes/trips-expansion.ts:371` |
+| PATCH | `/api/trips/:tripId/settings` | `artifacts/api-server/src/routes/trips-expansion.ts:372` |
 | GET | `/api/trips/:tripId/telegraph/commands/history` | `artifacts/api-server/src/routes/telegraphCommands.ts:463` |
 | GET | `/api/users/:userId/devices` | `artifacts/api-server/src/routes/devices.ts:216` |
 | GET | `/api/users/:userId/restrict-status` | `artifacts/api-server/src/routes/restrict.ts:170` |
@@ -470,8 +470,8 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | GET | `/api/users/:username/stamps` | `artifacts/api-server/src/routes/profileTabs.ts:197` |
 | GET | `/api/users/:username/stamps/:stampId/preview` | `artifacts/api-server/src/routes/passport.ts:1225` |
 | GET | `/api/users/:username/trips` | `artifacts/api-server/src/routes/profileTabs.ts:261` |
-| GET | `/api/v1/experiences/:id/live-state` | `artifacts/api-server/src/routes/intelReadModels.ts:140` |
-| GET | `/api/v1/experiences/:id/typical-patterns` | `artifacts/api-server/src/routes/intelReadModels.ts:198` |
+| GET | `/api/v1/experiences/:id/live-state` | `artifacts/api-server/src/routes/intelReadModels.ts:126` |
+| GET | `/api/v1/experiences/:id/typical-patterns` | `artifacts/api-server/src/routes/intelReadModels.ts:185` |
 | POST | `/api/v1/intel/observations/:id/claims/approve` | `artifacts/api-server/src/routes/intel.ts:300` |
 | POST | `/api/v1/intel/observations/:id/claims/propose` | `artifacts/api-server/src/routes/intel.ts:299` |
 | POST | `/api/v1/intel/outcomes` | `artifacts/api-server/src/routes/intelOutcomes.ts:80` |
@@ -483,7 +483,7 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | POST | `/api/v1/internal/intel/missions/:id/dispatch` | `artifacts/api-server/src/routes/intelCoverage.ts:122` |
 | GET | `/api/v1/internal/intel/redistributable/:subjectId` | `artifacts/api-server/src/routes/intelApi.ts:27` |
 | GET | `/api/v1/internal/intel/trail/movement` | `artifacts/api-server/src/routes/intel.ts:358` |
-| GET | `/api/v1/neighborhoods/:id/pulse` | `artifacts/api-server/src/routes/intelReadModels.ts:274` |
+| GET | `/api/v1/neighborhoods/:id/pulse` | `artifacts/api-server/src/routes/intelReadModels.ts:262` |
 | GET | `/api/v1/trails/:id/live-intel` | `artifacts/api-server/src/routes/trails.ts:37` |
 
 ### BACKEND WITH NO MOBILE CONSUMER
@@ -537,19 +537,19 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | POST | `/api/admin/geofence/:tripId/override-reveal` | `artifacts/api-server/src/routes/admin.ts:585` |
 | GET | `/api/admin/geofence/:tripId/suspicious-checkins` | `artifacts/api-server/src/routes/admin.ts:608` |
 | POST | `/api/admin/hidden-gems/:id/merge` | `artifacts/api-server/src/routes/hiddenGems.ts:1578` |
-| POST | `/api/admin/hidden-gems/:id/resolve-report` | `artifacts/api-server/src/routes/hiddenGems.ts:1609` |
-| POST | `/api/admin/hidden-gems/:id/sensitive` | `artifacts/api-server/src/routes/hiddenGems.ts:1552` |
-| POST | `/api/admin/hidden-gems/:id/verify` | `artifacts/api-server/src/routes/hiddenGems.ts:1486` |
-| GET | `/api/admin/hidden-gems/duplicate-candidates` | `artifacts/api-server/src/routes/hiddenGems.ts:1473` |
+| POST | `/api/admin/hidden-gems/:id/resolve-report` | `artifacts/api-server/src/routes/hiddenGems.ts:1639` |
+| POST | `/api/admin/hidden-gems/:id/sensitive` | `artifacts/api-server/src/routes/hiddenGems.ts:1581` |
+| POST | `/api/admin/hidden-gems/:id/verify` | `artifacts/api-server/src/routes/hiddenGems.ts:1514` |
+| GET | `/api/admin/hidden-gems/duplicate-candidates` | `artifacts/api-server/src/routes/hiddenGems.ts:1501` |
 | GET | `/api/admin/hidden-gems/guide-applications` | `artifacts/api-server/src/routes/hiddenGems.ts:1435` |
-| GET | `/api/admin/hidden-gems/pending` | `artifacts/api-server/src/routes/hiddenGems.ts:1395` |
-| GET | `/api/admin/hidden-gems/reported` | `artifacts/api-server/src/routes/hiddenGems.ts:1415` |
-| GET | `/api/admin/hidden-gems/sensitive-gems` | `artifacts/api-server/src/routes/hiddenGems.ts:1460` |
+| GET | `/api/admin/hidden-gems/pending` | `artifacts/api-server/src/routes/hiddenGems.ts:1419` |
+| GET | `/api/admin/hidden-gems/reported` | `artifacts/api-server/src/routes/hiddenGems.ts:1440` |
+| GET | `/api/admin/hidden-gems/sensitive-gems` | `artifacts/api-server/src/routes/hiddenGems.ts:1487` |
 | GET | `/api/admin/intel/live-scopes` | `artifacts/api-server/src/routes/admin.ts:3360` |
 | GET | `/api/admin/intel/live-scopes/:scopeKey` | `artifacts/api-server/src/routes/admin.ts:3384` |
 | POST | `/api/admin/intel/live-scopes/promote` | `artifacts/api-server/src/routes/admin.ts:3414` |
 | POST | `/api/admin/intel/live-scopes/withdraw` | `artifacts/api-server/src/routes/admin.ts:3459` |
-| POST | `/api/admin/local-guides/:userId/status` | `artifacts/api-server/src/routes/hiddenGems.ts:1636` |
+| POST | `/api/admin/local-guides/:userId/status` | `artifacts/api-server/src/routes/hiddenGems.ts:1667` |
 | POST | `/api/admin/media/backfill-dimensions` | `artifacts/api-server/src/routes/adminMedia.ts:405` |
 | GET | `/api/admin/moderation/reports` | `artifacts/api-server/src/routes/admin.ts:2039` |
 | PUT | `/api/admin/notification-defaults` | `artifacts/api-server/src/routes/notifications.ts:675` |
@@ -559,7 +559,7 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | GET | `/api/admin/passport/stamps/preview` | `artifacts/api-server/src/routes/passportStamps.ts:816` |
 | POST | `/api/admin/places/:id/merge` | `artifacts/api-server/src/routes/placesCanonical.ts:94` |
 | POST | `/api/admin/places/:id/unmerge` | `artifacts/api-server/src/routes/placesCanonical.ts:125` |
-| POST | `/api/admin/places/ingest` | `artifacts/api-server/src/routes/placesCanonical.ts:74` |
+| POST | `/api/admin/places/ingest` | `artifacts/api-server/src/routes/placesCanonical.ts:63` |
 | GET, POST | `/api/admin/price-baselines` | `artifacts/api-server/src/routes/tripBudgetIntel.ts:207` |
 | DELETE | `/api/admin/price-baselines/:id` | `artifacts/api-server/src/routes/tripBudgetIntel.ts:318` |
 | GET | `/api/admin/push-retry-health` | `artifacts/api-server/src/routes/notifications.ts:590` |
@@ -594,7 +594,7 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | PATCH | `/api/admin/stamps/definitions/:id` | `artifacts/api-server/src/routes/adminStamps.ts:130` |
 | GET | `/api/admin/suspicious-gps` | `artifacts/api-server/src/routes/admin.ts:316` |
 | POST | `/api/admin/suspicious-gps/:id/resolve` | `artifacts/api-server/src/routes/admin.ts:337` |
-| DELETE | `/api/admin/tags/:id` | `artifacts/api-server/src/routes/tags.ts:538` |
+| DELETE | `/api/admin/tags/:id` | `artifacts/api-server/src/routes/tags.ts:541` |
 | GET | `/api/admin/trips` | `artifacts/api-server/src/routes/admin.ts:2567` |
 | POST | `/api/admin/trips/:tripId/hide` | `artifacts/api-server/src/routes/admin.ts:2623` |
 | POST | `/api/admin/trips/:tripId/report-resolve` | `artifacts/api-server/src/routes/admin.ts:2680` |

@@ -10,7 +10,7 @@
  *   stamp            — legacy PassportStamp for fallback artwork / accessibility
  *   size             — width/height in px (default 88)
  *   rotate           — tilt in degrees (passed to fallback)
- *   showPendingLabel — show "artwork being prepared" hint (default true)
+ *   showPendingLabel — explicitly show a known pending artwork job (default false)
  *
  * URL selection by size:
  *   size < 120  → prefer thumbnailUrl, fall back to activeArtworkUrl
@@ -48,7 +48,7 @@ export function UniversalStampArtwork({
   stamp,
   size = 88,
   rotate = 0,
-  showPendingLabel = true,
+  showPendingLabel = false,
 }: Props) {
   // Build the ordered list of URLs to try based on render size.
   const useThumbnailFirst = size < 120;

@@ -253,7 +253,7 @@ function corpusClient() {
     let cap = Number.POSITIVE_INFINITY;
     const filters: Record<string, any> = {};
     const b: any = {
-      select: () => b, neq: () => b, in: () => b, not: () => b, is: () => b,
+      select: () => b, neq: () => b, in: (column: string, values: unknown[]) => { filters[`in:${column}`] = values; return b; }, not: () => b, is: () => b,
       or: () => b, gte: () => b, lte: () => b, gt: () => b, lt: () => b, order: () => b,
       eq(col: string, val: any) { filters[col] = val; return b; },
       limit(n: number) { if (Number.isFinite(n)) cap = n; return b; },
@@ -270,9 +270,9 @@ function corpusClient() {
         return settle({ data: null, error: null });
       },
       then(onF: any, onR: any) {
-        const rows = rowsFor(table);
+        const rows = rowsFor(table).filter(row => table !== "places" || !filters["in:id"] || filters["in:id"].includes(row.id)).map(row => table === "places" ? { moderation_status: "visible", merged_into_place_id: null, ...row } : row);
         const data = rows.length > cap ? rows.slice(0, cap) : rows;
-        return settle({ data, error: null }).then(onF, onR);
+        return settle({ data, error: null, count: rows.length }).then(onF, onR);
       },
     };
     return b;

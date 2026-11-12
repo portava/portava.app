@@ -3,7 +3,7 @@
  * so screens can swap import source with minimal churn. When Supabase isn't
  * configured these return empty/false so the app still runs on mock screens.
  */
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { isSupabaseConfigured } from '../lib/supabase.ts';
 import { getSessionUserId, onAuthChange } from '../services/auth.ts';
 import { listMyTrips, getTrip, type TripRow, getPendingTripInvites, type TripInvite } from '../services/trips.ts';
@@ -22,23 +22,29 @@ export function useSession() {
   return { userId, isAuthed: Boolean(userId), loading, configured: isSupabaseConfigured };
 }
 
-export function useMyTrips() {
+export function useMyTrips({ enabled = true }: { enabled?: boolean } = {}) {
+  const generation = useRef(0);
   const [data, setData] = useState<TripRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
+    const request = ++generation.current;
+    // Waiting for authentication is not a completed empty read. Keep consumers
+    // from replacing their snapshot until an enabled request actually finishes.
+    if (!enabled) { setData([]); setError(null); setLoading(true); return; }
     setLoading(true); setError(null);
     try {
-      setData(await listMyTrips());
+      const trips = await listMyTrips();
+      if (request === generation.current) setData(trips);
     } catch (e: any) {
-      setError(e?.message ?? 'Failed to load trips');
+      if (request === generation.current) setError(e?.message ?? 'Failed to load trips');
     } finally {
-      setLoading(false);
+      if (request === generation.current) setLoading(false);
     }
-  }, []);
+  }, [enabled]);
 
-  useEffect(() => { reload(); }, [reload]);
+  useEffect(() => { void reload(); return () => { generation.current += 1; }; }, [reload]);
 
   return { data, loading, error, reload };
 }

@@ -13,6 +13,7 @@ export function CaptionAsrSheet({ source, onClose, onRevoked }: { source: Captio
   const pending = useRef(false);
   const sourceEpoch = useRef(0);
   const statusRequest = useRef(0);
+  const action = useRef<AbortController | null>(null);
   useEffect(() => {
     const abort = new AbortController();
     const request = ++statusRequest.current;
@@ -28,7 +29,7 @@ export function CaptionAsrSheet({ source, onClose, onRevoked }: { source: Captio
     getCaptionAsrStatus(source, abort.signal).then((value) => {
       if (!abort.signal.aborted && request === statusRequest.current) { setStatus(value); setMessage(value.enabled ? `Transcription: ${value.state.replace(/_/g, ' ')}` : 'Local transcription is unavailable until its model and languages are validated.'); }
     }).catch(() => { if (!abort.signal.aborted && request === statusRequest.current) setMessage('Transcription status unavailable. You can still stop transcription and erase drafts.'); });
-    return () => { sourceEpoch.current += 1; mounted.current = false; abort.abort(); };
+    return () => { sourceEpoch.current += 1; mounted.current = false; abort.abort(); action.current?.abort(); };
   }, [source.assetId, source.version, source.revisionKey]);
 
   const stale = status && (status.sourceVersion !== source.version || status.revisionKey !== source.revisionKey);
@@ -39,9 +40,11 @@ export function CaptionAsrSheet({ source, onClose, onRevoked }: { source: Captio
     const isCurrent = () => mounted.current && sourceEpoch.current === requestEpoch;
     pending.current = true;
     setBusy(true);
+    const controller = new AbortController();
+    action.current = controller;
     try {
       if (revoking) {
-        const result = await revokeCaptionAsr(source);
+        const result = await revokeCaptionAsr(source, controller.signal);
         if (isCurrent()) {
           setConsent(false);
           setConfirmRevoke(false);
@@ -49,14 +52,14 @@ export function CaptionAsrSheet({ source, onClose, onRevoked }: { source: Captio
           setMessage(result.cleanupPending ? 'Consent revoked and processing stopped. Draft storage cleanup needs retry.' : 'Consent revoked. Generated drafts deleted. Published captions are unchanged.');
           onRevoked();
           try {
-            const refreshed = await getCaptionAsrStatus(source);
+            const refreshed = await getCaptionAsrStatus(source, controller.signal);
             if (isCurrent()) setStatus(refreshed);
           } catch {
             if (isCurrent()) setMessage((value) => `${value} Reopen to refresh consent status before requesting another draft.`);
           }
         }
       } else {
-        const result = await requestCaptionAsr(source, language, consent, status!.consentEpoch);
+        const result = await requestCaptionAsr(source, language, consent, status!.consentEpoch, controller.signal);
         if (isCurrent()) {
           setStatus(result);
           setConsent(false);
@@ -69,7 +72,7 @@ export function CaptionAsrSheet({ source, onClose, onRevoked }: { source: Captio
         setStatus(null);
         setMessage(error instanceof Error ? error.message : 'Transcription action could not be confirmed. Reopen to refresh consent status.');
       }
-    } finally { if (isCurrent()) { pending.current = false; setBusy(false); } }
+    } finally { if (action.current === controller) action.current = null; if (isCurrent()) { pending.current = false; setBusy(false); } }
   }
 
   const canRequest = status?.enabled && !stale && consent && !busy;

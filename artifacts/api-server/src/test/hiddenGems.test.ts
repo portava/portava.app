@@ -200,7 +200,7 @@ function makeFakeClient(state: FakeState, userId: string) {
         message_thread_members:  state.threadMembers ?? [],
         location_trust_events:   state.locationTrust ?? [],
         passport_visibility_preferences: state.passportVizPrefs ?? [],
-        places:                  state.places ?? [],
+        places:                  (state.places ?? []).map(row => ({ moderation_status: 'visible', merged_into_place_id: null, ...row })),
         trip_plan_items:         state.tripPlanItems ?? [],
       };
       return (tableData[table] ?? []).filter((r) => filters.every((f) => f(r)));
@@ -214,7 +214,7 @@ function makeFakeClient(state: FakeState, userId: string) {
       }
       return Promise.resolve({ data: filtered[0], error: null });
     }
-    function resolveList() { return Promise.resolve({ data: rows(), error: null }); }
+    function resolveList() { const data = rows(); return Promise.resolve({ data, error: null, count: data.length }); }
 
     return builder;
   }

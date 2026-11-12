@@ -82,6 +82,8 @@ describe('foldQuickMedia', () => {
   });
 });
 
+// NOTE: Wall owns the selected post; the mounted takeover and comments are tested from VideoWallItem.
+jest.mock('../../../../components/PostTakeover.tsx', () => ({ PostTakeover: (props: any) => require('react').createElement(require('react-native').View, { testID: 'quick-post-takeover', ...props }) }));
 describe('WallScreen quick media row', () => {
   it('renders one ring per followed person from the real data source', async () => {
     mockFetchQuick.mockResolvedValue({ ok: true, degraded: false, items });
@@ -101,8 +103,9 @@ describe('WallScreen quick media row', () => {
     await render(<WallScreen />);
     await waitFor(() => expect(screen.getByTestId('wall-quick-media-aya')).toBeTruthy());
 
-    fireEvent.press(screen.getByTestId('wall-quick-media-aya'));
-    expect(mockPush).toHaveBeenCalledWith('/media-viewer/post-aya-new');
+    await fireEvent.press(screen.getByTestId('wall-quick-media-aya'));
+    expect(screen.getByTestId('quick-post-takeover').props.postId).toBe('post-aya-new');
+    expect(mockPush).not.toHaveBeenCalled();
   });
 
   it.each([

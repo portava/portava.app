@@ -362,7 +362,7 @@ async function postCircleStatusCard(
     // Body stores the subtype and, for meeting-point cards, a privacy-safe location label.
     // No GPS, precise venues, or personally identifying location details are stored here —
     // only the user-supplied venue/approximate label which the host deliberately shared.
-    const bodyObj: Record<string, unknown> = { subtype: cardSubtype };
+    const bodyObj: Record<string, unknown> = { subtype: cardSubtype, cardSchemaVersion: 1 };
     if (extra?.venueLabel)  bodyObj["venueLabel"]  = extra.venueLabel;
     if (extra?.approxArea)  bodyObj["approxArea"]  = extra.approxArea;
 

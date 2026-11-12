@@ -484,14 +484,14 @@ interface FakeOpts {
 function makeClient(store: Store, opts: FakeOpts) {
   function chain(table: string) {
     const filters: Array<(r: any) => boolean> = [];
-    let single = false, wantRows = false;
+    let single = false, wantRows = false, exactCount = false;
     let mode: "select" | "insert" | "upsert" | "update" | "delete" = "select";
     let payload: any = null;
     let upsertOpts: { ignoreDuplicates?: boolean } = {};
     let limitN: number | null = null;
     let orderBy: { col: string; asc: boolean } | null = null;
     const obj: any = {
-      select() { if (mode !== "select") wantRows = true; return obj; },
+      select(_cols?: string, options?: { count?: string }) { if (mode !== "select") wantRows = true; exactCount = options?.count === "exact"; return obj; },
       insert(d: any) { mode = "insert"; payload = d; return obj; },
       upsert(d: any, o: any) { mode = "upsert"; payload = d; upsertOpts = o ?? {}; return obj; },
       update(d: any) { mode = "update"; payload = d; return obj; },
@@ -556,9 +556,10 @@ function makeClient(store: Store, opts: FakeOpts) {
         const { col, asc } = orderBy;
         matched = [...matched].sort((a, b) => (String(a[col] ?? "") < String(b[col] ?? "") ? -1 : String(a[col] ?? "") > String(b[col] ?? "") ? 1 : 0) * (asc ? 1 : -1));
       }
+      const count = exactCount ? matched.length : null;
       if (limitN != null) matched = matched.slice(0, limitN);
       if (single) return { data: matched[0] ? { ...matched[0] } : null, error: null };
-      return { data: matched.map((r) => ({ ...r })), error: null };
+      return { data: matched.map((r) => ({ ...r })), error: null, count };
     }
     return obj;
   }
@@ -584,7 +585,7 @@ function seed(): Store {
   });
   const place = (id: string, name: string) => ({
     id, name, primary_category: "food", latitude: 35.661, longitude: 139.701, address: "1-22-7 Jinnan", city: "Tokyo",
-    country_code: "JP", status: "active", merged_into_place_id: null, canonical_location_id: null,
+    country_code: "JP", status: "active", moderation_status: "visible", merged_into_place_id: null, canonical_location_id: null,
   });
   return {
     feature_flags: [],
@@ -907,8 +908,8 @@ describe("GET /admin/memory/metrics — end to end over the real routers", () =>
     _setMemoryQualityClock(() => now);
     app = await start({ mutate: (s) => {
       s.places.push(
-        { id: PLACE_OLD, name: "Old Name Cafe", primary_category: "food", latitude: 35.661, longitude: 139.701, address: "1-22-7 Jinnan", city: "Tokyo", country_code: "JP", status: "duplicate", merged_into_place_id: PLACE_SUCCESSOR, canonical_location_id: null },
-        { id: PLACE_SUCCESSOR, name: "New Name Cafe", primary_category: "food", latitude: 35.658, longitude: 139.698, address: "2-1 Dogenzaka", city: "Tokyo", country_code: "JP", status: "active", merged_into_place_id: null, canonical_location_id: null },
+        { id: PLACE_OLD, name: "Old Name Cafe", primary_category: "food", latitude: 35.661, longitude: 139.701, address: "1-22-7 Jinnan", city: "Tokyo", country_code: "JP", status: "duplicate", moderation_status: "visible", merged_into_place_id: PLACE_SUCCESSOR, canonical_location_id: null },
+        { id: PLACE_SUCCESSOR, name: "New Name Cafe", primary_category: "food", latitude: 35.658, longitude: 139.698, address: "2-1 Dogenzaka", city: "Tokyo", country_code: "JP", status: "active", moderation_status: "visible", merged_into_place_id: null, canonical_location_id: null },
       );
       s.memories[1].place_id = PLACE_OLD;
     } });

@@ -79,6 +79,7 @@
  * bounded inference the owner of a public trip has accepted by opting into
  * discovery, and is recorded here rather than silently kept.
  */
+import { tripHasEnded, tripStatusAtRead } from "../invariants/tripStatus.js";
 import { toPrivateTripPreview } from "../../../lib/privacy/tripSerializers.js";
 
 /** Bump on rename / removal / meaning change of a field. Additive changes do not bump. */
@@ -90,7 +91,7 @@ export const TRIP_DISCOVERY_PROJECTION_SCHEMA_VERSION = 1 as const;
  * routes/discoverySearch.ts learned the hard way that a non-label makes
  * Postgres reject the whole query (22P02) rather than match nothing.
  */
-export const TRIP_DISCOVERY_EXCLUDED_STATUSES = ["draft", "cancelled", "archived"] as const;
+export const TRIP_DISCOVERY_EXCLUDED_STATUSES = ["draft", "completed", "cancelled", "archived"] as const;
 
 /** "live": generated from the canonical row in the same request. No other value exists yet (no projection worker). */
 export type TripDiscoveryFreshness = "live";
@@ -134,7 +135,7 @@ export interface TripDiscoveryProjection {
 
 /** Explicit select list — the only `trips` columns this contract ever reads. */
 export const TRIP_DISCOVERY_SOURCE_COLUMNS =
-  "id, owner_id, title, destination_city, destination_country, cover_url, start_date, end_date, " +
+  "id, owner_id, title, destination_city, destination_country, cover_url, start_date, end_date, timezone, " +
   "status, visibility, show_in_discovery, show_exact_dates, show_destination_city, show_header_publicly, " +
   "precise_location_visible, trip_type, open_to_meet, created_at, updated_at, version";
 
@@ -143,10 +144,11 @@ export function isTripDiscoverable(row: {
   visibility?: string | null;
   show_in_discovery?: boolean | null;
   status?: string | null;
-}): boolean {
+  end_date?: string | null; timezone?: string | null;
+}, now = new Date()): boolean {
   return (
     row.visibility === "public" &&
-    row.show_in_discovery === true &&
+    row.show_in_discovery === true && !tripHasEnded(row, now) &&
     !(TRIP_DISCOVERY_EXCLUDED_STATUSES as readonly string[]).includes(String(row.status))
   );
 }
@@ -166,14 +168,14 @@ export function projectTripForDiscovery(row: Record<string, any>, generatedAt: s
     freshness: "live",
     tripId: tier.id,
     ownerId: String(row.owner_id),
-    discoverable: isTripDiscoverable(row),
+    discoverable: isTripDiscoverable(row, new Date(generatedAt)),
     title: tier.title,
     destinationCity: tier.destinationCity,
     destinationCountry: tier.destinationCountry,
     coverUrl: tier.coverUrl,
     startDate: tier.startDate,
     endDate: tier.endDate,
-    status: tier.status,
+    status: tripStatusAtRead(row, new Date(generatedAt)),
     createdAt: tier.createdAt,
     updatedAt: tier.updatedAt,
   };
@@ -217,13 +219,32 @@ export function tripDiscoveryIlikePattern(text: string): string {
   return `%${text.replace(/[,()]/g, "").replace(/[%_]/g, "\\$&")}%`;
 }
 
+/** The SQL date floor removes fully expired days before pagination; rows on
+ * the timezone boundary are checked against their own civil date. Offsets
+ * count admitted rows, so older rows cannot consume a page of current trips. */
+export async function currentTripPage(query: any, offset: number, limit: number, now: Date) {
+  const dayFloor = new Date(now.getTime() - 12 * 3_600_000).toISOString().slice(0, 10);
+  query = query.or(`end_date.is.null,end_date.gte.${dayFloor}`).order("id", { ascending: true });
+  const target = offset + limit;
+  const size = Math.min(200, Math.max(1, target));
+  const current: Record<string, any>[] = [];
+  for (let from = 0; current.length < target; from += size) {
+    const result = await query.range(from, from + size - 1);
+    if (result.error) return { data: null, error: result.error };
+    if (!Array.isArray(result.data)) break;
+    current.push(...result.data.filter((row: any) => !tripHasEnded(row, now)));
+    if (result.data.length < size) break;
+  }
+  return { data: current.slice(offset, target), error: null };
+}
+
 /**
  * Discoverable trips matching a free-text query, ordered by start_date, paged.
  * The discoverability predicate runs in SQL so pagination is over admitted
  * rows only. Every returned projection has discoverable = true.
  */
-export async function searchTripDiscoveryProjections(sc: any, q: TripDiscoverySearchQuery): Promise<TripDiscoveryProjectionResult> {
-  const generatedAt = new Date().toISOString();
+export async function searchTripDiscoveryProjections(sc: any, q: TripDiscoverySearchQuery, now = new Date()): Promise<TripDiscoveryProjectionResult> {
+  const generatedAt = now.toISOString();
   try {
     const pat = tripDiscoveryIlikePattern(q.text);
     let query: any = sc
@@ -236,10 +257,10 @@ export async function searchTripDiscoveryProjections(sc: any, q: TripDiscoverySe
       .order("start_date", { ascending: true });
     if (q.startsAfter) query = query.gte("start_date", q.startsAfter.slice(0, 10));
     if (q.startsBefore) query = query.lt("start_date", q.startsBefore.slice(0, 10));
-    const { data, error } = await query.range(q.offset, q.offset + q.limit - 1);
+    const { data, error } = await currentTripPage(query, q.offset, q.limit, now);
     if (error) return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", detail: String(error.message ?? error) };
     const rows: any[] = Array.isArray(data) ? data : [];
-    return { ok: true, generatedAt, projections: rows.map((r) => projectTripForDiscovery(r, generatedAt)) };
+    return { ok: true, generatedAt, projections: rows.filter(r => isTripDiscoverable(r, new Date(generatedAt))).map((r) => projectTripForDiscovery(r, generatedAt)) };
   } catch (e) {
     return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", detail: (e as Error)?.message ?? String(e) };
   }
@@ -249,8 +270,8 @@ export async function searchTripDiscoveryProjections(sc: any, q: TripDiscoverySe
  * Projections for specific trips, discoverable or not (the consumer applies
  * tripDiscoveryAdmits per viewer). Ids that do not exist are simply absent.
  */
-export async function readTripDiscoveryProjections(sc: any, tripIds: readonly string[]): Promise<TripDiscoveryProjectionResult> {
-  const generatedAt = new Date().toISOString();
+export async function readTripDiscoveryProjections(sc: any, tripIds: readonly string[], now = new Date()): Promise<TripDiscoveryProjectionResult> {
+  const generatedAt = now.toISOString();
   const ids = [...new Set(tripIds)].filter((id) => typeof id === "string" && id.length > 0);
   if (ids.length === 0) return { ok: true, generatedAt, projections: [] };
   try {

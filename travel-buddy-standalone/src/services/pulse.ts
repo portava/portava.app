@@ -48,6 +48,7 @@ export interface PulsePost {
   tripId: string | null;
   content: string;
   mediaUrls: string[];
+  postReferenceId?: string | null;
   /** Structured media items from post_media — present on new Postcard-flow posts. */
   media?: import('./postcards').PostcardMediaItem[];
   visibility: string;
@@ -94,6 +95,7 @@ export async function getPulseData(opts: {
   limit?: number;
   tab?: string;
   before?: string | null;
+  signal?: AbortSignal;
 }): Promise<
   | { ok: true; data: PulseResponse }
   // errorKind lets the caller tell "you are signed out" apart from "the network
@@ -119,6 +121,7 @@ export async function getPulseData(opts: {
   try {
     const res = await fetch(`${base}/api/pulse?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
+      signal: opts.signal,
     });
     if (!res.ok) {
       return {
@@ -156,6 +159,7 @@ export function pulsePostToFeedItem(p: PulsePost): PulseFeedItem {
     mediaUrl: p.media?.[0]?.thumbnail_url ?? p.media?.[0]?.url ?? p.mediaUrls[0],
     media: p.media,
     caption: p.content,
+    postReferenceId: p.postReferenceId,
     source: 'user',
     relatedTripId: p.tripId ?? null,
     neighborhood: p.locationName ?? undefined,

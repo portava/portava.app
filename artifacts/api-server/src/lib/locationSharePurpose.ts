@@ -49,12 +49,16 @@ import { isMissingColumnError } from "./capability/schemaCapability.js";
 /** The share store this module binds. */
 export const LOCATION_SHARE_TABLE = "trip_crew_location_sessions" as const;
 
-/**
- * Every purpose id the registry publishes — the list migration 3753's CHECK
- * enumerates. A test asserts the SQL list and this one are the same set, so the
- * registry growing without a migration is a red test, not a silent gap.
+/** Values the share-table CHECK accepts. Extending the location-purpose
+ * registry for a different store must never authorize reading live shares.
+ * The migration test verifies these against both the SQL and the registry.
  */
-export const SHARE_PURPOSE_CHECK_IDS: readonly string[] = LOCATION_PURPOSES.map((p) => p.id);
+export const SHARE_PURPOSE_CHECK_IDS: readonly string[] = [
+  "safety_anti_spoof", "live_session_sharing", "derived_traveler_state",
+  "geofence_checkin", "presence_in_context", "safety_return", "content_geotag",
+  "stamp_content", "route_plan_itinerary", "journey_observation", "intel_claim",
+  "aggregate_live_state",
+];
 
 /** Registry purposes whose declared `tables` include the share store. */
 export function purposesDeclaringShareTable(): string[] {

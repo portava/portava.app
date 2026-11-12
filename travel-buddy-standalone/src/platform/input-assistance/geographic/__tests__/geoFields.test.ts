@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 
 import {
   registerGeographicFields,
+  fieldForPlacePicker,
   GEO_FIELD_IDS,
   GEO_FIELD_CONTEXTS,
   _resetGeographicRegistration,
@@ -57,4 +58,14 @@ test('registerGeographicFields is idempotent (a second call is a no-op)', () => 
   registerGeographicFields(); // must not throw or duplicate
   const after = resolveFieldPolicy(GEO_FIELD_IDS.eventLocation);
   assert.equal(before!.context, after!.context);
+});
+
+test('known location purposes use the appropriate scope, and unregistered safety fields stay explicit', () => {
+  assert.equal(fieldForPlacePicker('event_location'), GEO_FIELD_IDS.eventLocation);
+  assert.equal(fieldForPlacePicker('city_select'), GEO_FIELD_IDS.cityPicker);
+  for (const purpose of ['memory', 'memory_create_location', 'memory_edit_location']) {
+    assert.equal(fieldForPlacePicker(purpose), GEO_FIELD_IDS.address);
+  }
+  assert.equal(fieldForPlacePicker('geofence_location'), undefined);
+  assert.equal(fieldForPlacePicker('circle_meeting_point'), undefined);
 });

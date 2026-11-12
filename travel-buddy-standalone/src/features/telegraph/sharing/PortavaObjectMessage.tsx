@@ -15,6 +15,8 @@ import { space, radius, type as t } from '../../../theme/tokens.ts';
 import { useTelegraphPalette, type TelegraphPalette } from '../theme/telegraphTheme.ts';
 import { parsePortavaObjectBody } from './shareApi.ts';
 import { useShareRevocation, revokedLabel } from './useShareRevocation.ts';
+import { SharedMessageMedia } from './SharedMessageMedia.tsx';
+import { PlaceLiveInformation } from './PlaceLiveInformation.tsx';
 
 const CARD_MAX_WIDTH = 280;
 
@@ -67,6 +69,14 @@ export function PortavaObjectMessage({ body, mine, threadId, messageId }: Portav
   const subtitle = projection?.subtitle ?? null;
   const deepLink = projection?.deepLink ?? null;
 
+  const hasMediaCard = projection && (parsed.objectType === 'POST' || parsed.objectType === 'MEDIA');
+  if (hasMediaCard) return <View style={[styles.wrap, mine && styles.wrapMine]} testID="telegraph-portava-object-card">
+    <Text style={styles.kind}>{prettyType(parsed.objectType).toUpperCase()}</Text>
+    {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+    <SharedMessageMedia key={projection.objectId} projection={projection} messageId={messageId} />
+    <Pressable accessibilityRole="button" accessibilityLabel={`View ${prettyType(parsed.objectType)}`} onPress={() => router.push(projection.deepLink as never)}><Text style={styles.title} numberOfLines={3}>{title}</Text></Pressable>
+    {parsed.caption ? <Text style={styles.caption}>{parsed.caption}</Text> : null}
+  </View>;
   return (
     <Pressable
       style={[styles.wrap, mine ? styles.wrapMine : null]}
@@ -95,6 +105,7 @@ export function PortavaObjectMessage({ body, mine, threadId, messageId }: Portav
           {parsed.caption}
         </Text>
       ) : null}
+      {parsed.objectType === 'PLACE' && <PlaceLiveInformation value={projection?.liveIntelligence} />}
     </Pressable>
   );
 }

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, TextInput, View, type StyleProp, type ViewStyle } from 'react-native';
+import { ActivityIndicator, AppState, Modal, Pressable, StyleSheet, Text, TextInput, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { useSession } from '../../context/SessionContext.tsx';
 import { supabase } from '../../lib/supabase.ts';
@@ -48,6 +49,14 @@ function sameOriginal(left: VideoSegmentSource, right: VideoSegmentSource): bool
   return sameVideoSegmentSource(left, right) && left.mediaRef === right.mediaRef;
 }
 
+interface PlaybackResume {
+  source: VideoSegmentSource | null;
+  mediaRef: string;
+  segment: MemoryVideoSegment | null;
+  position: number;
+  shouldPlay: boolean;
+}
+
 interface PlaybackLease {
   generation: number;
   source: VideoSegmentSource | null;
@@ -78,6 +87,9 @@ function OwnerVideoSegments({ ownerId, memoryId, itemId, uri, style }: MemoryVid
   const actionSequence = useRef(0);
   const playbackGeneration = useRef(0);
   const playback = useRef<PlaybackLease | null>(null);
+  const lastPlayback = useRef<PlaybackResume | null>(null);
+  const relocation = useRef<{ epoch: number; resume: PlaybackResume | null } | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
   const [snapshot, setSnapshot] = useState<VideoSegmentList | null>(null);
   const [busy, setBusy] = useState(true);
   const [available, setAvailable] = useState(true);
@@ -101,6 +113,7 @@ function OwnerVideoSegments({ ownerId, memoryId, itemId, uri, style }: MemoryVid
     range.current = null;
     setPreviewing(0);
     setPlaying(false);
+    if (lastPlayback.current) lastPlayback.current.shouldPlay = false;
     const video = player.current;
     if (video) void video.pauseAsync().catch(() => undefined);
   }, []);
@@ -114,6 +127,9 @@ function OwnerVideoSegments({ ownerId, memoryId, itemId, uri, style }: MemoryVid
     actionSequence.current += 1;
     lifecycle.current?.abort();
     lifecycle.current = null;
+    relocation.current = null;
+    lastPlayback.current = null;
+    setFullscreen(false);
     busyRef.current = false;
     stop();
     const video = player.current;
@@ -127,7 +143,7 @@ function OwnerVideoSegments({ ownerId, memoryId, itemId, uri, style }: MemoryVid
 
   const adopt = useCallback((next: VideoSegmentList) => {
     if (snapshotRef.current && !sameOriginal(snapshotRef.current.source, next.source)) {
-      stop(); resetDraft();
+      stop(); lastPlayback.current = null; resetDraft();
       replacePlayer();
     }
     if (range.current && !next.segments.some(segment => segment.id === range.current?.id)) stop();
@@ -137,11 +153,14 @@ function OwnerVideoSegments({ ownerId, memoryId, itemId, uri, style }: MemoryVid
 
   const refuse = useCallback((kind: VideoSegmentFailureKind) => {
     stop();
+    lastPlayback.current = null;
+    relocation.current = null;
     snapshotRef.current = null;
     setSnapshot(null);
     setMessage(messages[kind]);
     if (isDenied(kind)) {
       setAvailable(false);
+      setFullscreen(false);
       const video = player.current;
       if (video) void video.unloadAsync().catch(() => undefined);
       resetDraft();
@@ -199,7 +218,7 @@ function OwnerVideoSegments({ ownerId, memoryId, itemId, uri, style }: MemoryVid
     }
   };
 
-  const play = (selected?: MemoryVideoSegment) => run(async controller => {
+  const play = (selected?: MemoryVideoSegment, resume?: PlaybackResume) => run(async controller => {
     const generation = playbackGeneration.current;
     const active = () => current(controller) && playbackGeneration.current === generation;
     const latest = await listMemoryVideoSegments(scope, controller.signal);
@@ -218,6 +237,10 @@ function OwnerVideoSegments({ ownerId, memoryId, itemId, uri, style }: MemoryVid
     }
     if (!active()) { setMessage(messages.conflict); return; }
     const mediaRef = latest.ok ? latest.source.mediaRef : uri;
+    if (resume && (resume.mediaRef !== mediaRef || (resume.source
+      ? !latest.ok || !sameOriginal(resume.source, latest.source) : latest.ok))) {
+      refuse('conflict'); return;
+    }
     const signed = await resolveMemoryVideoOriginal(scope, mediaRef, controller.signal);
     if (!active()) return;
     if (!signed.ok) { refuse(signed.kind); return; }
@@ -252,10 +275,13 @@ function OwnerVideoSegments({ ownerId, memoryId, itemId, uri, style }: MemoryVid
     if (!authorized()) return;
     if (!isLoadablePlaybackUri(signed.uri)) { refuse('degraded_unavailable'); return; } await video.loadAsync({ uri: signed.uri }, { shouldPlay: false, isLooping: false, progressUpdateIntervalMillis: 50 }); // 2026-10-24: the one playback rule
     if (!authorized()) return;
-    await video.setPositionAsync(selected?.startMs ?? 0, { toleranceMillisBefore: 0, toleranceMillisAfter: 0 });
+    const position = Math.max(selected?.startMs ?? 0, Math.min(resume?.position ?? selected?.startMs ?? 0,
+      selected?.endMs ?? (latest.ok ? latest.source.durationMs : Number.MAX_SAFE_INTEGER)));
+    await video.setPositionAsync(position, { toleranceMillisBefore: 0, toleranceMillisAfter: 0 });
     if (!authorized()) return;
-    await video.playAsync();
-    authorized();
+    lastPlayback.current = { source: lease.source, mediaRef, segment: selected ?? null, position, shouldPlay: resume?.shouldPlay !== false };
+    if (resume?.shouldPlay !== false) await video.playAsync();
+    if (authorized()) setPlaying(resume?.shouldPlay !== false);
   });
 
   useEffect(() => {
@@ -314,6 +340,10 @@ function OwnerVideoSegments({ ownerId, memoryId, itemId, uri, style }: MemoryVid
       if (next.error) { stop(); setMessage('Video could not be played. Refresh to try again.'); }
       return;
     }
+    if (lastPlayback.current) {
+      lastPlayback.current.position = next.positionMillis;
+      lastPlayback.current.shouldPlay = next.isPlaying;
+    }
     const selected = range.current;
     if (selected && (next.positionMillis >= selected.endMs || next.didJustFinish)) {
       stop();
@@ -322,6 +352,72 @@ function OwnerVideoSegments({ ownerId, memoryId, itemId, uri, style }: MemoryVid
     }
     if (next.didJustFinish) { stop(); return; }
     setPlaying(next.isPlaying);
+  };
+
+  const switchDisplay = async (next: boolean) => {
+    if (next === fullscreen || relocation.current) return;
+    if (busyRef.current) {
+      // Closing remains available during a pending authorization. Retire it.
+      if (!next) refresh();
+      return;
+    }
+    const controller = lifecycle.current;
+    if (!controller || !current(controller) || !available) return;
+    const resume = lastPlayback.current ? { ...lastPlayback.current } : null;
+    const oldPlayer = player.current;
+    const transfer = { epoch: epoch.current, resume };
+    relocation.current = transfer;
+    busyRef.current = true; setBusy(true);
+    stop();
+    try {
+      // Retire the inline player before mounting the modal (and vice versa).
+      if (oldPlayer) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let rejectCancelled: () => void = () => {};
+        const cancel = () => rejectCancelled();
+        try {
+          await Promise.race([
+            (async () => { await oldPlayer.pauseAsync(); await oldPlayer.unloadAsync(); })(),
+            new Promise<never>((_resolve, reject) => {
+              rejectCancelled = () => reject(new Error('Display change ended.'));
+              controller.signal.addEventListener('abort', cancel, { once: true });
+              timer = setTimeout(rejectCancelled, 5000);
+            }),
+          ]);
+        } finally { if (timer) clearTimeout(timer); controller.signal.removeEventListener('abort', cancel); }
+      }
+      if (!current(controller) || relocation.current !== transfer) return;
+      replacePlayer();
+      transfer.epoch = epoch.current;
+      setFullscreen(next);
+    } catch {
+      if (current(controller) && relocation.current === transfer) {
+        relocation.current = null; lastPlayback.current = null;
+        busyRef.current = false; setBusy(false);
+        // A native command cannot trap the user in a fullscreen modal.
+        if (!next) clear();
+        setMessage('Video could not change display. Refresh to try again.');
+      }
+    }
+  };
+
+  useEffect(() => {
+    const transfer = relocation.current;
+    if (!transfer || transfer.epoch !== playerEpoch || !player.current) return;
+    relocation.current = null;
+    busyRef.current = false; setBusy(false);
+    if (transfer.resume) void play(transfer.resume.segment ?? undefined, transfer.resume);
+    // Only a physical player replacement consumes the saved intent. Playback
+    // itself changes state and must not retrigger this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fullscreen, playerEpoch]);
+
+  const resumeCurrent = () => {
+    const previous = lastPlayback.current;
+    if (!previous) { void play(); return; }
+    const end = previous.segment?.endMs ?? previous.source?.durationMs;
+    const position = end != null && previous.position >= end ? previous.segment?.startMs ?? 0 : previous.position;
+    void play(previous.segment ?? undefined, { ...previous, position, shouldPlay: true });
   };
 
   const save = () => {
@@ -362,12 +458,34 @@ function OwnerVideoSegments({ ownerId, memoryId, itemId, uri, style }: MemoryVid
 
   return (
     <View testID="memory-video-segments" style={styles.container}>
-      {available && <Video key={playerEpoch} ref={player} style={[styles.video, style]} resizeMode={ResizeMode.CONTAIN}
+      {available && !fullscreen && <Video key={playerEpoch} ref={player} style={[styles.video, style]} resizeMode={ResizeMode.CONTAIN}
+        videoStyle={{ width: '100%', height: '100%' }}
         useNativeControls={false} onPlaybackStatusUpdate={status} accessibilityLabel="Original Memory video" />}
+      <Modal visible={fullscreen && available} animationType="fade" presentationStyle="fullScreen"
+        supportedOrientations={['portrait', 'landscape']} onRequestClose={() => { void switchDisplay(false); }}>
+        <SafeAreaView style={styles.fullscreen} accessibilityViewIsModal>
+          <View style={styles.fullscreenBar}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Close fullscreen video" style={styles.button}
+              onPress={() => { void switchDisplay(false); }}><Text style={styles.buttonText}>Close fullscreen</Text></Pressable>
+          </View>
+          {available && fullscreen && <Video key={playerEpoch} ref={player} style={styles.fullscreenVideo} resizeMode={ResizeMode.CONTAIN}
+            videoStyle={{ width: '100%', height: '100%' }}
+            useNativeControls={false} onPlaybackStatusUpdate={status} accessibilityLabel="Original Memory video fullscreen" />}
+          <View style={styles.fullscreenBar}>
+            <Pressable accessibilityRole="button" accessibilityLabel={playing ? 'Pause fullscreen video' : 'Play fullscreen video'}
+              disabled={busy} style={[styles.button, busy && styles.disabled]} onPress={playing ? stop : resumeCurrent}>
+              <Text style={styles.buttonText}>{playing ? 'Pause' : 'Play'}</Text></Pressable>
+            {busy && <ActivityIndicator accessibilityLabel="Preparing fullscreen video" color={color.paper} />}
+            {!!message && <Text accessibilityLiveRegion="polite" style={styles.fullscreenHint}>{message}</Text>}
+          </View>
+        </SafeAreaView>
+      </Modal>
       <View style={styles.controls}>
         <View style={styles.row}>
           <Pressable accessibilityRole="button" accessibilityLabel="Play original video" disabled={busy || !available}
             style={[styles.button, (busy || !available) && styles.disabled]} onPress={() => { void play(); }}><Text style={styles.buttonText}>Play original</Text></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Open video fullscreen" disabled={busy || !available}
+            style={[styles.button, (busy || !available) && styles.disabled]} onPress={() => { void switchDisplay(true); }}><Text style={styles.buttonText}>Fullscreen</Text></Pressable>
           {playing && <Pressable accessibilityRole="button" accessibilityLabel="Pause video" disabled={busy} style={styles.button} onPress={stop}><Text style={styles.buttonText}>Pause</Text></Pressable>}
           <Pressable accessibilityRole="button" accessibilityLabel="Refresh video segments" style={styles.button} onPress={refresh}><Text style={styles.buttonText}>Refresh</Text></Pressable>
           {busy && <ActivityIndicator accessibilityLabel="Loading video segments" color={color.deep} />}
@@ -408,6 +526,10 @@ function OwnerVideoSegments({ ownerId, memoryId, itemId, uri, style }: MemoryVid
 const styles = StyleSheet.create({
   container: { backgroundColor: color.paperRaised },
   video: { width: '100%', height: 220, backgroundColor: color.ink },
+  fullscreen: { flex: 1, backgroundColor: color.ink },
+  fullscreenVideo: { flex: 1, width: '100%', backgroundColor: color.ink },
+  fullscreenBar: { padding: space.md, gap: space.sm, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
+  fullscreenHint: { ...typography.small, color: color.paper },
   controls: { padding: space.md, gap: space.sm },
   row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.sm },
   button: { minHeight: 44, paddingHorizontal: space.md, paddingVertical: space.md, backgroundColor: color.haze, borderRadius: radius.sm, justifyContent: 'center' },

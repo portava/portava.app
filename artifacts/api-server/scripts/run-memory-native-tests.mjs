@@ -9,6 +9,28 @@ export { default } from "./run-memory-sql-tests.mjs";
 const scriptPath = realpathSync(fileURLToPath(import.meta.url));
 const apiRoot = resolve(dirname(scriptPath), "..");
 const manifests = {
+  "key-packages": {
+    file: "src/test/keyPackages.postgres.test.ts",
+    suite: "4014 native PostgreSQL publication, consume and retry transactions",
+    binaryVariable: "KEY_PACKAGES_POSTGRES_BIN",
+    expectedTests: 7,
+  },
+  maps: {
+    file: "src/test/mapPrivateControls.native.test.ts",
+    suite: "Maps private controls: PostgreSQL17",
+    binaryVariable: "PORTAVA_TEST_POSTGRES_BIN",
+    expectedTests: 10,
+  },
+  place: {
+    file: "src/test/placeGovernance.native.test.ts",
+    suite: "canonical place governance: real PostgreSQL17",
+    binaryVariable: "PORTAVA_TEST_POSTGRES_BIN",
+  },
+  sensing: {
+    file: "src/test/sensingAtomicAdmission.native.test.ts",
+    suite: "Sensing atomic admission: real PostgreSQL 17",
+    binaryVariable: "PORTAVA_TEST_POSTGRES_BIN",
+  },
   snapshot: {
     file: "src/test/MemorySnapshot.postgres.test.ts",
     suite: "MemorySnapshot native two-session locks (fresh socket-only disposable cluster)",
@@ -33,6 +55,41 @@ const manifests = {
     file: "src/test/reportedReviewRemoval.native.test.ts",
     suite: "reported-review audited removal: PostgreSQL 17",
     binaryVariable: "PORTAVA_TEST_POSTGRES_BIN",
+  },
+  content: {
+    file: "src/test/reportedContentRemoval.native.test.ts",
+    suite: "reported-content audited removal: PostgreSQL 17",
+    binaryVariable: "PORTAVA_TEST_POSTGRES_BIN",
+  },
+  telegraph: {
+    file: "src/test/telegraphSequenceState.native.test.ts",
+    suite: "Telegraph durable sequence state: real PostgreSQL 17",
+    binaryVariable: "PORTAVA_TEST_POSTGRES_BIN",
+    expectedTests: 11,
+  },
+  "recording-capture": {
+    file: "src/test/recordingCaptureStamps.native.test.ts",
+    suite: "Recording capture stamps on PostgreSQL",
+    binaryVariable: "PORTAVA_TEST_POSTGRES_BIN",
+    expectedTests: 4,
+  },
+  "post-destinations": {
+    file: "src/test/postDestinations.native.test.ts",
+    suite: "Post reference destinations: real PostgreSQL 17",
+    binaryVariable: "PORTAVA_TEST_POSTGRES_BIN",
+    expectedTests: 16,
+  },
+  "trip-nearby": {
+    file: "src/test/tripNearby.native.test.ts",
+    suite: "Trip nearby checkpoints: real PostgreSQL 17",
+    binaryVariable: "PORTAVA_TEST_POSTGRES_BIN",
+    expectedTests: 13,
+  },
+  "official-media": {
+    file: "src/test/officialPostMedia.native.test.ts",
+    suite: "Official post media: real PostgreSQL 17",
+    binaryVariable: "PORTAVA_TEST_POSTGRES_BIN",
+    expectedTests: 12,
   },
   "media-translation": {
     file: "src/test/mediaCaptionTranslationHardDelete.native.test.ts",
@@ -82,7 +139,7 @@ function syntheticEnvironment(selected) {
 
 async function main([profile, ...argumentsList]) {
   if (profile !== "all" && !Object.hasOwn(manifests, profile ?? "")) {
-    throw new Error("Select a native manifest: snapshot, video, import, policy, review, media-translation, account-media, or all (four Memory suites); then pass its literal test paths");
+    throw new Error("Select a native manifest: snapshot, video, import, policy, review, content, media-translation, account-media, or all (four Memory suites); then pass its literal test paths");
   }
   const selected = profile === "all" ? memoryProfiles.map((name) => manifests[name]) : [manifests[profile]];
   const required = new Map(selected.map((manifest) => [manifest.file, manifest]));

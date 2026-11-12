@@ -67,6 +67,7 @@ function makeFakeClient(initialRows: Row[] = [], opts: { dbError?: string } = {}
         filtered = filtered.filter((r) => r[col] === val);
         return obj;
       },
+      neq(col: string, val: unknown) { filtered = filtered.filter(r => r[col] !== val); return obj; },
       order(col: string, o?: { ascending?: boolean }) {
         _orderCol = col;
         _ascending = o?.ascending ?? true;
@@ -433,6 +434,7 @@ function makeOsmFakeClient(opts: {
       update(d: Row)          { _op = "update"; _data = d; return obj; },
       delete()                { _op = "delete"; return obj; },
       eq(col: string, val: any) { filters.push((r) => r[col] === val); return obj; },
+      neq(col: string, val: unknown) { filters.push(r => r[col] !== val); return obj; },
       gt(col: string, val: any) { filters.push((r) => r[col] > val);   return obj; },
       order()  { return obj; },
       limit()  { return obj; },
@@ -683,5 +685,64 @@ describe("OSM save-count deduplication — trackOsmPlaceUnsave", () => {
 
     const dpsRows = fake.getDps();
     assert.equal(dpsRows.length, 0, "both users' discovery_place_saves records should be removed");
+  });
+});
+
+describe('personal Saved Places across sources', () => {
+  const owner='11111111-1111-4111-8111-111111111111', stranger='22222222-2222-4222-8222-222222222222';
+  const canonical='33333333-3333-4333-8333-333333333333', collection='44444444-4444-4444-8444-444444444444';
+  const community='55555555-5555-4555-8555-555555555555', reference='66666666-6666-4666-8666-666666666666';
+  const date='2026-11-08T12:00:00Z';
+  function world(held=false) {
+    return {
+      wishlist_places:[
+        {id:'w1',user_id:owner,place_id:'node/13',list_id:'trip-A',place_data:{name:'stale label'},saved_at:date},
+        {id:'w2',user_id:stranger,place_id:'foreign',list_id:'global',place_data:{name:'private'},saved_at:date},
+        {id:reference,user_id:owner,place_id:'legacy-favourite',list_id:'__portava_collection_place_ref_v1__',place_data:{name:'My viewpoint'},saved_at:date},
+      ],
+      discovery_place_saves:[{user_id:owner,place_id:community,saved_at:date}],
+      collections:[{id:collection,owner_id:owner}],
+      collection_items:[{id:'c1',collection_id:collection,entity_type:'place',entity_id:canonical,saved_at:date},{id:'c2',collection_id:collection,entity_type:'place',entity_id:reference,saved_at:date}],
+      discovery_places:[{id:community,name:'old community label',status:'active',osm_id:'node/13',canonical_location_id:canonical}],
+      places:[{id:canonical,name:'Current place',status:'active',moderation_status:held?'withheld':'visible',merged_into_place_id:null,latitude:16,longitude:108,city:'Da Nang'}],
+      external_place_references:[{id:'r1',provider:'osm',provider_place_id:'node/13',place_id:canonical}],
+    };
+  }
+  it('deduplicates governed aliases, preserves trip and provider IDs, and opens a private external collection reference',async()=>{
+    const {makeOracle}=await import('./helpers/postgrestOracle.js');
+    const {savedPlaceLibrary,collectionPlacePreviews}=await import('../lib/savedPlaceLibrary.js');
+    const sc=makeOracle({tables:world()}).client;
+    const read=await savedPlaceLibrary(sc,owner);
+    assert.equal(read.state,'ready',JSON.stringify(read));
+    assert.equal(read.places.length,2);
+    const place=read.places.find(p=>p.key===canonical)!;
+    assert.equal(place.title,'Current place');assert.equal(place.placeId,'node/13');assert.equal(place.collectionEntityId,canonical);
+    assert.deepEqual(place.sources,['wishlist','community','collections']);
+    assert.deepEqual(place.listIds,['trip-A']);assert.deepEqual(place.collectionIds,[collection]);
+    assert.equal((await collectionPlacePreviews(sc,owner,[reference])).get(reference)?.placeId,'legacy-favourite');
+    assert.equal((await collectionPlacePreviews(sc,stranger,[reference])).size,0);
+  });
+  it('files an external bookmark into a normal collection and preserves it after the source list is removed',async()=>{
+    const {makeOracle}=await import('./helpers/postgrestOracle.js');
+    const {savedPlaceLibrary,fileSavedPlaceForOwner,collectionPlacePreviews,PROVIDER_REF_LIST}=await import('../lib/savedPlaceLibrary.js');
+    const tables=world();
+    tables.collection_items=tables.collection_items.filter(item=>item.entity_id!==reference);
+    tables.wishlist_places.push({id:'w4',user_id:owner,place_id:'legacy-favourite',list_id:'trip-A',place_data:{name:'My viewpoint'},saved_at:date});
+    const sc=makeOracle({tables,unique:{wishlist_places:['user_id','place_id','list_id'],collection_items:['collection_id','entity_type','entity_id']}}).client;
+    assert.equal((await fileSavedPlaceForOwner(sc,owner,'legacy-favourite',collection))?.entityId,reference);
+    assert.equal((await fileSavedPlaceForOwner(sc,owner,'legacy-favourite',collection))?.entityId,reference);
+    assert.equal(tables.collection_items.filter(item=>item.entity_id===reference).length,1);
+    const removed=await sc.from('wishlist_places').delete().eq('user_id',owner).eq('place_id','legacy-favourite').neq('list_id',PROVIDER_REF_LIST);
+    assert.equal(removed.error,null);
+    assert.equal((await collectionPlacePreviews(sc,owner,[reference])).get(reference)?.title,'My viewpoint');
+    assert.deepEqual((await savedPlaceLibrary(sc,owner)).places.find(p=>p.placeId==='legacy-favourite')?.sources,['collections']);
+  });
+  it('does not revive withheld aliases or misrepresent an unreadable source as empty',async()=>{
+    const {makeOracle}=await import('./helpers/postgrestOracle.js');
+    const {savedPlaceLibrary,fileSavedPlaceForOwner}=await import('../lib/savedPlaceLibrary.js');
+    const sc=makeOracle({tables:world(true),failReads:{discovery_place_saves:{code:'offline',message:'offline'}}}).client;
+    const read=await savedPlaceLibrary(sc,owner);
+    assert.equal(read.state,'partial');assert.deepEqual(read.unavailableSources,['community']);assert.deepEqual(read.places.map(p=>p.placeId),['legacy-favourite']);
+    assert.equal(await fileSavedPlaceForOwner(sc,stranger,'legacy-favourite',collection),null);
   });
 });

@@ -57,7 +57,9 @@ function client(options: {
       status: 'translated',
       updated_at: '2026-10-01T00:00:00.000Z',
     }],
-  }, options.confidenceColumns ? { unchecked: ['message_translations'] } : {});
+  }, options.confidenceColumns ? {} : {
+    historicalTable: { table: "message_translations", snapshot: "20260922-production-schema.json" },
+  });
   const from = database.from.bind(database);
   const blocks = makeFailClosedClient({ rows: { blocks: [] } });
   database.from = table => table === 'blocks' ? blocks.from(table) : from(table);

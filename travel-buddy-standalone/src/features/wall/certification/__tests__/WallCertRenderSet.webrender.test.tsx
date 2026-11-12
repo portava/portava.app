@@ -132,7 +132,7 @@ function collectCss(): string {
     const node = sheet.ownerNode as HTMLStyleElement | null;
     if (node?.textContent) out.push(node.textContent);
   }
-  return out.join('\n');
+  return out.join('\n').replace(/[\t ]+$/gm, '');
 }
 
 /** Render every case at every width into jsdom and return the markup. */

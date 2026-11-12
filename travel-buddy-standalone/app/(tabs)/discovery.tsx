@@ -1,3 +1,4 @@
+import { tripWindowEnded } from '../../src/lib/tripCalendar.ts';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 import {
@@ -375,12 +376,21 @@ function DiscoveryHubScreen() {
       // sortBy (which may be from a different category's last session) never
       // bleeds into the initial tab. hasCachedSortForCategory distinguishes
       // "saved null (no sort)" from "never saved"; both resolve to null here.
-      setActiveFilters({
+      const restored = {
         ...filters,
         sortBy: hasCachedSortForCategory(initialCategory)
           ? getCachedSortForCategory(initialCategory)
           : null,
-      });
+      };
+      // Identical restored values must not launch another seven-category count
+      // batch or restart the active tab's place request on every cold open.
+      setActiveFilters((current) =>
+        current.radiusKm === restored.radiusKm && current.openNow === restored.openNow
+        && current.minRating === restored.minRating
+        && (current.sortBy ?? null) === (restored.sortBy ?? null)
+        && (current.intentMode ?? null) === (restored.intentMode ?? null)
+          ? current : restored,
+      );
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -579,6 +589,7 @@ function DiscoveryHubScreen() {
   // batch resolves.
   useEffect(() => {
     setCategoryCounts({});
+    if (!debouncedDestination.trim()) { setCountsLoading(false); return; }
     setCountsLoading(true);
     let cancelled = false;
     getDiscoveryCategoryCounts(debouncedDestination, activeFilters, contextMode, ageFilter, debouncedAgeRange.min, debouncedAgeRange.max).then((counts) => {
@@ -592,12 +603,12 @@ function DiscoveryHubScreen() {
   // Upgrade to the user's actual trip destination once trips load.
   // Only overrides if the user hasn't set a location yet.
   useEffect(() => {
-    if (!isAuthed) return;
+    if (!isAuthed || locationState.place.city) return;
     let cancelled = false;
     listMyTrips().then((rows) => {
       if (cancelled) return;
       const list = Array.isArray(rows) ? rows : [];
-      const active = list.find((r) => r.status === 'planning' || r.status === 'active') ?? list[0];
+      const active = list.find((r) => !tripWindowEnded(r) && ['planning', 'active', 'upcoming'].includes(r.status));
       if (active?.destinationCity && !locationState.place.city) {
         setDestination(active.destinationCity);
       }

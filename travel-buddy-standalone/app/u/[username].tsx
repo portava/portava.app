@@ -82,28 +82,32 @@ interface SocialProfile {
 // ── Friend action button ─────────────────────────────────────────────────────
 
 function FriendButton({ userId, isOwn }: { userId: string; isOwn: boolean }) {
-  const { status, loading, send, accept, decline, cancel, remove } = useFriendStatus(isOwn ? null : userId);
+  const { status, loading, error, reload, send, accept, decline, cancel, remove } = useFriendStatus(isOwn ? null : userId);
   const [busy, setBusy] = useState(false);
 
   if (isOwn || !userId) return null;
 
   async function run(action: () => Promise<any>) {
+    if (busy) return;
     setBusy(true);
-    const res = await action();
-    setBusy(false);
-    if (res?.ok && (res.data as any)?.autoAccepted) {
-      Alert.alert("You're now friends", 'They had already sent you a request, so you are now connected.');
-    }
+    try {
+      const res = await action();
+      if (!res?.ok) Alert.alert('Could not update friendship', res?.message ?? 'Please try again.');
+      else if ((res.data as any)?.autoAccepted) Alert.alert("You're now friends", 'They had already sent you a request, so you are now connected.');
+    } catch { Alert.alert('Could not update friendship', 'Please try again.'); }
+    finally { setBusy(false); }
   }
 
   if (loading) {
     return <View style={st.actionBtn}><ActivityIndicator size="small" color={color.mute} /></View>;
   }
+  if (error) return <Pressable style={st.actionBtn} accessibilityRole="button" onPress={() => { void reload(); }}><Text style={st.btnText}>Retry friendship status</Text></Pressable>;
 
   if (status === 'friends') {
     return (
       <Pressable
         style={[st.actionBtn, st.friendsBtnStyle]}
+        accessibilityRole="button"
         disabled={busy}
         onPress={() => {
           Alert.alert(
@@ -128,9 +132,9 @@ function FriendButton({ userId, isOwn }: { userId: string; isOwn: boolean }) {
 
   if (status === 'outgoing_pending') {
     return (
-      <Pressable style={[st.actionBtn, st.pendingBtnStyle]} onPress={() => run(cancel)} disabled={busy}>
+      <Pressable style={[st.actionBtn, st.pendingBtnStyle]} accessibilityRole="button" accessibilityLabel="Friend request sent. Cancel request" onPress={() => run(cancel)} disabled={busy}>
         <Clock size={15} color={color.mute} />
-        <Text style={[st.btnText, { color: color.mute }]}>{busy ? 'Cancelling…' : 'Request Sent'}</Text>
+        <Text style={[st.btnText, { color: color.mute }]}>{busy ? 'Cancelling…' : 'Friend Request Sent'}</Text>
       </Pressable>
     );
   }
@@ -138,10 +142,10 @@ function FriendButton({ userId, isOwn }: { userId: string; isOwn: boolean }) {
   if (status === 'incoming_pending') {
     return (
       <View style={st.incomingRow}>
-        <Pressable style={[st.actionBtn, st.acceptBtnStyle, { flex: 1 }]} onPress={() => run(accept)} disabled={busy}>
+        <Pressable style={[st.actionBtn, st.acceptBtnStyle, { flex: 1 }]} accessibilityRole="button" onPress={() => run(accept)} disabled={busy}>
           <Text style={[st.btnText, { color: '#fff' }]}>{busy ? '…' : 'Accept'}</Text>
         </Pressable>
-        <Pressable style={[st.actionBtn, st.declineBtnStyle, { flex: 1 }]} onPress={() => run(decline)} disabled={busy}>
+        <Pressable style={[st.actionBtn, st.declineBtnStyle, { flex: 1 }]} accessibilityRole="button" onPress={() => run(decline)} disabled={busy}>
           <Text style={[st.btnText, { color: color.ink }]}>{busy ? '…' : 'Decline'}</Text>
         </Pressable>
       </View>
@@ -149,10 +153,13 @@ function FriendButton({ userId, isOwn }: { userId: string; isOwn: boolean }) {
   }
 
   return (
-    <Pressable style={[st.actionBtn, st.addFriendBtnStyle]} onPress={() => run(send)} disabled={busy}>
+    <View>
+    <Pressable style={[st.actionBtn, st.addFriendBtnStyle]} accessibilityRole="button" onPress={() => run(send)} disabled={busy}>
       <UserPlus size={15} color="#fff" />
-      <Text style={[st.btnText, { color: '#fff' }]}>{busy ? 'Sending…' : 'Add Friend'}</Text>
+      <Text style={[st.btnText, { color: '#fff' }]}>{busy ? 'Sending…' : 'Send Friend Request'}</Text>
     </Pressable>
+    <Text style={{ color: color.mute, textAlign: 'center', marginTop: space.xs, fontSize: 12 }}>Following gets their updates. Friendship requires acceptance.</Text>
+    </View>
   );
 }
 
@@ -994,11 +1001,11 @@ function PublicPassportScreenNative() {
         {/* Stats row */}
         <View style={styles.statsRow}>
           {[
-            { n: postcards.length, label: 'Postcards' },
-            { n: countries, label: 'Countries' },
-            { n: cities, label: 'Cities' },
-            { n: follow.followersCount, label: 'Followers', onPress: canOpenFollowLists ? () => openFollowList('followers') : undefined },
-            { n: stampsEarned ?? '—', label: 'Stamps Earned' },
+            { n: postcards.length, label: 'Postcards', singular: 'Postcard' },
+            { n: countries, label: 'Countries', singular: 'Country' },
+            { n: cities, label: 'Cities', singular: 'City' },
+            { n: follow.loading ? '—' : follow.followersCount, label: 'Followers', singular: 'Follower', onPress: canOpenFollowLists ? () => openFollowList('followers') : undefined },
+            { n: stampsEarned ?? '—', label: 'Stamps Earned', singular: 'Stamp Earned' },
           ].map((item, i) => (
             <React.Fragment key={item.label}>
               {i > 0 && <View style={styles.statsDivider} />}
@@ -1010,9 +1017,9 @@ function PublicPassportScreenNative() {
                 testID={item.onPress ? `stats-open-${item.label}` : undefined}
               >
                 <Text style={styles.statsN} testID={`stats-n-${item.label}`}>
-                  {follow.loading && item.label === 'Followers' ? '—' : item.n}
+                  {item.n}
                 </Text>
-                <Text style={styles.statsL}>{item.label}</Text>
+                <Text style={styles.statsL}>{item.n === 1 ? item.singular : item.label}</Text>
               </Pressable>
             </React.Fragment>
           ))}
@@ -1122,6 +1129,7 @@ function PublicPassportScreenNative() {
                   color={active ? color.onInk : color.mute}
                   strokeWidth={2}
                 />
+                <Text style={{ fontSize: 10, color: active ? color.onInk : color.mute, marginTop: 3 }}>{tb.label}</Text>
               </Pressable>
             );
           })}

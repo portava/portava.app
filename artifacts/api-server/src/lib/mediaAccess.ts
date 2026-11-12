@@ -1,3 +1,4 @@
+import { filterCurrentPostAuthors } from './postAuthorAudience.js';
 /**
  * mediaAccess — SERVER-side authorization for media BYTES (bucket privacy).
  *
@@ -152,6 +153,7 @@ const UNSERVABLE_ATTACHMENT_MODERATION: ReadonlySet<string> = new Set([
 ]);
 
 function postVisible(post: any, viewerId: string): "allow" | "deny" | "trip" {
+  if (post.deleted_at != null) return "deny";
   if (post.status && post.status !== "active") return "deny";
   // Delayed-publish gate (audit 1e): unpublished post media is owner-only.
   if (post.post_status && post.post_status !== "published") return "deny";
@@ -367,39 +369,66 @@ async function decide(
 
   if (bucket !== "post-media") return false;
   { const posterOf = derivedPosterBase(path); if (posterOf !== null) return decide(sc, viewerId, bucket, posterOf); } // §37: a poster IS its video
-  // 1. Owner sees their own bytes — unless they deleted the story that holds
-  //    them, in which case "deleted" has to mean deleted for them too.
-  const pathOwner = ownerFromPath(path);
-  if (pathOwner === viewerId) {
-    return !(await ownerDeletedThisStory(sc, viewerId, bucket, path));
-  }
+  // Recorded derivatives inherit the original's terminal moderation even for
+  // the owner. A copied Memory URL grants no exception to removal of the bytes.
+  const variantUrl = publicUrlFor(bucket, path);
+  const original = await originalOfRecordedVariant(sc, path, variantUrl ? [variantUrl, `${bucket}/${path}`] : [`${bucket}/${path}`]);
+  if (original === "deny") return false;
+  if (original !== null) return decide(sc, viewerId, bucket, original);
 
+  // Forwarded copies are a private derivative, including for their owner.
+  // Never let an abandoned upload or tombstoned derivative use the owner shortcut.
+  let forwardMediaAllowed = false;
+  if (path.includes('/telegraph-forwards/')) {
+    const match = /^[0-9a-f-]{36}\/telegraph-forwards\/([0-9a-f-]{36})\/(?:[0-9]+(?:\.thumb\.jpg)?)$/.exec(path);
+    if (!match) return false;
+    try {
+      const access = await sc.rpc('telegraph_can_read_forward_media', { p_id: match[1], p_viewer: viewerId, p_path: path });
+      if (access.error || access.data !== true) return false;
+      forwardMediaAllowed = true;
+    } catch { return false; }
+  }
+  const pathOwner = ownerFromPath(path);
   let owner = pathOwner;
-  /**
-   * The canonical `media_assets.id` for this object, when the canonical layer
-   * is lit. It is the key `media_attachments` is filed under, so branches 3a/3b
-   * need it to ask lib/mediaVisibility about a per-attachment override. Null
-   * means "no canonical row" — `authorizeMediaAttachment` treats a null asset id
-   * as "no attachment to narrow by" and leaves the decision to the post rules,
-   * which is the pre-canonical behaviour unchanged.
-   */
   let canonicalAssetId: string | null = null;
   try {
     const { data: asset, error: assetErr } = await sc
       .from("media_assets")
-      .select("id, owner_user_id")
+      .select("id, owner_user_id, moderation_status, deleted_at")
       .eq("storage_bucket", bucket)
       .eq("storage_path", path)
       .maybeSingle();
-    // A rejected read leaves `owner` as the PATH owner — a weaker attribution
-    // that makes branches 3d/3e deny outright ("cannot attribute the object").
-    noteLookupFailure("media_assets owner", assetErr, { bucket, path });
-    if ((asset as any)?.owner_user_id) {
+    noteLookupFailure("media_assets moderation", assetErr, { bucket, path });
+    if (assetErr) return false;
+    if (asset) {
+      // Null/unknown status is not affirmative permission. Upload previews can
+      // remain available to their owner, but terminal moderation cannot.
+      const status = (asset as any).moderation_status;
+      if (typeof status !== "string" || !["processing", "active", "limited", "pending", "approved", "flagged"].includes(status)
+        || (asset as any).deleted_at != null) return false;
       canonicalAssetId = (asset as any).id ?? null;
-      owner = (asset as any).owner_user_id;
-      if (owner === viewerId) return true;
+      if ((asset as any).owner_user_id) owner = (asset as any).owner_user_id;
     }
-  } catch { /* canonical layer may be dark — path owner still applies */ }
+  } catch { return false; }
+  // Resolve current legacy moderation before the owner shortcut too. If the
+  // attachment was removed, its retained ledger decision remains authoritative.
+  // A current approved attachment can represent a successful moderation appeal;
+  // the historical ledger must not undo that explicit restoration.
+  let moderationRows: Array<{ post_id: string; moderation_status: string; processing_status: string }>;
+  try {
+    const current = await sc.from("post_media").select("post_id, moderation_status, processing_status")
+      .eq("storage_path", path).limit(POST_MEDIA_ATTACHMENT_CAP);
+    if (current.error || !Array.isArray(current.data) || current.data.length >= POST_MEDIA_ATTACHMENT_CAP) return false;
+    moderationRows = current.data;
+    if (moderationRows.some(row => row.moderation_status === "rejected" || (owner !== viewerId && row.moderation_status === "flagged"))) return false;
+    if (moderationRows.length === 0) {
+      const ledger = await sc.from("post_media_moderation_ledger").select("verdict").eq("storage_path", path).limit(1);
+      if (ledger.error || !Array.isArray(ledger.data)) return false;
+      if (ledger.data.some(row => row.verdict === "rejected" || owner !== viewerId)) return false;
+    }
+  } catch { return false; }
+  if (forwardMediaAllowed) return true;
+  if (owner === viewerId) return !(await ownerDeletedThisStory(sc, viewerId, bucket, path));
 
   // 2. Blocks, both directions, fail-closed.
   if (owner) {
@@ -444,6 +473,9 @@ async function decide(
   /** PostgREST `in.(…)` list — values are quoted and commas escaped. */
   const inList = `(${urlForms.map((u) => `"${u.replace(/"/g, '\\"')}"`).join(",")})`;
 
+  let postAuthorReadable: Promise<boolean> | null = null;
+  const mayReadAuthorPosts = () => postAuthorReadable ??= filterCurrentPostAuthors(sc, viewerId, [{ author_id: owner ?? undefined }]).then(rows => rows.length > 0).catch(() => false);
+
   // 3a. Postcard media (post_media.storage_path → parent post rules).
   //
   // THIS BRANCH IS THE ONLY MODERATION CARRIER ON THE post-media PATH, so it is
@@ -471,15 +503,7 @@ async function decide(
   // Whether it should also carry the §36 canonical values is a
   // MEDIA_CANONICAL_FLAG question and is not taken here.
   try {
-    const { data: pms, error: pmErr } = await sc
-      .from("post_media")
-      .select("post_id, moderation_status, processing_status")
-      .eq("storage_path", path)
-      .limit(POST_MEDIA_ATTACHMENT_CAP);
-    noteLookupFailure("3a post_media", pmErr, { bucket, path });
-    // The moderation carrier could not be read. Nothing later in this function
-    // can answer the question it was asked, so deny rather than fall through.
-    if (pmErr) return false;
+    const pms = moderationRows;
     const pmRows = ((pms as any[]) ?? []); if (pmRows.length === 0) { const original = await originalOfRecordedVariant(sc, path, urlForms); if (original === "deny") return false; if (original !== null) return decide(sc, viewerId, bucket, original); } // §23.7: a recorded, server-derived variant IS its original
     if (pmRows.length > 0) {
       // A truncated page cannot support a deny-if-any scan: an unservable row
@@ -500,7 +524,7 @@ async function decide(
       for (const pm of pmRows) {
         const { data: post, error: postErr } = await sc
           .from("posts")
-          .select("author_id, visibility, status, post_status, trip_id")
+          .select("author_id, visibility, status, post_status, trip_id, deleted_at")
           .eq("id", (pm as any).post_id)
           .maybeSingle();
         // Here the deny is returned, not fallen through: a rejected read denies
@@ -509,6 +533,7 @@ async function decide(
         if (!post) return false;
         if (!(owner && owner === (post as any).author_id)) continue;
         decidable = true;
+        if (!(await mayReadAuthorPosts())) continue;
         const v = postVisible(post, viewerId);
         if (v !== "allow" && v !== "trip") continue;
         // The two CONTEXTUAL layers, both of which narrow what the post's own
@@ -552,7 +577,7 @@ async function decide(
   try {
     const { data: posts, error: postsErr } = await sc
       .from("posts")
-      .select("id, author_id, visibility, status, post_status, trip_id")
+      .select("id, author_id, visibility, status, post_status, trip_id, deleted_at")
       .overlaps("media_urls", urlForms)
       .limit(1);
     noteLookupFailure("3b posts.media_urls", postsErr, { bucket, path });
@@ -564,6 +589,7 @@ async function decide(
     // highlight hardening). On a mismatch (or unknown owner) fall through — the
     // object may be legitimately reachable via a later branch, else §4 denies.
     if (post && owner && owner === post.author_id) {
+      if (!(await mayReadAuthorPosts())) return false;
       const v = postVisible(post, viewerId);
       if (v !== "allow" && v !== "trip") return false;
       // Same two contextual layers as 3a. This branch has no `post_media` row,

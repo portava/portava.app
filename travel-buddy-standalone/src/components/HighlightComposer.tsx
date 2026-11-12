@@ -20,22 +20,23 @@ import { useMediaComposer } from '../hooks/useMediaComposer.ts';
 import { MediaPickerButton } from './ui/MediaPickerButton.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t, shadow, avatar } from '../theme/tokens.ts';
-import { uploadMedia, validateMedia } from '../services/media.ts';
+import { usePrivateSurfaceKey } from '../hooks/usePrivateSurfaceKey.ts';
+import { captureMessagingOwnerRequest } from '../services/messagingOwnerRequest.ts';
+import { newPostDestinationOperation } from '../services/postDestinations.ts';
+import { uploadMedia, validateMedia, type MediaUploadResult } from '../services/media.ts';
 import { createHighlight, type HighlightVisibility, type HighlightLifetimeClass } from '../services/highlights.ts';
 // §4 / §12 — the five HighlightLifetime classes. The list, the spec's own
 // examples and what each class does all come from the server; see the
 // component header for why none of it is typed here.
 import { HighlightLifetimePicker } from '../features/highlights/HighlightLifetimePicker.tsx';
 import { useSession } from '../context/SessionContext.tsx';
-import { router } from 'expo-router';
 import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor.tsx';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { VIDEO_MAX_DURATION_SECONDS } from '../constants/mediaLimits.ts';
 
-/** Bound the highlight caption — the audit flagged it as the one unbounded
- *  caption composer. 2000 matches the Postcard composer's caption cap. */
-const CAPTION_MAX = 2000;
+/** POST /highlights accepts up to 500 characters. */
+const CAPTION_MAX = 500;
 
 const DURATIONS: { hours: number; label: string }[] = [
   { hours: 3,  label: '3h' },
@@ -64,9 +65,14 @@ interface Props {
   onSuccess?: () => void;
 }
 
-export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
+export function HighlightComposer(props: Props) {
+  const scope = usePrivateSurfaceKey();
+  const { userId } = useSession();
+  return <HighlightDraft key={`${scope}:${userId}`} {...props} userId={userId} />;
+}
+
+function HighlightDraft({ visible, onClose, onSuccess, userId }: Props & { userId?: string | null }) {
   const insets = useSafeAreaInsets();
-  const { signOut } = useSession();
 
   const [mediaUri, setMediaUri] = useState<string | null>(null);
   const [mimeType, setMimeType] = useState<string>('image/jpeg');
@@ -96,6 +102,17 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
   const [filterId, setFilterId] = useState<string>('original');
   const [filterIntensity, setFilterIntensity] = useState<number>(100);
 
+  const pending = useRef<AbortController | null>(null);
+  const uploadReceipt = useRef<{ key: string; value: MediaUploadResult } | null>(null);
+  const publishIntent = useRef<{ fingerprint: string; operationId: string } | null>(null);
+  useEffect(() => () => {
+    pending.current?.abort(); pending.current = null; submitLockRef.current = false;
+  }, [visible]);
+  const close = () => {
+    pending.current?.abort(); pending.current = null; submitLockRef.current = false;
+    onClose();
+  };
+
   // Reset non-media form fields when the composer opens so the form is fresh
   // each time. Media state (mediaUri and related) is intentionally NOT reset
   // here — that would lose picked media when the user closes and reopens the
@@ -103,6 +120,7 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
   // Media is reset explicitly after a successful submit or via the × remove button.
   useEffect(() => {
     if (visible) {
+      setSubmitting(false);
       setCaption('');
       setVis('public');
       setExpiresInHours(24);
@@ -138,6 +156,7 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
     const v = validateMedia(picked, { surface: 'highlight' });
     if (!v.ok) { setError(v.message); return; }
 
+    uploadReceipt.current = null; publishIntent.current = null;
     setMimeType(mime);
     setIsVideo(asVideo);
     setVideoDuration(durationSec);
@@ -174,80 +193,58 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
   }
 
   async function handleSubmit() {
-    if (!mediaUri) return;
-    if (submitLockRef.current) return;
-    submitLockRef.current = true;
-    setSubmitting(true);
-    setError(null);
-
+    if (!visible || !mediaUri || submitLockRef.current) return;
+    const owner = captureMessagingOwnerRequest();
+    if (!owner?.isCurrent() || owner.ownerId !== userId) {
+      owner?.invalidate(); setError('Sign in again before sharing this Highlight.'); return;
+    }
+    const request = new AbortController();
+    pending.current = request; submitLockRef.current = true;
+    const current = () => pending.current === request && !request.signal.aborted && owner.isCurrent();
+    setSubmitting(true); setError(null);
     try {
-      const up = await uploadMedia({
-        uri: mediaUri,
-        mimeType,
-        fileSize,
-        type: isVideo ? 'video' : 'image',
-      });
-      if (!up.ok || !up.url) {
-        if (up.errorKind === 'unauthenticated') {
-          await signOut();
-          router.replace('/(auth)/sign-in');
-          onClose();
-          return;
+      const key = JSON.stringify([owner.ownerId, owner.sessionId, mediaUri, mimeType]);
+      let receipt = uploadReceipt.current?.key === key ? uploadReceipt.current.value : null;
+      if (!receipt) {
+        receipt = await uploadMedia({ uri: mediaUri, mimeType, fileSize, duration: videoDuration, type: isVideo ? 'video' : 'image' },
+          { surface: 'highlight', signal: request.signal }, owner);
+        if (!current()) return;
+        if (!receipt.ok || !receipt.url) {
+          setError(`Upload failed. ${receipt.message ?? 'Please try the upload again.'}`); return;
         }
-        if (up.errorKind === 'rate_limited') {
-          setError('Too many uploads — please wait a moment and try again.');
-          return;
-        }
-        if (up.errorKind === 'invalid_payload') {
-          setError("This file couldn't be read — try a different photo.");
-          return;
-        }
-        setError(up.message ?? 'Media upload failed.');
+        uploadReceipt.current = { key, value: receipt };
+      }
+      const duration = isVideo ? receipt.durationSeconds ?? videoDuration : null;
+      if (isVideo && (duration == null || !Number.isFinite(duration) || duration <= 0 || duration > VIDEO_MAX_DURATION_SECONDS.highlight)) {
+        setError(duration != null && duration > VIDEO_MAX_DURATION_SECONDS.highlight
+          ? `This video is longer than ${VIDEO_MAX_DURATION_SECONDS.highlight}s. Choose a shorter clip.`
+          : 'The duration of this video could not be verified. Choose another clip.');
         return;
       }
-
-      const locationCity = loc.source === 'gps' ? loc.city : null;
-      const locationCountry = loc.source === 'gps' ? loc.country : null;
-      const locationName = loc.source === 'none' ? null : loc.source === 'manual' ? loc.name : (loc.name ?? loc.city);
-
-      const result = await createHighlight({
-        mediaUrl: up.url,
-        mediaType: mimeType,
-        videoDurationSeconds: videoDuration,
+      const intent = {
+        mediaUrl: receipt.url!, mediaType: receipt.mediaType ?? mimeType,
+        videoDurationSeconds: duration, mediaDurationSeconds: duration == null ? null : Math.ceil(duration),
+        mediaThumbnailUrl: receipt.thumbnailUrl ?? null,
         caption: caption.trim() || null,
-        locationName,
-        locationCity,
-        locationCountry,
-        visibility: vis,
-        expiresInHours,
-        filterId,
-        filterIntensity,
-        lifetimeClass,
-      });
-
-      if (!result.ok) {
-        if (result.errorKind === 'unauthenticated') {
-          await signOut();
-          router.replace('/(auth)/sign-in');
-          onClose();
-          return;
-        }
-        setError(result.message ?? 'Could not post highlight.');
-        return;
+        locationName: loc.source === 'none' ? null : loc.source === 'manual' ? loc.name : (loc.name ?? loc.city),
+        locationCity: loc.source === 'gps' ? loc.city : null, locationCountry: loc.source === 'gps' ? loc.country : null,
+        visibility: vis, expiresInHours, filterId, filterIntensity, lifetimeClass,
+      };
+      const fingerprint = JSON.stringify(intent);
+      if (publishIntent.current?.fingerprint !== fingerprint) publishIntent.current = { fingerprint, operationId: newPostDestinationOperation() };
+      const result = await createHighlight({ ...intent, operationId: publishIntent.current.operationId }, owner, request.signal);
+      if (!current()) return;
+      if (!result.ok || !result.data) {
+        setError(`Upload complete. Couldn’t publish the Highlight. ${result.message ?? 'Try again.'}`); return;
       }
-
-      // Reset media so the next open session starts fresh
-      // (the visible=true effect intentionally no longer resets media state).
-      setMediaUri(null);
-      setMimeType('image/jpeg');
-      setIsVideo(false);
-      setVideoDuration(null);
-      setFileSize(null);
-      onSuccess?.();
-      onClose();
+      uploadReceipt.current = null; publishIntent.current = null;
+      setMediaUri(null); setMimeType('image/jpeg'); setIsVideo(false); setVideoDuration(null); setFileSize(null);
+      onSuccess?.(); onClose();
+    } catch (error) {
+      if (current()) setError(uploadReceipt.current ? 'Upload complete. Couldn’t confirm publication. Try again.' : 'Couldn’t upload the selected file. Try again.');
     } finally {
-      submitLockRef.current = false;
-      setSubmitting(false);
+      owner.invalidate();
+      if (pending.current === request) { pending.current = null; submitLockRef.current = false; setSubmitting(false); }
     }
   }
 
@@ -259,14 +256,14 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
   const canSubmit = !!mediaUri && !submitting;
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
       <KeyboardSafeScrollView style={{ justifyContent: 'flex-end' }}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <Pressable style={StyleSheet.absoluteFill} onPress={close} />
         <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
           <View style={s.grab} />
           <View style={s.head}>
             <Text style={s.headTitle}>New Highlight</Text>
-            <Pressable onPress={onClose} hitSlop={8} style={s.closeBtn}>
+            <Pressable onPress={close} hitSlop={8} style={s.closeBtn}>
               <X size={18} color={color.ink} />
             </Pressable>
           </View>
@@ -298,7 +295,7 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
                   ) : (
                     <Image source={{ uri: mediaUri }} style={s.mediaPreview} resizeMode="cover" />
                   )}
-                  <Pressable style={s.mediaRemove} onPress={() => setMediaUri(null)} hitSlop={8}>
+                  <Pressable style={s.mediaRemove} disabled={submitting} onPress={() => { setMediaUri(null); uploadReceipt.current = null; publishIntent.current = null; }} hitSlop={8}>
                     <X size={14} color="#fff" />
                   </Pressable>
                   {isVideo && videoDuration != null && (
@@ -373,7 +370,7 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
                   <Pressable
                     key={value}
                     style={[s.chip, vis === value && s.chipOn]}
-                    onPress={() => setVis(value)}
+                    disabled={submitting} onPress={() => setVis(value)}
                   >
                     <Text style={[s.chipText, vis === value && s.chipTextOn]}>{label}</Text>
                   </Pressable>
@@ -391,7 +388,7 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
                   <Pressable
                     key={hours}
                     style={[s.chip, expiresInHours === hours && s.chipOn]}
-                    onPress={() => setExpiresInHours(hours)}
+                    disabled={submitting} onPress={() => setExpiresInHours(hours)}
                   >
                     <Text style={[s.chipText, expiresInHours === hours && s.chipTextOn]}>{label}</Text>
                   </Pressable>

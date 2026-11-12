@@ -47,6 +47,9 @@ import { HAVE_DB, exec, psql, rows, scalar, seedUser, deleteUser } from "./local
 import { isAssertionOnlyDoBlock, isPreconditionDoBlock, topLevelStatements } from "../../scripts/lib/migrationSqlBlocks.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
+// The historical migrations deliberately reject any column they have never
+// classified. Replay them on their original table shape inside ROLLBACK.
+const HISTORICAL_POSTS = "ALTER TABLE public.posts DROP COLUMN IF EXISTS post_reference_id;";
 const MIGRATION = resolve(__dir, "../../migrations/3801_posts_release_timing_columns_withheld.sql");
 const ROLLBACK = resolve(__dir, "../../../../../db/rollback/2026-10-08-3801-posts-release-timing-columns-withheld-rollback.sql");
 const M3362 = resolve(__dir, "../../migrations/3362_posts_client_column_grants.sql");
@@ -260,7 +263,8 @@ describe("census-media §50.16 — 3801: no client role reads when a post was re
 
   it("R4 — the rollback restores 3362's end state exactly (3362's postcondition passes on it); 3801 re-applied reproduces today's catalog", () => {
     const old = postconditions(M3362)[0]!;
-    const out = exec(`BEGIN;\n${SNAPSHOT}\n${unwrapped(ROLLBACK)}\n${SNAPSHOT}\n${old}\nSELECT 'post3362-ok';\n${unwrapped(MIGRATION)}\n${SNAPSHOT}\nROLLBACK;`);
+    const before = JSON.parse(exec(SNAPSHOT)[0]!);
+    const out = exec(`BEGIN;\n${HISTORICAL_POSTS}\n${SNAPSHOT}\n${unwrapped(ROLLBACK)}\n${SNAPSHOT}\n${old}\nSELECT 'post3362-ok';\n${unwrapped(MIGRATION)}\n${SNAPSHOT}\nROLLBACK;`);
     const [now, rolled, reapplied] = snaps(out);
     assert.ok(now && rolled && reapplied, "three snapshots");
     assert.ok(out.includes("post3362-ok"), "3362's postcondition passes on the rolled-back state");
@@ -271,7 +275,7 @@ describe("census-media §50.16 — 3801: no client role reads when a post was re
     assert.equal(rolled.relacl, now.relacl, "the rollback never restores a table-level privilege");
     assert.deepEqual(reapplied, now, "3801 after its rollback is the state 3801 left");
     assert.deepEqual(rolled.policies, now.policies, "no policy changes");
-    assert.deepEqual(JSON.parse(exec(SNAPSHOT)[0]!), now, "the test left the database as it found it");
+    assert.deepEqual(JSON.parse(exec(SNAPSHOT)[0]!), before, "the test left the database as it found it");
     // The rollback deletes 3801's ledger row, so a later runner pass re-applies 3801.
     const led = exec(`BEGIN;
       INSERT INTO public.schema_migration_ledger (filename, checksum, applied_by, notes)
@@ -299,7 +303,7 @@ describe("census-media §50.16 — 3801: no client role reads when a post was re
 
   it("R5 — from 2148's state (production's on 2026-10-08), 3801 alone reaches the same catalog as 3362 then 3801", () => {
     // 3801's rollback, then 3362's: 2148's state (a table-level client SELECT, no column ACL). Then 3801 alone.
-    const out = exec(`BEGIN;\n${SNAPSHOT}\n${unwrapped(ROLLBACK)}\n${unwrapped(RB3362)}\n${SNAPSHOT}\n${unwrapped(MIGRATION)}\n${SNAPSHOT}\nROLLBACK;`);
+    const out = exec(`BEGIN;\n${HISTORICAL_POSTS}\n${SNAPSHOT}\n${unwrapped(ROLLBACK)}\n${unwrapped(RB3362)}\n${SNAPSHOT}\n${unwrapped(MIGRATION)}\n${SNAPSHOT}\nROLLBACK;`);
     const [now, s2, direct] = snaps(out);
     assert.ok(now && s2 && direct);
     assert.match(String(s2.relacl), /anon=r\/.*authenticated=r\//, "anti-vacuity: the middle state is 2148's table-level SELECT");
@@ -310,7 +314,7 @@ describe("census-media §50.16 — 3801: no client role reads when a post was re
   it("R6 — the precondition refuses a state nobody wrote down, and a second apply", () => {
     const pre = precondition(MIGRATION);
     const refuse = (setup: string, why: RegExp) => {
-      const r = psql(`BEGIN;\n${setup}\n${pre}\nROLLBACK;`);
+      const r = psql(`BEGIN;\n${HISTORICAL_POSTS}\n${setup}\n${pre}\nROLLBACK;`);
       assert.notEqual(r.status, 0, `the precondition must refuse after: ${setup}`);
       assert.match(r.stderr, why);
     };
@@ -329,7 +333,7 @@ describe("census-media §50.16 — 3801: no client role reads when a post was re
     refuse(`${unwrapped(ROLLBACK)}\nCREATE ROLE ${g};\nGRANT SELECT ON TABLE public.posts TO ${g} WITH GRANT OPTION;\nSET LOCAL ROLE ${g};\nGRANT SELECT (content) ON TABLE public.posts TO anon;\nRESET ROLE;`,
       new RegExp(`a client privilege on posts was granted by ${g} rather than the table owner`));
     // And from 3362's exact end state, the precondition passes (control).
-    const ok = psql(`BEGIN;\n${unwrapped(ROLLBACK)}\n${pre}\nROLLBACK;`);
+    const ok = psql(`BEGIN;\n${HISTORICAL_POSTS}\n${unwrapped(ROLLBACK)}\n${pre}\nROLLBACK;`);
     assert.equal(ok.status, 0, `control: 3362's end state is accepted:\n${ok.stderr}`);
   });
 });

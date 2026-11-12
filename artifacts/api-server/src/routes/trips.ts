@@ -1,3 +1,4 @@
+import { tripHasEnded } from "../domain/trips/invariants/tripStatus.js";
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { isBlockedBetween } from "../lib/blockGuard.js";
@@ -708,7 +709,7 @@ router.get("/me/trip-invites/pending", async (req, res) => {
   // Fetch trip details
   const { data: trips, error: tripsErr } = await sc
     .from("trips")
-    .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, cover_media_type, owner_id, visibility, trip_type, show_exact_dates, show_destination_city")
+    .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, cover_media_type, owner_id, visibility, trip_type, show_exact_dates, show_destination_city, status, timezone")
     .in("id", tripIds);
 
   if (tripsErr) { sendError(res, "db_error", tripsErr.message); return; }
@@ -744,7 +745,7 @@ router.get("/me/trip-invites/pending", async (req, res) => {
   const invites = inviteRows
     .map((row: any) => {
       const trip = tripMap[row.trip_id];
-      if (!trip) return null;
+      if (!trip || tripHasEnded(trip)) return null;
       const inviter = profileMap[trip.owner_id] ?? null;
       return {
         tripId:             trip.id,
@@ -753,6 +754,7 @@ router.get("/me/trip-invites/pending", async (req, res) => {
         destinationCountry: trip.destination_country ?? null,
         startDate:          trip.start_date ?? null,
         endDate:            trip.end_date ?? null,
+        timezone:           trip.timezone ?? null,
         coverUrl:           trip.cover_url ?? null,
         coverMediaType:     trip.cover_media_type ?? null,
         invitedAt:          row.created_at,
@@ -1203,13 +1205,15 @@ router.post("/trips/:tripId/invite", async (req, res) => {
   // `error` bound for the same reason as the first `trips` read in this file:
   // unreadable is not absent, and "Trip not found" is not a thing a failed read
   // may say.
-  const { data: trip, error: tripErr } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await client.from("trips").select("owner_id, status, end_date, timezone").eq("id", tripId).maybeSingle();
   if (tripErr) {
     req.log.error({ err: tripErr }, "invite member: trip unreadable");
     sendError(res, "degraded_unavailable", "We could not read this trip right now. Please try again shortly.");
     return;
   }
   if (!trip) { res.status(404).json({ error: "not_found", message: "Trip not found" }); return; }
+  if (tripHasEnded(trip)) { res.status(410).json({ error: "gone", message: "This trip has ended" }); return; }
+
   // §6.1 canInviteParticipant — owner only, as the kernel's INVITE_PARTICIPANT
   // capability is. Passed the row already read.
   const invite = await canInviteParticipant(client, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
@@ -1345,11 +1349,12 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
   // census-trust §31: a DEGRADED read refuses this type too (it used to stay OPEN
   // as "low-risk"), so it is answered retryably here, never as a restriction.
   const { data: tripVis, error: tripVisErr } = await client
-    .from("trips").select("visibility").eq("id", tripId).maybeSingle();
+    .from("trips").select("visibility, status, end_date, timezone").eq("id", tripId).maybeSingle();
   if (tripVisErr) {
     sendError(res, "degraded_unavailable", "We could not verify this invitation right now. Please try again shortly.");
     return;
   }
+  if (!tripVis || tripHasEnded(tripVis)) { res.status(410).json({ error: "gone", message: "This trip is no longer active" }); return; }
   const isPrivatePlan = ["private", "invite"].includes(String((tripVis as any)?.visibility ?? "private"));
   if (isPrivatePlan) {
     const inviteTrust = await getRestrictionState(client, user.id);

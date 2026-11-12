@@ -21,7 +21,7 @@ const mockPush = jest.fn();
 jest.mock('expo-router', () => {
   const R = jest.requireActual('react');
   return {
-    useRouter: () => ({ push: (...a: unknown[]) => mockPush(...a), back: jest.fn(), replace: jest.fn(), canGoBack: () => true }),
+    useRouter: () => ({ push: (...a: unknown[]) => mockPush(...a), back: jest.fn(), setParams: jest.fn(), replace: jest.fn(), canGoBack: () => true }),
     useLocalSearchParams: () => ({ prefillMessage: 'Who could show me around Da Nang?' }),
     useFocusEffect: (cb: () => void) => R.useEffect(cb, []),
   };

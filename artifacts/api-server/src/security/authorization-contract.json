@@ -7,6 +7,7 @@
   ],
   "$pinnedAsMeasured": "layover_sessions, layover_plan_stops, layover_events and airport_profiles (census L199, 2026-09-07) are entered at the state MEASURED on the CI database, which is broader than invariant 1's SELECT-only ideal: anon/authenticated still hold DELETE, INSERT, SELECT and UPDATE from 0127's ALTER DEFAULT PRIVILEGES residue. CORRECTED 2026-09-09: these four entries were first written claiming REFERENCES and TRIGGER as well. Nothing had measured those two. They were inferred from the phrase 'the default ALL grant' rather than read off the database, and information_schema.role_table_grants on portava-ci returns exactly DELETE,INSERT,SELECT,UPDATE for both roles on all four tables — 2335 section 2's REVOKE TRUNCATE is present and REFERENCES/TRIGGER were never granted. check:authorization-contract is what caught it, reporting the contract as WIDER than live; a contract that approves a grant the database does not have approves a hole nobody opened, and it would have read as approval the day someone did. They are here so that drift on them — a policy added or dropped, a WITH CHECK removed, TRUNCATE restored — fails CI, which it could not while they were absent. This is a pin, not an approval: RLS (owner-scoped WITH CHECK policies; no anon policy) is what denies the client writes today, and every application writer is the service client. Narrowing the grants to SELECT-only is a separate migration and an owner decision; when it lands, shrink these entries in the same PR. SHRUNK 2026-10-07 by lane R with 3620_layover_client_write_boundary.sql (owner decision L199-b, census L200): the four entries now state the SELECT-only boundary 3620 creates, in the same PR, as this note asked. 3620 is applied to no database; until it is, each database is wider than these entries and this check says so there.",
   "tables": {
+    "recording_capture_stamps": { "note": "4019: private recording credentials and server-issued provenance. Only the service role accesses this table.", "tableGrants": {}, "insertCols": {}, "updateCols": {}, "policies": [{"name": "recording_capture_stamp_service", "cmd": "ALL", "permissive": true, "roles": ["service_role"]}] },
     "memory_snapshots": { "note": "3990, local and unapplied: private immutable evidence. API service-only access; owner-read policy is unreachable without a client grant. No activation is approved by this contract.", "tableGrants": {}, "insertCols": {}, "updateCols": {}, "policies": [{ "name": "memory_snapshots_owner_read", "cmd": "SELECT", "permissive": true, "roles": ["authenticated"] }] },
     "memory_video_segments": { "note": "3991, local and unapplied: canonical video segment references behind authenticated service-only operations. No client grants or policies.", "tableGrants": {}, "insertCols": {}, "updateCols": {}, "policies": [] },
     "memory_video_segment_operations": { "note": "3991, local and unapplied: private idempotency/cancellation receipts, accessible only within validated server commands.", "tableGrants": {}, "insertCols": {}, "updateCols": {}, "policies": [] },
@@ -120,7 +121,7 @@
       ]
     },
     "discovery_places": {
-      "note": "2153 — INSERT forge + submitter impersonation. SELECT-only for clients; all writes service-role. 3390 (census-discovery, explicit RLS): three RESTRICTIVE client-deny policies (INSERT, UPDATE, DELETE for anon+authenticated), so no later permissive policy or re-GRANT can reopen a client write.",
+      "note": "2153 — INSERT forge + submitter impersonation. SELECT-only for clients; all writes service-role. 3390 (census-discovery, explicit RLS): three RESTRICTIVE client-deny policies (INSERT, UPDATE, DELETE for anon+authenticated), so no later permissive policy or re-GRANT can reopen a client write. 4009 adds restrictive SELECT moderation for canonical-place links; submitters retain access to retract their own listing. No new client write grants.",
       "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
       "insertCols": {},
       "updateCols": {},
@@ -128,6 +129,7 @@
         { "name": "discovery_places_deny_delete_clients", "cmd": "DELETE", "permissive": false, "roles": ["anon","authenticated"] },
         { "name": "discovery_places_deny_insert_clients", "cmd": "INSERT", "permissive": false, "roles": ["anon","authenticated"] },
         { "name": "discovery_places_deny_update_clients", "cmd": "UPDATE", "permissive": false, "roles": ["anon","authenticated"] },
+        { "name": "discovery_places_canonical_moderation", "cmd": "SELECT", "permissive": false, "roles": ["public"] },
         { "name": "discovery_places_auth_insert", "cmd": "INSERT", "permissive": true, "roles": ["public"] },
         { "name": "discovery_places_own_delete", "cmd": "DELETE", "permissive": true, "roles": ["public"] },
         { "name": "discovery_places_own_update", "cmd": "UPDATE", "permissive": true, "roles": ["public"] },

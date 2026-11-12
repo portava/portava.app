@@ -30,6 +30,8 @@ import { color, space, type as t } from '../../theme/tokens.ts';
 import { getOverlayHeaderTotalHeight } from '../ui/AppHeader.tsx';
 import { useMediaStore, type GeoAreaMode, type GemCategory } from '../../stores/mediaStore.ts';
 import { useGemsFeed, type GemsFeedItem } from '../../hooks/useGemsFeed.ts';
+import { usePrivateSurfaceKey } from '../../hooks/usePrivateSurfaceKey.ts';
+import { SaveToCollectionSheet } from '../SaveToCollectionSheet.tsx';
 import { useMediaSave } from '../../hooks/useMediaSave.ts';
 import { useSession } from '../../context/SessionContext.tsx';
 import { GemsFilterBar } from './GemsFilterBar.tsx';
@@ -61,7 +63,12 @@ export interface GemsFeedProps {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function GemsFeed({
+export function GemsFeed(props: GemsFeedProps) {
+  const scope = usePrivateSurfaceKey();
+  return <GemsFeedForViewer key={scope} {...props} />;
+}
+
+function GemsFeedForViewer({
   nearMeEnabled = true,
   activeTripId,
   activeCity,
@@ -81,6 +88,7 @@ export function GemsFeed({
   const saveHook = useMediaSave();
 
   // ── Sheet state ──────────────────────────────────────────────────────────
+  const [saveItem, setSaveItem] = useState<GemsFeedItem | null>(null);
   const [commentItemId, setCommentItemId] = useState<string | null>(null);
   const [moreMenuItemId, setMoreMenuItemId] = useState<string | null>(null);
   const [whyThisItemId, setWhyThisItemId] = useState<string | null>(null);
@@ -152,8 +160,8 @@ export function GemsFeed({
 
   // ── Interaction handlers ──────────────────────────────────────────────────
   const handleSave = useCallback((item: GemsFeedItem) => {
-    saveHook.toggleSave(item.id);
-  }, [saveHook]);
+    setSaveItem(item);
+  }, []);
 
   const handleComment = useCallback((item: GemsFeedItem) => {
     setCommentItemId(item.id);
@@ -211,7 +219,7 @@ export function GemsFeed({
         />
       </View>
     );
-  }, [screenWidth, screenHeight, onViewPlace, onAddToTrip, onDirections, onViewCreator, handleSave, handleShare, handleMore]);
+  }, [screenWidth, screenHeight, onViewPlace, onAddToTrip, onDirections, onViewCreator, handleSave, handleShare, handleMore, saveHook.isSaved]);
 
   const keyExtractor = useCallback((item: GemsFeedItem) => item.id, []);
 
@@ -309,6 +317,12 @@ export function GemsFeed({
           nearMeLoading={nearMeLoading}
         />
       </View>
+
+      {saveItem ? <SaveToCollectionSheet key={saveItem.id} visible entityType="gem" entityId={saveItem.gemId ?? saveItem.id}
+        isSaved={saveHook.isSaved(saveItem.id)} onClose={() => setSaveItem(null)}
+        onStatusRead={(saved) => saveHook.setSaved(saveItem.id, saved)}
+        onSaved={() => saveHook.setSaved(saveItem.id, true)}
+        onUnsaved={() => { saveHook.setSaved(saveItem.id, false); setSaveItem(null); }} /> : null}
 
       {/* ── Comment sheet ────────────────────────────────────────────────── */}
       <MediaCommentSheet

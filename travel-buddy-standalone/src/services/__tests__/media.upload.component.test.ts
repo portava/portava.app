@@ -11,6 +11,11 @@
  *
  * Run: npx jest src/services/__tests__/media.upload.component.test.ts
  */
+// NOTE: these cases exercise the browser fetch transport. The native file-upload suite covers the Expo binary path.
+import { Platform } from 'react-native';
+const originalPlatform = Platform.OS;
+beforeAll(() => { Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' }); });
+afterAll(() => { Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform }); });
 import assert from 'node:assert/strict';
 import {
   uploadMedia,

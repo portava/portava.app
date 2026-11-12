@@ -17,6 +17,8 @@ import eventsRouter from "../routes/events.js";
 import postcardsRouter from "../routes/postcards.js";
 import { sweepExpiredStories } from "../routes/stories.js";
 import { FEED_DIM } from "../lib/mediaProcessing.js";
+import { createHash, randomUUID } from "node:crypto";
+import { PLAIN_MP4 } from "./videoProbeFixtures.js";
 import { FIXTURE_ISO6709, mp4WithLocation } from "./videoFixtures.js";
 
 let server: http.Server;
@@ -28,10 +30,10 @@ const EVENT_ID = "d0000000-0000-4000-a000-0000000000e1";
 const OLD_SUPABASE_URL = process.env.SUPABASE_URL;
 const SB = "http://sb.example.test";
 
-function rawReq(method: string, path: string, body: Buffer | null, contentType: string): Promise<{ status: number; body: any }> {
+function rawReq(method: string, path: string, body: Buffer | null, contentType: string, extraHeaders: Record<string, string> = {}): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
     const url = new URL(path, base);
-    const headers: Record<string, string> = { authorization: `Bearer ${TOKEN}`, "content-type": contentType };
+    const headers: Record<string, string> = { authorization: `Bearer ${TOKEN}`, "content-type": contentType, ...extraHeaders };
     if (body) headers["content-length"] = String(body.length);
     const r = http.request({ hostname: url.hostname, port: Number(url.port), path: url.pathname, method, headers, agent: false }, (res) => { // agent:false — never a pooled keep-alive socket the server has already destroyed (census-media §28.12)
       let raw = ""; res.on("data", (c) => (raw += c));
@@ -899,5 +901,28 @@ describe("POST /api/events/:id/posts — mediaUrls storage-origin validation", (
     const r = await jsonReq("POST", `/api/events/${EVENT_ID}/posts`, { body: "No media" });
     assert.equal(r.status, 201, JSON.stringify(r.body));
     assert.deepEqual(client._inserted.find((i: any) => i.table === "event_posts")?.row?.media_urls, []);
+  });
+});
+
+
+describe('camera stamps use the verified upload pipeline', () => {
+  it('seals the actual stored file under the authenticated owner and returns its protected key', async () => {
+    const client = makeClient(), id = randomUUID(), secret = 'a'.repeat(43), path = `${USER_ID}/capture-stamps/${id}.mp4`;
+    let sealed: Record<string,string> | undefined;
+    (client as any).rpc = async (fn:string, args:any) => {
+      assert.equal(fn,'seal_recording_capture'); sealed=args; return {data:path,error:null};
+    };
+    setClients(client);
+    const response=await rawReq('POST','/api/media/upload',PLAIN_MP4,'video/mp4',{'x-portava-capture-token':`${id}.${secret}`});
+    assert.equal(response.status,201); assert.equal(response.body.captureAccepted,true); assert.equal(response.body.url,`post-media/${path}`);
+    assert.equal(sealed?.p_owner,USER_ID); assert.equal(sealed?.p_hash,createHash('sha256').update(secret).digest('hex'));
+    assert.equal(sealed?.p_sha,createHash('sha256').update(client._uploads[0].buf).digest('hex'));
+  });
+  it('cannot stamp a spoofed media header or write bytes after an invalid capture token', async () => {
+    const client=makeClient();setClients(client);
+    const result=await rawReq('POST','/api/media/upload',PLAIN_MP4,'video/mp4',{'x-portava-capture-token':'forged'});
+    assert.equal(result.status,409); assert.equal(client._uploads.length,0);
+    const malformed=await rawReq('POST','/api/media/upload',mp4Head(),'video/mp4',{'x-portava-capture-token':`${randomUUID()}.${'a'.repeat(43)}`});
+    assert.equal(malformed.status,400); assert.equal(client._uploads.length,0);
   });
 });

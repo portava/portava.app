@@ -29,8 +29,9 @@
  * Settings changes it (onSensingConsentChange), so a withdrawal stops capture
  * or sending at once rather than at the next launch.
  */
-import { AppState, type AppStateStatus } from 'react-native';
+import { AppState, Platform, type AppStateStatus } from 'react-native';
 import { freshToken } from '../apiToken.ts';
+import { currentDiscoveryScope, onDiscoveryScopeChange } from '../discoveryViewerScope.ts';
 import { onSensingConsentChange, readSensingConsent } from '../sensingConsent.ts';
 import { sensingCaptureDecision } from '../../lib/sensing/consentSplit.ts';
 import {
@@ -39,14 +40,17 @@ import {
 } from './sensingCapture.ts';
 import {
   createDeviceLocationSource,
+  onAreaLocationGranted,
   createDeviceMotionSource,
 } from './deviceSensorSources.ts';
 import { createAcousticMeterSource } from './acousticMeterSource.ts';
 import { onAcousticSensingPermissionChange, readAcousticSensingPermission } from './acousticSensingPermission.ts';
 import { createSensingTransport } from './sensingTransport.ts';
 import { registerSensingZoneSource } from './sensingZoneHint.ts';
-import { SECURE_KEYS, getSecure, setSecure } from '../../lib/secureStore.ts';
-import { deviceCommitment, deviceSecretFromBytes } from '../../lib/sensing/commitment.ts';
+import { sensingDeviceSecret } from './sensingDeviceSecret.ts';
+export { sensingDeviceSecret, _resetSensingDeviceSecret } from './sensingDeviceSecret.ts';
+import { isSensingErasurePending, onSensingErasureChange, registerSensingRevocationCredential } from './sensingErasure.ts';
+import { deviceCommitment } from '../../lib/sensing/commitment.ts';
 import {
   ACOUSTIC_PERMISSION_DENIED,
   acousticCaptureAllowed,
@@ -59,53 +63,26 @@ export interface SensingCaptureInstallation {
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
-/**
- * The device secret behind every commitment. Read from SecureStore, minted
- * from 32 CSPRNG bytes the first time, and kept in memory for the process.
- *
- * REFUSES rather than degrades: without `crypto.getRandomValues` there is no
- * secret, `commitmentFor` answers null, and the transport sends nothing. A
- * secret from `Math.random` would be a guessable commitment, and a guessable
- * commitment lets anyone holding the table recognise this device's rows.
- * On web SecureStore is a no-op, so the secret lives for the process only —
- * which means a web session can contribute but cannot withdraw after a
- * reload; sensing capture is not expected to run there.
- */
-let memorySecret: string | null = null;
-export async function sensingDeviceSecret(): Promise<string | null> {
-  if (memorySecret) return memorySecret;
-  const stored = await getSecure(SECURE_KEYS.SENSING_DEVICE_SECRET);
-  if (typeof stored === 'string' && stored.length >= 64) {
-    memorySecret = stored;
-    return stored;
-  }
-  const g = globalThis as { crypto?: { getRandomValues?: (b: Uint8Array) => Uint8Array } };
-  if (typeof g.crypto?.getRandomValues !== 'function') return null;
-  const bytes = new Uint8Array(32);
-  g.crypto.getRandomValues(bytes);
-  const secret = deviceSecretFromBytes(bytes);
-  await setSecure(SECURE_KEYS.SENSING_DEVICE_SECRET, secret);
-  memorySecret = secret;
-  return secret;
-}
-
-/** TEST SEAM: forget the in-memory secret so the next call re-reads storage. */
-export function _resetSensingDeviceSecret(): void {
-  memorySecret = null;
-}
-
 export function installSensingCapture(): SensingCaptureInstallation {
+  if (Platform.OS === 'web') return { dispose() {} };
   let capture: SensingCaptureHandle | null = null;
   let disposed = false;
   let reconciliation = 0;
   let captureGeneration = 0;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  let retryDelay = 2_000;
+  let foreground = AppState.currentState === 'active';
+  let owner = currentDiscoveryScope().viewer;
+  const hasOwner = () => typeof owner === 'string' && owner.startsWith('u:');
   let acoustic: AcousticPermission = ACOUSTIC_PERMISSION_DENIED;
   /** Whether the person's upload consent is in effect. Checked before EVERY send. */
   let uploadAllowed = false;
+  let surfaceAllowed = false;
 
   const transport = createSensingTransport({
     baseUrl: apiBase(),
     getEligibilityToken: freshToken,
+    surfaceAllowed: () => surfaceAllowed,
     commitmentFor: async (epoch) => {
       const secret = await sensingDeviceSecret();
       return secret ? deviceCommitment(secret, epoch) : null;
@@ -124,17 +101,36 @@ export function installSensingCapture(): SensingCaptureInstallation {
     registerSensingZoneSource(null);
   }
 
-  async function recheck(): Promise<void> {
+  async function recheck(keepCredential = false): Promise<void> {
     if (disposed) return;
+    clearTimeout(retryTimer);
     const expected = ++reconciliation;
     uploadAllowed = false;
-    transport.reset();
-    const current = () => !disposed && expected === reconciliation;
+    surfaceAllowed = false;
+    transport.reset({ keepCredential });
+    // Revalidation never leaves an old consent's sensors running while a slow
+    // read decides whether this account still authorizes capture.
+    stop();
+    if (!foreground || !hasOwner()) return;
+    const expectedOwner = owner;
+    const current = () => !disposed && foreground && owner === expectedOwner && expected === reconciliation;
     let decision = { capture: false, upload: false };
     try {
-      if (apiBase()) decision = sensingCaptureDecision(await readSensingConsent());
+      if (apiBase() && !await isSensingErasurePending()) {
+        const read = await readSensingConsent();
+        if (!current()) return;
+        if (read.status !== 'ok' && read.reason !== 'not_configured') {
+          retryTimer = setTimeout(() => { if (current()) void recheck(keepCredential); }, retryDelay);
+          retryDelay = Math.min(retryDelay * 2, 60_000);
+          return;
+        }
+        retryDelay = 2_000;
+        decision = sensingCaptureDecision(read);
+        surfaceAllowed = decision.upload && read.status === 'ok' && read.state.consents.surface.effective;
+      }
     } catch {}
     if (!current()) return;
+    if (!decision.upload) transport.reset();
     if (!decision.capture) {
       stop();
       return;
@@ -171,13 +167,23 @@ export function installSensingCapture(): SensingCaptureInstallation {
     registerSensingZoneSource(() => running.currentZone());
   }
 
+  const unsubscribeLocation = onAreaLocationGranted(() => { void recheck(true); });
+  const unsubscribeErasure = onSensingErasureChange(() => { if (!disposed) void recheck(); });
+  const unregisterCredential = registerSensingRevocationCredential(() => transport.revocationCredential?.() ?? null);
   void recheck();
 
   // Re-check consent on every foreground AND on every change made in Settings:
   // a withdrawal (here or on another device) must stop capture or sending, not
   // wait for a relaunch.
   const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
-    if (state !== 'active') return;
+    foreground = state === 'active';
+    void recheck(true);
+  });
+  const unsubscribeOwner = onDiscoveryScopeChange(() => {
+    const next = currentDiscoveryScope().viewer;
+    if (next === owner) return;
+    owner = next;
+    acoustic = ACOUSTIC_PERMISSION_DENIED;
     void recheck();
   });
   const unsubscribeConsent = onSensingConsentChange(() => { if (!disposed) void recheck(); });
@@ -192,12 +198,18 @@ export function installSensingCapture(): SensingCaptureInstallation {
 
   return {
     dispose() {
+      if (disposed) return;
       disposed = true;
+      clearTimeout(retryTimer);
       reconciliation += 1;
       uploadAllowed = false;
       acoustic = ACOUSTIC_PERMISSION_DENIED;
       transport.reset();
       stop();
+      unregisterCredential();
+      unsubscribeLocation();
+      unsubscribeErasure();
+      unsubscribeOwner();
       unsubscribeConsent();
       unsubscribeAcoustic();
       try {

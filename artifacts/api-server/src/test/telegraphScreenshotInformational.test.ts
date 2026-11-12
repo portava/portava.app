@@ -280,13 +280,22 @@ const w5 = await import("../domain/telegraph/policies/screenshotSignal.js");
 const { TEMPLATES } = await import("../services/notifications/NotificationTemplateService.js");
 const VERIFIER_PARAPHRASES = ["No one can capture this chat", "Snapshots are blocked in this conversation", "This chat is capture-protected"];
 
+function jsonCopyStrings(value: unknown): string[] {
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.flatMap(jsonCopyStrings);
+  if (value && typeof value === 'object') return Object.values(value).flatMap(jsonCopyStrings);
+  return [];
+}
+
 /** Every claim-shaped user-facing string in `files`, collapsed. */
 function claimsIn(files: readonly string[], prepare: (code: string) => string = (code) => code): Array<{ file: string; text: string }> {
   const out: Array<{ file: string; text: string }> = [];
   for (const f of files) {
     const raw = readFileSync(f, "utf8");
     const code = prepare(/\.(?:json|html|hbs|ejs|txt|xml|plist)$/.test(f) ? raw : stripComments(raw));
-    for (const t of userFacingStrings(code)) if (w5.claimsCaptureProtection(t)) out.push({ file: relative(REPO, f), text: collapse(t) });
+    // JSON escape spellings must be inspected as the text the user sees.
+    const copy = f.endsWith('.json') ? jsonCopyStrings(JSON.parse(code)) : userFacingStrings(code);
+    for (const t of copy) if (w5.claimsCaptureProtection(t)) out.push({ file: relative(REPO, f), text: collapse(t) });
   }
   return out;
 }
@@ -327,6 +336,11 @@ describe("T408 wave 5 — at a detection site, copy is an exact allowlist (any w
 });
 
 describe("T408 wave 5 — everywhere else, a wider net with a closed reviewed list", () => {
+  it("decodes escaped JSON copy before detecting protection claims", () => {
+    const copy = jsonCopyStrings(JSON.parse('{"nested":["Screenshots are bl\\u006fcked",false,{"copy":"No audio \\u2014 recorded"}]}'));
+    assert.deepEqual(copy, ['Screenshots are blocked', 'No audio — recorded']);
+    assert.equal(w5.claimsCaptureProtection(copy[0]!), true);
+  });
   it("the claim shape catches the verifier's paraphrases and their kin, and not the signal itself", () => {
     for (const s of [...VERIFIER_PARAPHRASES, "Messages here can't be copied", "We stop screenshots", "Screen recording is off for this chat", "Your chats are secure from capture"]) {
       assert.equal(w5.claimsCaptureProtection(s), true, s);

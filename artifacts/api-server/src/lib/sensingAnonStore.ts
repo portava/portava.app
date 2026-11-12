@@ -686,10 +686,11 @@ export async function readSensingCohort(
         reportedCount: typeof count === "number" ? count : null,
       };
     }
-    const rows = (data ?? []) as SensingContributionRow[];
+    if (!Array.isArray(data)) return { ok: false, complete: false, rows: [], error: "malformed_read", reportedCount: null };
+    const rows = data as SensingContributionRow[];
     // A full page is indistinguishable from a truncated one, so it is reported as
     // incomplete. The aggregation refuses on that, which is the safe direction.
-    return { ok: true, complete: rows.length < limit, rows };
+    return { ok: true, complete: rows.length < limit && Number.isInteger(count) && count === rows.length, rows };
   } catch (e) {
     return {
       ok: false,

@@ -28,6 +28,7 @@
  * PURE module — no React, no network, no RN. Network access is INJECTED, so this
  * is safe to import under the node:test runner (mirrors suggestBody.ts).
  */
+import { withInputBudget } from './requestBudget.ts';
 import type { AssistanceType, EntityType, InputContext } from '../types/inputContext.ts';
 import type { InputFieldPolicy } from '../types/fieldPolicy.ts';
 import type { InputSuggestion } from '../types/inputSuggestion.ts';
@@ -170,33 +171,41 @@ export interface RecordResult {
  * pure side-effect: a failed record can never break the selection the user made.
  */
 export async function recordSelectionWith(deps: SelectDeps, req: SelectRequest): Promise<RecordResult> {
+  const budget = withInputBudget();
   try {
     const base = (deps.apiBase() ?? '').trim();
     if (!base) return { recorded: false, reason: 'no_api_base' };
 
     let token: string | null = null;
     try {
-      token = await deps.getToken();
+      token = await budget.wait(deps.getToken);
     } catch {
       token = null;
     }
     // No token → do not send. Unauthenticated surfaces simply record nothing.
     if (!token) return { recorded: false, reason: 'no_token' };
 
-    const res = await deps.fetchImpl(`${base}/input-assistance/select`, {
+    if (!budget.current(token)) return { recorded: false, reason: 'account_changed' };
+    const res = await budget.wait(() => deps.fetchImpl(`${base}/api/input-assistance/select`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(buildSelectBody(req)),
-    });
+      signal: budget.signal,
+    }));
     if (!res || !res.ok) {
       return { recorded: false, reason: res ? `http_${res.status}` : 'no_response' };
     }
-    return { recorded: true };
+    const receipt = await budget.wait(() => res.json());
+    return receipt?.ok === true && receipt.recorded === true
+      ? { recorded: true }
+      : { recorded: false, reason: 'not_recorded' };
   } catch {
     // FAIL-SOFT — the selection proceeds regardless of a record failure.
     return { recorded: false, reason: 'error' };
+  } finally {
+    budget.done();
   }
 }

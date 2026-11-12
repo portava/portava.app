@@ -624,12 +624,25 @@ describe("Admin reports: hide-content", () => {
       reports: [report],
       posts:   [{ id: POST_ID, post_status: "published", author_id: TARGET_ID }],
     });
+    const postWrites: Record<string, unknown>[] = [];
+    const originalFrom = admin.from.bind(admin);
+    admin.from = (table: string) => {
+      const query = originalFrom(table);
+      if (table === 'posts') {
+        const update = query.update.bind(query);
+        query.update = (patch: Record<string, unknown>) => { postWrites.push(patch); return update(patch); };
+      }
+      return query;
+    };
     _setTestClient(admin, true);
     _setTestServiceClient(admin);
     const r = await req("POST", `/admin/reports/${REPORT_ID}/hide-content`, { reason: "Violation" });
     assert.ok([200, 201].includes(r.status), `expected 200/201, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.equal(r.body?.contentHidden, true);
     assert.equal(r.body?.status, "in_review");
+    assert.equal(postWrites.length, 1);
+    assert.equal(postWrites[0].status, 'hidden');
+    assert.equal(postWrites[0].post_status, undefined, 'moderation must not write a nonexistent removed delayed-release state');
   });
 
   it("audits the moderation action against the post OWNER, not the admin", async () => {

@@ -7,6 +7,7 @@
  * defaults + pause). Both source screens save immediately (per-toggle), so we
  * preserve that behavior — there is no batched SaveBar here.
  */
+import { MapPrivacySection } from '../../../src/components/map/MapPrivacySection.tsx';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, Pressable, Switch, ActivityIndicator, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
@@ -522,6 +523,7 @@ function LocationAvailabilityScreenInner() {
         </>
       )}
 
+      <MapPrivacySection />
       {/* Who Can See Me — screen stays */}
       <SettingsSection title="Visibility">
         <SettingsRow

@@ -1395,7 +1395,7 @@ export function deriveCrowdFlow(
 
     // GATE 3 — multiple signal families (recognized ones only).
     const families = normalizeFamilies(t.signalFamilies);
-    if (families.length < minFamilies) {
+    if (countIndependentFlowFamilies(families) < minFamilies) {
       rejected.push({ ...id, reason: "insufficient_signal_families" });
       continue;
     }
@@ -1507,4 +1507,10 @@ function normalizeFamilies(input: unknown): CrowdFlowSignalFamily[] {
     if (CROWD_FLOW_SIGNAL_FAMILIES.includes(f)) seen.add(f);
   }
   return [...seen].sort();
+}
+
+/** OD-MAP-1: accepted plans and navigation starts share one consent boundary.
+ * They remain distinct evidence labels, but cannot corroborate each other. */
+export function countIndependentFlowFamilies(input: unknown): number {
+  return new Set(normalizeFamilies(input).map(family => family === "navigation_start" ? "accepted_plan" : family)).size;
 }

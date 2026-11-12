@@ -78,11 +78,11 @@ interface FakeOpts {
 
 function baseDb(): Record<string, any[]> {
   const places: any[] = [
-    { id: PLACE_LIVE, name: "Sky36 Rooftop (now)", city: "Hanoi", neighborhood: "Hoan Kiem", primary_category: "bar", status: "active", updated_at: "2026-10-01T00:00:00Z" },
-    { id: PLACE_DUP, name: "Gone Cafe", city: "Hanoi", neighborhood: null, primary_category: "cafe", status: "duplicate", updated_at: "2026-10-01T00:00:00Z" },
+    { id: PLACE_LIVE, name: "Sky36 Rooftop (now)", city: "Hanoi", neighborhood: "Hoan Kiem", primary_category: "bar", moderation_status: "visible", merged_into_place_id: null, status: "active", updated_at: "2026-10-01T00:00:00Z" },
+    { id: PLACE_DUP, name: "Gone Cafe", city: "Hanoi", neighborhood: null, primary_category: "cafe", moderation_status: "visible", merged_into_place_id: null, status: "duplicate", updated_at: "2026-10-01T00:00:00Z" },
   ];
   for (let i = 0; i < 40; i++) {
-    places.push({ id: `9${String(i).padStart(7, "0")}-0000-4000-8000-000000000000`, name: `Place ${i}`, city: "Hue", neighborhood: null, primary_category: "x", status: "active", updated_at: null });
+    places.push({ id: `9${String(i).padStart(7, "0")}-0000-4000-8000-000000000000`, name: `Place ${i}`, city: "Hue", neighborhood: null, primary_category: "x", moderation_status: "visible", merged_into_place_id: null, status: "active", updated_at: null });
   }
   const posts: any[] = [
     { id: POST_OK, author_id: SENDER, content: "The post as it reads today", visibility: "public", status: "active", post_status: "published", deleted_at: null, media_urls: [], location_privacy_mode: "exact", created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-02T00:00:00Z" },
@@ -135,7 +135,7 @@ function makeClient(opts: FakeOpts = {}) {
         if (rows.length > 1) return { data: null, error: { message: "multiple rows" } };
         return { data: rows[0] ?? null, error: null };
       }
-      return { data: rows, error: null };
+      return { data: rows, error: null, count: rows.length };
     };
     const b: any = {
       select() { return b; },
@@ -267,7 +267,7 @@ describe("T445 — a served body never carries a field of the sender's snapshot"
 
   it("keeps the sender's own caption and the reference — the two things that are not the source's", () => {
     const served = JSON.parse(servedCardBody("discovery_card", snapshotBody("discovery_card", {}), { kind: "discovery_card", state: "withheld", reason: "no_source" }));
-    assert.deepEqual(served, { sourceId: PLACE_LIVE, sourceType: "place", caption: "you'd love this", withheld: true });
+    assert.deepEqual(served, { sourceId: PLACE_LIVE, sourceType: "place", caption: "you'd love this", cardSchemaVersion: 1, withheld: true });
   });
 
   it("a withheld Compass card has no `type`, so an installed client draws its own fallback rather than printing the discriminator", () => {
@@ -375,7 +375,7 @@ describe("T448 / T359 — every card is the source as it is NOW, for THIS viewer
     const { client } = makeClient();
     const out = await applySharedCardTruth(client, VIEWER, [r]);
     assert.equal(out.truth.get(r.id)?.state, "withheld");
-    assert.deepEqual(JSON.parse(out.rows[0].body), { subtype: "meeting_point", withheld: true });
+    assert.deepEqual(JSON.parse(out.rows[0].body), { subtype: "meeting_point", cardSchemaVersion: 1, withheld: true });
   });
 
   it("an UNREADABLE source table is unavailable/unknown — never the snapshot, never an empty card", async () => {
@@ -415,7 +415,7 @@ describe("T448 / T359 — every card is the source as it is NOW, for THIS viewer
 // ── 4. batching ──────────────────────────────────────────────────────────────
 
 describe("T448 — the re-resolution is ONE batch, not one read per card", () => {
-  it("fifty cards over forty places and ten posts cost one read per table", async () => {
+  it("fifty cards use four place batches including current moderation, not one query per card", async () => {
     const { client, reads, db } = makeClient();
     const rows: any[] = [];
     const placeIds = db.places.slice(2).map((p) => p.id); // the forty
@@ -427,8 +427,9 @@ describe("T448 — the re-resolution is ONE batch, not one read per card", () =>
     const out = await applySharedCardTruth(client, VIEWER, rows, { stats });
     assert.equal(out.truth.size, rows.length);
     for (const r of out.rows) assert.ok(!String(r.body).includes(SNAP));
-    assert.equal(reads.places, 1, `places read ${reads.places}×`);
+    assert.equal(reads.places, 4, `places read ${reads.places}×`);
     assert.equal(reads.posts, 1, `posts read ${reads.posts}×`);
+    assert.equal(reads.post_media, 1, `post attachments read ${reads.post_media}×`);
     assert.equal(reads.profiles, 1, `profiles read ${reads.profiles}×`);
     assert.ok(reads.blocks <= 2, `blocks read ${reads.blocks}×`);
     assert.ok(stats.coalesced >= 40 + 10 + 10 + 20, `coalesced ${stats.coalesced}`);
@@ -529,7 +530,7 @@ describe("fix round 1 (F1) — a source id is resolved only in its canonical uui
     const out = await resolveSharedCards(client, VIEWER, [{ row: live }, { row: bad }]);
     assert.equal(out.get(live.id)?.state === "live" && out.get(live.id)?.state, "live");
     assert.deepEqual(out.get(bad.id), { kind: "discovery_card", state: "withheld", reason: "no_source" });
-    assert.equal(reads.places, 1, "one read, and only for the uuid");
+    assert.equal(reads.places, 4, "one source read plus three current moderation checks, only for the uuid");
   });
 });
 

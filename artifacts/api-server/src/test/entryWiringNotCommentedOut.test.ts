@@ -95,7 +95,11 @@ export function hiddenStatements(text: string): number[] {
   const hits: number[] = [];
   text.split("\n").forEach((line, i) => {
     if (/^\s*(\/\/|\*|\/\*)/.test(line)) return; // a whole-line comment is prose, not an appended statement
-    const blanked = line.replace(/(["'`])(?:\\.|(?!\1).)*\1/g, (m) => m[0] + " ".repeat(Math.max(0, m.length - 2)) + m[0]);
+    if (!line.includes("//")) return;
+    // Each quoted character consumes either an escape pair or one non-escape
+    // character. These disjoint alternatives avoid backtracking on long
+    // runs of slashes in server regular expressions.
+    const blanked = line.replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g, (m) => " ".repeat(m.length));
     const at = blanked.indexOf("//");
     if (at <= 0) return;
     if (HIDDEN.test(blanked.slice(at + 2))) hits.push(i + 1);
@@ -139,6 +143,12 @@ describe("census-discovery §90 — entry wiring is not commented out", () => {
       'import adminTrailsRouter from "./adminTrails"; // census-discovery §52 (DC-23): appended to this line',
     );
     assert.deepEqual(unmountedRouters(routerVisible), ["adminTrailsRouter"]);
+  });
+
+  it("ignores apparent mounts in quoted URLs and still finds code behind a real comment", () => {
+    const slashes = "\\".repeat(2048);
+    assert.deepEqual(hiddenStatements(`const s = "${slashes}// router.use(fakeRouter)";`), []);
+    assert.deepEqual(hiddenStatements(`const s = "${slashes}"; // router.use(hiddenRouter)`), [1]);
   });
 
   it("src/index.ts calls every start… function it imports, including DC-07's trend rebuild scheduler", () => {

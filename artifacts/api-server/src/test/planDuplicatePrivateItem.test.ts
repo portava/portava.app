@@ -95,7 +95,7 @@ function seed(d: Door, ex: Existing): Record<string, Rows> {
     trip_private_anchor_shares: ex.shared ? [{ plan_item_id: EXISTING, trip_id: TRIP, owner_id: ex.creator, member_id: ANA, created_at: iso(-1) }] : [],
     events: [{ id: EVENT, host_id: BEN, state: "published", visibility: "public", title: "Fado night", starts_at: iso(6), ends_at: iso(8) }],
     hidden_gems: [{ id: GEM, status: "active", title: "Gem", submitted_by: BEN, created_at: iso(-72) }],
-    places: [{ id: PLACE, name: "Cafe", category: "dining", latitude: 38.7, longitude: -9.1 }],
+    places: [{ id: PLACE, name: "Cafe", primary_category: "dining", city: "Lisbon", status: "active", latitude: 38.7, longitude: -9.1 }],
     discovery_places: [{ id: PLACE, name: "Cafe", category: "dining", city: "Lisbon", status: "active" }],
     meetups: [{ id: MEETUP, title: "Meetup", starts_at: iso(4), trip_id: null }],
   };
@@ -120,6 +120,42 @@ function use(s: Record<string, Rows>): FakeClient {
   return c;
 }
 const planInserts = (c: FakeClient) => c._observed.inserts.filter((w: any) => w.table === "trip_plan_items").length;
+
+describe('place add-to-plan current availability', () => {
+  const door = DOORS.find(d => d.name === 'place-add-to-plan')!;
+  const world = (): Record<string, Rows> => ({ ...seed(door, { creator: BEN, isPrivate: true }), trip_plan_items: [] });
+  it('can add an active canonical place without a community mirror', async () => {
+    const c = use({ ...world(), discovery_places: [] });
+    const r = await call(harness.base, 'POST', door.path, ANA, door.body);
+    assert.equal(r.status, 201, JSON.stringify(r.body)); assert.equal(planInserts(c), 1);
+    const item = c._store.trip_plan_items![0]!;
+    assert.equal(item.title, 'Cafe'); assert.equal(item.location_name, 'Lisbon');
+    assert.equal(item.lat, undefined); assert.equal(item.lng, undefined);
+  });
+  it('refuses a withheld, closed or merged canonical row despite an active community shadow', async () => {
+    for (const patch of [{ moderation_status: 'withheld' }, { status: 'closed' }, { merged_into_place_id: GEM }]) {
+      const rows = world(); rows.places![0] = { ...rows.places![0], ...patch };
+      const c = use(rows); const r = await call(harness.base, 'POST', door.path, ANA, door.body);
+      assert.equal(r.status, 404, JSON.stringify(r.body)); assert.equal(planInserts(c), 0);
+    }
+  });
+  it('refuses a provider-only alias while held and admits it after restoration', async () => {
+    const rows = world(); rows.places![0] = { ...rows.places![0], id: GEM, moderation_status: 'withheld' };
+    rows.discovery_places![0] = { ...rows.discovery_places![0], osm_id: 'node/1' };
+    const c = use({ ...rows, external_place_references: [{ provider: 'osm', provider_place_id: 'node/1', place_id: GEM }] });
+    assert.equal((await call(harness.base, 'POST', door.path, ANA, door.body)).status, 404);
+    assert.equal(planInserts(c), 0);
+    c._store.places![0]!.moderation_status = 'visible';
+    assert.equal((await call(harness.base, 'POST', door.path, ANA, door.body)).status, 201);
+    assert.equal(planInserts(c), 1);
+  });
+  it('reports unavailable rather than writing when the canonical read fails', async () => {
+    const c = makeFakeClient(world(), { errors: { places: { message: 'offline' } } });
+    _setTestClient(c as never, true);
+    const r = await call(harness.base, 'POST', door.path, ANA, door.body);
+    assert.equal(r.status, 503, JSON.stringify(r.body)); assert.equal(planInserts(c), 0);
+  });
+});
 
 async function add(d: Door, ex: Existing) {
   const c = use(seed(d, ex));

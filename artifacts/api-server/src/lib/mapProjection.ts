@@ -57,6 +57,7 @@
  * `enrichWithLiveClaims` from already-computed snapshots. Spec §37: "Do not let
  * Compass invent live conditions" — the same applies here.
  */
+import { tripHasEnded, tripExpiryInstant } from '../domain/trips/invariants/tripStatus.js';
 import {
   MAP_OBJECT_KINDS,
   type ActivityLevel,
@@ -428,6 +429,7 @@ export const TRIP_PRIVACY_CLASS: PrivacyClass = "place_level";
 
 /** Structural shape of `toAuthorizedTripView` (lib/privacy/tripSerializers). */
 export type TripViewLike = {
+  timezone?: string | null;
   id: string;
   title?: string | null;
   visibility?: string | null;
@@ -450,7 +452,8 @@ export type TripViewLike = {
  *
  * No freshness or confidence: a trip's dates are a plan, not an observation.
  */
-export function projectTrip(t: TripViewLike): MapObject | null {
+export function projectTrip(t: TripViewLike, now = new Date()): MapObject | null {
+  if (tripHasEnded({ status: t?.status, end_date: t?.endDate, timezone: t?.timezone }, now)) return null;
   if (t?.destinationLat == null || t?.destinationLng == null) return null;
   if (!t.id) return null;
   if (t.visibility === "private") return null;
@@ -458,6 +461,7 @@ export function projectTrip(t: TripViewLike): MapObject | null {
   return {
     id: `trip:${t.id}`,
     kind: "trip_stop",
+    expiresAt: tripExpiryInstant(t.endDate, t.timezone) ?? undefined,
     geometry: point(Number(t.destinationLat), Number(t.destinationLng)),
     title: t.title ?? t.destinationCity ?? "Trip",
     subtitle:

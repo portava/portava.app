@@ -14,6 +14,7 @@
  * PRIVACY: exact coords are NEVER included in Discovery responses.
  * Only city/district text labels and distance buckets are returned.
  */
+import { tripHasEnded } from '../../domain/trips/invariants/tripStatus.js';
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { UserLocationPreferences } from "./LocationPermissionService";
 import { getVerifiedPlaces } from "./GeoZoneService"; import { discoveryTripViewerProjectionsOn, nextTripCityFromProjection } from "../../lib/discoveryTripViewerConsumer.js";
@@ -167,13 +168,12 @@ async function getNextTripCity(db: SupabaseClient, userId: string): Promise<stri
   try { if (await discoveryTripViewerProjectionsOn(db)) return nextTripCityFromProjection(db, userId); // census-discovery §81 (A10): Trips' own "next trip"; the read below is the flag-off arm
     const { data } = await db
       .from("trips")
-      .select("destination_city")
+      .select("destination_city, end_date, timezone, status")
       .eq("owner_id", userId)
       .in("status", ["planning", "active"])
       .order("start_date", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    return (data as any)?.destination_city ?? null;
+      .limit(50);
+    return data?.find(trip => !tripHasEnded(trip))?.destination_city ?? null;
   } catch {
     return null;
   }

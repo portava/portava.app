@@ -25,6 +25,7 @@ import { policyAllowsVideo } from '../../lib/contentMediaPolicy.ts';
 // ---------------------------------------------------------------------------
 
 export interface MediaPickerButtonProps {
+  recordingStamp?: boolean;
   /**
    * State + methods from useMediaComposer. Only `policy`, `onPickResult`, and
    * `canAddMore` are consumed; sheet state is managed internally by this
@@ -54,7 +55,7 @@ export function MediaPickerButton({
   label,
   sheetTitle,
   disabled = false,
-  testID,
+  testID, recordingStamp,
 }: MediaPickerButtonProps) {
   const { policy, onPickResult, canAddMore } = composer;
   const allowsVideo = policyAllowsVideo(policy);
@@ -101,6 +102,7 @@ export function MediaPickerButton({
 
       <MediaSourceSheet
         visible={sheetVisible}
+        recordingStamp={recordingStamp}
         onClose={() => setSheetVisible(false)}
         onResult={(asset) => {
           setSheetVisible(false);

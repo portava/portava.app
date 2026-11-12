@@ -178,6 +178,7 @@ export interface WallProjectionBase {
   projectionId: string;
   objectType: WallObjectType;
   canonicalObjectId: string;
+  postReferenceId?: string | null;
   actor?: PublicActorRef;
   /** Publication time — the Wall's chronological spine (spec §16/§28). */
   publishedAt: string;

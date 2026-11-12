@@ -76,7 +76,7 @@ export function wordsFor(scope: SensingConsentScope, serverVersion: string | nul
 
 /** The minimal shape of a consent read this decision needs (services/sensingConsent's SensingConsentRead). */
 export type ConsentReadLike =
-  | { status: 'ok'; state: { consents: Record<SensingConsentScope, { effective: boolean }> } }
+  | { status: 'ok'; state: { available: boolean; consents: Record<SensingConsentScope, { effective: boolean }> } }
   | { status: 'unreadable' };
 
 /**
@@ -85,8 +85,8 @@ export type ConsentReadLike =
  */
 export function sensingCaptureDecision(read: ConsentReadLike | { status: string } | null | undefined): { capture: boolean; upload: boolean } {
   if (!read || read.status !== 'ok') return { capture: false, upload: false };
-  const c = (read as Extract<ConsentReadLike, { status: 'ok' }>).state.consents;
-  const capture = c.capture?.effective === true;
+  const { available, consents: c } = (read as Extract<ConsentReadLike, { status: 'ok' }>).state;
+  const capture = available === true && c.capture?.effective === true;
   return { capture, upload: capture && c.upload?.effective === true };
 }
 

@@ -233,13 +233,15 @@ describe("POST /trips/draft-from-text", () => {
 
     assert.equal(insertCalls.length, 0, "draft extraction must NEVER insert anything");
 
-    // Model discipline: UGC-wrapped input, gpt-4o-mini, temperature 0.
+    // Model discipline: UGC-wrapped input, gpt-5.4-mini, supported non-reasoning mode.
     const sent = capture.opts[0];
     const userMsg = sent.messages.find((m: any) => m.role === "user");
     assert.ok(userMsg.content.includes("<portava:ugc>"), "text must be UGC-wrapped");
     assert.ok(userMsg.content.includes(text));
-    assert.equal(sent.model, "gpt-4o-mini");
-    assert.equal(sent.temperature, 0);
+    assert.equal(sent.model, "gpt-5.4-mini");
+    assert.equal(sent.reasoning_effort, "none");
+    assert.equal(sent.max_completion_tokens, 400);
+    assert.equal("temperature" in sent, false);
   });
 
   it("extracts a destinations[] array for multi-city trips", async () => {

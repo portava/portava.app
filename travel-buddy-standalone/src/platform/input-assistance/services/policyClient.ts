@@ -20,6 +20,8 @@
  */
 import { freshToken as freshApiToken } from '../../../services/apiToken.ts';
 
+import { withInputBudget } from './requestBudget.ts';
+
 export type {
   PolicyFetchOk,
   PolicyFetchFail,
@@ -48,23 +50,17 @@ export async function fetchInputPolicies(signal?: AbortSignal): Promise<PolicyFe
   const base = apiBase();
   if (!base) return { ok: false, unavailable: true, error: 'API not configured' };
 
-  let token: string | null = null;
+  const budget = withInputBudget(signal);
   try {
-    token = await freshApiToken();
-  } catch {
-    token = null;
-  }
-  // Policy is per-viewer, so an unauthenticated fetch is not merely useless —
-  // it would produce a table with no account to file it under. The store
-  // refuses that anyway; this returns early rather than relying on it.
-  if (!token) return { ok: false, unavailable: true, error: 'Not signed in' };
+    const token = await budget.wait(freshApiToken);
+    if (!token) return { ok: false, unavailable: true, error: 'Not signed in' };
+    if (!budget.current(token)) return { ok: false, unavailable: false, error: 'Account changed' };
 
-  try {
-    const res = await fetch(`${base}/api/input-assistance/policies`, {
+    const res = await budget.wait(() => fetch(`${base}/api/input-assistance/policies`, {
       method: 'GET',
       headers: { Authorization: `Bearer ${token}` },
-      signal,
-    });
+      signal: budget.signal,
+    }));
     if (!res.ok) {
       return {
         ok: false,
@@ -72,7 +68,7 @@ export async function fetchInputPolicies(signal?: AbortSignal): Promise<PolicyFe
         error: `HTTP ${res.status}`,
       };
     }
-    const body = (await res.json()) as { policyVersion?: unknown; contexts?: unknown };
+    const body = (await budget.wait(() => res.json())) as { policyVersion?: unknown; contexts?: unknown };
     const version = typeof body.policyVersion === 'string' ? body.policyVersion : '';
     const contexts =
       body.contexts !== null && typeof body.contexts === 'object'
@@ -86,7 +82,10 @@ export async function fetchInputPolicies(signal?: AbortSignal): Promise<PolicyFe
     }
     return { ok: true, policyVersion: version, contexts };
   } catch (e) {
+    if (budget.timedOut()) return { ok: false, unavailable: true, error: 'Policy request timed out' };
     const aborted = (e as { name?: string } | null)?.name === 'AbortError';
     return { ok: false, unavailable: !aborted, error: aborted ? 'Aborted' : 'Network error' };
+  } finally {
+    budget.done();
   }
 }

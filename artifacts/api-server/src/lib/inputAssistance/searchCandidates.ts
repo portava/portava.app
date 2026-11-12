@@ -1,3 +1,5 @@
+import { currentTripPage } from "../../domain/trips/contracts/tripDiscoveryProjection.js";
+import { tripHasEnded } from "../../domain/trips/invariants/tripStatus.js";
 /**
  * Search candidate generation — the platform layer's per-type searchers.
  *
@@ -884,7 +886,7 @@ async function searchTrips(
       const pat = sqlPattern(q);
       let trQ: any = sc
         .from("trips")
-        .select("id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at")
+        .select("id, title, destination_city, destination_country, owner_id, cover_url, start_date, end_date, timezone, status, visibility, created_at")
         .or(`title.ilike.${pat},destination_city.ilike.${pat},destination_country.ilike.${pat}`)
         .eq("visibility", "public")
         .eq("show_in_discovery", true)
@@ -896,12 +898,12 @@ async function searchTrips(
         //
         // Same shape as the events fix above: a denylist of real labels that also
         // drops unpublished `draft` trips the broken filter would have surfaced.
-        .not("status", "in", '("draft","cancelled","archived")')
+        .not("status", "in", '("draft","completed","cancelled","archived")')
         .order("start_date", { ascending: true });
       // Apply time-intent date bounds to trip start_date when present
       if (ctx?.startsAfter)  trQ = trQ.gte("start_date", ctx.startsAfter.slice(0, 10));
       if (ctx?.startsBefore) trQ = trQ.lt("start_date",  ctx.startsBefore.slice(0, 10));
-      const { data, error } = await trQ.range(offset, offset + fetchLimit - 1);
+      const { data, error } = await currentTripPage(trQ, offset, fetchLimit, new Date());
 
       // The same line P1 removed from the plans path, and for the same reason:
       // supabase-js RESOLVES on a read failure, so `error` here is a real outage
@@ -912,7 +914,7 @@ async function searchTrips(
       if (error) throw new DiscoverySearchReadError("trips", error);
       if (!data) return [];
 
-      cards = (data as any[]).map((t: any): DiscoveryTripCardSource => ({
+      cards = (data as any[]).filter(t => !tripHasEnded(t)).map((t: any): DiscoveryTripCardSource => ({
         id: t.id as string,
         ownerId: t.owner_id as string,
         title: (t.title as string | null) ?? null,
@@ -1032,16 +1034,16 @@ async function searchPlans(
     } else {
       const { data: trips, error: tripsErr } = await sc
         .from("trips")
-        .select("id, visibility, show_in_discovery, owner_id, status, start_date")
+        .select("id, visibility, show_in_discovery, owner_id, status, start_date, end_date, timezone")
         .in("id", tripIds)
         // Same dead literals as searchTrips above ("deleted" / "banned" are not
         // `trip_status` labels). The error USED to be dropped here, and this is
         // the branch production takes (§6 D3: 2420 unapplied, 2550 seeded FALSE),
         // so a `trips` outage emptied `parents`, dropped every plan as "no
         // allowed parent trip", and answered 200 {results: []} — D11's masquerade.
-        .not("status", "in", '("draft","cancelled","archived")');
+        .not("status", "in", '("draft","completed","cancelled","archived")');
       if (tripsErr) throw new DiscoverySearchReadError("trips", tripsErr);
-      parents = ((trips ?? []) as any[]).map((t: any): DiscoveryPlanParentTrip => ({
+      parents = ((trips ?? []) as any[]).filter(t => !tripHasEnded(t)).map((t: any): DiscoveryPlanParentTrip => ({
         id: t.id as string,
         ownerId: t.owner_id as string,
         startDate: (t.start_date as string | null) ?? null,

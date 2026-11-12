@@ -18,7 +18,9 @@
  *   • Do This Experience → GET /media/experiences/:id/plan, then route into the
  *     trip-plan flow PROPOSE-ONLY (the user confirms; never auto-added, §15.2). §21: timed plan + trip choice.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { usePrivateSurfaceKey } from '../../../hooks/usePrivateSurfaceKey.ts';
+import { captureMessagingOwnerRequest } from '../../../services/messagingOwnerRequest.ts';
 import { View, Text, Modal, Pressable, StyleSheet, ScrollView, ActivityIndicator, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -42,7 +44,8 @@ import {
 import { color, space, radius, type as t, icon as iconToken } from '../../../theme/tokens.ts';
 import { closeThenNavigate } from '../../../lib/deferredNavigate.ts';
 import { usePlanPicker } from '../../../components/PlanPickerController.tsx';
-import { saveMedia, reportMedia } from '../../../services/mediaInteractions.ts';
+import { reportMedia } from '../../../services/mediaInteractions.ts';
+import { SaveToCollectionSheet } from '../../../components/SaveToCollectionSheet.tsx';
 import { fetchExperiencePlan, resolveMediaActionExecution, fetchCompiledExperiencePlan } from '../services/mediaActions.ts';
 import type { CompiledExperiencePlan, LinkableEventRef, MediaAction, MediaActionId, MediaEntityKind } from '../types/mediaActions.ts';
 import { useMediaActions } from '../hooks/useMediaActions.ts';
@@ -78,14 +81,32 @@ export interface MediaActionRailProps {
   mediaId: string | null | undefined;
   visible: boolean;
   onClose: () => void;
+  onSavedChange?: (mediaId: string, saved: boolean) => void;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailProps) {
+export function MediaActionRail({ mediaId, visible, onClose, onSavedChange }: MediaActionRailProps) {
+  const scope = usePrivateSurfaceKey();
+  return visible && mediaId ? <ActiveMediaActionRail key={`${scope}:${mediaId}`} mediaId={mediaId} visible onClose={onClose} onSavedChange={onSavedChange} /> : null;
+}
+
+function ActiveMediaActionRail({ mediaId, visible, onClose, onSavedChange }: MediaActionRailProps) {
+  const lifetime = useRef({ owner: captureMessagingOwnerRequest(), active: true, busy: false, controller: new AbortController() }).current;
+  useEffect(() => {
+    lifetime.active = true;
+    if (lifetime.controller.signal.aborted) lifetime.controller = new AbortController();
+    return () => { lifetime.active = false; lifetime.controller.abort(); };
+  }, [lifetime]);
+  const current = useCallback(() => lifetime.active && !!lifetime.owner?.isCurrent(), [lifetime]);
+  const close = useCallback(() => {
+    lifetime.active = false;
+    lifetime.controller.abort();
+    onClose();
+  }, [lifetime, onClose]);
   const insets = useSafeAreaInsets();
   const planPicker = usePlanPicker();
-  const { status, actions, entityRefs, wanted, wantPending, toggleWant, reload } = useMediaActions(
+  const { status, actions, entityRefs, wanted, wantPending, wantError, toggleWant, reload } = useMediaActions(
     mediaId,
     visible,
   );
@@ -100,17 +121,21 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
   const [panel, setPanel] = useState<RailPanel | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [shareObject, setShareObject] = useState<{ objectType: 'POST'; objectId: string } | null>(null);
+  const [savingToCollection, setSavingToCollection] = useState(false);
 
   // A closed rail forgets its step, so reopening starts at the action list.
   useEffect(() => {
     if (!visible) {
       setPanel(null);
       setNotice(null);
+      setSavingToCollection(false);
+      setShareObject(null);
     }
   }, [visible]);
 
   const runAction = useCallback(
     (action: MediaAction) => {
+      if (!current() || lifetime.busy) return;
       const exec = resolveMediaActionExecution(action, entityRefs);
 
       // Fire the §45 outcome event at the media-originated action point: this is
@@ -155,13 +180,20 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
           return;
 
         case 'save':
-          if (mediaId) void saveMedia(mediaId);
-          onClose();
+          if (mediaId) setSavingToCollection(true);
           return;
 
         case 'report':
-          if (mediaId) void reportMedia(mediaId, 'not_interested');
-          onClose();
+          if (!mediaId) return;
+          lifetime.busy = true;
+          setBusyId(action.id);
+          void reportMedia(mediaId, 'not_interested', undefined, { signal: lifetime.controller.signal }).then(result => {
+            if (!current()) return;
+            lifetime.busy = false;
+            setBusyId(null);
+            if (result.ok) close();
+            else setNotice('Couldn’t send this report. Try again.');
+          });
           return;
 
         case 'plan_picker':
@@ -169,6 +201,7 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
           // picks the trip and confirms; nothing is written here).
           onClose();
           setTimeout(() => {
+            if (!lifetime.owner?.isCurrent()) return;
             planPicker.open({
               id: exec.source.id,
               type: exec.source.type,
@@ -182,13 +215,17 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
           // Do This Experience — fetch the executable plan, then route into the
           // trip-plan flow PROPOSE-ONLY. Degrade: no plan → no-op, never throws.
           if (busyId) return;
+          lifetime.busy = true;
           setBusyId(action.id);
-          void fetchExperiencePlan(exec.experienceId).then((r) => {
+          void fetchExperiencePlan(exec.experienceId, { signal: lifetime.controller.signal }).then((r) => {
+            if (!current()) return;
+            lifetime.busy = false;
             setBusyId(null);
-            if (!r.ok || !r.data) return; // not eligible / empty → nothing to propose
+            if (!r.ok || !r.data) { setNotice('This experience has no plan you can add right now.'); return; }
             const title = r.data.stops[0]?.title ?? 'This experience';
             onClose();
             setTimeout(() => {
+              if (!lifetime.owner?.isCurrent()) return;
               planPicker.open({ id: exec.experienceId, type: 'experience', title });
             }, 320);
           });
@@ -201,8 +238,10 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
           // identity, §48). Directions STARTED is the maps app opening; a place
           // with no directions says so instead of opening nothing.
           if (busyId) return;
+          lifetime.busy = true;
           setBusyId(action.id);
           void openRailDirections(exec.placeId, () => {
+            if (!current()) return;
             emitMediaNorthStar(record, action.id, northStarCtx);
             emitMediaSignal(record, 'directions_tap', {
               mediaId,
@@ -210,7 +249,9 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
               surface: 'action_rail',
               actionId: action.id,
             });
-          }).then((outcome) => {
+          }, current, { owner: lifetime.owner ?? undefined, signal: lifetime.controller.signal }).then((outcome) => {
+            if (!current()) return;
+            lifetime.busy = false;
             setBusyId(null);
             if (outcome === 'opened') onClose();
             else setNotice(outcome === 'no_directions' ? 'No directions are available for this place.' : 'Couldn’t open directions.');
@@ -228,8 +269,11 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
           // Do This Experience, executable (§15.2): fetch the timed plan, then
           // the user picks the trip. Nothing is written before that choice.
           if (busyId) return;
+          lifetime.busy = true;
           setBusyId(action.id);
-          void fetchCompiledExperiencePlan(exec.experienceId, { source: exec.source }).then((r) => {
+          void fetchCompiledExperiencePlan(exec.experienceId, { source: exec.source, signal: lifetime.controller.signal }).then((r) => {
+            if (!current()) return;
+            lifetime.busy = false;
             setBusyId(null);
             if (!r.ok || !r.data) {
               setNotice('This experience has no plan you can add right now.');
@@ -244,8 +288,11 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
           // Save Route (§23.1) — the rail is coordinate-free, so each stop is
           // completed through the canonical place record before POST /route-plans.
           if (busyId) return;
+          lifetime.busy = true;
           setBusyId(action.id);
-          void saveRailRoute({ title: exec.title, stops: exec.stops, mediaId: exec.mediaId }).then((res) => {
+          void saveRailRoute({ title: exec.title, stops: exec.stops, mediaId: exec.mediaId }, { owner: lifetime.owner ?? undefined, signal: lifetime.controller.signal, isCurrent: current }).then((res) => {
+            if (!current()) return;
+            lifetime.busy = false;
             setBusyId(null);
             if (res.ok) closeThenNavigate(onClose, `/route/${encodeURIComponent(res.routeId)}`);
             else setNotice(res.reason === 'create_failed' ? 'Couldn’t save this route.' : 'Not enough of these places can be located to make a route.');
@@ -270,7 +317,7 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
           return;
       }
     },
-    [busyId, entityRefs, mediaId, onClose, planPicker, toggleWant, record],
+    [busyId, entityRefs, mediaId, onClose, planPicker, toggleWant, record, current, lifetime, close],
   );
 
   // Render only actions the client can actually execute (hides any future /
@@ -284,10 +331,21 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
       visible={visible}
       transparent
       animationType="slide"
-      onRequestClose={onClose}
+      onRequestClose={close}
       statusBarTranslucent
     >
-      <Pressable style={s.backdrop} onPress={onClose} accessibilityLabel="Close actions" />
+      {savingToCollection && mediaId ? <SaveToCollectionSheet
+        key={mediaId}
+        visible
+        embedded
+        entityType="post"
+        entityId={mediaId}
+        onStatusRead={saved => { if (current()) onSavedChange?.(mediaId, saved); }}
+        onSaved={() => { if (current()) onSavedChange?.(mediaId, true); }}
+        onUnsaved={() => { if (current()) onSavedChange?.(mediaId, false); }}
+        onClose={close}
+      /> : <>
+      <Pressable style={s.backdrop} onPress={close} accessibilityLabel="Close actions" />
 
       <View style={[s.sheet, { paddingBottom: insets.bottom + space.lg }]}>
         <View style={s.handle} />
@@ -297,7 +355,7 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
             <Compass size={iconToken.s20} color={color.deep} strokeWidth={1.8} />
             <Text style={s.title}>Actions</Text>
           </View>
-          <Pressable onPress={onClose} style={s.closeBtn} hitSlop={8} accessibilityLabel="Close">
+          <Pressable onPress={close} style={s.closeBtn} hitSlop={8} accessibilityLabel="Close">
             <X size={iconToken.s20} color={color.mute} strokeWidth={1.8} />
           </Pressable>
         </View>
@@ -309,6 +367,7 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
           bounces={false}
         >
           {notice ? <Text style={s.notice}>{notice}</Text> : null}
+          {wantError ? <Text accessibilityRole="alert" style={s.notice}>{wantError}</Text> : null}
           {panel?.kind === 'trip_choice' ? (
             <TripChoicePanel
               plan={panel.plan}
@@ -336,11 +395,10 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
               <ActivityIndicator size="small" color={color.mute} />
             </View>
           ) : renderable.length === 0 ? (
-            <Text style={s.empty}>
-              {status === 'error'
-                ? 'Couldn’t load actions. Pull down to try again.'
-                : 'No actions available for this item.'}
-            </Text>
+            <View>
+              <Text style={s.empty}>{status === 'error' ? 'Couldn’t load actions.' : 'No actions available for this item.'}</Text>
+              {status === 'error' ? <Pressable accessibilityRole="button" accessibilityLabel="Retry media actions" onPress={reload} style={s.row}><Text style={s.rowLabel}>Try again</Text></Pressable> : null}
+            </View>
           ) : (
             renderable.map((action) => {
               const Icon = iconFor(action.id);
@@ -352,9 +410,10 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
                   key={action.id}
                   style={({ pressed }) => [s.row, active && s.rowActive, pressed && s.rowPressed]}
                   onPress={() => runAction(action)}
+                  disabled={!!busyId || rowBusy}
                   accessibilityRole="button"
                   accessibilityLabel={action.label}
-                  accessibilityState={isWant ? { selected: wanted } : undefined}
+                  accessibilityState={{ disabled: !!busyId || rowBusy, busy: rowBusy, ...(isWant ? { selected: wanted } : {}) }}
                 >
                   <View style={[s.rowIcon, active && s.rowIconActive]}>
                     <Icon
@@ -382,6 +441,7 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
       {mediaId && shareObject ? (
         <TelegraphObjectShareSheet mediaId={mediaId} object={shareObject} onClose={() => setShareObject(null)} />
       ) : null}
+      </>}
     </Modal>
   );
 }

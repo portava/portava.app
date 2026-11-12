@@ -33,7 +33,7 @@ function makeDb(tables: Record<string, any[]>, opts: { failing?: string[] } = {}
     const run = () =>
       opts.failing?.includes(name)
         ? { data: null, error: { message: `${name} unreadable` } }
-        : { data: (tables[name] ?? []).filter((r) => filters.every((f) => f(r))), error: null };
+        : { data: (tables[name] ?? []).filter((r) => filters.every((f) => f(r))), error: null, count: (tables[name] ?? []).filter((r) => filters.every((f) => f(r))).length };
     const b: any = {
       select() { return b; },
       eq(k: string, v: any) { filters.push((r) => r[k] === v); return b; },
@@ -105,7 +105,7 @@ describe("MD207 — readJourneySignals counts only COMPLETED, PUBLIC journeys", 
         { trip_id: "t-joined", user_id: C, status: "accepted", role: "member" },
         { trip_id: "t-invited", user_id: C, status: "invited", role: "invited" },
       ],
-      places: [{ id: PLACE, city: "Hoi An" }],
+      places: [{ id: PLACE, city: "Hoi An", moderation_status: "visible", merged_into_place_id: null }],
     });
     const j = await readJourneySignals(db, { contributorId: C, subjectId: PLACE }, NOW);
     assert.equal(j.completedTrips, 2, "t-owned and t-joined, nothing else");
@@ -127,7 +127,7 @@ describe("MD207 — readJourneySignals counts only COMPLETED, PUBLIC journeys", 
     const db = makeDb({
       trips: [trip("t1"), trip("t2"), trip("t3")],
       trip_members: [],
-      places: [{ id: PLACE, city: "Hoi An" }],
+      places: [{ id: PLACE, city: "Hoi An", moderation_status: "visible", merged_into_place_id: null }],
       intel_observations: [],
       intel_state_snapshots: [],
       passport_stamps: Array.from({ length: 50 }, (_, i) => ({ user_id: C, id: i })),

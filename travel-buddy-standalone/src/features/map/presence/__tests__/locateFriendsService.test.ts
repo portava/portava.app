@@ -1050,3 +1050,33 @@ describe('§25 · sharePermittedLocation is a bounded, expiring, revocable share
     assert.deepEqual(res.data.members, []);
   });
 });
+
+// Generation fences protect callbacks already executing when the app leaves.
+describe('in-flight location work cannot cross a stopped generation', () => {
+  test('a delayed sampler cannot publish after stop and restart', async () => {
+    const timers = fakeTimers(); const { impl, calls } = stubFetch([{ body: okReadBody([]) }]);
+    let resolve!: (signal: { rung: 'last_known'; observedAt: number; proximity: 'nearby' }) => void;
+    let samples = 0;
+    const sync = createLocateFriendsSync({ sessionId: SESSION_ID, transport: transportFor(impl), onChange: () => {}, now: () => NOW,
+      sampleSignal: () => { samples++; return samples === 1 ? new Promise(done => { resolve = done; }) : null; },
+      setIntervalImpl: timers.set, clearIntervalImpl: timers.clear });
+    sync.start(); await flush(); sync.stop(); sync.start(); await flush();
+    resolve({ rung: 'last_known', observedAt: NOW, proximity: 'nearby' }); await flush();
+    assert.equal(calls.filter(call => call.method === 'POST').length, 0); sync.stop();
+  });
+  test('stop aborts a read and a late response cannot repopulate state', async () => {
+    const timers = fakeTimers(); let resolve!: (response: Response) => void; let signal: AbortSignal | undefined; let changes = 0;
+    const impl: typeof fetch = async (_url, init) => { signal = init?.signal as AbortSignal; return new Promise(done => { resolve = done; }); };
+    const sync = createLocateFriendsSync({ sessionId: SESSION_ID, transport: transportFor(impl), onChange: () => { changes++; }, now: () => NOW, setIntervalImpl: timers.set, clearIntervalImpl: timers.clear });
+    sync.start(); await flush(); sync.stop(); assert.equal(signal?.aborted, true);
+    resolve({ ok: true, json: async () => okReadBody([memberBody()]) } as Response); await flush(); assert.equal(changes, 0); assert.deepEqual(sync.state().members, []);
+  });
+  test('overlapping sampler ticks cannot dispatch duplicate positions', async () => {
+    const timers = fakeTimers(); const { impl, calls } = stubFetch([{ body: okReadBody([]) }]); let samples = 0;
+    let resolve!: (signal: { rung: 'last_known'; observedAt: number; proximity: 'nearby' }) => void;
+    const sync = createLocateFriendsSync({ sessionId: SESSION_ID, transport: transportFor(impl), onChange: () => {}, now: () => NOW,
+      sampleSignal: () => { samples++; return new Promise(done => { resolve = done; }); }, setIntervalImpl: timers.set, clearIntervalImpl: timers.clear });
+    sync.start(); timers.tick(LOCATE_FRIENDS_PUBLISH_INTERVAL_MS); await sync.publishOnce(); assert.equal(samples, 1);
+    resolve({ rung: 'last_known', observedAt: NOW, proximity: 'nearby' }); await flush(); assert.equal(calls.filter(call => call.method === 'POST').length, 1); sync.stop();
+  });
+});

@@ -29,6 +29,7 @@
  *
  * Run: node --import tsx/esm --test src/test/mediaNeighborhoodOnlyMode.test.ts
  */
+import { makeFakeClient as makeCatalogClient } from './telegraphCertificationHarness.js';
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -334,6 +335,7 @@ function feedPost(mode: string | null, over: Record<string, any> = {}) {
 
 function feedClient(posts: any[], flags: string[]) {
   function builder(table: string) {
+    if (table === "places") return makeCatalogClient({ places: [{ id: PLACE }] }).from(table);
     const filters: Array<(r: any) => boolean> = [];
     let select: string | null = null;
     let limitVal = 1000;
@@ -485,6 +487,7 @@ describe("D. the Watch feed routes read the owner's mode and honour it", () => {
 type Dataset = Record<string, any[]>;
 function projectionClient(data: Dataset) {
   const builder = (table: string): any => {
+    if (table === "places") return makeCatalogClient({ places: data.places ?? [] }).from(table);
     const filters: any[] = [];
     const rows = () => {
       let r = (data[table] ?? []).map((x) => ({ ...x }));

@@ -1,11 +1,11 @@
 /**
- * SaveButton — bookmark icon that toggles save state.
+ * SaveButton — bookmark icon that opens the collection picker.
  *
  * Usage:
  *   <SaveButton entityType="post" entityId={post.id} />
  *
- * Long-press opens the SaveToCollectionSheet so the user can pick a
- * specific collection (or create one).
+ * A tap lets users pick or create collections, including additional
+ * collections for an already-saved item. Removal is explicit in the sheet.
  *
  * For posts the savedPostsCache is consulted first so re-mounts during
  * feed navigation show the correct bookmark state instantly, without
@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 import { Bookmark } from 'lucide-react-native';
 import type { EntityType } from '../services/collections.ts';
-import { saveItem, unsaveItem, checkSaved } from '../services/collections.ts';
+import { checkSaved } from '../services/collections.ts';
 import { color } from '../theme/tokens.ts';
 import { SaveToCollectionSheet } from './SaveToCollectionSheet.tsx';
 import { useSession } from '../context/SessionContext.tsx';
@@ -35,9 +35,16 @@ interface SaveButtonProps {
   onSavedChange?: (saved: boolean) => void;
   /** Feed session ID forwarded to the rank-outcome endpoint so saves are attributed to the session. */
   sessionId?: string | null;
+  /** Other surfaces can record their own outcome instead of attributing to Pulse. */
+  recordRankOutcome?: boolean;
 }
 
-export function SaveButton({
+export function SaveButton(props: SaveButtonProps) {
+  const { userId } = useSession();
+  return <SaveButtonForItem key={`${userId}:${props.entityType}:${props.entityId}`} {...props} userId={userId} />;
+}
+
+function SaveButtonForItem({
   entityType,
   entityId,
   initialSaved,
@@ -45,8 +52,9 @@ export function SaveButton({
   tint,
   onSavedChange,
   sessionId,
-}: SaveButtonProps) {
-  const { userId } = useSession();
+  recordRankOutcome = true,
+  userId,
+}: SaveButtonProps & { userId: ReturnType<typeof useSession>['userId'] }) {
 
   // For posts: read from the pre-warmed cache first so the bookmark renders
   // correctly from the first paint without a round-trip.  Non-post types
@@ -87,11 +95,13 @@ export function SaveButton({
     let cancelled = false;
     setLoading(true);
     checkSaved(entityType, entityId)
-      .then(({ saved: s }) => {
+      .then(({ saved: s, ok }) => {
         if (!cancelled && mounted.current) {
-          if (!hasInteracted.current) setSaved(s);
-          // Prime the cache so subsequent re-mounts skip the round-trip.
-          if (entityType === 'post' && userId) writeSavedCache(userId, entityId, s);
+          if (!hasInteracted.current && ok !== false) {
+            setSaved(s);
+            // A late read must not replace a completed save in the cache.
+            if (entityType === 'post' && userId) writeSavedCache(userId, entityId, s);
+          }
           setLoading(false);
         }
       })
@@ -108,25 +118,12 @@ export function SaveButton({
     setSaved(cached ?? initialSaved ?? false);
   }, [initialSaved, userId, entityId, entityType]);
 
-  const toggle = async () => {
+  const updateSaved = (next: boolean) => {
     hasInteracted.current = true;
-    const next = !saved;
-    // Optimistic update: write to cache immediately so re-mounts during the
-    // API call already show the correct state.
     setSaved(next);
     if (entityType === 'post' && userId) writeSavedCache(userId, entityId, next);
     onSavedChange?.(next);
-    // Report a 'save' outcome to the ranking loop so the session is credited.
-    if (next) fireRankOutcome(entityId, 'pulse', 'save', sessionId ?? null);
-    const ok = next
-      ? await saveItem(entityType, entityId)
-      : await unsaveItem(entityType, entityId);
-    if (!ok && mounted.current) {
-      // Revert on failure.
-      setSaved(!next);
-      if (entityType === 'post' && userId) writeSavedCache(userId, entityId, !next);
-      onSavedChange?.(!next);
-    }
+    if (recordRankOutcome && next && !saved) fireRankOutcome(entityId, 'pulse', 'save', sessionId ?? null);
   };
 
   const iconColor = tint ?? (saved ? color.signal : color.mute);
@@ -134,11 +131,12 @@ export function SaveButton({
   return (
     <>
       <Pressable
-        onPress={loading ? undefined : toggle}
+        onPress={loading ? undefined : () => setPickerOpen(true)}
         onLongPress={loading ? undefined : () => setPickerOpen(true)}
         hitSlop={12}
         style={({ pressed }) => [s.btn, pressed && { opacity: 0.65 }]}
-        accessibilityLabel={saved ? 'Unsave' : 'Save'}
+        accessibilityLabel={saved ? 'Manage saved collections' : 'Save to collection'}
+        accessibilityHint="Choose a collection or create a new one"
         accessibilityRole="button"
       >
         {loading ? (
@@ -154,15 +152,19 @@ export function SaveButton({
       </Pressable>
 
       <SaveToCollectionSheet
+        onStatusRead={(value) => {
+          if (!mounted.current) return;
+          setSaved(value);
+          if (entityType === 'post' && userId) writeSavedCache(userId, entityId, value);
+        }}
         visible={pickerOpen}
         entityType={entityType}
         entityId={entityId}
+        isSaved={saved}
         onClose={() => setPickerOpen(false)}
-        onSaved={(colId) => {
-          setSaved(true);
-          if (entityType === 'post' && userId) writeSavedCache(userId, entityId, true);
-          onSavedChange?.(true);
-          fireRankOutcome(entityId, 'pulse', 'save', sessionId ?? null);
+        onSaved={() => updateSaved(true)}
+        onUnsaved={() => {
+          updateSaved(false);
           setPickerOpen(false);
         }}
       />

@@ -9,6 +9,11 @@
  *   - Toggle "hide viewer list"
  *   - Post — uploads media to Supabase Storage, then calls POST /api/stories
  */
+import { usePrivateSurfaceKey } from '../hooks/usePrivateSurfaceKey.ts';
+import { useRecordingStampDraft } from '../features/capture-stamps/useRecordingStampDraft.ts';
+import { RecordingStampOption } from '../features/capture-stamps/RecordingStamp.tsx';
+import { uploadMedia } from '../services/media.ts';
+import { SharedVideoPlayer } from './ui/SharedVideoPlayer.tsx';
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, Pressable, Modal, StyleSheet, TextInput,
@@ -44,7 +49,12 @@ const VISIBILITY_OPTIONS: Array<{ value: StoryVisibility; label: string; sub: st
   { value: 'circle_only',   label: 'Circle',         sub: 'Your circle members only',             Icon: Lock },
 ];
 
-export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Props) {
+export function StoryComposer(props: Props) {
+  const scope = usePrivateSurfaceKey();
+  return <StoryDraft key={scope} {...props} />;
+}
+function StoryDraft({ visible, onClose, onPosted, defaultTripId }: Props) {
+  const stamp = useRecordingStampDraft();
   const insets = useSafeAreaInsets();
   const [mediaUri, setMediaUri] = useState<string | null>(null);
   const [mediaType, setMediaType] = useState<string>('image/jpeg');
@@ -96,15 +106,16 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
   const mediaComposer = useMediaComposer('story');
 
   function handleMediaResult(asset: import('expo-image-picker').ImagePickerAsset) {
+    stamp.select(asset);
     setMediaUri(asset.uri);
-    setMediaType(
-      asset.type === 'video' || (asset.mimeType ?? '').startsWith('video/')
-        ? 'video/mp4'
-        : 'image/jpeg',
-    );
+    setMediaType(asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg'));
   }
 
   async function handlePost() {
+    if (stamp.pending) {
+      if (await stamp.finish(stamp.pending)) { onPosted?.(); handleReset(); onClose(); }
+      return;
+    }
     if (!mediaUri) { Alert.alert('Pick media first'); return; }
     // Publication is held until this deployment's retention windows are known.
     // The draft is left exactly as it is — nothing below this line runs, and
@@ -136,7 +147,17 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
       // server-side upload-and-copy into the sharer's own object, not a URL
       // passthrough.
       setUploadProgress('Uploading media...');
-      const uploaded = await uploadStoryMedia(mediaUri, mediaType);
+      const recording = stamp.selected;
+      if (stamp.enabled && (!recording || recording.uri !== mediaUri)) { Alert.alert('Recording stamp unavailable', 'Turn it off to share this video.'); return; }
+      let uploaded: string | null;
+      if (recording) {
+        const receipt = await uploadMedia({ uri: mediaUri, mimeType: mediaType, type: 'video' },
+          { recording, maxVideoDurationSeconds: mediaComposer.policy.videoMaxDuration ?? 60 }, recording.session.owner);
+        if (!receipt.ok || !receipt.captureAccepted || !recording.session.owner.isCurrent()) {
+          Alert.alert('Recording upload not confirmed', receipt.message ?? 'Try again or turn off the recording stamp.'); return;
+        }
+        uploaded = receipt.url;
+      } else uploaded = await uploadStoryMedia(mediaUri, mediaType);
       setUploadProgress(null);
       if (!uploaded) {
         Alert.alert('Upload failed', 'Could not upload your media. Please check your connection and try again.');
@@ -152,8 +173,9 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
         closeFriendsOnly: visibility === 'close_friends',
         tripId: (visibility === 'trip_crew' ? tripId : null) ?? null,
         hideViewerList,
-      });
+      }, recording?.session.owner);
       if (result.ok) {
+        if (recording && !(await stamp.finish({ recording, type: 'story', id: result.story.id }))) return;
         onPosted?.();
         handleReset();
         onClose();
@@ -168,6 +190,7 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
   }
 
   function handleReset() {
+    stamp.reset();
     setMediaUri(null);
     setCaption('');
     setVisibility('public');
@@ -175,6 +198,7 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
   }
 
   function handleClose() {
+    if (stamp.pending) { handleReset(); onPosted?.(); onClose(); return; }
     if (mediaUri) {
       Alert.alert('Discard story?', 'Your story draft will be lost.', [
         { text: 'Keep editing', style: 'cancel' },
@@ -257,20 +281,26 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
               {/* mediaUri is always a local device file URI (file:// or content://)
                   set by the media picker — never a stored bucket URL — so no
                   signed-URL hydration is needed here. */}
-              <Image source={{ uri: mediaUri }} style={s.preview} resizeMode="cover" />
-              <Pressable onPress={() => setMediaUri(null)} style={s.clearMedia}>
+              {mediaType.startsWith('video/') ? <SharedVideoPlayer uri={mediaUri} autoplay={visible} muted style={s.preview} />
+                : <Image source={{ uri: mediaUri }} style={s.preview} resizeMode="cover" />}
+              <Pressable disabled={posting || !!stamp.pending} onPress={() => { stamp.select(null); setMediaUri(null); }} style={s.clearMedia}>
                 <X size={16} color="#fff" />
               </Pressable>
             </View>
           ) : (
             <MediaPickerButton
               composer={{ ...mediaComposer, onPickResult: handleMediaResult }}
-              variant="area"
+              variant="area" recordingStamp
               label="Add photo or video"
               sheetTitle="New Story"
             />
           )}
 
+          {stamp.recording?.uri === mediaUri && mediaUri && <RecordingStampOption selected={stamp.enabled}
+            disabled={posting || !!stamp.pending} onChange={stamp.setEnabled} />}
+          {stamp.stampError ? <View><Text accessibilityRole="alert">{stamp.stampError}</Text>
+            <Pressable accessibilityRole="button" onPress={() => void handlePost()}><Text>Retry recording stamp</Text></Pressable>
+            <Pressable accessibilityRole="button" onPress={handleClose}><Text>Done</Text></Pressable></View> : null}
           {/* Caption */}
           <TextInput
             style={s.captionInput}

@@ -1,3 +1,5 @@
+import { tripHasEnded } from "../domain/trips/invariants/tripStatus.js";
+import { readCanonicalPlaceVisibility } from '../lib/places/placeGovernance.js';
 /**
  * wall — the Portava Wall API (spec §26/§27).
  *
@@ -133,7 +135,7 @@ const CANDIDATE_FETCH = 150;
 // status='active' + post_status='pending_*'. The Wall served those pending
 // posts to every follower while the author was still at the place (§23/§37).
 const POST_COLUMNS =
-  "id, author_id, trip_id, content, visibility, status, post_status, created_at, published_at, " +
+  "id, author_id, trip_id, content, post_reference_id, visibility, status, post_status, created_at, published_at, " +
   "canonical_place_id, has_video, media_count, category, location_city, location_country, " +
   "like_count, comment_count, save_count, location_privacy_mode"; // census-media §43: the owner's mode, read with the row so a withheld place can be marked (lib/postPlaceDisclosure)
 
@@ -345,7 +347,7 @@ export async function loadViewerContext(sc: any, viewerId: string): Promise<Wall
   try {
     const { data, error } = await sc
       .from("trips")
-      .select("destination_city, status")
+      .select("destination_city, status, end_date, timezone")
       .eq("owner_id", viewerId)
       .in("status", ["planning", "upcoming", "active"])
       .limit(50);
@@ -354,6 +356,7 @@ export async function loadViewerContext(sc: any, viewerId: string): Promise<Wall
     // is genuinely harmless here — it is logged, not escalated.
     if (error) logger.warn({ err: error, viewerId }, "wall: upcoming trips read failed — no destination boost");
     for (const r of (data as any[]) ?? []) {
+      if (tripHasEnded(r)) continue;
       const c = (r as any).destination_city;
       if (c) ctx.upcomingTripCities.add(String(c).trim().toLowerCase());
     }
@@ -663,6 +666,7 @@ export async function loadCandidates(
   ];
 
   const profileById = new Map<string, any>();
+  let profileReadFailed = false;
   const placeById = new Map<string, PublicPlaceRef>();
   try {
     if (authorIds.length > 0) {
@@ -675,6 +679,7 @@ export async function loadCandidates(
       for (const p of rows) profileById.set(String(p.id), p);
     }
   } catch (err) {
+    profileReadFailed = true;
     logger.warn({ err }, "wall: author profile batch read failed");
   }
   try {
@@ -737,6 +742,7 @@ export async function loadCandidates(
     const id = String(r.id);
     const authorId = String(r.author_id);
     const prof = profileById.get(authorId);
+    if (typeof prof?.account_status !== 'string' || !prof.account_status) { profileReadFailed = true; continue; }
     const isOutside = r.__outside === true;
     const objectType = classifyObjectType(r, isOutside, opts.discoveryEnabled);
     const placeRef = r.canonical_place_id ? placeById.get(String(r.canonical_place_id)) ?? null : null;
@@ -781,9 +787,10 @@ export async function loadCandidates(
       tripId: r.trip_id ?? null,
       publishedAt: wallPublishedAtForViewer(r, opts.viewerId), // verifier F6: a "Publish after I leave" post's release instant dates its author's exit, so others see (and page by) its creation instant
       text: r.content ?? null,
+      postReferenceId: r.post_reference_id ?? null,
       place: withPostPlaceMark(placeRef, r), // census-media §43: the same ref, marked (never serialised) when mapPublicPost withholds this post's place; wallItemsForViewer strips it for a non-owner at the response
       actor,
-      authorAccountStatus: prof?.account_status ?? "active",
+      authorAccountStatus: prof.account_status,
       isDeleted: false,
       discoveryReason,
     });
@@ -798,7 +805,8 @@ export async function loadCandidates(
     if (placeRef) placeByObject.set(id, withPostPlaceMark(placeRef, r)!); // census-media §43: marked as above, so the Live strip can tell a withheld post's place from a disclosed one
   }
 
-  return { candidates, signals, placeByObject, followingReachedEnd };
+  return { candidates, signals, placeByObject, followingReachedEnd: profileReadFailed ? false : followingReachedEnd,
+    ...(profileReadFailed ? { spineFailed: true } : {}) };
 }
 
 // ── Intent steering (temporary; never changes saved preferences, spec §17) ───
@@ -1519,7 +1527,7 @@ router.get(
  * list changes for ranking reasons.
  */
 const REVALIDATE_COLUMNS =
-  "id, author_id, trip_id, visibility, status, post_status, deleted_at, created_at, published_at, location_privacy_mode"; // location_privacy_mode: verifier F6, so publishedAt below can tell a "Publish after I leave" post
+  "id, author_id, trip_id, visibility, status, post_status, deleted_at, created_at, published_at, location_privacy_mode, canonical_place_id"; // location_privacy_mode: verifier F6, so publishedAt below can tell a "Publish after I leave" post
 
 /** Hard cap on ids one revalidation call may carry (the client caches 12). */
 export const MAX_REVALIDATE_IDS = 50;
@@ -1613,13 +1621,15 @@ router.post(
     // the SAME columns (status='active' + post_status='published' + no
     // tombstone). Everything downstream of it — author account status, blocks,
     // visibility tiers — is projectObjects' job, below.
+    const placeVisibility = await readCanonicalPlaceVisibility(sc, rows.flatMap(row => row?.canonical_place_id ? [String(row.canonical_place_id)] : []));
+    if (!placeVisibility.ok) { res.json({ eligibleObjectIds: [], generatedAt }); return; }
     const live = rows.filter(
       (r) =>
         r &&
         String(r.status ?? "") === "active" &&
         String(r.post_status ?? "") === "published" &&
         r.deleted_at == null &&
-        isPostPublished(r),
+        isPostPublished(r) && (!r.canonical_place_id || placeVisibility.visibleIds.has(String(r.canonical_place_id))),
     );
     if (live.length === 0) {
       res.status(200).json({ eligibleObjectIds: [], generatedAt });
@@ -1638,7 +1648,7 @@ router.post(
         .select("id, account_status")
         .in("id", authorIds.slice(0, 500));
       if (error) throw error; // supabase-js RESOLVES on error; the catch below is only reachable this way
-      for (const p of (data as any[]) ?? []) { if (p?.id) accountStatus.set(String(p.id), String(p.account_status ?? "active")); }
+      for (const p of (data as any[]) ?? []) { if (p?.id) accountStatus.set(String(p.id), String(p.account_status ?? "")); }
     } catch (err) {
       logger.warn({ err }, "wall: revalidate author-status read failed — nothing re-admitted");
       res.status(200).json({ eligibleObjectIds: [], generatedAt }); return;
@@ -1761,58 +1771,8 @@ export function wallLiveStripForViewer(
  * here without any signal in the response, which is how the follow graph was
  * silently truncated. Pages are never asked to be larger than this.
  */
-const FOLLOW_GRAPH_PAGE = 1000;
-/**
- * The most follows one request reads. Past it the graph is served as far as it
- * was read and reported NOT known, so Following withholds `caughtUp` instead of
- * asserting it over follows nobody looked at. Five sequential keyset pages.
- */
-export const FOLLOW_GRAPH_MAX_ROWS = 5000;
-
-/**
- * Every `user_follows` row of `viewerId`, keyset-paged on `following_id` (the
- * second column of the table's primary key, so each page is an index range
- * scan and a concurrent insert cannot shift a later page the way an OFFSET
- * would). Same envelope as one supabase-js read:
- *   - `error` set and `data` null: the FIRST page failed — nothing is known;
- *   - `error` set and `data` an array: a later page failed, or the graph is
- *     larger than FOLLOW_GRAPH_MAX_ROWS — `data` is what WAS read;
- *   - `error` null: `data` is the whole graph.
- */
-async function readWholeFollowGraph(
-  sc: any,
-  viewerId: string,
-): Promise<{ data: Array<{ following_id: string }> | null; error: unknown }> {
-  const out: Array<{ following_id: string }> = [];
-  let after: string | null = null;
-  for (;;) {
-    let q = sc
-      .from("user_follows")
-      .select("following_id")
-      .eq("follower_id", viewerId)
-      .order("following_id", { ascending: true });
-    if (after !== null) q = q.gt("following_id", after);
-    const { data, error } = await q.limit(FOLLOW_GRAPH_PAGE);
-    if (error) return { data: after === null ? null : out, error };
-    const page = ((data as any[]) ?? []).filter((r) => r && r.following_id != null);
-    for (const r of page) {
-      if (out.length >= FOLLOW_GRAPH_MAX_ROWS) {
-        return {
-          data: out,
-          error: {
-            code: "wall_follow_graph_over_bound",
-            message: `follow graph is larger than the ${FOLLOW_GRAPH_MAX_ROWS} follows one request reads`,
-          },
-        };
-      }
-      out.push({ following_id: String(r.following_id) });
-    }
-    // A short page is the end. A full one is not evidence of more — the next
-    // (possibly empty) page answers that.
-    if (page.length < FOLLOW_GRAPH_PAGE) return { data: out, error: null };
-    after = String(page[page.length - 1].following_id);
-  }
-}
+import { readWholeFollowGraph } from "../services/wall/wallFollowGraph.js";
+export { FOLLOW_GRAPH_MAX_ROWS } from "../services/wall/wallFollowGraph.js";
 
 /** Followed authors per spine query: keeps each `author_id=in.(…)` filter bounded. */
 export const SPINE_AUTHOR_CHUNK = 500;

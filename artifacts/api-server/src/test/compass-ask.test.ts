@@ -425,6 +425,25 @@ describe("D. Action intent — Phase 4 tool loop, propose-never-execute", () => 
 // ── E. Honest fallback on OpenAI error ────────────────────────────────────────
 
 describe("E. Honest fallback copy", () => {
+  it("finishes a failed streaming prompt with a visible reason and reusable conversation id", async () => {
+    const client = makeClient();
+    _setTestClient(client, true);
+    _setTestOpenAI(makeOpenAIErrorMock() as any);
+    const reply = await fetch(`http://127.0.0.1:${port}/api/compass/ask`, {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" },
+      body: JSON.stringify({ prompt: "What should I do in Tokyo?", stream: true }),
+    });
+    assert.equal(reply.status, 200);
+    assert.equal(reply.headers.get("x-accel-buffering"), "no");
+    const events = (await reply.text()).trim().split("\n\n").map(line => JSON.parse(line.slice(6)));
+    const failure = events.find(event => event.error === true);
+    assert.ok(failure);
+    assert.ok(typeof failure.conversationId === "string" && failure.conversationId.length > 0);
+    assert.equal(failure.fallbackReason, "ai_error");
+    assert.match(failure.message, /unavailable|try again/i);
+    assert.equal(assistantInserts(client).length, 0);
+  });
+
   it("returns 'temporarily unavailable' message when OpenAI fails — not canned recommendations", async () => {
     const client = makeClient();
     _setTestClient(client, "test-token");

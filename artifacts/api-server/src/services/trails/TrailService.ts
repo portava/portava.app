@@ -48,6 +48,7 @@ import {
   type MomentumRow,
 } from "../../lib/discoveryLocalMomentum.js";
 import type { DerivedStoreProvenance } from "../../lib/discoveryRankProvenance.js";
+import { governDiscoveryPlaces, readDiscoveryPlaceFacts } from '../../lib/discoveryPlaceGovernance.js';
 import {
   canonicaliseTrailProposal, canonicalTrailSlug, capTrailLabels, DUPLICATE_TITLE_SIMILARITY, trailDestinationKey,
   isTrailLifecycleState, isTrailLifecycleTransitionAllowed,
@@ -359,7 +360,10 @@ export async function servableMembers(
     readRows("posts", (ids) => sc.from("posts").select("id, author_id, visibility, status, post_status, deleted_at, tombstoned_at, publish_at, trip_id, canonical_place_id, location_place_id, primary_media_type, media_type, content").in("id", ids), idsOf("post")),
     readRows("events", (ids) => sc.from("events").select("id, host_id, visibility, state, verified_only, trust_score_min, age_min, age_max").in("id", ids), idsOf("event")),
     readRows("route_plans", (ids) => sc.from("route_plans").select("id, owner_user_id, trip_id, status").in("id", ids), idsOf("route")),
-    readRows("discovery_places", (ids) => sc.from("discovery_places").select("id, submitted_by").in("id", ids), idsOf("place")),
+    readDiscoveryPlaceFacts(sc, idsOf('place')).then(rows => {
+      if (rows === null) { unread?.add('places'); return null; }
+      return new Map(rows.map(row => [String(row.id), row]));
+    }),
   ]);
   const access = await memberAccessFor(sc, events, routes, viewerId, unread); // §64: the ban and trip-crew reads, once per call, fail closed
   const resolved: ServableMember[] = [];
@@ -386,12 +390,17 @@ export async function servableMembers(
     } else if (m.source_type === "place") {
       if (!places) continue;
       const d = places.get(m.source_id);
+      if (!d) continue;
       creatorId = d && typeof d.submitted_by === "string" ? d.submitted_by : null;
       clusterPlaceId = m.source_id; mediaType = "place";
     }
     resolved.push({ ...m, creatorId, clusterPlaceId, mediaType, text });
   }
 
+  const governedClusters = await governDiscoveryPlaces(sc, resolved.map(row => row.clusterPlaceId).filter((id): id is string => !!id), id => id);
+  if (!governedClusters.readable) unread?.add('places');
+  const visibleClusters = new Set(governedClusters.rows);
+  for (const row of resolved) if (row.clusterPlaceId && !visibleClusters.has(row.clusterPlaceId)) row.clusterPlaceId = null;
   const creatorIds = [...new Set(resolved.map((m) => m.creatorId).filter((c): c is string => typeof c === "string"))];
   let inactive: Set<string> | null = new Set();
   if (creatorIds.length > 0) {
@@ -1962,11 +1971,16 @@ export async function readMemberGeography(sc: any, members: readonly MemberRow[]
   const posts = await read(() => sc.from("posts").select("id, canonical_place_id").in("id", postIds), postIds.length);
   const canonicalOfPost = new Map<string, string>((posts ?? []).filter((p) => typeof p?.canonical_place_id === "string").map((p) => [String(p.id), String(p.canonical_place_id)]));
   const canonicalIds = [...new Set([...placeIds, ...canonicalOfPost.values()])];
-  const [community, canonical, events] = await Promise.all([
+  const [rawCommunity, rawCanonical, events] = await Promise.all([
     read(() => sc.from("discovery_places").select("id, name, lat, lng").in("id", placeIds), placeIds.length),
     read(() => sc.from("places").select("id, name, latitude, longitude").in("id", canonicalIds), canonicalIds.length),
     read(() => sc.from("events").select("id, location_lat, location_lng").in("id", eventIds), eventIds.length),
   ]);
+  const governed = await governDiscoveryPlaces(sc, [...(rawCommunity ?? []), ...(rawCanonical ?? [])], row => String(row.id));
+  if (!governed.readable) return { cellBySource: null, venueOf: new Map() };
+  const visible = new Set(governed.rows.map(row => String(row.id)));
+  const community = rawCommunity?.filter(row => visible.has(String(row.id))) ?? null;
+  const canonical = rawCanonical?.filter(row => visible.has(String(row.id))) ?? null;
   const at = new Map<string, { name: string; lat: unknown; lng: unknown }>();
   for (const c of canonical ?? []) at.set(String(c.id), { name: String(c.name ?? ""), lat: c.latitude, lng: c.longitude });
   for (const d of community ?? []) at.set(String(d.id), { name: String(d.name ?? ""), lat: d.lat, lng: d.lng });

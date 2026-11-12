@@ -126,6 +126,8 @@ describe("§9.1 — the sensing contribution stack is imported by its own siblin
 
   /** The allowlist §9.1 arrived at by hand, with the reason each entry is not an ingest. */
   const PERMITTED = new Map<string, string>([
+    [join("lib", "sensingAtomicAdmission.ts"), "§38: atomic admission/budget; existing opaque identity boundary retained"],
+    [join("routes", "sensingRevocation.ts"), "§38: epoch-preimage erasure only, no insertion, publishing, or account join"],
     [join("lib", "sensingAnonService.ts"), "the store's own read/write service — a sibling, not a caller of one"],
     [join("lib", "sensingContributionPolicy.ts"), "composes the admission policy from the store's constants; pure, no I/O"],
     [join("lib", "sensingContributionSession.ts"), "the issuance half; pure, and refuses while the posture is undecided"],
@@ -265,6 +267,7 @@ describe("§9.1 — the sensing contribution stack is imported by its own siblin
       [
         join("routes", "mapObservations.ts"),
         join("routes", "sensingIngest.ts"),
+        join("routes", "sensingRevocation.ts"),
         join("routes", "sensingSession.ts"),
         join("services", "intel", "IntelCaptureService.ts"),
       ],

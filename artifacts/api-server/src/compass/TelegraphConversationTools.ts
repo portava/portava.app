@@ -400,7 +400,7 @@ export async function telegraphGetSharedPlaces(
 
   let placesQ = sc
     .from("messages")
-    .select("id, sender_id, body, msg_type, subtype, created_at")
+    .select("id, sender_id, body, content_ref, msg_type, subtype, created_at")
     .eq("thread_id", gate.conversationId)
     .is("deleted_at", null)
     .in("subtype", ["discovery_card", "hidden_gem", "meeting_point", "compass_card"])

@@ -132,3 +132,38 @@ describe('D. presentation', () => {
     assert.match(model.canonicalCheckCopy('something_else'), /something_else/);
   });
 });
+
+describe('E. contribution and pagination contracts', () => {
+  it('carries an opaque More cursor and rejects malformed page content', async () => {
+    respond = () => json({ lists: [{ key: 'more', byPlace: {}, unplaced: [{ id: 'c', sourceType: 'post', sourceId: 'p' }] }], next: null });
+    assert.equal((await api.getMoreTrailContent('t', 'opaque+/=')).state, 'ok');
+    assert.equal(calls[0]!.url, 'http://api.test/api/v1/discovery/trails/t/more?cursor=opaque%2B%2F%3D');
+    respond = () => json({ lists: [{ key: 'more', byPlace: { p: [null] }, unplaced: [] }], next: null });
+    assert.equal((await api.getMoreTrailContent('t')).state, 'unavailable');
+  });
+  it('does not report a suggestion accepted when the server keeps it pending', async () => {
+    respond = () => json({ attached: 0, refusals: [{ reason: 'cap' }] }, 201);
+    assert.equal((await api.decideTrailSuggestion('s', 'accept')).state, 'unavailable');
+    respond = () => json({ state: 'declined' });
+    assert.equal((await api.decideTrailSuggestion('s', 'accept')).state, 'unavailable');
+    assert.deepEqual(await api.decideTrailSuggestion('s', 'decline'), { state: 'done', status: 200, data: { state: 'declined' } });
+  });
+  it('validates owner suggestions instead of drawing malformed rows or false emptiness', async () => {
+    respond = () => json({ suggestions: [{ id: 's' }] });
+    assert.equal((await api.getTrailSuggestions()).state, 'unavailable');
+    respond = () => json({ suggestions: [] });
+    assert.deepEqual(await api.getTrailSuggestions(), { state: 'ok', data: [] });
+  });
+  it('parses only supported owned-domain or app links and posts the exact selected relationship', async () => {
+    const { trailSourceFromLink, contributeToTrail } = await import('../trailContribution.ts');
+    const id = '11111111-1111-4111-8111-111111111111';
+    assert.deepEqual(trailSourceFromLink(`travelbuddy://post/${id}`), { sourceType: 'post', sourceId: id });
+    assert.deepEqual(trailSourceFromLink(`https://rumazi.com/events/${id}`), { sourceType: 'event', sourceId: id });
+    for (const link of [`https://rumazi.com.evil.example/post/${id}`, `https://user@rumazi.com/post/${id}`, `https://rumazi.com/post/no-id`, `https://rumazi.com/trip/${id}`, `https://rumazi.com/constructor/${id}`]) assert.equal(trailSourceFromLink(link), null);
+    respond = () => json({ attached: 0, suggested: 1 }, 201);
+    assert.deepEqual(await contributeToTrail('t', { sourceType: 'post', sourceId: id }, 'supporting'), { state: 'suggested' });
+    assert.deepEqual(JSON.parse(String(calls[0]!.init?.body)), { labels: [{ sourceType: 'post', sourceId: id, relationship: 'supporting' }] });
+    respond = () => json({ attached: 0 }, 201);
+    assert.equal((await contributeToTrail('t', { sourceType: 'post', sourceId: id }, 'primary')).state, 'failed');
+  });
+});

@@ -44,7 +44,9 @@
  * large touch targets.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { TripNearbyCard } from '../../features/trips/crew/TripNearbyCard.tsx';
+import { View, Text, Pressable, ScrollView, StyleSheet, AppState } from 'react-native';
+import { currentDiscoveryScope, isCurrentDiscoveryScope, onDiscoveryScopeChange } from '../../services/discoveryViewerScope.ts';
 import { Users, Clock, WifiOff, LogOut, CircleSlash } from 'lucide-react-native';
 
 import { color, radius, space, typography, avatar, icon } from '../../theme/tokens.ts';
@@ -108,6 +110,8 @@ export interface LocateFriendsLiveConfig {
   sampleSignal?: () => LocateSignal | null | Promise<LocateSignal | null>;
   /** The viewer's grant. Absent ⇒ §23's ungranted `approximate` ceiling. */
   grant?: PrecisionGrant | null;
+  /** Screen focus. Backgrounding always pauses independently. */
+  active?: boolean;
   /** Test/preview seam. */
   transport?: Partial<LocateFriendsTransport> | null;
 }
@@ -168,16 +172,21 @@ function useLocateFriendsLive(
 
   const sessionId = live?.sessionId ?? null;
   const publishes = Boolean(live?.sampleSignal);
+  const active = live?.active !== false;
+  const viewerMemberId = live?.viewerMemberId;
 
   useEffect(() => {
-    if (!sessionId) {
+    const owner = currentDiscoveryScope();
+    if (!sessionId || owner.viewer !== `u:${viewerMemberId}`) {
       syncRef.current = null;
       setState(IDLE_LIVE_STATE);
       return undefined;
     }
+    let alive = true;
+    let foreground = AppState.currentState === 'active';
     const sync = createLocateFriendsSync({
       sessionId,
-      onChange: setState,
+      onChange: next => { if (alive && active && foreground && isCurrentDiscoveryScope(owner)) setState(next); },
       sampleSignal: publishes
         ? () => configRef.current?.sampleSignal?.() ?? null
         : undefined,
@@ -193,13 +202,24 @@ function useLocateFriendsLive(
     });
     syncRef.current = sync;
     force((n) => n + 1);
-    sync.start();
+    const reconcile = () => {
+      if (alive && active && foreground && isCurrentDiscoveryScope(owner)) sync.start();
+      else { sync.stop(); setState(IDLE_LIVE_STATE); }
+    };
+    const appState = AppState.addEventListener('change', state => {
+      foreground = state === 'active';
+      if (foreground) reconcile();
+      else { sync.stop(); setState(IDLE_LIVE_STATE); }
+    });
+    const unsubscribeOwner = onDiscoveryScopeChange(reconcile);
+    reconcile();
     // The one cleanup that matters: an interval must never outlive the screen.
     return () => {
+      alive = false; appState.remove(); unsubscribeOwner();
       sync.stop();
       syncRef.current = null;
     };
-  }, [sessionId, publishes]);
+  }, [sessionId, publishes, active, viewerMemberId]);
 
   return { state, sync: syncRef.current };
 }
@@ -388,6 +408,7 @@ export function LocateFriendsPanel({
             />
           ))
         )}
+        {live?.active !== false && liveState.status === 'ok' && liveState.session?.groupScopeKind === 'trip' ? <TripNearbyCard tripId={liveState.session.groupScopeId} /> : null}
       </ScrollView>
 
       {/*

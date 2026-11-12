@@ -43,8 +43,17 @@
 // NOTE: intentional stub — memoryApi reaches lib/supabase, which builds a
 // client at import time and fails outside an Expo runtime. Everything asserted
 // below is the real module.
-jest.mock('../../../lib/supabase.ts', () => ({ isSupabaseConfigured: true, supabase: null }));
-jest.mock('../../../services/apiToken.ts', () => ({ freshToken: async () => 'test-token' }));
+jest.mock('../../../lib/supabase.ts', () => {
+  const listeners = new Set();
+  return { isSupabaseConfigured: true, supabase: { auth: { listeners, onAuthStateChange: (listener: unknown) => {
+    listeners.add(listener); return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } };
+  } } } };
+});
+jest.mock('../../../services/apiToken.ts', () => ({ ...jest.requireActual('../../../services/apiToken.ts'), freshToken: async () => require('../../../services/__tests__/observedOwnerSessionFixture.ts').observedOwnerAccessToken('u1','s1') }));
+import { seedObservedOwnerSession, disposeObservedOwnerSession } from '../../../services/__tests__/observedOwnerSessionFixture.ts';
+import { setDiscoveryViewerFromSession } from '../../../services/discoveryViewerScope.ts';
+beforeEach(() => { setDiscoveryViewerFromSession('u1'); seedObservedOwnerSession('u1','s1'); });
+afterEach(() => { disposeObservedOwnerSession(); setDiscoveryViewerFromSession(null); });
 
 import * as memoryApi from '../memory/memoryApi.ts';
 import { draftSavedMessage, type MemoryDraft } from '../memory/memoryApi.ts';

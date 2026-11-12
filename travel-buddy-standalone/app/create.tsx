@@ -2,6 +2,10 @@ import React from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
 import { UnifiedPostComposer } from '../src/components/PulseCreate';
 import type { Place } from '../src/lib/location/placeTypes';
+import { Alert } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { PostSaveDestinationPanel } from '../src/components/PostSaveDestinationPanel.tsx';
+import { POST_UUID } from '../src/constants/postReference.ts';
 
 /**
  * /create — full-screen post composer page.
@@ -36,12 +40,17 @@ export default function Create() {
     }
   }
 
-  const { placeId, placeName, bucket, tripId } = useLocalSearchParams<{
+  const { placeId, placeName, bucket, tripId, sharePostId } = useLocalSearchParams<{
     placeId?: string;
     placeName?: string;
     bucket?: string;
     tripId?: string;
+    sharePostId?: string;
   }>();
+  if (typeof sharePostId === 'string' && POST_UUID.test(sharePostId)) {
+    return <SafeAreaView style={{ flex: 1 }}><PostSaveDestinationPanel postId={sharePostId} destination="profile" active
+      onCancel={dismiss} onSaved={() => { dismiss(); Alert.alert('Shared to your profile'); }} /></SafeAreaView>;
+  }
 
   // Build a minimal Place snapshot from the query params so the composer
   // opens with the location chip pre-populated.
@@ -70,6 +79,7 @@ export default function Create() {
       onClose={dismiss}
       onSuccess={dismiss}
       openCameraOnMount={!initialPlace}
+      initialText=""
       initialPlace={initialPlace}
       initialBucket={bucket ?? null}
       tripId={typeof tripId === 'string' && tripId ? tripId : null}

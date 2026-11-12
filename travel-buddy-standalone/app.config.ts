@@ -36,8 +36,8 @@ function configPlugins(): ConfigPlugins {
  * Apple button when `extra.signInWithApple` is false (src/lib/buildCapabilities.ts),
  * usePushToken.ts swallows a failed token registration, and universal links
  * simply open the website. Read at config time only and never set in EAS, so
- * store builds are unaffected. Usage: docs/eas-runbook.md ("Local build with a
- * Personal Team").
+ * store builds are unaffected. Usage: docs/eas-runbook.md ("Local iPhone build
+ * with a Personal Team").
  */
 export const PERSONAL_TEAM_ENV = 'PORTAVA_PERSONAL_TEAM';
 const PERSONAL_TEAM_PLUGINS_DROPPED: ReadonlySet<string> = new Set(['expo-apple-authentication']);

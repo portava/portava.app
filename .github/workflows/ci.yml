@@ -733,6 +733,89 @@ jobs:
           set -euo pipefail
           bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:reported-review-native 2>&1 | tee "$RUNNER_TEMP/reported-review-native.log"
 
+      - name: Require native reported-content removal suite
+        timeout-minutes: 5
+        shell: bash
+        env:
+          PORTAVA_TEST_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}
+          TMPDIR: /tmp
+        run: |
+          set -euo pipefail
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:reported-content-native 2>&1 | tee "$RUNNER_TEMP/reported-content-native.log"
+
+      - name: Require native canonical place governance suite
+        timeout-minutes: 5
+        shell: bash
+        env:
+          PORTAVA_TEST_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}
+          TMPDIR: /tmp
+        run: |
+          set -euo pipefail
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:place-governance-native 2>&1 | tee "$RUNNER_TEMP/place-governance-native.log"
+
+      - name: Require native Sensing privacy suite
+        timeout-minutes: 5
+        shell: bash
+        env:
+          PORTAVA_TEST_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}
+          TMPDIR: /tmp
+        run: |
+          set -euo pipefail
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:sensing-privacy-native 2>&1 | tee "$RUNNER_TEMP/sensing-privacy-native.log"
+
+      - name: Require native Telegraph sequence and receipt suite
+        timeout-minutes: 5
+        shell: bash
+        env:
+          PORTAVA_TEST_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}
+          TMPDIR: /tmp
+        run: |
+          set -euo pipefail
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:telegraph-native 2>&1 | tee "$RUNNER_TEMP/telegraph-native.log"
+
+      - name: Require native one-use key package transaction suite
+        timeout-minutes: 5
+        shell: bash
+        env:
+          KEY_PACKAGES_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}
+          TMPDIR: /tmp
+        run: |
+          set -euo pipefail
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:key-packages-native 2>&1 | tee "$RUNNER_TEMP/key-packages-native.log"
+
+      - name: Require native post destination transaction suite
+        timeout-minutes: 5
+        shell: bash
+        env:
+          PORTAVA_TEST_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}
+          TMPDIR: /tmp
+        run: |
+          set -euo pipefail
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:post-destinations-native 2>&1 | tee "$RUNNER_TEMP/post-destinations-native.log"
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:recording-capture-native 2>&1 | tee "$RUNNER_TEMP/recording-capture-native.log"
+
+      - name: Require native trip nearby checkpoint transaction suite
+        # Radio behavior is separately device-certified; this gate covers the
+        # real SQL consent, membership, expiry and revocation boundary.
+        timeout-minutes: 5
+        shell: bash
+        env:
+          PORTAVA_TEST_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}
+          TMPDIR: /tmp
+        run: |
+          set -euo pipefail
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:trip-nearby-native 2>&1 | tee "$RUNNER_TEMP/trip-nearby-native.log"
+
+      - name: Require native official post media transaction suite
+        timeout-minutes: 5
+        shell: bash
+        env:
+          PORTAVA_TEST_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}
+          TMPDIR: /tmp
+        run: |
+          set -euo pipefail
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:official-media-native 2>&1 | tee "$RUNNER_TEMP/official-media-native.log"
+
       - name: Require native media translation deletion suite
         timeout-minutes: 5
         shell: bash

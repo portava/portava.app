@@ -275,6 +275,24 @@ describe("trips-expansion: an unreadable table is not an empty one", () => {
     assertRefused(await call("GET", "/trips/join-requests", { token: "owner-token" }), "join-requests");
   });
 
+  it("keeps only pending requests for open owner and co-host trips, preserving expired requests as history", async () => {
+    const original = fake.tables.trips[0];
+    const request = fake.tables.trip_join_requests[0];
+    for (const [id, owner, end] of [
+      ["closed-owner", OWNER, "2000-01-01"],
+      ["closed-cohost", OTHER, "2000-01-01"],
+      ["open-cohost", OTHER, "2099-12-31"],
+    ]) {
+      fake.tables.trips.push({ ...original, id, owner_id: owner, end_date: end });
+      fake.tables.trip_join_requests.push({ ...request, id: "request-" + id, trip_id: id });
+      if (owner === OTHER) fake.tables.trip_members.push({ trip_id: id, user_id: OWNER, role: "co_host", status: "accepted" });
+    }
+    const r = await call("GET", "/trips/join-requests", { token: "owner-token" });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.requests.map((row: any) => row.tripId).sort(), [TRIP, "open-cohost"].sort());
+    assert.equal(fake.tables.trip_join_requests.length, 4);
+  });
+
   it("GET /trips/:id/checklists — an unreadable trip_checklist_items is NOT an empty checklist", async () => {
     fake.failOn("trip_checklist_items", "select");
     const r = await call("GET", `/trips/${TRIP}/checklists`, { token: "owner-token" });

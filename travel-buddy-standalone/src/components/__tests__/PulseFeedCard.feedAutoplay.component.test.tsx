@@ -10,7 +10,8 @@
  * Run with: pnpm test:component
  */
 import React from 'react';
-import { render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { router } from 'expo-router';
 
 // ── expo-router ───────────────────────────────────────────────────────────────
 // NOTE: intentionally exhaustive — spreading requireActual pulls in native
@@ -176,12 +177,15 @@ jest.mock('../../services/posts.ts', () => ({ hidePost: jest.fn() }));
 // NOTE: intentionally exhaustive — the stub records the source it was handed;
 // FeedAutoplayVideo's own behaviour is media/__tests__/FeedAutoplayVideo.component.test.tsx.
 jest.mock('../media/FeedAutoplayVideo.tsx', () => ({
-  FeedAutoplayVideo: ({ uri }: { uri: string }) => {
+  FeedAutoplayVideo: require('react').forwardRef(({ uri, ...props }: { uri: string }, ref: any) => {
     const React = require('react');
     const { View } = require('react-native');
-    return React.createElement(View, { testID: 'feed-autoplay-video', uri });
-  },
+    React.useImperativeHandle(ref, () => ({ pause: async () => {} }));
+    return React.createElement(View, { testID: 'feed-autoplay-video', uri, ...props });
+  }),
 }));
+// NOTE: this card owns the in-place handoff. The takeover integration mounts real comments and transport.
+jest.mock('../PostTakeover.tsx', () => ({ PostTakeover: (props: any) => require('react').createElement(require('react-native').View, { testID: 'post-takeover', ...props }) }));
 
 // ── Component under test ───────────────────────────────────────────────────────
 import { PulseFeedCard } from '../PulseFeedCard.tsx';
@@ -204,6 +208,27 @@ function makePostItem(overrides: Partial<PulseFeedItem> = {}): PulseFeedItem {
 const VIDEO_MEDIA = [{ url: 'post-media/u-1/2.mov', thumbnail_url: 'post-media/u-1/2-thumb.jpg', media_type: 'video' }];
 
 describe('PulseFeedCard — the picked card plays its video', () => {
+  it('opens a video over the feed, retires inline playback, and resumes it at the returned position', async () => {
+    jest.mocked(router.push).mockClear();
+    await render(<PulseFeedCard item={makePostItem({ media: VIDEO_MEDIA as any })} autoplayVideo />);
+    await act(async () => screen.getByTestId('feed-autoplay-video').props.onPositionChange(12000));
+    await fireEvent.press(screen.getByLabelText('View video full screen'), { stopPropagation: jest.fn() });
+    expect(router.push).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('feed-autoplay-video')).toBeNull();
+    expect(screen.getByTestId('post-takeover').props).toMatchObject({ postId: 'post-1', initialMediaUri: VIDEO_MEDIA[0].url, initialPositionMillis: 12000 });
+    await act(async () => { screen.getByTestId('post-takeover').props.onPositionChange(18000); screen.getByTestId('post-takeover').props.onClose(); });
+    expect(screen.queryByTestId('post-takeover')).toBeNull();
+    expect(screen.getByTestId('feed-autoplay-video').props.initialPositionMillis).toBe(18000);
+  });
+
+  it('opens original photos over the same feed without routing to another page', async () => {
+    jest.mocked(router.push).mockClear();
+    await render(<PulseFeedCard item={makePostItem({ mediaUrl: 'post-media/u-1/original.jpg' })} />);
+    await fireEvent.press(screen.getByLabelText('View photo full screen'), { stopPropagation: jest.fn() });
+    expect(router.push).not.toHaveBeenCalled();
+    expect(screen.getByTestId('post-takeover').props).toMatchObject({ postId: 'post-1', initialMediaUri: 'post-media/u-1/original.jpg' });
+  });
+
   it('a video post the feed picked plays its own video over the poster', async () => {
     await render(<PulseFeedCard item={makePostItem({ media: VIDEO_MEDIA as any })} autoplayVideo />);
     expect((screen.getByTestId('feed-autoplay-video') as any).props.uri).toBe('post-media/u-1/2.mov');

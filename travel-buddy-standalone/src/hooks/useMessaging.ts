@@ -8,6 +8,8 @@
  *   Both hooks pause polling when AppState leaves 'active' and resume on return.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useThreadOutbox } from '../features/telegraph/outbox/useThreadOutbox.ts';
+import { mergePendingMessages } from '../features/telegraph/outbox/pendingMessages.ts';
 import { cursorOf, mergeResumed, resumeFromCursor } from '../features/telegraph/connection/sequenceResume.ts'; import { useCompactPlaybackSource, isAccessLoss } from '../features/telegraph/media/useCompactPlaybackSource.ts'; // §6.3 T62 — on this line so no cited line moves
 import { noteThreadCursor } from '../features/telegraph/connection/sequenceCursorStore.ts';
 import { AppState, type AppStateStatus } from 'react-native';
@@ -23,11 +25,12 @@ import {
   markThreadRead,
   markHighlightsViewed,
   getThreadMessages, resumeThreadMessages,
-  sendMessage,
+  sendMessage, cancelPendingMessage,
   sendTyping,
   retryTranslation,
   getMyLanguageSettings,
   updateMyLanguageSettings,
+  type MsgResult,
   type MessageVerdict,
   type MessagePermissionResult,
   type MessageRequest,
@@ -287,6 +290,8 @@ export function useThreadMessages(threadId: string | null) {
   // thread can discard their results instead of interleaving two conversations.
   const activeThreadIdRef = useRef(threadId);
   activeThreadIdRef.current = threadId;
+  const activeOwnerIdRef = useRef(userId);
+  activeOwnerIdRef.current = userId;
 
   // Reset per-thread tracking whenever the thread changes.
   useEffect(() => {
@@ -297,7 +302,8 @@ export function useThreadMessages(threadId: string | null) {
     setMessages([]);
     setLoading(true);
     setError(null); setAccessLost(false);
-  }, [threadId]);
+    sendingRef.current = false; setSending(false);
+  }, [threadId, userId]);
 
   // Paint snapshot immediately when AsyncStorage read completes (second open).
   useEffect(() => {
@@ -319,10 +325,10 @@ export function useThreadMessages(threadId: string | null) {
     const res = await getThreadMessages(threadId);
     // Fence: the user switched threads while this fetch was in flight — the
     // result belongs to the old thread, so drop it.
-    if (activeThreadIdRef.current !== threadId) return;
+    if (activeThreadIdRef.current !== threadId || activeOwnerIdRef.current !== userId) return;
     if (res.ok && res.data) {
       const msgs = [...(res.data.messages ?? [])].reverse();
-      setMessages(msgs); setAccessLost(false);
+      setMessages((previous) => mergePendingMessages(msgs, previous)); setAccessLost(false);
       // Only cache confirmed server messages — exclude optimistic entries.
       const toCache = msgs.filter(
         (m) => m.deliveryStatus !== 'sending' && m.deliveryStatus !== 'failed',
@@ -333,13 +339,13 @@ export function useThreadMessages(threadId: string | null) {
     }
     networkFetchedRef.current = true;
     setLoading(false);
-  }, [threadId, saveSnapshot]);
+  }, [threadId, userId, saveSnapshot]);
 
   const silentPoll = useCallback(async () => {
     if (!threadId || appStateRef.current !== 'active' || sendingRef.current) return;
     const res = await getThreadMessages(threadId);
     // Fence: discard results that arrive after the user switched threads.
-    if (activeThreadIdRef.current !== threadId) return;
+    if (activeThreadIdRef.current !== threadId || activeOwnerIdRef.current !== userId) return;
     if (!res.ok || !res.data) { if (isAccessLoss(res)) setAccessLost(true); return; } // §6.3 T62: a refused poll is an access loss, not silence
     const incoming = [...(res.data.messages ?? [])].reverse();
     if (incoming.length === 0) return;
@@ -352,7 +358,8 @@ export function useThreadMessages(threadId: string | null) {
       // since the last render (pending → translated/failed/skipped).
       // Only replace the entry when status actually changes to avoid flicker.
       let hasTranslationUpdate = false;
-      const updated = prev.map((m) => {
+      const confirmedClients = new Set(incoming.map((message) => message.clientId).filter(Boolean));
+      const updated = prev.filter((message) => !(message.deliveryStatus === 'sending' || message.deliveryStatus === 'failed') || !confirmedClients.has(message.clientId)).map((m) => {
         const edited = incomingById.get(m.id); if (edited && (edited.editedAt !== m.editedAt || edited.deleted !== m.deleted)) { hasTranslationUpdate = true; return edited; } // WP-08 TEL-F07: an edit or delete replaces the stale copy
         if (m.translationStatus === 'pending') { const refreshed = incomingById.get(m.id);
           if (refreshed && refreshed.translationStatus !== 'pending') {
@@ -367,7 +374,9 @@ export function useThreadMessages(threadId: string | null) {
       if (fresh.length === 0) return updated;
       return [...updated, ...fresh];
     });
-  }, [threadId]);
+  }, [threadId, userId]);
+
+  useThreadOutbox(threadId, userId, (pending) => setMessages((previous) => mergePendingMessages(previous, pending)), () => { void reload(); }, setError);
 
   // T233 (§17.2): catch up from the last acknowledged sequence before the ordinary poll, so a gap longer
   // than one page is closed instead of skipped. No cursor (server capability OFF) ⇒ no request at all.
@@ -379,11 +388,11 @@ export function useThreadMessages(threadId: string | null) {
       const r = await resumeThreadMessages(threadId, after);
       return { ok: r.ok, status: r.errorKind === 'rate_limited' ? 429 : undefined, retryAfterSeconds: r.retryAfterSeconds ?? null, messages: r.data?.messages, resume: r.data?.resume ?? null };
     });
-    if (activeThreadIdRef.current !== threadId) return;
+    if (activeThreadIdRef.current !== threadId || activeOwnerIdRef.current !== userId) return;
     if (outcome.messages.length > 0) setMessages((prev) => mergeResumed(prev, outcome.messages));
     if (outcome.kind === 'fallback' && outcome.reason === 'backpressure') return; // the server is shedding: the interval poll comes back
     void silentPoll();
-  }, [threadId, silentPoll]);
+  }, [threadId, userId, silentPoll]);
 
   useEffect(() => {
     reload();
@@ -452,9 +461,9 @@ export function useThreadMessages(threadId: string | null) {
 
   /** Optimistically append a message, then reconcile with the server response. */
   const send = useCallback(
-    async (body: string, opts?: { msgType?: string; subtype?: string; replyToId?: string; replyToBody?: string | null; replyToSenderName?: string | null }) => {
+    async (body: string, opts?: { msgType?: string; subtype?: string; replyToId?: string; replyToBody?: string | null; replyToSenderName?: string | null; isE2ee?: boolean }) => {
       const trimmed = body.trim();
-      if (!threadId || !trimmed) return;
+      if (!threadId || !trimmed || sendingRef.current) return;
       const clientId = makeClientId();
       const optimistic: Message = {
         id: clientId,
@@ -481,13 +490,17 @@ export function useThreadMessages(threadId: string | null) {
         replyToBody: opts?.replyToBody ?? null,
         replyToSenderName: opts?.replyToSenderName ?? null,
         deliveryStatus: 'sending',
+        pendingIsE2ee: opts?.isE2ee === true,
       };
 
       sendingRef.current = true;
       setSending(true);
       setMessages((prev) => [...prev, optimistic]);
 
-      const res = await sendMessage(threadId, trimmed, { ...opts, clientId });
+      let res: MsgResult<Message>;
+      try { res = await sendMessage(threadId, trimmed, { ...opts, clientId }); }
+      catch (error) { res = { ok: false, data: null, errorKind: 'db_error', message: error instanceof Error ? error.message : 'The message could not be sent.' }; }
+      if (activeThreadIdRef.current !== threadId || activeOwnerIdRef.current !== userId) return res;
       if (res.ok && res.data) {
         const server = res.data as Message;
         setMessages((prev) => {
@@ -514,21 +527,30 @@ export function useThreadMessages(threadId: string | null) {
   );
 
   /** Resend a previously-failed optimistic message (matched by its clientId). */
+  const cancelSend = useCallback(async (clientId: string) => {
+    await cancelPendingMessage(clientId);
+    if (activeThreadIdRef.current !== threadId || activeOwnerIdRef.current !== userId) return;
+    setMessages((previous) => previous.filter((message) => message.clientId !== clientId || message.deliveryStatus === 'sent'));
+  }, [threadId, userId]);
+
   const retrySend = useCallback(
     async (clientId: string) => {
-      if (!threadId) return;
+      if (!threadId || sendingRef.current) return;
       const failed = messages.find((m) => m.clientId === clientId);
-      if (!failed || !failed.body) return;
+      if (!failed || !failed.body || failed.deliveryStatus !== 'failed') return;
+      sendingRef.current = true; setSending(true);
       setMessages((prev) =>
         prev.map((m) =>
           m.clientId === clientId ? { ...m, deliveryStatus: 'sending' as const, sendFailure: null } : m,
         ),
       );
-      const res = await sendMessage(threadId, failed.body, {
-        msgType: failed.msgType,
-        subtype: failed.subtype ?? undefined,
-        clientId,
-      });
+      let res: MsgResult<Message>;
+      try { res = await sendMessage(threadId, failed.body, {
+        msgType: failed.msgType, subtype: failed.subtype ?? undefined,
+        clientId, replyToId: failed.replyToId ?? undefined, isE2ee: failed.pendingIsE2ee === true,
+      }); } catch (error) { res = { ok: false, data: null, errorKind: 'db_error', message: error instanceof Error ? error.message : 'The message could not be sent.' }; }
+      if (activeThreadIdRef.current !== threadId || activeOwnerIdRef.current !== userId) return res;
+      sendingRef.current = false; setSending(false);
       if (res.ok && res.data) {
         const server = res.data as Message;
         setMessages((prev) => {
@@ -545,7 +567,7 @@ export function useThreadMessages(threadId: string | null) {
       }
       return res;
     },
-    [threadId, messages],
+    [threadId, messages, userId],
   );
 
   /**
@@ -604,10 +626,10 @@ export function useThreadMessages(threadId: string | null) {
     setError(null);
     const res = await getThreadMessages(threadId);
     // Fence: discard results that arrive after the user switched threads.
-    if (activeThreadIdRef.current !== threadId) return;
+    if (activeThreadIdRef.current !== threadId || activeOwnerIdRef.current !== userId) return;
     if (res.ok && res.data) {
       const msgs = [...(res.data.messages ?? [])].reverse();
-      setMessages(msgs); setAccessLost(false);
+      setMessages((previous) => mergePendingMessages(msgs, previous)); setAccessLost(false);
       const toCache = msgs.filter(
         (m) => m.deliveryStatus !== 'sending' && m.deliveryStatus !== 'failed',
       );
@@ -617,7 +639,7 @@ export function useThreadMessages(threadId: string | null) {
     }
     networkFetchedRef.current = true;
     setLoading(false);
-  }, [threadId, clearSnapshot, saveSnapshot]);
+  }, [threadId, userId, clearSnapshot, saveSnapshot]);
 
   return {
     messages,
@@ -628,7 +650,7 @@ export function useThreadMessages(threadId: string | null) {
     reload,
     refresh,
     send,
-    retrySend,
+    retrySend, cancelSend,
     notifyTyping,
     retry,
   };

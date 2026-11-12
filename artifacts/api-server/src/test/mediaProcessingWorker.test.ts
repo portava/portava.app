@@ -1223,7 +1223,9 @@ describe("census-media §32 — PRIVACY: a swept entity asset reaches nobody its
     // (3) The byte gate reads the canonical row once, for owner attribution.
     const gate = read("lib/mediaAccess.ts");
     assert.equal((gate.match(/\.from\("media_assets"\)/g) ?? []).length, 1);
-    assert.match(gate, /\.from\("media_assets"\)\s*\.select\("id, owner_user_id"\)/);
+    const assetSelect = gate.match(/\.from\("media_assets"\)\s*\.select\("([^"]+)"\)/);
+    const selected = new Set(assetSelect?.[1]?.split(",").map(field => field.trim()));
+    for (const field of ["id", "owner_user_id", "moderation_status", "deleted_at"]) assert.ok(selected.has(field), field);
     // (4) Telegraph's MEDIA share needs `public` for a non-owner, and the
     //     canonical writer never sends `visibility` (0191 defaults it to inherit).
     assert.match(read("services/telegraph/shareables.ts"), /if \(!mine\) \{\s*if \(r\.visibility !== "public"\) return \{ state: UNAVAILABLE\("private"\), projection: null \};/);

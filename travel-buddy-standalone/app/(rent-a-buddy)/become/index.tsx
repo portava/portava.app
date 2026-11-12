@@ -195,8 +195,10 @@ export default function BecomeABuddy() {
         />
         <Text style={s.policyNote}>
           By applying you confirm your services will be strictly non-romantic and non-adult in nature.
-          See Community Guidelines for full policy.
         </Text>
+        <Pressable accessibilityRole="link" onPress={() => router.push('/settings/community-guidelines')}>
+          <Text style={s.policyNote}>Read Community Guidelines</Text>
+        </Pressable>
       </View>
     </ScrollView>
   );

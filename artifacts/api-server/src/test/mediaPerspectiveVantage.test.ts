@@ -21,6 +21,7 @@
  *
  * Run: node --import tsx/esm --test src/test/mediaPerspectiveVantage.test.ts
  */
+import { makeFakeClient as makeCatalogClient } from './telegraphCertificationHarness.js';
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -226,6 +227,7 @@ const PLACE = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 type Dataset = Record<string, any[]>;
 function projectionClient(data: Dataset, log: string[]) {
   const builder = (table: string): any => {
+    if (table === "places") return makeCatalogClient({ places: data.places ?? [] }).from(table);
     const filters: any[] = [];
     let selected = "";
     const rows = () => {

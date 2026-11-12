@@ -181,11 +181,12 @@ function makeClient(store: Record<string, any[]>, failReads: Set<string>, failIn
         throw new Error(`unexpected write to ${table}`);
       }
       if (failReads.has(table) || (usedIn && failInReads.has(table))) return { data: null, error: { message: `${table} unavailable` } };
-      let rows = (store[table] ?? []).filter((r) => filters.every((f) => f(r)));
+      let rows = (store[table] ?? []).map(r=>table === "places" ? {moderation_status:"visible",merged_into_place_id:null,...r}:r).filter((r) => filters.every((f) => f(r)));
+      const count=rows.length;
       if (limitN != null) rows = rows.slice(0, limitN);
       const project = (r: any) => (columns ? Object.fromEntries(columns.filter((c) => c in r).map((c) => [c, r[c]])) : { ...r });
       if (single) return { data: rows[0] ? project(rows[0]) : null, error: null };
-      return { data: rows.map(project), error: null };
+      return { data: rows.map(project), error: null, count };
     }
     return obj;
   }

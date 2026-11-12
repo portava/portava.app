@@ -35,6 +35,7 @@ import { MapPin, MessageCircle, ExternalLink } from 'lucide-react-native';
 import { StampIcon } from './stamps/StampIcon.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx'; import { messageTreeMediaOrNull } from '../features/telegraph/media/messageTreeMedia.ts';
+import { SharedMessageMedia } from '../features/telegraph/sharing/SharedMessageMedia.tsx';
 import { Avatar } from './ui/Avatar.tsx';
 import { space, radius, type as t } from '../theme/tokens.ts';
 import { useTelegraphTheme, type TelegraphPalette } from '../features/telegraph/theme/telegraphTheme.ts';
@@ -144,7 +145,6 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
   if (live) {
     const p = live.projection;
     const handle = p.subtitle && p.subtitle.startsWith('@') ? p.subtitle.slice(1) : null;
-    const image = messageTreeMediaOrNull(p.imageUrl); // census T446: storage or nothing
     return (
       <View style={[card.wrap, mine && card.wrapMine]} testID="post-card-live">
         <View style={card.header}>
@@ -158,16 +158,7 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
             <Text style={[card.authorName, mine && card.authorNameMine]} numberOfLines={1}>@{handle}</Text>
           </UserIdentityLink>
         ) : null}
-        {image ? (
-          <DisplayMediaImage
-            uri={image}
-            width={CARD_MAX_WIDTH}
-            height={THUMBNAIL_HEIGHT}
-            resizeMode="cover"
-            style={card.thumbnail}
-            alt={p.title}
-          />
-        ) : null}
+        <SharedMessageMedia key={p.objectId} projection={p} messageId={messageId} />
         <Text style={[card.snippet, mine && card.snippetMine]} numberOfLines={3}>{p.title}</Text>
         {payload.caption ? (
           <Text style={[card.caption, mine && card.captionMine]} numberOfLines={2}>"{payload.caption}"</Text>

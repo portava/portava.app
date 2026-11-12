@@ -31,7 +31,9 @@
     "lint:orphan-tests": "node scripts/check-orphan-tests.mjs",
     "lint:close-then-navigate": "node scripts/check-close-then-navigate.mjs",
     "lint:dev-proxy-not-shipped": "node scripts/check-dev-proxy-not-shipped.mjs",
-    "check:all": "bash scripts/run-all-checks.sh"
+    "check:all": "bash scripts/run-all-checks.sh",
+    "check:native-config": "node scripts/check-native-package-config.mjs",
+    "eas-build-post-install": "node scripts/check-native-package-config.mjs"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.0",
@@ -121,5 +123,16 @@
     "react-test-renderer": "19.1.0",
     "tsx": "4.22.4",
     "typescript": "~5.9.2"
+  },
+  "op-sqlite": {
+    "sqlcipher": true,
+    "fts5": true
+  },
+  "expo": {
+    "autolinking": {
+      "searchPaths": [
+        "./vendor"
+      ]
+    }
   }
 }

@@ -24,7 +24,7 @@
  * Run:
  *   node --import tsx/esm --test src/test/mapProjectionLayers.test.ts
  */
-import { describe, it, before, after, beforeEach } from "node:test";
+import { mock, describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
@@ -526,6 +526,8 @@ const TRIP = {
   endDate: "2026-09-10",
   status: "upcoming",
 };
+
+mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-09-01T12:00:00Z") });
 
 describe("projectCircleMember", () => {
   it("is 'approximate' — never place_level, never precise_temporary", () => {

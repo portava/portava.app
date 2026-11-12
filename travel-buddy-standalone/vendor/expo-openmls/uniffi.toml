@@ -1,0 +1,5 @@
+[bindings.kotlin]
+# Cargo package expo-openmls produces libexpo_openmls.so. The UDL namespace
+# alone defaults to libuniffi_openmls.so, which cannot load on a real device.
+cdylib_name = "expo_openmls"
+package_name = "uniffi.openmls"

@@ -127,7 +127,13 @@ function db(opts: { flagOn?: boolean; contributions?: Row[]; publications?: Row[
     };
     return b;
   }
-  return { from, _tables: tables, _touched: touched };
+  return { from, _tables: tables, _touched: touched, rpc: async (name: string, args: any) => {
+    assert.equal(name,"sensing_publish_if_current");
+    const row=args.p_publication; const rows=tables[SENSING_PUBLISHED_TABLE];
+    const previous=rows.filter(r=>r.cohort_key===row.cohort_key && r.expires_at>row.published_at).sort((a,b)=>b.published_at.localeCompare(a.published_at))[0];
+    if((previous?.id??null)!==args.p_expected_id) return {data:"conflict",error:null};
+    rows.push({...row,id:`pub-${rows.length+1}`}); return {data:"stored",error:null};
+  } };
 }
 
 function fresh() { _resetSensingStorePresence(); }

@@ -18,7 +18,14 @@ jest.mock('../../../lib/supabase.ts', () => ({ isSupabaseConfigured: true, supab
 // NOTE: intentionally exhaustive — the module reads one function from it.
 jest.mock('../../../services/apiToken.ts', () => ({ freshToken: async () => 'tok-1' }));
 
-import { fetchReceipts, markSeen } from '../lifecycle/lifecycleApi.ts';
+let mockCurrentOwner = true;
+// NOTE: intentional seam: the real owner/token boundary has native auth integration tests.
+jest.mock('../../../services/messagingOwnerRequest.ts', () => ({
+ captureMessagingOwnerRequest: () => ({ isCurrent: () => mockCurrentOwner }),
+ messagingOwnerToken: async () => 'tok-1',
+}));
+
+import { fetchReceipts, markSeen, markDelivered } from '../lifecycle/lifecycleApi.ts';
 
 const T = '11111111-1111-4111-8111-111111111111';
 const A = '22222222-2222-4222-8222-222222222222';
@@ -30,6 +37,7 @@ const fetchMock = jest.fn();
 beforeEach(() => {
   process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
   fetchMock.mockReset();
+  mockCurrentOwner = true;
   (global as any).fetch = fetchMock;
 });
 afterAll(() => { (global as any).fetch = realFetch; });
@@ -77,4 +85,15 @@ describe('markSeen', () => {
     const r = await markSeen(T, A);
     expect(r).toEqual(expect.objectContaining({ ok: false, error: 'not_found' }));
   });
+});
+
+it('acknowledges device delivery separately from seen', async () => {
+ fetchMock.mockResolvedValue(answer(200,{advanced:true}));
+ expect((await markDelivered(T,A)).ok).toBe(true);
+ expect(fetchMock.mock.calls[0][0]).toBe(`https://api.test/api/threads/${T}/delivered`);
+ expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({upToMessageId:A});
+});
+it('drops a lifecycle response after the account changes', async () => {
+ fetchMock.mockImplementation(async()=>{ mockCurrentOwner=false; return answer(200,{receipts:[]}); });
+ expect(await fetchReceipts(T,[A])).toEqual({ok:false,error:'unauthenticated'});
 });

@@ -19,6 +19,9 @@
  *     cursor   — pagination cursor
  */
 import { randomUUID } from "node:crypto";
+import { refuseExplicitTripAdd } from "../compass/CompassTripActionGate.js";
+import { itineraryOutline, itineraryPromptForTurn, requestedItineraryCity } from "../compass/CompassItineraryOutline.js";
+import { CompassVenueStream, groundVenueTerms } from "../compass/CompassVenueTerms.js";
 import { Router } from "express";
 import { z } from "zod";
 import { COMPASS_QUICK_ACTION_TYPES } from "../lib/compassDecisionActions.js";
@@ -1315,14 +1318,38 @@ async function runToolCallingLoop(
   onDelta?: (delta: string) => void,
   /** Aborts model calls when the SSE client disconnects mid-answer. */
   signal?:  AbortSignal,
+  itinerary?: { prompt: string; city?: string },
 ): Promise<ToolLoopOutcome> {
+  if (signal?.aborted) throw new ClientDisconnectedError();
   const convo: any[] = [...messages];
   const toolLog: ToolExecution[] = trackPartialToolLog<ToolExecution>(messages); // H266: readable by the caller if a model call below throws
   const proposals: AddToTripProposal[] = [];
 
+  let seededSearch: { city: string; result: unknown } | null = null;
+  const emptyCity = (value: unknown) => {
+    const row = value as { catalogEmpty?: boolean; liveListings?: unknown[] };
+    return row?.catalogEmpty === true && !row.liveListings?.length;
+  };
+  if (itinerary) {
+    const city = requestedItineraryCity(itinerary.prompt, undefined, itinerary.city);
+    const outline = itineraryOutline(itinerary.prompt, city);
+    if (outline?.payload === null) return { finalRaw: JSON.stringify(outline), toolLog, proposals };
+    if (outline && city) {
+      // The short, explicit plan needs this authorized city search either way.
+      // Do it directly, and preserve the actual result for a richer model answer.
+      const args = { city };
+      const result = await executeCompassTool(sc, userId, profile as any, "search_places", args);
+      toolLog.push({ name: "search_places", arguments: args, result });
+      if (emptyCity(result)) return { finalRaw: JSON.stringify(outline), toolLog, proposals };
+      seededSearch = { city, result };
+      convo.push({ role: "assistant", content: null, tool_calls: [{ id: "itinerary_city_places", type: "function", function: { name: "search_places", arguments: JSON.stringify(args) } }] });
+      convo.push({ role: "tool", tool_call_id: "itinerary_city_places", content: JSON.stringify(result) });
+    }
+  }
+  let endSearch = false;
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
     if (signal?.aborted) throw new ClientDisconnectedError();
-    const forceFinal = round === MAX_TOOL_ROUNDS;
+    const forceFinal = endSearch || round === MAX_TOOL_ROUNDS;
     const requestOpts = {
       model: "gpt-5-mini",
       max_completion_tokens: 1200,
@@ -1375,14 +1402,37 @@ async function runToolCallingLoop(
       let args: Record<string, unknown> = {};
       try { args = JSON.parse(tc?.function?.arguments ?? "{}"); } catch { /* empty args */ }
 
-      const result = await executeCompassTool(sc, userId, profile as any, name, args);
-      toolLog.push({ name, arguments: args, result });
+      const requestedCity = itinerary && name === "search_places" ? requestedItineraryCity(itinerary.prompt, args.city, itinerary.city) : undefined;
+      if (requestedCity) args.city = requestedCity;
+      if (endSearch && name === "search_places") {
+        convo.push({ role: "tool", tool_call_id: tc.id, content: "City-wide search already returned no matching places." });
+        continue;
+      }
+      const repeatedCitySearch = name === "search_places" && seededSearch && args.city === seededSearch.city && Object.keys(args).length === 1;
+      let result = repeatedCitySearch ? seededSearch!.result : await executeCompassTool(sc, userId, profile as any, name, args);
+      if (!repeatedCitySearch) toolLog.push({ name, arguments: args, result });
+      if (itinerary && name === "search_places") {
+        if (emptyCity(result) && requestedCity && typeof args.query === "string" && args.query.trim()) {
+          const broadArgs = { city: requestedCity };
+          result = await executeCompassTool(sc, userId, profile as any, name, broadArgs);
+          toolLog.push({ name, arguments: broadArgs, result });
+        }
+        if (emptyCity(result) && !toolLog.some(tool => {
+          const row = tool.result as { candidates?: unknown[]; liveListings?: unknown[] };
+          return (tool.name === "search_places" || tool.name === "search_events") && (row?.candidates?.length || row?.liveListings?.length);
+        })) {
+          const outline = itineraryOutline(itinerary.prompt, requestedCity);
+          if (outline && toolCalls.length === 1) return { finalRaw: JSON.stringify(outline), toolLog, proposals };
+          endSearch = true;
+        }
+      }
       const proposal = (result as any)?.proposal;
       if (name === "add_to_trip" && proposal?.proposalId) proposals.push(proposal as AddToTripProposal);
 
       log.info({ userId, tool: name }, "compass/ask: tool executed");
       convo.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(result) });
     }
+    if (endSearch) convo.push({ role: "system", content: "The available place searches are exhausted. In the traveler’s language, offer a useful generic day-by-day itinerary honoring all their stated constraints. Do not invent venues, hours or prices. If the destination or duration is missing, clarify it instead of assuming the phone’s city or one day. No further tools are needed." });
   }
   // Unreachable, but keeps TS happy.
   return { finalRaw: "", toolLog, proposals };
@@ -1527,7 +1577,7 @@ router.post("/compass/ask", async (req, res) => {
     };
     if (stream) {
       res.setHeader("Content-Type",  "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Cache-Control", "no-cache, no-transform"); res.setHeader("X-Accel-Buffering", "no");
       res.setHeader("Connection",    "keep-alive");
       res.flushHeaders();
       res.write(`data: ${JSON.stringify({ error: true, ...refusal })}\n\n`);
@@ -1547,7 +1597,7 @@ router.post("/compass/ask", async (req, res) => {
     } catch { /* non-fatal */ }
     if (stream) {
       res.setHeader("Content-Type",  "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Cache-Control", "no-cache, no-transform"); res.setHeader("X-Accel-Buffering", "no");
       res.setHeader("Connection",    "keep-alive");
       res.flushHeaders();
       res.write(`data: ${JSON.stringify({ delta: message })}\n\n`);
@@ -1572,17 +1622,29 @@ router.post("/compass/ask", async (req, res) => {
   // `history` is already loaded above and was previously not passed, which left
   // the router resolving a pronoun with no antecedent — the standing evaluation
   // set's "What did you mean?" and "Which one is closer?" are exactly that case.
-  let intentResult: IntentClassification | null = null;
-  try {
-    intentResult = await classifyIntent(
-      prompt,
-      modelTurns(history).slice(-CLASSIFIER_CONTEXT_TURNS),
-    );
-  } catch { /* non-fatal — treated as no classification */ }
-  const isItineraryIntent =
-    intentResult !== null &&
-    intentResult.intent === "itinerary" &&
-    intentResult.confidence >= 0.6;
+  const planningPrompt = itineraryPromptForTurn(prompt, modelTurns(history));
+  const refusal = await refuseExplicitTripAdd(sc, user.id, planningPrompt);
+  if (refusal) {
+    try {
+      await appendMessage(sc, conversationId, "user", prompt);
+      await appendMessage(sc, conversationId, "assistant", refusal.message, undefined, COMPASS_ASK_PROMPT_VERSION);
+      await touchConversation(sc, conversationId);
+    } catch { /* The answer remains available if conversation history cannot be updated. */ }
+    const answer = {
+      conversationId, message: refusal.message, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload: null,
+      quickActions: [], pendingProposals: [], uiBlocks: [], intent: null,
+      meta: { toolsUsed: [], groundingViolations: [], droppedInventedIds: 0, actionOutcome: refusal.reason },
+      ...(refusal.retryable ? { fallback: true, fallbackReason: refusal.reason } : {}),
+    };
+    if (stream) {
+      res.set({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "X-Accel-Buffering": "no" });
+      res.end(`data: ${JSON.stringify({ done: true, ...answer })}\n\n`);
+    } else res.json(answer);
+    return;
+  }
+  // Context reads below do not depend on intent. Start classification now and
+  // join it when constructing the provider messages, after the layover gate.
+  const classification = classifyIntent(prompt, modelTurns(history).slice(-CLASSIFIER_CONTEXT_TURNS)).catch(() => null);
 
   // ── Action intent (Phase 4) ───────────────────────────────────────────────
   // Actions no longer short-circuit: the tool-calling loop lets the model
@@ -1956,6 +2018,10 @@ router.post("/compass/ask", async (req, res) => {
   const userMessageWithContext = `${prompt}\n\n${ctxLines.join("\n")}`;
 
   // ── Build messages array ──────────────────────────────────────────────────
+  const intentResult: IntentClassification | null = await classification;
+  const isItineraryIntent = intentResult?.intent === "itinerary" && intentResult.confidence >= 0.6;
+  const itineraryRequest = isItineraryIntent || (planningPrompt !== prompt && /\b(?:plan|itinerary|weekend)\b/i.test(planningPrompt))
+    ? { prompt: planningPrompt, city } : undefined;
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: "system", content: COMPASS_ASK_PROMPT },
     { role: "system", content: COMPASS_TOOLS_PROMPT_ADDENDUM },
@@ -1994,7 +2060,7 @@ router.post("/compass/ask", async (req, res) => {
   // ── SSE streaming ─────────────────────────────────────────────────────────
   if (stream) {
     res.setHeader("Content-Type",  "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Cache-Control", "no-cache, no-transform"); res.setHeader("X-Accel-Buffering", "no");
     res.setHeader("Connection",    "keep-alive");
     res.flushHeaders();
     // Client-disconnect handling: if the SSE client drops mid-answer we abort
@@ -2010,27 +2076,31 @@ router.post("/compass/ask", async (req, res) => {
       // Tool rounds run silently server-side; the FINAL model round streams
       // its content token-by-token as delta events (same contract as before
       // Phase 4). The done event still carries the parsed message fields.
+      const venueStream = new CompassVenueStream(delta => {
+        if (!res.writableEnded) res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+      }, prompt);
       const { finalRaw, toolLog, proposals } = await withAskProjections(() => runToolCallingLoop(
         sc, user.id, guardProfile, messages as any, req.log,
-        (delta) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify({ delta })}\n\n`); },
+        delta => venueStream.push(delta),
         clientAbort.signal,
+        itineraryRequest,
       ));
       const _parsed = _parseModelResponse(finalRaw);
       const _rawMessage  = finalRaw === "" ? compassAiFailureFallback(toolLog, SUMMARISE_EMPTY_FALLBACK_MESSAGE).message : _parsed.message;
-      // Sensing `:148`. The tokens are already on the wire — the client rebuilds
-      // the bubble from the accumulated deltas — so the correction is sent as
-      // one more delta rather than by rewriting what was said.
-      const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);
+      // Validate venue terms before handing structured itinerary data to the client.
+      const venue = groundVenueTerms(_rawMessage, _parsed.payload, toolLog, prompt, _parsed.quickActions);
+      const _grounded    = groundCompassAnswer(venue.message, toolLog, liveClaimEvidence);
       const message      = _grounded.text;
+      venueStream.finish(venue.changed ? { message, payload: venue.payload, quickActions: venue.quickActions } : undefined);
       if (_grounded.correction && !res.writableEnded) {
         req.log.warn(
           { userId: user.id, violations: _grounded.violations.map((v) => v.kind) },
           "compass/ask stream: answer over-claimed against its own tool evidence",
         );
-        res.write(`data: ${JSON.stringify({ delta: `\n\n${_grounded.correction}` })}\n\n`);
+        if (!venue.changed) res.write(`data: ${JSON.stringify({ delta: `\n\n${_grounded.correction}` })}\n\n`);
       }
-      const payload      = _parsed.payload;
-      const quickActions = _parsed.quickActions;
+      const payload      = venue.payload;
+      const quickActions = venue.quickActions;
       // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
       // outMeta tracks how many model-declared ids were not found in the tool log
       // (hallucinated references). When no blocks were declared, synthesis runs
@@ -2067,7 +2137,7 @@ router.post("/compass/ask", async (req, res) => {
       } catch { /* non-fatal */ }
       // Phase 6: bounded-cadence memory compression (fire-and-forget)
       compressConversationIfDue(sc, user.id, conversationId).catch(() => {});
-      res.write(`data: ${JSON.stringify({ done: true, conversationId, message, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind), toolsUsed: toolLog.map((t) => t.name) }, intent: intentResult })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: true, conversationId, message, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: [..._grounded.violations.map((v) => v.kind), ...venue.violations], toolsUsed: toolLog.map((t) => t.name) }, intent: intentResult })}\n\n`);
       res.end();
     } catch (err) {
       if (clientAbort.signal.aborted) {
@@ -2077,7 +2147,8 @@ router.post("/compass/ask", async (req, res) => {
         return;
       }
       req.log.error({ err, userId: user.id }, "compass/ask stream failed");
-      res.write(`data: ${JSON.stringify({ error: true, ...(await compassAiFailureFallbackWithRetrieval(partialToolLogOf(messages), () => executeCompassTool(sc, user.id, guardProfile as any, "memory_search", { query: prompt }), HONEST_FALLBACK_MESSAGE)) })}\n\n`);
+      appendSystemEvent(sc, conversationId, "assistant_unavailable", { fallbackReason: "ai_error" }).catch(() => {});
+      res.write(`data: ${JSON.stringify({ error: true, conversationId, promptVersion: COMPASS_ASK_PROMPT_VERSION, fallback: true, fallbackReason: "ai_error", ...(await compassAiFailureFallbackWithRetrieval(partialToolLogOf(messages), () => executeCompassTool(sc, user.id, guardProfile as any, "memory_search", { query: prompt }), HONEST_FALLBACK_MESSAGE)) })}\n\n`);
       res.end();
     }
     return;
@@ -2086,13 +2157,15 @@ router.post("/compass/ask", async (req, res) => {
   // ── Non-streaming (default) ───────────────────────────────────────────────
   try {
     const { finalRaw, toolLog, proposals } = await withAskProjections(() => runToolCallingLoop(
-      sc, user.id, guardProfile, messages as any, req.log,
+      sc, user.id, guardProfile, messages as any, req.log, undefined, undefined,
+      itineraryRequest,
     ));
     const _parsed = _parseModelResponse(finalRaw);
     const _rawMessage  = finalRaw === "" ? compassAiFailureFallback(toolLog, SUMMARISE_EMPTY_FALLBACK_MESSAGE).message : _parsed.message;
     // Sensing `:148` — the same boundary the streamed branch applies, on the
     // same tool log, so the two branches cannot publish different answers.
-    const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);
+    const venue = groundVenueTerms(_rawMessage, _parsed.payload, toolLog, prompt, _parsed.quickActions);
+    const _grounded    = groundCompassAnswer(venue.message, toolLog, liveClaimEvidence);
     const message      = _grounded.text;
     if (_grounded.correction) {
       req.log.warn(
@@ -2100,8 +2173,8 @@ router.post("/compass/ask", async (req, res) => {
         "compass/ask: answer over-claimed against its own tool evidence",
       );
     }
-    const payload      = _parsed.payload;
-    const quickActions = _parsed.quickActions;
+    const payload      = venue.payload;
+    const quickActions = venue.quickActions;
     // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
     // outMeta tracks how many model-declared ids were not found in the tool log
     // (hallucinated references). When no blocks were declared, synthesis runs
@@ -2138,7 +2211,7 @@ router.post("/compass/ask", async (req, res) => {
     } catch { /* non-fatal */ }
     // Phase 6: bounded-cadence memory compression (fire-and-forget)
     compressConversationIfDue(sc, user.id, conversationId).catch(() => {});
-    res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind), toolsUsed: toolLog.map((t) => t.name) }, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
+    res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: [..._grounded.violations.map((v) => v.kind), ...venue.violations], toolsUsed: toolLog.map((t) => t.name) }, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
   } catch (err) {
     req.log.error({ err, userId: user.id }, "compass/ask: LLM call failed");
     // spec §1 `system-event`: the conversation records that the assistant was

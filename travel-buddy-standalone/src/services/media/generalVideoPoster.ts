@@ -125,16 +125,14 @@ export function deviceGeneralPosterDeps(
   apiBase: string,
   token: string,
   extract: (videoUri: string) => Promise<string | null>,
+  uploadFrame = async (url: string, uri: string, headers: Record<string, string>): Promise<Pick<Response, 'ok' | 'status' | 'json'>> =>
+    fetch(url, { method: 'POST', headers, body: await (await fetch(uri)).blob() }),
 ): GeneralPosterDeps {
-  const frameBlob = async (uri: string): Promise<Blob> => (await fetch(uri)).blob();
+  const headers = { 'Content-Type': 'image/jpeg', Authorization: `Bearer ${token}` };
   return {
     extract,
     async postPoster(videoPath, frameUri) {
-      const res = await fetch(`${apiBase}/api/media/upload/poster?path=${encodeURIComponent(videoPath)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'image/jpeg', Authorization: `Bearer ${token}` },
-        body: await frameBlob(frameUri),
-      });
+      const res = await uploadFrame(`${apiBase}/api/media/upload/poster?path=${encodeURIComponent(videoPath)}`, frameUri, headers);
       let body: unknown = null;
       try {
         body = await res.json();
@@ -144,11 +142,7 @@ export function deviceGeneralPosterDeps(
       return { status: res.status, body };
     },
     async uploadAsImage(frameUri) {
-      const res = await fetch(`${apiBase}/api/media/upload`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'image/jpeg', Authorization: `Bearer ${token}` },
-        body: await frameBlob(frameUri),
-      });
+      const res = await uploadFrame(`${apiBase}/api/media/upload`, frameUri, headers);
       if (!res.ok) return null;
       const body = (await res.json().catch(() => ({}))) as { url?: unknown };
       return str(body?.url);

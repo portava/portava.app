@@ -17,6 +17,8 @@ const mockShareObject = jest.fn();
 const mockPressable = jest.fn();
 const mockTextInput = jest.fn();
 
+// NOTE: The capability endpoint owns room encryption state; these tests exercise the send decision after that read.
+jest.mock('../../features/telegraph/conversation/conversationProjection.ts', () => ({ fetchConversationProjection: jest.fn(async () => ({conversation: {isE2ee: false}})) }));
 jest.mock('react-native', () => {
   const actual = jest.requireActual('react-native');
   const CapturedPressable = (props: any) => {
@@ -370,5 +372,6 @@ it('ShareSheet does not use an old post preview after the source changes', async
   await fireEvent.press(ui.getByText('Send in a chat'));
   await act(async () => { pending.resolve({ ok: true, data: { content: 'Old preview' } }); });
   await fireEvent.press(ui.getByText('Current thread')); await fireEvent.press(ui.getByText('Send'));
-  expect(JSON.parse(mockSend.mock.calls[0][1])).toMatchObject({ postId: 'new-source', snippet: 'Current preview' });
+  expect(JSON.parse(mockSend.mock.calls[0][1])).toEqual({ postId: 'new-source' });
+  expect(mockPost).not.toHaveBeenCalled();
 });

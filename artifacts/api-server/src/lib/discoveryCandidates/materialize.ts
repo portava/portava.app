@@ -35,6 +35,7 @@ import { toCanonicalCategory } from "../placeCategories.js";
 import { fetchBlockedSet, submitterIsVisible } from "../blocks.js";
 import { inactiveSubmitterIds, submitterInGoodStanding } from "../discoveryCacheEligibility.js";
 import { IN_LIST_CAP } from "./retrievals.js"; import { servedDistanceKm, batchFetchVoteAndRatingAggregates } from "../discoveryPlaceAggregates.js";
+import { governDiscoveryPlaces } from '../discoveryPlaceGovernance.js';
 
 /** Mirrors routes/discovery.ts DEMO_DISCOVERY_SOURCES (pinned equal by test). */
 export const DEMO_SOURCES: ReadonlySet<string> = new Set(["seed_script", "demo", "qa_fixture"]);
@@ -180,6 +181,9 @@ export async function materialiseCandidates(
   const out: MaterialiseOutcome = { rows: new Map(), submitterById: new Map(), failedReads: [], refused: { blocked: 0, standing: 0, demo: 0, category: 0 } };
   const uuids = [...new Set(ids.filter((i) => i.startsWith("db/")).map((i) => i.slice(3)))].slice(0, IN_LIST_CAP);
   if (!sc || uuids.length === 0) return out;
+  const governed = await governDiscoveryPlaces(sc, uuids, id => id);
+  if (!governed.readable) { out.failedReads.push('places.governance'); return out; }
+  const allowed = new Set(governed.rows.map(id => id.toLowerCase()));
 
   let dp: any[] = [];
   try {
@@ -205,6 +209,7 @@ export async function materialiseCandidates(
   const found = new Set<string>();
   for (const row of dp) {
     found.add(String(row.id));
+    if (!allowed.has(String(row.id).toLowerCase())) continue;
     if (DEMO_SOURCES.has(row.source as string)) { out.refused.demo++; continue; }
     if (!submitterIsVisible(row.submitted_by, blocked)) { out.refused.blocked++; continue; }
     if (!submitterInGoodStanding(row.submitted_by, inactive)) { out.refused.standing++; continue; }
@@ -215,7 +220,7 @@ export async function materialiseCandidates(
   }
 
   await mergeRouteAggregates(sc, out);
-  const rest = uuids.filter((u) => !found.has(u));
+  const rest = uuids.filter((u) => !found.has(u) && allowed.has(u.toLowerCase()));
   if (rest.length === 0 || out.failedReads.includes("discovery_places")) return out;
   try {
     const { data, error } = await sc

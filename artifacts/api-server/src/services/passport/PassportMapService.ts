@@ -6,6 +6,7 @@
  * Returns only city-level and neighborhood-zone markers aggregated from passport_stamps.
  */
 
+import { readCanonicalPlaceVisibility } from "../../lib/places/placeGovernance.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CallerContext } from "./PassportPrivacyGuard.js";
 import { filterStamps, filterMemories } from "./PassportPrivacyGuard.js";
@@ -21,8 +22,8 @@ const logger = rootLogger.child({ service: "PassportMapService" });
  * Identity comes from the stamp/memory's own `place_id` when it has one and
  * from its `neighborhood` otherwise, so a landmark and a zone both get a level
  * without either pretending to be the other. The LABEL is resolved from
- * `places.name`; an unresolvable id falls back to the neighbourhood and then to
- * a generic word rather than surfacing a uuid.
+ * `places.name`; a missing or withheld canonical identity is removed while
+ * its coarse city/trip history remains.
  *
  * NO COORDINATES, by construction: nothing here reads latitude/longitude, and
  * the rows it is built from have already been through `guardStamp` /
@@ -173,8 +174,8 @@ function placeKeyOf(placeId: unknown, neighborhood: unknown): string | null {
  *   `trips`            titles and dates for the Trip level. Unreadable ⇒ the
  *                      Trips still exist, unnamed — losing a title must not lose
  *                      the stamps grouped under it.
- *   `places`           display names for the Places level. Unreadable ⇒ places
- *                      fall back to their neighbourhood label.
+ *   `places`           current moderation and names for the Places level.
+ *                      Unreadable/withheld canonical links are omitted.
  *   `passport_memories` level 6, via `loadMemories` + `filterMemories` — the SAME
  *                      per-memory gate every other Passport surface runs, so My
  *                      World cannot become the surface that shows a private
@@ -300,7 +301,22 @@ async function attachTripLevels(
     }
   }
 
-  // Place names. A failure costs the LABELS, never the level.
+  // Recheck current governance before exposing any stored place association.
+  // City/trip history remains; unavailable places are not leaked as unnamed IDs.
+  if (placeIds.size > 0) {
+    const visibility = await readCanonicalPlaceVisibility(db, [...placeIds]);
+    for (const perCity of buckets.values()) for (const b of perCity.values()) {
+      for (const [key, place] of b.places) {
+        if (place.placeId && (!visibility.ok || !visibility.visibleIds.has(place.placeId))) {
+          b.places.delete(key);
+          for (const memory of b.memories) if (memory.placeKey === key) memory.placeKey = null;
+          placeIds.delete(place.placeId);
+        }
+      }
+    }
+  }
+
+  // Names are read only for places still visible at the current boundary.
   if (placeIds.size > 0) {
     try {
       const { data, error } = await db

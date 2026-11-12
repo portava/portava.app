@@ -123,3 +123,10 @@ describe("verifier finding 2 — the durable-audit flag itself cannot be read", 
     assert.equal(auditRows(c).length, 0);
   });
 });
+
+it('optional durable outcomes are labelled separately and read only after the admin purpose/audit gates',async()=>{
+ const db=seed(true);db.feature_flags.push({flag:'telegraph_outcome_feedback_enabled',enabled:true});const c=use(db);let calls=0;
+ c.rpc=async(name)=>{assert.equal(name,'telegraph_outcome_summary');assert.equal(auditRows(c).length,1);calls++;return {data:{evidence:'self_reported',suppressed:true,verifiedAttendance:false,reportedMet:null},error:null};};
+ assert.equal((await read(null)).status,400);assert.equal(calls,0);const response=await read(PURPOSE);assert.equal(response.status,200);const body=await response.json() as any;assert.equal(body.selfReportedOutcomes.evidence,'self_reported');assert.equal(body.selfReportedOutcomes.reportedMet,null);assert.equal(calls,1);
+});
+it('disabled outcome collection never calls its summary RPC',async()=>{const c=use(seed(false));let calls=0;c.rpc=async()=>{calls++;return {data:null,error:null};};const response=await read(PURPOSE);const body=await response.json() as any;assert.equal(body.selfReportedOutcomes.state,'disabled');assert.equal(calls,0);});

@@ -1,3 +1,5 @@
+import { gifProviderKey } from '../../src/features/telegraph/gifs/giphyApi.ts';
+import { GifPickerSheet } from '../../src/features/telegraph/gifs/GifPickerSheet.tsx';
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View,
@@ -16,6 +18,7 @@ import {
   TextInput,
   type AppStateStatus,
 } from 'react-native';
+import { closeThenNavigate } from '../../src/lib/deferredNavigate.ts';
 import { Avatar } from '../../src/components/ui/Avatar';
 import { localDateKey, localTodayKey } from '../../src/utils/localDate';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -55,6 +58,8 @@ import { DiscoveryCardMessage } from '../../src/components/DiscoveryCardMessage'
 import { PostCardMessage } from '../../src/components/PostCardMessage';
 import { ThreadSafetySheet } from '../../src/components/ThreadSafetySheet';
 import { SharedContextRail, shouldCollapseOnScroll } from '../../src/features/telegraph/index.ts';
+import { ConversationContext, currentSharedObjectLink } from '../../src/features/telegraph/sharedContext/ConversationContext.tsx';
+import type { SharedContextItem } from '../../src/features/telegraph/sharedContext/types.ts';
 import { PortavaObjectMessage } from '../../src/features/telegraph/sharing/PortavaObjectMessage.tsx'; import { OriginalAlongside } from '../../src/features/telegraph/translation/OriginalAlongside.tsx';
 import { TypedMessageRenderer, rendersTypedKind } from '../../src/features/telegraph/kinds/TypedMessageRenderer.tsx';
 import { rendersKnownMessageType, safeUnknownBody } from '../../src/features/telegraph/kinds/unsupportedPayload.ts';
@@ -103,6 +108,9 @@ import { MessageMediaBubble } from '../../src/components/MessageMediaBubble';
 import { MessageSafetyBanner } from '../../src/features/telegraph/components/MessageSafetyBanner';
 import { StrangerMediaShield } from '../../src/features/telegraph/components/StrangerMediaShield';
 // Telegraph §16.2 / §17.4 — data-saver and the degradation ladder.
+import { LinkedMessageMedia } from '../../src/features/telegraph/sharing/LinkedMessageMedia.tsx';
+import { canonicalMediaLink } from '../../src/features/telegraph/sharing/canonicalMediaLink.ts';
+import { ThreadSharePlaybackContext, SHARED_MEDIA_VIEWABILITY, useThreadSharePlayback } from '../../src/features/telegraph/sharing/threadSharePlayback.tsx';
 import { useDataSaver } from '../../src/features/telegraph/hooks/useDataSaver'; import { reportThreadSend, reportMeetAtSend } from '../../src/features/telegraph/composer/composerTaskOutcome.ts'; import { useFeatureFlags } from '../../src/context/FeatureFlagsContext.tsx'; import { useLinkPreviews } from '../../src/features/telegraph/linkPreview/useLinkPreviews.ts'; import { LinkPreviewCard } from '../../src/features/telegraph/linkPreview/LinkPreviewCard.tsx'; import { LINK_PREVIEWS_FLAG, type LinkPreview } from '../../src/features/telegraph/linkPreview/linkPreviewApi.ts'; // census T404, one line: this file is cited by line
 import * as Haptics from 'expo-haptics';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
@@ -173,7 +181,7 @@ function LongPressActionSheet({
   onDeleteForMe,
   onReply,
   onSave,
-  onUnsent, onEdit, onHistory, canEdit = false, blockLabel, onBlockSender,
+  onUnsent, onEdit, onHistory, onForward, onForwardPermission, canEdit = false, blockLabel, onBlockSender,
   receipt,
 }: {
   message: Message | null;
@@ -188,6 +196,7 @@ function LongPressActionSheet({
   onDeleteForMe: (id: string) => Promise<void>;
   onReply: (msg: Message) => void;
   onSave: (msg: Message) => void;
+  onForward?: (msg: Message) => void; onForwardPermission?: (msg: Message) => void;
   onUnsent: (id: string) => void; onEdit?: (msg: Message) => void; onHistory?: (msg: Message) => void; canEdit?: boolean; blockLabel?: string; onBlockSender?: () => void;
 }) { const { palette, styles: las } = useTelegraphTheme(makeSheetStyles);
   const plainInsetForSheets = usePlainBottomInset();
@@ -211,6 +220,8 @@ function LongPressActionSheet({
             ['reply',     'Reply',         Reply        ],
             ['copy',      'Copy text',     Copy         ],
             ['save',      'Save message',  BookmarkPlus ], ...(canEdit ? [['edit', 'Edit', Pencil]] : []), ...(threadId && canViewEditHistory(message) ? [['history', 'Edit history', History]] : []),
+            ...(onForward ? [['forward', 'Forward', ArrowRight]] : []),
+            ...(mine && onForwardPermission ? [['permission', 'Forwarding permission', Lock]] : []),
             ...(!mine ? [['report', 'Report', Flag]] : []),
           ] as [string, string, React.ComponentType<{ size: number; color: string }>][]).map(([key, label, Icon]) => (
             <Pressable
@@ -223,6 +234,10 @@ function LongPressActionSheet({
                   Alert.alert('Copied', 'Message copied to clipboard.');
                 } else if (key === 'report') {
                   setShowReport(true);
+                } else if (key === 'forward') {
+                  onForward?.(message);
+                } else if (key === 'permission') {
+                  onForwardPermission?.(message);
                 } else if (key === 'reply') {
                   onReply(message);
                 } else if (key === 'save') {
@@ -751,13 +766,14 @@ function MessageBubble({
   dismissedAiMsgIds,
   onDismissAiCard,
   deliveryStatus, sendFailure, linkPreview = null,
-  onRetry,
+  onRetry, onCancelPending,
   onRetryTranslation,
   currentUserId,
   isCircleMember,
   onCircleCardPress,
-  threadId,
+  threadId, plainThread,
 }: {
+  plainThread?: boolean;
   item: Message;
   mine: boolean;
   groupStart?: boolean;
@@ -775,6 +791,7 @@ function MessageBubble({
   onDismissAiCard?: (msgId: string) => void;
   deliveryStatus?: 'sending' | 'sent' | 'failed' | null; /** Why the server refused it, when it said — a burst-limit pause is not a dropped connection. */ sendFailure?: SendFailure | null;
   onRetry?: () => void;
+  onCancelPending?: () => void;
   onRetryTranslation?: () => void;
   currentUserId?: string;
   isCircleMember?: boolean | null;
@@ -830,6 +847,14 @@ function MessageBubble({
       </Pressable>
     );
   }
+
+  // A canonical link pasted into plaintext chat uses the same revocable source as a typed share.
+  // Never send a decrypted URL or an optimistic encrypted send to a projection endpoint.
+  const linked = !item.e2eeFailed && item.msgType === 'text'
+    ? canonicalMediaLink(item.body) : null;
+  if (linked) return <Pressable onLongPress={onLongPress} delayLongPress={300}>
+    <LinkedMessageMedia key={`${threadId}:${item.id}:${linked.objectId}`} refInfo={linked} encrypted={!plainThread || Boolean(item.ciphertext || item.pendingIsE2ee)} mine={mine} threadId={threadId ?? null} messageId={item.id} />
+  </Pressable>;
 
   // Meetup card — special rendering (long-press wrapper added)
   const meetupPayload = parseMeetupCard(item.body ?? '', item);
@@ -1093,6 +1118,11 @@ function MessageBubble({
           <Text style={styles.deliveryFailed} testID="telegraph-send-failed-copy">{failedSendCopy(sendFailure)}</Text>
         </Pressable>
       )}
+      {mine && deliveryStatus === 'failed' && onCancelPending && (
+        <Pressable accessibilityRole="button" accessibilityLabel="Stop retrying this message" onPress={onCancelPending} style={styles.deliveryRow} hitSlop={8}>
+          <Text style={styles.deliveryFailed}>Stop retrying</Text>
+        </Pressable>
+      )}
 
       {/* §7.3 / §30A.15 — what is known about this message, and nothing more:
           • Sent — the server accepted it;
@@ -1206,7 +1236,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
   const { id, title, threadType, contextId, otherUserId, muted } = useLocalSearchParams<{ id: string; title?: string; threadType?: string; contextId?: string; otherUserId?: string; muted?: string }>();
   const insets = useSafeAreaInsets();
   const { userId } = useSession();
-  const { messages, loading, error, sending, send, reload, typingUserIds, notifyTyping, retrySend } = useThreadMessages(id ?? null);
+  const { messages, loading, error, sending, send, reload, typingUserIds, notifyTyping, retrySend, cancelSend } = useThreadMessages(id ?? null);
   const { data: langSettings } = useLanguageSettings();
   const [input, setInput] = useState('');
   const [lastSentMessage, setLastSentMessage] = useState<string | undefined>(undefined);
@@ -1258,6 +1288,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
   // Telegraph §16.2 / §17.4 — the degradation ladder. Consulted here for
   // media; the AI tray consults it for `ai`.
   const dataSaver = useDataSaver(); const { isEnabled: flagEnabled } = useFeatureFlags(); const linkPreviews = useLinkPreviews(id ?? null, messages, flagEnabled(LINK_PREVIEWS_FLAG) && !safetyQuiet && dataSaver.mayLoad('mediaPreview')); // census T404: off (the seed), a raised safety mode or data saver ⇒ no request and no preview (Q-LP6)
+  const sharedPlayback = useThreadSharePlayback(dataSaver.mayLoad('mediaPreview') && !safetyQuiet && !actionMsg && !showSafetySheet);
   const [showMediaPickerSheet, setShowMediaPickerSheet] = useState(false);
 
   function handleBlockPress() {
@@ -1410,7 +1441,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
   // Merge: per-thread override takes precedence over global langSettings
   const autoTranslate = threadAutoTranslate ?? langSettings?.auto_translate_messages ?? true;
   const defaultShowOriginal = threadShowOriginal ?? langSettings?.show_original_messages ?? false;
-  const isGroupThread = threadType === 'trip' || threadType === 'circle';
+  const isGroupThread = threadType === 'trip' || threadType === 'circle' || threadType === 'group';
 
   // Sender-side rate-limit: "Waiting for reply" = the current user has a
   // PENDING outgoing message request to this person. We check the server so
@@ -1545,6 +1576,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
   }, [threadType, otherUserId, telegraphHeader.other]);
   // Telegraph §6.1: the composer's + menu, and the two typed-compose sheets.
   const [showPlusMenu, setShowPlusMenu] = useState(false);
+  const [showGifPicker,setShowGifPicker]=useState(false);
   const [typedCompose, setTypedCompose] = useState<TypedComposeKind | null>(null); const [locationDraft, setLocationDraft] = useState<TelegraphLocationDraft | null>(null); const [showVoiceRecorder, setShowVoiceRecorder] = useState(false); // §6.2 VOICE — the sheet the + menu's Voice entry opens. Shares a line because census-telegraph cites every line below it.
 
   // Send button springs in/out with input content
@@ -1666,6 +1698,14 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
 
   async function handleSend() {
     const text = input.trim();
+    if (conversationProjection.status !== 'ready' || conversationProjection.isE2ee === null) {
+      Alert.alert('Chat is reconnecting', 'Wait until this conversation’s encryption settings are verified, then try again.');
+      return;
+    }
+    if (mediaPicker.media !== null && conversationProjection.isE2ee) {
+      Alert.alert('Media unavailable in encrypted chats', 'This message was not uploaded. You can send encrypted text in this conversation.');
+      return;
+    }
 
     // ── Media send path ───────────────────────────────────────────────────
     if (mediaPicker.media !== null && id) {
@@ -1705,11 +1745,11 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
     setSendFailed(false);
     const currentReply = replyingTo;
     setReplyingTo(null);
-    const res = await send(text, currentReply ? {
+    const res = await send(text, { isE2ee: conversationProjection.isE2ee, ...(currentReply ? {
       replyToId: currentReply.id,
       replyToBody: currentReply.displayBody ?? currentReply.body ?? null,
       replyToSenderName: currentReply.senderName ?? null,
-    } : undefined);
+    } : {}) });
     if (!res?.ok) setSendFailed(true); reportThreadSend(id, !!res?.ok); // §45 G320: a held New Telegraph pick, reported on its send (no-op without consent)
     listRef.current?.scrollToEnd({ animated: true });
   }
@@ -1752,6 +1792,12 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
     });
   }, []);
 
+  const [showConversationContext, setShowConversationContext] = useState(false);
+  const openSharedContextItem = useCallback(async (item: SharedContextItem) => {
+    if (!id) return;
+    try { const link = await currentSharedObjectLink(id, item); if (link) router.push(link as never); }
+    catch (error) { Alert.alert('Shared item', error instanceof Error ? error.message : 'This item could not be opened. Try again.'); }
+  }, [id]);
   const handlePlanMeetupButton = useCallback(() => {
     setMeetupSheetCtx({
       tripId: threadType === 'trip' ? contextId : undefined,
@@ -2051,14 +2097,25 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
       {/* Telegraph §2.2 / §3: the Shared Context Rail sits between the header
           and the message stream. It renders nothing when there is no mutual
           canonical state, and nothing when the read failed. */}
-      {id ? <SafetyModeBar threadId={id} refreshKey={messages[messages.length - 1]?.id ?? null} onCall={canShowCallButtons ? () => { void startThreadCall('voice'); } : undefined} onBlockOrReport={() => setShowSafetySheet(true)} onLocationScope={() => setTypedCompose('LOCATION_SCOPE')} onModeChange={(s) => setSafetyQuiet(s.deprioritizeEntertainment)} senderLabel={(uid) => senderLabelFor(messages, uid, userId ?? null)} /> : null}{id ? <SharedContextRail threadId={id} key={bookingTransitionKey ?? 'rail'} scrolled={railCollapsed} /> : null}<TelegraphConnectionBanner />{/* §30A.15: says when messages cannot arrive; nothing while fine */}
+      {id ? <SafetyModeBar threadId={id} refreshKey={messages[messages.length - 1]?.id ?? null} onCall={canShowCallButtons ? () => { void startThreadCall('voice'); } : undefined} onBlockOrReport={() => setShowSafetySheet(true)} onLocationScope={() => setTypedCompose('LOCATION_SCOPE')} onModeChange={(s) => setSafetyQuiet(s.deprioritizeEntertainment)} senderLabel={(uid) => senderLabelFor(messages, uid, userId ?? null)} /> : null}{id ? <SharedContextRail threadId={id} key={bookingTransitionKey ?? 'rail'} scrolled={railCollapsed} onOpenObject={item => void openSharedContextItem(item)} onSeeAll={() => setShowConversationContext(true)} /> : null}<TelegraphConnectionBanner />{/* §30A.15: says when messages cannot arrive; nothing while fine */}
+      {id ? <ConversationContext threadId={id} expanded={showConversationContext} onExpanded={setShowConversationContext} onOpenObject={item => void openSharedContextItem(item)} actions={{
+        CREATE_PLAN: { label: 'Plan a meetup', run: handlePlanMeetupButton },
+        ADD_TO_TRIP: { label: 'Plan a trip meetup', run: handlePlanMeetupButton },
+        MEET_HERE: { label: 'Choose a meeting point', run: () => setTypedCompose('LOCATION') },
+        SHARE_LOCATION: { label: 'Share a timed location', run: () => setTypedCompose('LOCATION_SCOPE') },
+        SHARE_AVAILABILITY: { label: 'Manage availability', run: () => router.push('/messages/nearby' as never) },
+        SHARE_PLACE: { label: 'Find a place to share', run: () => router.push('/(tabs)/discovery' as never) },
+      }} /> : null}
 
       {/* Telegraph §2.2's optional coordination panel / §9's coordination
           mode. Renders only while the thread is actually coordinating, or
           while a decision or commitment is unresolved. */}
       {id ? <CoordinationPanel threadId={id} viewerId={userId ?? null} onOpenRecap={threadRecap.available ? () => setShowRecap(true) : undefined} onShareLocation={() => setTypedCompose('LOCATION_SCOPE')} refreshKey={messages[messages.length - 1]?.id ?? null} onDrawnIdsChange={setPanelDrawnIds} /> : null}{id ? <SemanticLayersStrip threadId={id} viewerId={userId ?? null} messages={messages} refreshKey={messages[messages.length - 1]?.id ?? null} dataSaver={!dataSaver.mayLoad('mediaPreview')} onLayeredIdsChange={setLayeredIds} panelDrawnIds={panelDrawnIds} /> : null}
 
+      <ThreadSharePlaybackContext.Provider value={sharedPlayback.playback}>
       <FlatList
+        viewabilityConfig={SHARED_MEDIA_VIEWABILITY}
+        onViewableItemsChanged={sharedPlayback.onViewableItemsChanged}
         windowSize={9}
         initialNumToRender={18}
         maxToRenderPerBatch={12}
@@ -2173,6 +2230,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
                 item={m}
                 mine={mine}
                 threadId={id ?? null}
+                plainThread={conversationProjection.status === 'ready' && conversationProjection.isE2ee === false}
                 groupStart={item.groupStart}
                 groupEnd={item.groupEnd}
                 autoTranslate={autoTranslate}
@@ -2191,6 +2249,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
                 onDismissAiCard={(msgId) => setDismissedAiMsgIds((prev) => new Set([...prev, msgId]))}
                 deliveryStatus={mine ? (m.deliveryStatus ?? null) : null} sendFailure={mine ? (m.sendFailure ?? null) : null}
                 onRetry={mine && m.clientId ? () => retrySend(m.clientId!) : undefined}
+                onCancelPending={mine && m.clientId ? () => { void cancelSend(m.clientId!).catch(() => Alert.alert('Could not stop retrying', 'Try again when secure storage is available.')); } : undefined}
                 onRetryTranslation={!mine && m.id ? () => { retryTranslation(m.id).catch(() => {}); } : undefined}
                 currentUserId={userId ?? undefined}
                 isCircleMember={isCircleMember}
@@ -2212,6 +2271,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
         }}
         onLayout={() => listRef.current?.scrollToEnd({ animated: false })}
       />
+      </ThreadSharePlaybackContext.Provider>
 
       {/* Scroll-to-bottom FAB */}
       {showJumpFab && (
@@ -2337,6 +2397,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
           own availability and its own reason — an entry that cannot complete
           in this tree is shown DISABLED rather than hidden. */}
       <ComposerPlusMenu
+        gifsAvailable={gifProviderKey()!==null}
         visible={showPlusMenu} deprioritizeEntertainment={safetyQuiet} // §15.2: GIF is put away while safety mode is raised
         portavaTrips={{ available: tripComposer.available, onSelect: () => {
           setShowPlusMenu(false);
@@ -2350,6 +2411,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
           if (entryId === 'VIDEO') { await mediaPicker.pickVideo(); return; }
           if (entryId === 'LOCATION') { setTypedCompose('LOCATION'); return; }
           if (entryId === 'MEMORY_NOTE') { setTypedCompose('MEMORY_NOTE'); return; }
+          if (entryId === 'GIF') { setShowGifPicker(true); return; }
           if (entryId === 'VOICE') { setShowVoiceRecorder(true); return; } // §6.1's Voice entry; the recorder owns permission, the ceiling and the upload.
         }}
       />
@@ -2366,6 +2428,8 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
         onClose={() => setShowVoiceRecorder(false)}
         onSent={() => { setReplyingTo(null); void reload(); }}
       />
+
+      <GifPickerSheet visible={showGifPicker&&!safetyQuiet} threadId={id??''} onClose={()=>setShowGifPicker(false)} onSent={()=>void reload()}/>
 
       <TypedComposePrompt
         kind={typedCompose} initialLocation={locationDraft}
@@ -2389,27 +2453,20 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
         onClose={() => setShowContentDrawer(false)} onAsk={() => { setShowContentDrawer(false); setShowAsk(true); }}
       />
 
-      {/* §10.3: the recap is a READ that already happened. `initialRecap`
-          hands the sheet what `useThreadRecap` read, so opening it creates
-          nothing and re-reads nothing. Every button in it is an offer. */}
+      {/* Startup checks availability only. Opening Recap reads its current content. */}
       <RecapSheet
         visible={showRecap}
         threadId={id ?? ''}
+        planId={threadRecap.planId}
         onClose={() => setShowRecap(false)}
-        initialRecap={threadRecap.response}
         onCurate={(action) => {
           if (action === 'DONE') return;
-          // Each of §10.3's other three actions needs a surface this lane did
-          // not build. Saying so is the point: the recap already promised it
-          // wrote nothing, and a button that silently did nothing would be a
-          // quieter lie than this one.
-          const what =
-            action === 'CREATE_MEMORY'
-              ? 'Building a Memory from a whole night needs a curation screen that does not exist yet. You can still save any single message to your Memory drafts from the message itself.'
-              : action === 'SHARE_PHOTOS'
-                ? 'Sharing this night\u2019s photos in one go is not built yet.'
-                : 'Following the people you met from here is not built yet.';
-          Alert.alert('Nothing was saved', what);
+          if (!id || !threadRecap.planId) return;
+          closeThenNavigate(() => setShowRecap(false), {
+            pathname: '/messages/recap-curation',
+            params: { threadId: id, planId: threadRecap.planId ?? '',
+              mode: action === 'CREATE_MEMORY' ? 'memory' : action === 'SHARE_PHOTOS' ? 'photos' : 'people' },
+          } as never);
         }}
       />
 
@@ -2522,7 +2579,9 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
       <ThreadSafetySheet
         visible={showSafetySheet}
         onClose={() => setShowSafetySheet(false)}
-        threadType={(threadType as 'direct' | 'trip' | 'circle') ?? 'direct'}
+        threadType={(threadType as 'direct' | 'trip' | 'circle' | 'group' | 'rent_buddy_booking') ?? 'direct'}
+        onAddPeople={threadType === 'direct' && !isE2ee && flagEnabled('telegraph_dm_group_formation_enabled') ? () => closeThenNavigate(() => setShowSafetySheet(false), { pathname: '/messages/conversation-tools', params: { threadId: id, mode: 'add' } } as never) : undefined}
+        onManageGroup={isGroupThread && flagEnabled('telegraph_group_controls_enabled') ? () => closeThenNavigate(() => setShowSafetySheet(false), { pathname: '/messages/conversation-tools', params: { threadId: id, mode: 'manage' } } as never) : undefined}
         otherUserId={otherUserId}
         isMuted={threadIsMuted}
         onToggleMute={async () => {
@@ -2573,6 +2632,8 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
           });
         }}
         onUnsent={() => { void reload(); }} onEdit={(m) => setEditingMsg(m)} onHistory={(m) => setHistoryMsg(m)} canEdit={canEditMessage(actionMsg, actionMsgMine, treatAsE2eeForEdit(conversationProjection))} blockLabel={isDirect && otherUserId ? 'Block this person' : undefined} onBlockSender={isDirect && otherUserId ? () => { void (async () => { setBlockingUser(true); const blocked = await blockUser(otherUserId); setBlockingUser(false); if (blocked.ok) router.replace('/messages'); else Alert.alert('Could not block', blockFailedCopy(blocked.error)); })(); } : undefined}
+        onForward={flagEnabled('telegraph_forwarding_enabled') && actionMsg && !actionMsg.deleted && actionMsg.deliveryStatus !== 'sending' && actionMsg.deliveryStatus !== 'failed' && !isE2ee ? (msg) => closeThenNavigate(() => setActionMsg(null), { pathname: '/messages/conversation-tools', params: { threadId: id, messageId: msg.id, mode: 'forward' } } as never) : undefined}
+        onForwardPermission={flagEnabled('telegraph_forwarding_enabled') && actionMsg && !actionMsg.deleted && actionMsg.deliveryStatus !== 'sending' && actionMsg.deliveryStatus !== 'failed' && !isE2ee ? (msg) => closeThenNavigate(() => setActionMsg(null), { pathname: '/messages/conversation-tools', params: { threadId: id, messageId: msg.id, mode: 'permission' } } as never) : undefined}
         receipt={actionMsgReceipt}
       />
 

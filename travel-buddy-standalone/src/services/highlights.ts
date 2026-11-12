@@ -1,3 +1,5 @@
+import { messagingOwnerToken, type MessagingOwnerRequest } from './messagingOwnerRequest.ts';
+import { newPostDestinationOperation } from './postDestinations.ts';
 /**
  * Highlights service — typed fetch wrappers for all highlight API endpoints.
  * Follows the freshToken / apiFetch pattern used by posts.ts and other services.
@@ -181,7 +183,7 @@ function isNetworkError(e: unknown): boolean {
   );
 }
 
-function mapHighlight(r: any): Highlight {
+export function mapHighlight(r: any): Highlight {
   return {
     id: r.id,
     ownerId: r.owner_id,
@@ -206,7 +208,7 @@ function mapHighlight(r: any): Highlight {
     filterId: r.filter_id ?? 'original',
     filterIntensity: r.filter_intensity ?? 100,
     mediaThumbnailUrl: r.media_thumbnail_url ?? null,
-    mediaDurationSeconds: r.media_duration_seconds ?? null,
+    mediaDurationSeconds: r.media_duration_seconds ?? r.video_duration_seconds ?? null,
     // NOT `r.pinnedAt ?? null`. That spelling erases the difference between a
     // server that said "not pinned" and a server that could not say anything
     // about pinning at all — see the field's comment on `Highlight`.
@@ -240,6 +242,7 @@ function mapHighlight(r: any): Highlight {
 export type HighlightLifetimeClass = 'LIVE' | 'DAY' | 'TRIP' | 'SEASONAL' | 'PERMANENT';
 
 export interface CreateHighlightInput {
+  operationId?: string;
   mediaUrl: string;
   mediaType: string;
   videoDurationSeconds?: number | null;
@@ -271,14 +274,19 @@ export interface CreateHighlightInput {
   sourceMemoryIds?: string[];
 }
 
-export async function createHighlight(input: CreateHighlightInput): Promise<HighlightResult<Highlight>> {
+export async function createHighlight(input: CreateHighlightInput, owner?: MessagingOwnerRequest, signal?: AbortSignal): Promise<HighlightResult<Highlight>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
-  const token = await freshToken();
+  const current = () => !signal?.aborted && (!owner || owner.isCurrent());
+  const stale = (): HighlightResult<Highlight> => ({ ok: false, data: null, errorKind: 'unauthenticated', message: 'Your signed-in session changed. Reopen Highlights.' });
+  if (!current()) return stale();
+  const token = owner ? await messagingOwnerToken(owner) : await freshToken();
+  if (!current()) return stale();
   if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
   try {
     const res = await fetch(`${apiBase()}/api/highlights`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'Idempotency-Key': input.operationId ?? newPostDestinationOperation() },
+      signal,
       body: JSON.stringify({
         mediaUrl: input.mediaUrl,
         mediaType: input.mediaType,
@@ -306,8 +314,11 @@ export async function createHighlight(input: CreateHighlightInput): Promise<High
           : {}),
       }),
     });
-    if (!res.ok) return mapApiError<Highlight>(res.status, await res.json().catch(() => ({})));
-    return { ok: true, data: mapHighlight(await res.json()) };
+    const body = await res.json().catch(() => null);
+    if (!current()) return stale();
+    if (!res.ok) return mapApiError<Highlight>(res.status, body ?? {});
+    if (!body || typeof body.id !== 'string' || !body.id) return { ok: false, data: null, errorKind: 'db_error', message: 'Publication could not be confirmed. Retry this Highlight.' };
+    return { ok: true, data: mapHighlight(body) };
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };

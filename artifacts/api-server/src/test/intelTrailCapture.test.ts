@@ -22,6 +22,7 @@
  *     aggregate, fail-closed at every step, and exposes no actor identity;
  *   • the internal cohort read route is admin-only and flag-gated.
  */
+import { canonicalPlaceFixture } from "./helpers/canonicalPlaceFixture.js";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -117,6 +118,7 @@ function makeDb(opts: FakeOpts) {
 
   function from(table: string) {
     reads.push(table);
+    if (table === "places") return canonicalPlaceFixture(tables.places);
     let op: "select" | "insert" | "insert_select" | "update" | "update_select" = "select";
     let payload: any = null;
     const filters: Array<{ col: string; val: any; kind: string }> = [];

@@ -148,7 +148,7 @@ remediation step, which are that document's own to re-measure.
 
 ### 2.4 The traveller-side fee is structurally zero
 
-The ledger reads `traveler_service_fee_usd` (`lib/rentBuddyEarningsLedger.ts:132#travelerServiceFeeUsdFor`). Both seeds
+The ledger reads `traveler_service_fee_usd` (`lib/rentBuddyEarningsLedger.ts:135#travelerServiceFeeUsdFor`). Both seeds
 populate only `traveler_service_fee_pct` (`0048_rent_buddy_marketplace.sql:418`,
 `0134:1208`), leaving `traveler_service_fee_usd` at its column default of `0`
 (`0048:402`). **No code anywhere reads `traveler_service_fee_pct`** — the only non-type,
@@ -463,7 +463,7 @@ independent enforcements already exist:
   Intel capture records a non-`none` commercial disclosure under the **non-independent**
   `sponsored` source class, which "keeps a disclosed-commercial report out of independent
   community consensus — it never overwrites confidence, only its epistemic standing"
-  (`services/intel/IntelCaptureService.ts:394-399`), and `sponsored` resolves to the
+  (`services/intel/IntelCaptureService.ts:395-400`), and `sponsored` resolves to the
   `"sponsored"` source label, never to `"consensus"` (`:453-462`). Fail-closed: an omitted
   disclosure is `'none'`.
 - **Featured placement is editorial and admin-only.** `portava_featured` is written only through

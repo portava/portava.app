@@ -67,6 +67,7 @@ const NOW = Date.now();
 const hrs = (n: number) => new Date(NOW + n * 3600_000).toISOString();
 
 interface State {
+  kernelDisabled?: boolean;
   errorTable?: string;
   planEndsAt?: string;
   planStatus?: string;
@@ -91,7 +92,7 @@ function msg(id: string, over: Record<string, any> = {}) {
 
 function fixture(state: State): Record<string, any[]> {
   return {
-    feature_flags: [{ flag: "telegraph_history_bound_enabled", enabled: false }],
+    feature_flags: [{ flag: "telegraph_history_bound_enabled", enabled: false }, { flag: 'memory_kernel_enabled', enabled: !state.kernelDisabled }],
     message_thread_members: [
       { thread_id: THREAD, user_id: ALICE, left_at: null, visible_from_at: null },
       { thread_id: THREAD, user_id: BOB, left_at: null, visible_from_at: null },
@@ -167,6 +168,8 @@ function makeClient(state: State) {
       neq(col: string, val: any) { filters.push((r) => r[col] !== val); return proxy; },
       in(col: string, vals: any[]) { filters.push((r) => vals.map(String).includes(String(r[col]))); return proxy; },
       is(col: string, val: any) { filters.push((r) => (val === null ? r[col] == null : r[col] === val)); return proxy; },
+      lte(col: string, val: any) { filters.push((r) => Date.parse(r[col]) <= Date.parse(val)); return proxy; },
+      or(clause: string) { if (clause.startsWith("ends_at.is.null,ends_at.lte.")) { const limit=Date.parse(clause.slice("ends_at.is.null,ends_at.lte.".length)); filters.push(r=>r.ends_at==null||Date.parse(r.ends_at)<=limit); } return proxy; },
       gte(col: string, val: any) { filters.push((r) => Date.parse(r[col]) >= Date.parse(val)); return proxy; },
       order(col: string, opts?: any) { _order = { col, asc: opts?.ascending !== false }; return proxy; },
       limit(n: number) { _limit = n; return proxy; },
@@ -200,7 +203,12 @@ function makeClient(state: State) {
     _db: db,
     _inserted: inserted,
     from,
-    rpc: async () => ({ data: null, error: { message: "rpc not modelled" } }),
+    rpc: async (name: string, args: { p_command?: { payload?: { write?: Record<string, unknown>; telegraph_source_message_id?: string } } }) => {
+      if (name !== 'telegraph_memory_draft_execute' || !args.p_command?.payload?.telegraph_source_message_id) return { data: null, error: { message: 'unexpected Memory writer' } };
+      const row = { id: 'eeeeeeee-0000-4000-8000-000000000001', ...args.p_command.payload.write };
+      inserted.push({ table: 'memories', row });
+      return { data: { ok: true, memory_id: row.id, event_id: 'event', event_type: 'memory.created', result: row, contract_version: 1 }, error: null };
+    },
     auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },
   };
 }
@@ -328,6 +336,13 @@ describe("§10.2 — a PRIVATE draft, one message at a time", () => {
     assert.equal(r.body.draft.source, "media");
   });
 
+  it('a disabled kernel cannot report a saved message after creating only an empty draft', async () => {
+    const c = useState({ kernelDisabled: true });
+    const r = await post('/me/memory-drafts', ALICE, { messageId: M_PHOTO });
+    assert.equal(r.status, 503);
+    assert.equal(c._inserted.length, 0);
+  });
+
   it("REFUSES a threadId, a list, or 'all' — by name", async () => {
     const c = useState({});
     for (const body of [
@@ -432,6 +447,16 @@ describe("§10.3 — the recap is derived from CONFIRMED session context", () =>
 });
 
 describe("GET /threads/:id/recap", () => {
+  it('availability reads no messages or participants and still requires a finished confirmed plan', async()=>{
+    for(const errorTable of ['messages','meetup_invites']){useState({errorTable});const r=await get(`/threads/${THREAD}/recap?availability=1`,ALICE);assert.equal(r.status,200);assert.deepEqual(r.body,{available:true,planId:MEETUP});}
+    useState({planStatus:'draft'});assert.equal((await get(`/threads/${THREAD}/recap?availability=1`,ALICE)).body.available,false);
+  });
+  it('latest completed plan is chosen before the bounded result cap', async()=>{
+    const c=useState({});const plan=c._db.meetups[0];
+    c._db.meetups=[...Array.from({length:25},(_,i)=>({...plan,id:`old-${i}`,starts_at:hrs(-100-i)})),plan];
+    assert.equal((await get(`/threads/${THREAD}/recap?availability=1`,ALICE)).body.planId,MEETUP);
+  });
+
   it("recaps a completed plan and writes nothing", async () => {
     const c = useState({});
     const r = await get(`/threads/${THREAD}/recap`, ALICE);

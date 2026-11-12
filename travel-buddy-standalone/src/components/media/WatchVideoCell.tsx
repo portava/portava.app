@@ -23,12 +23,13 @@ import {
   Text,
   StyleSheet,
   Dimensions,
-  ActivityIndicator,
+  ActivityIndicator, Platform,
 } from 'react-native';
 import { CachedImage } from '../CachedImage.tsx';
 import { Video, type AVPlaybackStatus } from 'expo-av';
 import { WifiOff, PlayCircle } from 'lucide-react-native';
 import { color, type as t } from '../../theme/tokens.ts';
+import { usePostPlaybackLayer } from '../../hooks/usePostPlaybackLayer.ts';
 import { useSmartVideoFit } from '../../hooks/useSmartVideoFit.ts';
 import { VideoBlurBackdrop } from '../ui/VideoBlurBackdrop.tsx';
 import { MediaCaptionControls } from './MediaCaptionControls.tsx';
@@ -58,6 +59,7 @@ export interface WatchVideoCellProps {
   captionSource?: string;
   posterUrl: string | null;
   isActive: boolean;
+  isViewable?: boolean;
   playbackEligible?: boolean;
   isMuted: boolean;
   /** Called on every playback tick. `durationMs` is null until the video metadata loads. */
@@ -73,7 +75,7 @@ export interface WatchVideoCellHandle {
 
 export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellProps>(
   function WatchVideoCell(
-    { id, videoUrl, captionSource, posterUrl, isActive, playbackEligible = true, isMuted, onProgress, onVideoRef, onVideoUnmount },
+    { id, videoUrl, captionSource, posterUrl, isActive, isViewable = isActive, playbackEligible = true, isMuted, onProgress, onVideoRef, onVideoUnmount },
     ref,
   ) {
     const videoRef = useRef<Video>(null);
@@ -84,7 +86,14 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
     const [hasHardFailed, setHasHardFailed] = useState(false);
     const [captionStatus, setCaptionStatus] = useState<{ source: string; status: AVPlaybackStatus } | null>(null);
     const captionsEnabled = useFeatureFlags().isEnabled('media_captions_enabled');
-    const shouldPlay = isActive && playbackEligible;
+    const layer = usePostPlaybackLayer();
+    const position = useRef(0);
+    const [resumeAt, setResumeAt] = useState<number | null>(null);
+    const resumeStatus = React.useMemo(() => resumeAt !== null ? { positionMillis: resumeAt } : {}, [resumeAt]);
+    useEffect(() => {
+      if (!layer.allowed) setResumeAt(isViewable && position.current > 0 ? position.current : null);
+    }, [layer.allowed, isViewable]);
+    const shouldPlay = isActive && playbackEligible && layer.allowed && !(Platform.OS === 'web' && resumeAt !== null);
     const playback = useAdaptivePlayback(captionSource ?? videoUrl, videoUrl, shouldPlay);
     const dubbing = useMediaDubbingSession({ source: captionSource ?? videoUrl, active: shouldPlay && !hasHardFailed,
       controller, controlSource: { shouldPlay, isMuted, volume: 1, rate: 1 } });
@@ -111,13 +120,13 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
       } else {
         videoRef.current?.pauseAsync().catch(() => {});
         // Reset position so the next time this cell becomes active it starts fresh.
-        if (!isActive) videoRef.current?.setPositionAsync(0).catch(() => {});
+        if (!isViewable) videoRef.current?.setPositionAsync(0).catch(() => {});
       }
-    }, [isActive, shouldPlay, hasHardFailed]);
+    }, [isViewable, shouldPlay, hasHardFailed]);
 
     const handleStatus = useCallback(
       (status: AVPlaybackStatus) => {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || !layer.isCurrent()) return;
         dubbing.playback.onSourceStatus(status);
         if (captionsEnabled) setCaptionStatus({ source: videoUrl, status });
 
@@ -138,6 +147,7 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
 
         setIsBuffering(status.isBuffering ?? false);
 
+        if (resumeAt == null) position.current = status.positionMillis;
         const dur = status.durationMillis;
         if (dur && dur > 0) {
           onProgress(status.positionMillis / dur, dur);
@@ -145,7 +155,7 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
           onProgress(0, null);
         }
       },
-      [failureCount, onProgress, captionsEnabled, videoUrl, playback.rejectAdaptive, dubbing.playback.onSourceStatus],
+      [failureCount, onProgress, captionsEnabled, videoUrl, playback.rejectAdaptive, dubbing.playback.onSourceStatus, layer.isCurrent, resumeAt],
     );
 
     // ── Failure state ─────────────────────────────────────────────────────────
@@ -167,7 +177,15 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
     return (
       <View nativeID={`watch-cell-${id}-${needsLetterbox ? 'contain' : 'cover'}`} style={s.cell}>
         {needsLetterbox ? <VideoBlurBackdrop uri={posterUrl} /> : null}
-        <Video
+        {layer.allowed && <Video
+          status={resumeStatus}
+          onLoad={async () => {
+            if (resumeAt == null) return;
+            const target = videoRef.current;
+            try { if (Platform.OS === 'web') await target?.setPositionAsync(resumeAt); }
+            catch { if (layer.isCurrent() && target === videoRef.current) setHasHardFailed(true); }
+            if (mountedRef.current && layer.isCurrent() && target === videoRef.current) setResumeAt(null);
+          }}
           ref={captureVideo}
           source={playback.source}
           style={{ position: 'absolute', top: 0, left: 0, width: SCREEN_W, height: SCREEN_H }}
@@ -179,7 +197,7 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
           onPlaybackStatusUpdate={handleStatus}
           onReadyForDisplay={onReadyForDisplay}
           progressUpdateIntervalMillis={captionsEnabled || dubbing.enabled ? 100 : 500}
-        />
+        />}
 
         {/* Poster: shown while buffering (avoids black flash during seek). */}
         {isBuffering && posterUrl ? (

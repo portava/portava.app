@@ -1,3 +1,5 @@
+import { filterCurrentPostAuthors } from '../../lib/postAuthorAudience.js';
+import { readCanonicalPlaceVisibility } from '../../lib/places/placeGovernance.js';
 /**
  * WallProjectionService — projects canonical objects into Wall shapes.
  *
@@ -20,7 +22,7 @@
  * re-admit it. This is why the gate lives here, upstream of both feed modes,
  * rather than in the ranker or the route.
  *
- * The service is pure over its inputs plus ONE batched block read; it does not
+ * The service batches current author audience, place and block reads; it does not
  * fetch candidates (the route/candidate loaders do) and it does not rank or order
  * them (the ranking / following services do).
  *
@@ -69,6 +71,7 @@ export interface WallCandidate {
   /** Experience time when it differs from publishedAt (spec §16). */
   experienceAt?: string | null;
   text?: string | null;
+  postReferenceId?: string | null;
   media?: DisplayMedia[];
   place?: PublicPlaceRef | null;
   actor?: PublicActorRef | null;
@@ -209,11 +212,9 @@ function passesEligibility(c: WallCandidate): boolean {
   // (profiles_account_status_check: active / deactivated / pending_deletion /
   // deleted) — so it could never drop anything, and a deactivated or
   // pending-deletion author's posts kept flowing onto every follower's Wall
-  // (§23: fail closed). A null/absent value reads as 'active' exactly as
-  // lib/http requireUser and gate 7 do: the column is NOT NULL, so absence
-  // only means a loader that could not read the profile, which is the
-  // loaders' own fail-soft default.
-  const status = c.authorAccountStatus ?? "active";
+  // (§23: fail closed). A null/absent value is missing authorization evidence,
+  // never an active author. Loaders report the affected lane as degraded.
+  const status = c.authorAccountStatus;
   if (status !== "active") return false;
   const mod = c.moderationStatus ?? "active";
   if (mod === "removed" || mod === "takedown" || mod === "moderated") return false;
@@ -348,6 +349,7 @@ function projectOne(c: WallCandidate, viewer: ProjectViewerContext): WallProject
     visibility: mapVisibility(c.visibility),
     media: c.media && c.media.length > 0 ? c.media : undefined,
     text: c.text ?? undefined,
+    ...(c.postReferenceId ? {postReferenceId:c.postReferenceId} : {}),
     place: c.place ?? undefined,
     // Server-resolved save state (spec §2). Only post-like objects have a
     // canonical save store, so every other type omits the field rather than
@@ -419,14 +421,22 @@ export async function projectObjects(
   );
   if (eligible.length === 0) return [];
 
-  const blockedAuthorIds = await loadBlockedAuthorIds(
-    sc,
-    viewer.viewerId,
-    eligible.map((c) => c.authorId),
-  );
+  // Cached public posts and stale follow snapshots cannot override the current
+  // private account or canonical restriction. Revalidate metadata as one batch.
+  const postCandidates = eligible.filter(candidate => POST_LIKE_TYPES.has(candidate.objectType))
+    .map(candidate => ({ author_id: candidate.authorId, candidate }));
+  const [placeVisibility, blockedAuthorIds, currentPosts] = await Promise.all([
+    readCanonicalPlaceVisibility(sc, eligible.flatMap(candidate => candidate.place?.placeId ? [candidate.place.placeId] : [])),
+    loadBlockedAuthorIds(sc, viewer.viewerId, eligible.map(candidate => candidate.authorId)),
+    filterCurrentPostAuthors(sc, viewer.viewerId, postCandidates, { throwOnUnavailable: true }),
+  ]);
+  if (!placeVisibility.ok) throw new Error('wall_place_eligibility_unreadable');
 
+  const currentPostSet = new Set(currentPosts.map(row => row.candidate));
   const out: WallProjection[] = [];
   for (const c of eligible) {
+    if (POST_LIKE_TYPES.has(c.objectType) && !currentPostSet.has(c)) continue;
+    if (c.place?.placeId && !placeVisibility.visibleIds.has(c.place.placeId)) continue;
     if (blockedAuthorIds.has(c.authorId)) continue; // block gate (either direction)
     if (!passesVisibility(c, viewer)) continue; // visibility gate
     out.push(projectOne(c, viewer));

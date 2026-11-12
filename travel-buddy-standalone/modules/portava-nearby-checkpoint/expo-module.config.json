@@ -1,0 +1,1 @@
+{"platforms":["ios","android"],"apple":{"modules":["PortavaNearbyCheckpointModule"]},"android":{"modules":["com.portava.maps.nearby.PortavaNearbyCheckpointModule"]}}

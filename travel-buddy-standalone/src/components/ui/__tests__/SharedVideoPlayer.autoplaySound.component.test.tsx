@@ -68,6 +68,28 @@ describe('SharedVideoPlayer — autoplay and sound', () => {
     expect(mockLastVideoProps.isMuted).toBe(false);
   });
 
+  it('restores the sound control after a native failure and allows retry', async () => {
+    mockSetStatusAsync.mockRejectedValueOnce(new Error('Audio session unavailable'));
+    await render(<SharedVideoPlayer uri="https://example.com/video.mp4" muted />);
+    await act(async () => { fireEvent.press(screen.getByLabelText('Unmute')); });
+    expect(screen.getByLabelText('Unmute')).toBeTruthy();
+    expect(screen.getByText('Sound could not be changed. Try again.')).toBeTruthy();
+    await act(async () => { fireEvent.press(screen.getByLabelText('Unmute')); });
+    expect(screen.getByLabelText('Mute')).toBeTruthy();
+    expect(screen.queryByText('Sound could not be changed. Try again.')).toBeNull();
+  });
+
+  it('an old sound command cannot change a replacement video', async () => {
+    let reject: (error: Error) => void = () => {};
+    mockSetStatusAsync.mockImplementationOnce(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+    const view = await render(<SharedVideoPlayer uri="https://example.com/first.mp4" muted />);
+    await act(async () => { fireEvent.press(screen.getByLabelText('Unmute')); });
+    await act(async () => { view.rerender(<SharedVideoPlayer uri="https://example.com/second.mp4" muted={false} />); });
+    await act(async () => { reject(new Error('Retired command')); });
+    expect(screen.getByLabelText('Mute')).toBeTruthy();
+    expect(screen.queryByText('Sound could not be changed. Try again.')).toBeNull();
+  });
+
   it('autoplay turned off pauses the video, and turned back on resumes it (the post screen covered, then back)', async () => {
     const view = await render(<SharedVideoPlayer uri="https://example.com/video.mp4" autoplay muted={false} />);
     expect(mockLastVideoProps.shouldPlay).toBe(true);

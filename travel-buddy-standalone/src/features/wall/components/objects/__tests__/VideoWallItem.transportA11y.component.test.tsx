@@ -47,7 +47,10 @@
 
 import React from 'react';
 import { AccessibilityInfo } from 'react-native';
-import { render, screen, fireEvent, act } from '@testing-library/react-native';
+import { render, screen, fireEvent, act, within } from '@testing-library/react-native';
+import { router } from 'expo-router';
+// NOTE: the test renderer has no native safe-area provider around the modal header.
+jest.mock('react-native-safe-area-context', () => ({ ...jest.requireActual('react-native-safe-area-context'), useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 // NOTE: exhaustive-by-design mock — the real wallApi loads the supabase /
 // apiToken chain at import, which would crash the jest suite. wallItemShared
@@ -86,6 +89,14 @@ jest.mock('expo-av', () => {
   Video.displayName = 'Video';
   return { Video, ResizeMode: { COVER: 'cover', CONTAIN: 'contain' } };
 });
+
+// NOTE: exercise the mounted post takeover with an authorized original and its real player.
+jest.mock('../../../../../services/posts', () => ({
+  ...jest.requireActual('../../../../../services/posts'),
+  getPostById: async () => ({ ok: true, data: { id: 'c-v1', authorId: 'author', author: { name: 'Traveler' },
+    content: 'A short clip', createdAt: '2026-11-01T00:00:00Z', mediaUrls: ['https://example.com/clip.mp4'],
+    mediaType: 'video/mp4', commentCount: 0, likeCount: 0, canComment: true, canLike: true, canShare: true, savedByMe: false } }),
+}));
 
 import { VideoWallItem } from '../VideoWallItem.tsx';
 import { WallItemVisibilityProvider } from '../../../hooks/useWallItemVisibility.tsx';
@@ -157,6 +168,7 @@ function operableControls(): any[] {
 let reduceMotionSpy: jest.SpyInstance;
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.spyOn(router, 'push');
   capturedStatusCallback = null;
   reduceMotionSpy = jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(false);
 });
@@ -165,6 +177,36 @@ afterEach(() => {
 });
 
 describe('§36 / W170 — video transport controls in the Wall accessibility tree', () => {
+  it('opens the current inline decoder in a modal at its playback position without navigating', async () => {
+    await renderItem();
+    await screen.findByTestId('mock-video');
+    await act(async () => capturedStatusCallback?.({ isLoaded: true, isPlaying: true, positionMillis: 9000, durationMillis: 30000 }));
+    await fireEvent.press(screen.getByLabelText('Open video'));
+    expect((await screen.findAllByText('Comments')).length).toBeGreaterThan(0);
+    expect(screen.getByLabelText('Close')).toBeTruthy();
+    expect(screen.getAllByTestId('mock-video')).toHaveLength(1);
+    expect(screen.getByTestId('mock-video').props.status.positionMillis).toBe(9000);
+    expect(within(screen.getByTestId('post-takeover')).getByLabelText('Share')).toBeTruthy();
+    expect(router.push).not.toHaveBeenCalled();
+    await fireEvent.press(screen.getByLabelText('Close'));
+    expect(screen.queryByLabelText('Close')).toBeNull();
+    expect(screen.getAllByTestId('mock-video')).toHaveLength(1);
+  });
+
+  it('plays the reduced-motion poster only after an explicit tap, in the same modal', async () => {
+    reduceMotionSpy.mockResolvedValue(true);
+    await renderItem();
+    await screen.findByLabelText('Play video');
+    expect(screen.queryByTestId('mock-video')).toBeNull();
+    await fireEvent.press(screen.getByLabelText('Play video'));
+    expect((await screen.findAllByText('Comments')).length).toBeGreaterThan(0);
+    expect(screen.getByLabelText('Close')).toBeTruthy();
+    expect(screen.getAllByTestId('mock-video')).toHaveLength(1);
+    expect(router.push).not.toHaveBeenCalled();
+    await fireEvent.press(screen.getByLabelText('Close'));
+    expect(screen.queryByTestId('mock-video')).toBeNull();
+  });
+
   it('mounts the REAL shared player inside the Wall item (guard against a vacuous pass)', async () => {
     await renderItem();
     // If this ever fails the assertions below are testing the poster fallback,

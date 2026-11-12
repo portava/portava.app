@@ -1,4 +1,6 @@
+import { tripHasEnded, tripExpiryInstant } from "../domain/trips/invariants/tripStatus.js";
 import { randomUUID } from 'node:crypto';
+import { governDiscoveryPlaces } from '../lib/discoveryPlaceGovernance.js';
 import { enrichSpans } from '../lib/enrichSpans';
 import { rankCandidates } from '../lib/portavaRank';
 import { logImpression, logLivePulseServe, selectServedImpressions } from '../lib/rankLog';
@@ -80,7 +82,7 @@ export const pulseQuerySchema = z.object({
 // isPostPublished). It was not selected here at all, so Pulse had no way to
 // tell a published post from one still waiting for its author to leave.
 const POST_SAFE_COLUMNS =
-  "id, author_id, trip_id, content, media_urls, visibility, status, post_status, created_at, updated_at, " +
+  "id, author_id, trip_id, content, post_reference_id, media_urls, visibility, status, post_status, created_at, updated_at, " +
   "location_name, location_city, location_country, location_source, canonical_place_id, location_privacy_mode, published_at"; // published_at: census-media MD79 — a released "Publish after I leave" post shows its place 24 h, then the city (read, never served); location_privacy_mode: census-media §42 — without it every row reads as `none` to mapPublicPost
 
 const GEO_TAG_COLUMNS =
@@ -345,6 +347,7 @@ router.get("/pulse", async (req, res) => {
       authorId:    row.author_id,
       tripId:      row.trip_id ?? null,
       content:     row.content,
+      postReferenceId: row.post_reference_id ?? null,
       mediaUrls:   mediaByPost.get(row.id) ?? row.media_urls ?? [],
       visibility:  row.visibility,
       createdAt:   row.created_at,
@@ -473,7 +476,7 @@ router.get("/pulse", async (req, res) => {
       const todayStart = nowIso.slice(0, 10);
       let planQ = sc
         .from("trips")
-        .select("id, owner_id, title, destination_city, start_date, visibility, max_members, trip_members(count)")
+        .select("id, owner_id, title, destination_city, start_date, end_date, timezone, status, visibility, max_members, trip_members(count)")
         .in("status", ["planning", "upcoming"])
         .gte("start_date", todayStart)
         .lte("start_date", tomorrowEnd)
@@ -508,6 +511,7 @@ router.get("/pulse", async (req, res) => {
       const rawPlans: any[] = [];
       if (planResult.status === "fulfilled") {
         for (const plan of ((planResult.value as any).data as any[]) ?? []) {
+          if (tripHasEnded(plan, new Date(nowMs))) continue;
           if (blockedSet.size > 0 && blockedSet.has(plan.owner_id as string)) continue;
           // member_count is not a trips column — derive it from the embedded
           // trip_members aggregate (select "trip_members(count)").
@@ -869,7 +873,9 @@ router.get("/pulse", async (req, res) => {
         return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
       };
 
-      const mapped = ((nearbyPlaces ?? []) as any[]).map((p: any) => {
+      const governedPlaces = await governDiscoveryPlaces(sc, nearbyPlaces ?? [], (place: any) => place.id);
+      if (!governedPlaces.readable) throw new Error('Place visibility could not be checked');
+      const mapped = governedPlaces.rows.map((p: any) => {
         const pLat = p.lat != null ? parseFloat(String(p.lat)) : null;
         const pLng = p.lng != null ? parseFloat(String(p.lng)) : null;
         const distanceKm =
@@ -1348,11 +1354,12 @@ router.get("/pulse/live", async (req, res) => {
       if (queryTripIds.length > 0) {
         const { data: trips } = await sc
           .from("trips")
-          .select("id, title, destination_city, start_date, end_date, status, visibility, owner_id")
+          .select("id, title, destination_city, start_date, end_date, timezone, status, visibility, owner_id")
           .in("id", queryTripIds)
           .in("status", ["planning", "upcoming", "active"]);
 
         for (const trip of (trips as any[]) ?? []) {
+          if (tripHasEnded(trip)) continue;
           const city = (trip.destination_city as string | null) ?? null;
           tripCityMap.set(trip.id as string, city);
 
@@ -1384,7 +1391,7 @@ router.get("/pulse/live", async (req, res) => {
             primary_action:    { label: 'View Trip', type: 'navigate_trip' },
             secondary_action:  isHost ? { label: 'Invite', type: 'invite_to_trip' } : null,
             reason_labels:     [isHost ? 'Your trip' : 'Trip member'],
-            expires_at:        (trip.end_date as string | null) ?? null,
+            expires_at:        tripExpiryInstant(trip.end_date, trip.timezone),
             is_joinable:       false,
           });
         }
@@ -1890,10 +1897,10 @@ router.get("/pulse/live", async (req, res) => {
   try {
     const { data: ownedTrips } = await sc
       .from("trips")
-      .select("id, destination_city")
+      .select("id, destination_city, status, end_date, timezone")
       .eq("owner_id", user.id);
 
-    const ownedTripIds = ((ownedTrips as any[]) ?? []).map((t: any) => t.id as string);
+    const ownedTripIds = ((ownedTrips as any[]) ?? []).filter(t => !tripHasEnded(t)).map((t: any) => t.id as string);
     if (ownedTripIds.length > 0) {
       const { data: pendingRequests } = await sc
         .from("trip_join_requests")

@@ -43,7 +43,7 @@ plainly rather than leaving implied.** Discovery serves OSM/Overpass places and
 (`_compassCandidateCache`) stores media bytes or signed URLs — the only media
 field on a `DiscoveryPlace` is `headerImageUrl`, and the ranking path reads it
 only as a **boolean** (`hasMedia: !!(p.headerImageUrl)`,
-`routes/discovery.ts:1360`, and a completeness weight at `:1361`). Revoking
+`routes/discovery.ts:1351`, and a completeness weight at `:1361`). Revoking
 anonymous read on `post-media` therefore cannot change discovery ordering,
 discovery cache contents, or discovery cache keys. The two subsystems touch only
 where a place carries a header image for **display**, and that is a rendering
@@ -125,7 +125,7 @@ logs.**
 
 ### 1e. `/discovery/counts` writes the cache that `/discovery` serves from
 
-`routes/discovery.ts:1542` — `if (enriched.length > 0) cache.set(k, { places:
+`routes/discovery.ts:1533` — `if (enriched.length > 0) cache.set(k, { places:
 enriched, cachedAt: Date.now() })` — uses the **same `cacheKey(destination, cat,
 radiusKm)`** as the main route. A category-count request therefore **primes
 Cache A**, and the next `GET /discovery?category=for_you` for that city serves
@@ -165,7 +165,7 @@ findings the claim does not contain.**
 |---|---|
 | L1 = in-memory `Map` | `const cache = new Map<string, CacheEntry>()` — `routes/discovery.ts:144` |
 | L2 = `discovery_cache` table | `lib/discoveryPersistentCache.ts:55` (read), `:100` (upsert, `onConflict: "cache_key"`) |
-| Key is **user-independent** | `cacheKey(dest, cat, radius)` = `` `${dest.toLowerCase().trim()}:${cat}:${radius}` `` — `routes/discovery.ts:159-161`; call site `const key = cacheKey(destination, category, radiusKm)` at `:1025`. **No `callerUserId` term.** |
+| Key is **user-independent** | `cacheKey(dest, cat, radius)` = `` `${dest.toLowerCase().trim()}:${cat}:${radius}` `` — `routes/discovery.ts:159-161`; call site `const key = cacheKey(destination, category, radiusKm)` at `:1016`. **No `callerUserId` term.** |
 | Stores **raw pre-ranking** candidates | `cache.set(key, { places: enrichedOsm, ... })` at `:1204`; `enrichedOsm` is Overpass output plus saved-counts (`:1185`), assembled **before** any ranker |
 | **Never ranks** | `serveCachedPlaces` (`:1089-1110`) does `mergeAndDedup` → `applyFilters` → `slice`. `applyFilters` (`:1028`) applies openNow/minRating/age filters and the plain `sortBy` comparators (`:1053-1071`). No ranker. |
 | TTL | 2 h (`PLACE_TTL_MS`, `lib/discoveryPersistentCache.ts:19`) |

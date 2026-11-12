@@ -40,6 +40,7 @@ const SRC = join(dirname(fileURLToPath(import.meta.url)), "..");
 type Ledger = Record<string, { sites: number; status: "re-resolves" | "exempt"; why: string }>;
 
 export const CARD_BODY_READERS: Ledger = {
+  "services/telegraph/memorySource.ts": { sites: 1, status: "exempt", why: "Owner-only source preview rechecks membership, history window, author and schema. Only plain text or validated media is returned; card and other structured bodies remain in the conversation renderer." },
   "routes/messaging.ts": { sites: 7, status: "re-resolves",
     why: "GET /threads/:id/messages (2 selects: the page, with/without the sequence column) and its reply quote, GET edits and GET /me/saved-messages re-resolve; the translate-retry read and the PATCH edit read are the sender's/recipient's write path and serve no body." },
   "routes/groupChat.ts": { sites: 2, status: "re-resolves",

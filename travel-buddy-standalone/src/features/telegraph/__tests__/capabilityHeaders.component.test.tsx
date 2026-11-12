@@ -23,7 +23,7 @@ import { join } from 'node:path';
 import { render, screen } from '@testing-library/react-native';
 
 // NOTE: intentional stub — lib/supabase builds a client at import time, which fails outside an Expo runtime.
-jest.mock('../../../lib/supabase.ts', () => ({ supabase: {}, isSupabaseConfigured: true }));
+jest.mock('../../../lib/supabase.ts', () => ({ supabase: {auth:{onAuthStateChange:()=>({data:{subscription:{unsubscribe:()=>{}}}})}}, isSupabaseConfigured: true }));
 // NOTE: intentional stub — AccessibilityInfo is not backed by the jest preset; the renderer's use of it is not under test here.
 jest.mock('../../wall/hooks/useReducedMotionSetting.ts', () => ({ useReducedMotionSetting: jest.fn(() => false) }));
 // NOTE: intentional stub — the voice player hydrates a signed URL over the network; what is under test is that the
@@ -62,7 +62,7 @@ describe('T431 — the headers, by surface', () => {
     const h = telegraphReadHeaders('conversation');
     expect(h[CLIENT_SCHEMAS_HEADER].split(',')).toEqual([
       'place.share.v1', 'event.share.v1', 'trip.share.v1', 'memory_note.v1', 'location.scope.v1', 'object.share.v1',
-      'media_album.v1', 'gif.v1', 'voice.v1', 'action.v1', 'announcement.v1', 'safety.v1',
+      'media_album.v1', 'gif.v1', 'gif.v2', 'voice.v1', 'action.v1', 'announcement.v1', 'safety.v1',
     ]);
     expect(h[CLIENT_ACTIONS_HEADER]).toBe('none');
   });
@@ -157,7 +157,7 @@ describe('T431 — derived from the renderers, never "everything"', () => {
     const hook = read('src/hooks/useGroupChat.ts');
     const calls = hook.match(/getThreadMessages\([^)]*\)/g) ?? [];
     expect(calls.length).toBeGreaterThan(0);
-    for (const c of calls) expect(c).toMatch(/'group_chat'\)$/);
+    for (const c of calls) expect(c).toMatch(/'group_chat'(?:, oldest\.sequence)?\)$/);
   });
 });
 

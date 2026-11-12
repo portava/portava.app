@@ -166,7 +166,7 @@ describe('census-media §34 — flag-ON surfaces in the DOM', () => {
     expect(mockIsActive['web-1']).toBe(false);
   });
 
-  it('F1: the tab\'s mode switcher sits under the World header and above the lens bar', async () => {
+  it('F1: the tab\'s mode switcher sits above the Explore World header, which precedes the lens bar', async () => {
     mockFlags = {};
     const modes = [
       { key: 'world' as const, label: 'World' },
@@ -182,13 +182,15 @@ describe('census-media §34 — flag-ON surfaces in the DOM', () => {
       );
     });
     const html = container.innerHTML;
-    const header = html.indexOf('>MEDIA<');
+    const header = html.indexOf('>Explore World<');
     const worldChip = html.indexOf('data-testid="mode-chip-world"');
     const watchChip = html.indexOf('data-testid="mode-chip-watch"');
     const lensNow = labelsInOrder().indexOf('Now');
     expect(header).toBeGreaterThanOrEqual(0);
-    expect(worldChip).toBeGreaterThan(header);
+    expect(worldChip).toBeGreaterThanOrEqual(0);
     expect(watchChip).toBeGreaterThan(worldChip);
+    expect(header).toBeGreaterThan(watchChip);
+    expect(html.indexOf('aria-label="Now"')).toBeGreaterThan(header);
     expect(lensNow).toBeGreaterThan(labelsInOrder().indexOf('World'));
   });
 });

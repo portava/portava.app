@@ -1,3 +1,5 @@
+// NOTE: this screen fixture is mounted without a navigator; focus is stable here.
+jest.mock('@react-navigation/native', () => ({ ...jest.requireActual('@react-navigation/native'), useIsFocused: () => true }));
 /**
  * Full-screen map entry points — CAMERA SNAP tests (sections 12–14).
  *

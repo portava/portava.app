@@ -2,7 +2,7 @@
 // This file is processed by uniffi-bindgen to generate Swift (iOS) and
 // Kotlin (Android) bindings.
 //
-// All byte arrays are passed as base64url-encoded strings to avoid
+// All byte arrays are passed as standard padded base64-encoded strings to avoid
 // binary/null-byte issues across the FFI boundary.
 
 namespace openmls {
@@ -58,6 +58,9 @@ namespace openmls {
     string group_state_b64,
     string ciphertext_b64
   );
+
+  [Throws=OpenMlsError]
+  string session_owner_id(string group_state_b64);
 
   // ── Safety numbers ──────────────────────────────────────────────────────────
   // Derive a 60-digit decimal safety number from the group's ACTUAL member

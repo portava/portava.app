@@ -13,18 +13,9 @@ const mockRefreshSession = jest.fn();
 const mockLanguageSettings = jest.fn();
 const mockAuthListeners = new Set<(event: AuthChangeEvent, session: Session | null) => void>();
 
-jest.mock('react-native', () => {
-  const actual = jest.requireActual('react-native');
-  const react = jest.requireActual('react');
-  const modal = ({ visible, children }: { visible: boolean; children: React.ReactNode }) => (
-    visible ? react.createElement(actual.View, null, children) : null
-  );
-  return new Proxy(actual, {
-    get(target, property, receiver) {
-      return property === 'Modal' ? modal : Reflect.get(target, property, receiver);
-    },
-  });
-});
+// NOTE: deliver the native iOS dismissal event before starting an action from the overflow sheet.
+jest.mock('react-native', () => require('../../../src/__fixtures__/modalDismissal.ts').withModalDismissal(jest.requireActual('react-native')));
+
 jest.mock('react-native-safe-area-context', () => ({
   ...jest.requireActual('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
@@ -370,7 +361,7 @@ test('an unmounted route cannot seed a subsequent mount with late translation', 
   expect(screen.queryByText('Stale translation')).toBeNull();
 });
 
-test('preserves original share text and canonical edit target while translated text is displayed', async () => {
+test('shares the canonical post and keeps its original edit target while translated text is displayed', async () => {
   mockUserId = 'author-a';
   mockGetSession.mockResolvedValue({ data: { session: session('author-a') } });
   const share = jest.spyOn(Share, 'share').mockResolvedValue({ action: Share.sharedAction });
@@ -380,7 +371,10 @@ test('preserves original share text and canonical edit target while translated t
   await complete(pending);
   await fireEvent.press(screen.getByLabelText('More options'));
   await fireEvent.press(screen.getByText('Share post'));
-  expect(share).toHaveBeenCalledWith({ message: `${original}…\n\nportava:///post/${canonicalId}`, url: `portava:///post/${canonicalId}` });
+  expect(await screen.findByText('Share to my profile')).toBeTruthy();
+  expect(share).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByText('Share to my profile'));
+  await waitFor(() => expect(router.push).toHaveBeenCalledWith({ pathname: '/create', params: { sharePostId: canonicalId } }));
   await fireEvent.press(screen.getByLabelText('More options'));
   await fireEvent.press(screen.getByText('Edit post'));
   expect(router.push).toHaveBeenCalledWith(`/post/edit/${canonicalId}`);

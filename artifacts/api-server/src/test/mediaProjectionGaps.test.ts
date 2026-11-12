@@ -61,6 +61,7 @@
  * Run: node --import tsx/esm --test src/test/mediaProjectionGaps.test.ts
  */
 
+import { makeFakeClient as makeCatalogClient } from './telegraphCertificationHarness.js';
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -114,6 +115,7 @@ function makeSc(data: Dataset) {
   };
 
   const builder = (table: string): any => {
+    if (table === "places") return makeCatalogClient({ places: data.places ?? [] }).from(table);
     const filters: any[] = [];
     const b: any = {
       select() { return b; },
@@ -229,7 +231,7 @@ function baseData(extra: Dataset = {}): Dataset {
     trips: [],
     post_hides: [],
     tags: [],
-    places: [],
+    places: [{ id: PLACE_1 }, { id: PLACE_2 }],
     feature_flags: [],
     ...extra,
   };

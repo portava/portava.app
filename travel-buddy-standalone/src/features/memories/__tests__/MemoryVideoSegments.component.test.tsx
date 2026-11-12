@@ -345,3 +345,134 @@ it('does not renew a stopped generation from a delayed authorization response or
   expect(mockList).toHaveBeenCalledTimes(checks);
   expect(video.playAsync).toHaveBeenCalledTimes(1);
 });
+
+it('moves a playing segment into fullscreen and back at its current position with only one mounted player', async () => {
+  mockList.mockResolvedValue({ ok: true, source, segments: [segment] });
+  await render(<MemoryVideoSegments {...props} />); await ready();
+  await fireEvent.press(screen.getByLabelText('Play segment Arrival 1–4')); await ready();
+  const inline = latestPlayer();
+  expect(inline.props.videoStyle).toEqual({ width: '100%', height: '100%' });
+  await act(async () => inline.props.onPlaybackStatusUpdate({ isLoaded: true, positionMillis: 2250, isPlaying: true }));
+  await fireEvent.press(screen.getByLabelText('Open video fullscreen')); await ready();
+  const full = latestPlayer();
+  expect(full).not.toBe(inline); expect(inline.pauseAsync).toHaveBeenCalled(); expect(inline.unloadAsync).toHaveBeenCalled();
+  expect(screen.getAllByTestId('original-video')).toHaveLength(1);
+  expect(full.props.accessibilityLabel).toBe('Original Memory video fullscreen');
+  expect(full.props.videoStyle).toEqual({ width: '100%', height: '100%' });
+  expect(full.setPositionAsync).toHaveBeenLastCalledWith(2250, { toleranceMillisBefore: 0, toleranceMillisAfter: 0 });
+  expect(full.playAsync).toHaveBeenCalledTimes(1); expect(full.props.useNativeControls).toBe(false);
+  await act(async () => full.props.onPlaybackStatusUpdate({ isLoaded: true, positionMillis: 3000, isPlaying: true }));
+  await fireEvent.press(screen.getByLabelText('Close fullscreen video')); await ready();
+  const returned = latestPlayer(); expect(returned).not.toBe(full); expect(full.unloadAsync).toHaveBeenCalled();
+  expect(screen.getAllByTestId('original-video')).toHaveLength(1);
+  expect(returned.props.accessibilityLabel).toBe('Original Memory video');
+  expect(returned.setPositionAsync).toHaveBeenLastCalledWith(3000, { toleranceMillisBefore: 0, toleranceMillisAfter: 0 });
+  await act(async () => returned.props.onPlaybackStatusUpdate({ isLoaded: true, positionMillis: 4050, isPlaying: true }));
+  expect(returned.setStatusAsync).toHaveBeenLastCalledWith({ shouldPlay: false, positionMillis: 4000 });
+});
+
+it('keeps paused fullscreen transitions paused and resumes the same segment', async () => {
+  mockList.mockResolvedValue({ ok: true, source, segments: [segment] });
+  await render(<MemoryVideoSegments {...props} />); await ready();
+  await fireEvent.press(screen.getByLabelText('Play segment Arrival 1–4')); await ready();
+  await act(async () => latestPlayer().props.onPlaybackStatusUpdate({ isLoaded: true, positionMillis: 2000, isPlaying: true }));
+  await fireEvent.press(screen.getByLabelText('Pause video'));
+  await fireEvent.press(screen.getByLabelText('Open video fullscreen')); await ready();
+  const full = latestPlayer(); expect(full.playAsync).not.toHaveBeenCalled();
+  expect(full.setPositionAsync).toHaveBeenLastCalledWith(2000, { toleranceMillisBefore: 0, toleranceMillisAfter: 0 });
+  await fireEvent.press(screen.getByLabelText('Play fullscreen video')); await ready();
+  expect(full.playAsync).toHaveBeenCalledTimes(1);
+  await act(async () => full.props.onPlaybackStatusUpdate({ isLoaded: true, positionMillis: 4050, isPlaying: true }));
+  expect(full.setStatusAsync).toHaveBeenLastCalledWith({ shouldPlay: false, positionMillis: 4000 });
+});
+
+it('fullscreen can open before playback and only the explicit Play action starts the original', async () => {
+  await render(<MemoryVideoSegments {...props} />); await ready();
+  await fireEvent.press(screen.getByLabelText('Open video fullscreen')); await ready();
+  expect(latestPlayer().playAsync).not.toHaveBeenCalled(); expect(mockResolve).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByLabelText('Play fullscreen video')); await ready();
+  expect(latestPlayer().playAsync).toHaveBeenCalledTimes(1);
+});
+
+it('retired inline callbacks cannot pause or advance the replacement fullscreen player', async () => {
+  mockList.mockResolvedValue({ ok: true, source, segments: [segment] });
+  await render(<MemoryVideoSegments {...props} />); await ready();
+  await fireEvent.press(screen.getByLabelText('Play segment Arrival 1–4')); await ready();
+  const inlineCallback = latestPlayer().props.onPlaybackStatusUpdate;
+  await fireEvent.press(screen.getByLabelText('Open video fullscreen')); await ready();
+  const full = latestPlayer(); full.pauseAsync.mockClear(); full.setStatusAsync.mockClear();
+  await act(async () => inlineCallback({ isLoaded: true, positionMillis: 5000, isPlaying: true, didJustFinish: true }));
+  expect(full.pauseAsync).not.toHaveBeenCalled(); expect(full.setStatusAsync).not.toHaveBeenCalled();
+  expect(screen.getByLabelText('Pause fullscreen video')).toBeTruthy();
+});
+
+it('fullscreen entry rechecks a withdrawn source before loading or resuming', async () => {
+  await render(<MemoryVideoSegments {...props} />); await ready();
+  await fireEvent.press(screen.getByLabelText('Play original video')); await ready();
+  mockList.mockResolvedValue({ ok: false, kind: 'not_found' });
+  await fireEvent.press(screen.getByLabelText('Open video fullscreen')); await ready();
+  expect(latestPlayer().loadAsync).not.toHaveBeenCalled(); expect(screen.queryByTestId('original-video')).toBeNull();
+  expect(screen.queryByLabelText('Close fullscreen video')).toBeNull();
+});
+
+it('fullscreen keeps the short playback lease and stops if authorization renewal hangs', async () => {
+  jest.useFakeTimers();
+  await render(<MemoryVideoSegments {...props} />); await ready();
+  await fireEvent.press(screen.getByLabelText('Play original video')); await ready();
+  await fireEvent.press(screen.getByLabelText('Open video fullscreen')); await ready();
+  const full = latestPlayer(); full.pauseAsync.mockClear();
+  mockList.mockImplementation(() => new Promise(() => {}));
+  await act(async () => { jest.advanceTimersByTime(15000); });
+  expect(full.pauseAsync).toHaveBeenCalled(); expect(screen.queryByLabelText('Pause fullscreen video')).toBeNull();
+});
+
+it('closing fullscreen during pending authorization aborts the old intent and cannot resume it later', async () => {
+  await render(<MemoryVideoSegments {...props} />); await ready();
+  await fireEvent.press(screen.getByLabelText('Open video fullscreen')); await ready();
+  let finish!: (value: unknown) => void;
+  mockResolve.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await fireEvent.press(screen.getByLabelText('Play fullscreen video'));
+  await waitFor(() => expect(mockResolve).toHaveBeenCalled());
+  const full = latestPlayer(); const signal = mockResolve.mock.calls[0][2];
+  await fireEvent.press(screen.getByLabelText('Close fullscreen video')); await ready();
+  expect(signal.aborted).toBe(true); expect(screen.queryByLabelText('Close fullscreen video')).toBeNull();
+  await act(async () => finish({ ok: true, uri: 'https://storage.test/signed' }));
+  expect(full.playAsync).not.toHaveBeenCalled();
+});
+
+it('background and auth retirement dismiss fullscreen and stop the only player', async () => {
+  await render(<MemoryVideoSegments {...props} />); await ready();
+  await fireEvent.press(screen.getByLabelText('Open video fullscreen')); await ready();
+  await fireEvent.press(screen.getByLabelText('Play fullscreen video')); await ready();
+  const full = latestPlayer();
+  await act(async () => mockAppState?.('background'));
+  expect(full.pauseAsync).toHaveBeenCalled(); expect(full.unloadAsync).toHaveBeenCalled();
+  expect(screen.queryByLabelText('Close fullscreen video')).toBeNull(); expect(screen.queryByTestId('original-video')).toBeNull();
+  await act(async () => mockAppState?.('active')); await ready();
+  await fireEvent.press(screen.getByLabelText('Open video fullscreen')); await ready();
+  await act(async () => { for (const listener of mockListeners) listener('SIGNED_OUT', null); });
+  expect(screen.queryByLabelText('Close fullscreen video')).toBeNull(); expect(screen.queryByTestId('original-video')).toBeNull();
+});
+
+it('cannot get stuck fullscreen when a native unload never settles', async () => {
+  jest.useFakeTimers();
+  await render(<MemoryVideoSegments {...props} />); await ready();
+  await fireEvent.press(screen.getByLabelText('Open video fullscreen')); await ready();
+  const full = latestPlayer(); full.unloadAsync.mockImplementationOnce(() => new Promise(() => {}));
+  await fireEvent.press(screen.getByLabelText('Close fullscreen video'));
+  await act(async () => { jest.advanceTimersByTime(5000); });
+  expect(screen.queryByLabelText('Close fullscreen video')).toBeNull(); expect(screen.queryByTestId('original-video')).toBeNull();
+  expect(screen.getByText('Video could not change display. Refresh to try again.')).toBeTruthy();
+  await fireEvent.press(screen.getByLabelText('Refresh video segments')); await ready();
+  expect(screen.getByTestId('original-video')).toBeTruthy();
+});
+
+it('a rejected native display change remains retryable without starting a second player', async () => {
+  await render(<MemoryVideoSegments {...props} />); await ready();
+  const inline = latestPlayer(); inline.unloadAsync.mockRejectedValueOnce(new Error('native failure'));
+  await fireEvent.press(screen.getByLabelText('Open video fullscreen')); await ready();
+  expect(latestPlayer()).toBe(inline); expect(screen.getAllByTestId('original-video')).toHaveLength(1);
+  expect(screen.getByText('Video could not change display. Refresh to try again.')).toBeTruthy();
+  await fireEvent.press(screen.getByLabelText('Open video fullscreen')); await ready();
+  expect(screen.getByLabelText('Close fullscreen video')).toBeTruthy();
+});

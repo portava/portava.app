@@ -15,6 +15,7 @@
  *   SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *   node --import tsx/esm --test src/test/mediaActionsSection21.test.ts
  */
+import { makeFakeClient as makeCatalogClient } from './telegraphCertificationHarness.js';
 import { describe, it, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -33,6 +34,7 @@ function makeSc(data: Dataset) {
   const resolveRows = (table: string, filters: Array<(r: any) => boolean>) =>
     (data[table] ?? []).map((r) => ({ ...r })).filter((r) => filters.every((f) => f(r)));
   const builder = (table: string): any => {
+    if (table === "places") return makeCatalogClient({ places: data.places ?? [] }).from(table);
     const filters: Array<(r: any) => boolean> = [];
     const b: any = {
       select() { return b; },
@@ -108,6 +110,7 @@ function makePost(o: Record<string, any> = {}): any {
 
 function baseData(extra: Dataset = {}): Dataset {
   return {
+    places: [{ id: PLACE_1 }],
     profiles: [
       { id: VIEWER, location_country: "VN", date_of_birth: "1990-01-01", account_status: "active" },
       { id: AUTHOR_A, account_status: "active", passport_visibility: "public", is_private: false },
@@ -147,6 +150,13 @@ describe("MD94 — Go There / Directions", () => {
     assert.equal(a!.target.endpoint, "/api/places/:placeId/living");
     assert.equal(a!.target.params?.placeId, PLACE_1);
     assert.equal(isLocationSafe(set), true, "no coordinate on the rail — the Places page owns the route");
+  });
+
+  it("withholds the entire action set for a missing or moderated place", async () => {
+    for (const places of [[], [{ id: PLACE_1, moderation_status: "withheld" }]]) {
+      const set = await actionsFor(baseData({ posts: [makePost()], places }));
+      assert.equal(set, null);
+    }
   });
 
   it("is NOT offered when the owner kept the exact place private (city_only), exactly like show_on_map", async () => {

@@ -96,28 +96,41 @@ export function installInputPolicySync(deps: PolicySyncDeps = {}): () => void {
 
   const recents = deps.recents ?? { clear: clearLocalRecents, bindAccount: bindLocalRecentsAccount };
 
+  let mounted = true;
+  let observed = false;
+  let pending: AbortController | null = null;
   const onAccount = (userId: string | null): void => {
+    if (!mounted) return;
+    const changed = store.activeAccount() !== userId;
+    if (changed) { pending?.abort(); pending = null; }
     // §29 — the same event that drops the policy snapshot and the process-wide
     // suggestion cache also erases the DEVICE-local recents (census G199).
     // They are the same kind of data written by the same explicit accepts; the
     // only difference is that one of them survives the process, which makes it
     // the more important of the two to erase when the viewer changes.
     applyAccountChange(userId, store, cache, recents);
-    if (userId != null) void refreshPolicies(userId, store, doFetch);
+    if (userId != null && !pending && store.needsRefresh(userId)) {
+      const refresh = new AbortController(); pending = refresh;
+      // Leave the auth notification before asking the SDK to read the access token.
+      void Promise.resolve().then(() => {
+        if (mounted && !refresh.signal.aborted) return refreshPolicies(userId, store, doFetch, refresh.signal);
+      }).catch(() => {}).finally(() => { if (pending === refresh) pending = null; });
+    }
   };
 
-  const unsubscribe = subscribe(onAccount);
+  const unsubscribe = subscribe(userId => { observed = true; onAccount(userId); });
 
   // `onAuthChange` may not fire for an ALREADY-established session, so ask
   // once at install time. A failure here lands on signed-out, which is the
   // safe state: every field stays unassisted until the authority answers.
   void (async () => {
     try {
-      onAccount(await current());
+      const initial = await current();
+      if (!observed) onAccount(initial);
     } catch {
-      onAccount(null);
+      if (!observed) onAccount(null);
     }
   })();
 
-  return unsubscribe;
+  return () => { mounted = false; pending?.abort(); unsubscribe(); };
 }

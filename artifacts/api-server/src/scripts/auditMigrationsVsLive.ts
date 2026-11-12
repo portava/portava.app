@@ -68,7 +68,7 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { FROZEN_LEGACY_FILES, findRogueFrozenFiles } from "./frozenLegacyFiles.js";
 import { FROZEN_ROOT_FILES } from "./frozenRootFiles.js";
-import { functionClaimKey, isMissing, type Claim, type LiveSchema } from "./lib/schemaClaimResolution.js";
+import { functionClaimKey, relationClaimKey, isMissing, type Claim, type LiveSchema } from "./lib/schemaClaimResolution.js";
 import { sensingPostureOnDisk } from "./lib/sensingPostureOnDisk.js";
 import { partitionClaims, staleEntries } from "./lib/conditionalClaims.js";
 
@@ -615,14 +615,14 @@ export async function liveQuery<T = Record<string, unknown>>(
 export async function fetchLiveSchema(): Promise<LiveSchema> {
   const [rels, cols, fns, idxs, pols, enums, trgs, rls, tgrants, rgrants, qfns, qrgrants] =
     await Promise.all([
-    liveQuery<{ name: string }>(
-      `select c.relname as name from pg_class c
+    liveQuery<{ name: string; s: string }>(
+      `select c.relname as name, n.nspname as s from pg_class c
        join pg_namespace n on n.oid = c.relnamespace
-       where n.nspname = 'public' and c.relkind in ('r','p','v','m')`,
+       where n.nspname <> 'information_schema' and left(n.nspname, 3) <> 'pg_' and c.relkind in ('r','p','v','m')`,
     ),
-    liveQuery<{ t: string; c: string }>(
-      `select table_name as t, column_name as c
-       from information_schema.columns where table_schema = 'public'`,
+    liveQuery<{ t: string; c: string; s: string }>(
+      `select table_name as t, column_name as c, table_schema as s
+       from information_schema.columns where table_schema <> 'information_schema' and left(table_schema, 3) <> 'pg_'`,
     ),
     liveQuery<{ name: string; s: string }>(
       // BOTH schemas, tagged. `authz` holds the SECURITY DEFINER membership
@@ -659,14 +659,14 @@ export async function fetchLiveSchema(): Promise<LiveSchema> {
     // resolve. relrowsecurity is the only thing that answers "did the ENABLE
     // actually happen" — including when the ENABLE was inside a conditional
     // block whose guard was false (see 2070 / post_event_links).
-    liveQuery<{ name: string }>(
-      `select c.relname as name from pg_class c
+    liveQuery<{ name: string; s: string }>(
+      `select c.relname as name, n.nspname as s from pg_class c
        join pg_namespace n on n.oid = c.relnamespace
-       where n.nspname = 'public' and c.relkind in ('r','p') and c.relrowsecurity`,
+       where n.nspname <> 'information_schema' and left(n.nspname, 3) <> 'pg_' and c.relkind in ('r','p') and c.relrowsecurity`,
     ),
-    liveQuery<{ t: string; g: string; p: string }>(
-      `select table_name as t, grantee as g, privilege_type as p
-       from information_schema.role_table_grants where table_schema = 'public'`,
+    liveQuery<{ t: string; g: string; p: string; s: string }>(
+      `select table_name as t, grantee as g, privilege_type as p, table_schema as s
+       from information_schema.role_table_grants where table_schema <> 'information_schema' and left(table_schema, 3) <> 'pg_'`,
     ),
     // Table grants and ROUTINE grants are different catalogs. 18 of the 19
     // GRANT statements in src/migrations/ are GRANT EXECUTE ON FUNCTION, which
@@ -705,8 +705,8 @@ export async function fetchLiveSchema(): Promise<LiveSchema> {
   // false positives over case alone.
   const lc = (s: string) => s.toLowerCase();
   return {
-    relations: new Set(rels.map((r) => lc(r.name))),
-    columns: new Set(cols.map((r) => lc(`${r.t}.${r.c}`))),
+    relations: new Set(rels.map((r) => relationClaimKey(r.s, r.name))),
+    columns: new Set(cols.map((r) => `${relationClaimKey(r.s, r.t)}.${lc(r.c)}`)),
     functions: new Set(fns.filter((r) => r.s === "public").map((r) => lc(r.name))),
     authzFunctions: new Set(fns.filter((r) => r.s === "authz").map((r) => lc(r.name))),
     indexes: new Set(idxs.map((r) => lc(r.name))),
@@ -714,8 +714,8 @@ export async function fetchLiveSchema(): Promise<LiveSchema> {
     enums: new Set(enums.map((r) => lc(r.e))),
     enumValues: new Set(enums.map((r) => lc(`${r.e}.${r.v}`))),
     triggers: new Set(trgs.map((r) => lc(`${r.t}.${r.g}`))),
-    rlsEnabled: new Set(rls.map((r) => lc(r.name))),
-    tableGrants: new Set(tgrants.map((r) => lc(`${r.t}.${r.g}.${r.p}`))),
+    rlsEnabled: new Set(rls.map((r) => relationClaimKey(r.s, r.name))),
+    tableGrants: new Set(tgrants.map((r) => `${relationClaimKey(r.s, r.t)}.${lc(r.g)}.${lc(r.p)}`)),
     routineGrants: new Set(rgrants.filter((r) => r.s === "public").map((r) => lc(`${r.r}.${r.g}`))),
     authzRoutineGrants: new Set(rgrants.filter((r) => r.s === "authz").map((r) => lc(`${r.r}.${r.g}`))),
     collidingFunctionNames: new Set(
@@ -740,6 +740,10 @@ function name(m: RegExpMatchArray, i = 1): string {
 // qualIdent with the schema CAPTURED (group 1; the name is groups 2/3), for the
 // function claims that must keep it — see LiveSchema.qualifiedFunctions.
 const schemaQualIdent = String.raw`(?:("[^"]+"|[A-Za-z_][A-Za-z0-9_]*)\.)?${ident}`;
+
+function tableKey(m: RegExpMatchArray, offset = 1): string {
+  return relationClaimKey(m[offset], name(m, offset + 1));
+}
 
 function fnKey(m: RegExpMatchArray): string {
   return functionClaimKey(m[1], name(m, 2));
@@ -854,11 +858,11 @@ export function parseMigration(sql: string): Claim[] {
   // CREATE TABLE [IF NOT EXISTS] <name> ( <column defs> )
   scan(
     new RegExp(
-      String.raw`create\s+table\s+(?:if\s+not\s+exists\s+)?${qualIdent}`,
+      String.raw`create\s+table\s+(?:if\s+not\s+exists\s+)?${schemaQualIdent}`,
       "gi",
     ),
     (m) => {
-      const table = name(m);
+      const table = tableKey(m);
       add("table", table, `table ${table}`);
       // Claim every column declared in the parenthesized body too, so a table
       // created live with a partial column set is still flagged.
@@ -874,22 +878,22 @@ export function parseMigration(sql: string): Claim[] {
   // CREATE [OR REPLACE] [MATERIALIZED] VIEW <name>
   scan(
     new RegExp(
-      String.raw`create\s+(?:or\s+replace\s+)?(?:materialized\s+)?view\s+(?:if\s+not\s+exists\s+)?${qualIdent}`,
+      String.raw`create\s+(?:or\s+replace\s+)?(?:materialized\s+)?view\s+(?:if\s+not\s+exists\s+)?${schemaQualIdent}`,
       "gi",
     ),
-    (m) => add("view", name(m), `view ${name(m)}`),
+    (m) => add("view", tableKey(m), `view ${tableKey(m)}`),
   );
 
   // ALTER TABLE <t> ... ADD [COLUMN] [IF NOT EXISTS] <col> — possibly several
   // ADD COLUMN clauses in one statement.
   scan(
     new RegExp(
-      String.raw`alter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?${qualIdent}([\s\S]*?);`,
+      String.raw`alter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?${schemaQualIdent}([\s\S]*?);`,
       "gi",
     ),
     (m) => {
-      const table = name(m);
-      const body = m[3] ?? "";
+      const table = tableKey(m);
+      const body = m[4] ?? "";
       for (const cm of body.matchAll(
         new RegExp(
           String.raw`add\s+(?:column\s+)?(?:if\s+not\s+exists\s+)?${ident}`,
@@ -983,10 +987,10 @@ export function parseMigration(sql: string): Claim[] {
   // created" is not drift.
   scan(
     new RegExp(
-      String.raw`alter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?${qualIdent}\s+enable\s+row\s+level\s+security`,
+      String.raw`alter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?${schemaQualIdent}\s+enable\s+row\s+level\s+security`,
       "gi",
     ),
-    (m) => add("rls", name(m), `row level security on ${name(m)}`),
+    (m) => add("rls", tableKey(m), `row level security on ${tableKey(m)}`),
   );
 
   // ── GRANT <privs> ON [TABLE] <table> TO <role> ──────────────────────────────
@@ -994,13 +998,13 @@ export function parseMigration(sql: string): Claim[] {
   // function form is handled separately below.
   scan(
     new RegExp(
-      String.raw`grant\s+([a-z, ]+?)\s+on\s+(?!function|schema|sequence|all)(?:table\s+)?${qualIdent}\s+to\s+([a-z_][a-z0-9_]*)`,
+      String.raw`grant\s+([a-z, ]+?)\s+on\s+(?!function|schema|sequence|all)(?:table\s+)?${schemaQualIdent}\s+to\s+([a-z_][a-z0-9_]*)`,
       "gi",
     ),
     (m) => {
       const privsRaw = m[1].toLowerCase();
-      const table = name(m, 2);
-      const grantee = m[4].toLowerCase();
+      const table = tableKey(m, 2);
+      const grantee = m[5].toLowerCase();
       const privs = /\ball\b/.test(privsRaw)
         ? ["select", "insert", "update", "delete", "truncate", "references", "trigger"]
         : privsRaw.split(",").map((x) => x.trim()).filter(Boolean);

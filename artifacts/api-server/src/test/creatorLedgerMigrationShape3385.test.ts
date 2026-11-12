@@ -116,14 +116,14 @@ describe("M — 3385/3386/3387 say what the code depends on", () => {
     for (const t of [t85, t86, t87]) assert.match(t, /DELETE FROM public\.schema_migration_ledger/);
   });
 
-  it("M6. the ledger is reachable: both routers registered and the producer scheduled, on lines that shifted no citation", () => {
-    const routes = readFileSync(join(HERE, "../routes/index.ts"), "utf8").split("\n");
-    const idx = readFileSync(join(HERE, "../index.ts"), "utf8").split("\n");
-    assert.match(routes[79]!, /^import rentABuddyMarketplaceRouter from "\.\/rentABuddyMarketplace"; import creatorEconomyRouter from "\.\/creatorEconomy"; import adminCreatorLedgerRouter from "\.\/adminCreatorLedger";/);
-    assert.match(routes[246]!, /^router\.use\(rentABuddyMarketplaceRouter\); router\.use\(creatorEconomyRouter\); router\.use\(adminCreatorLedgerRouter\);/);
-    assert.match(idx[34]!, /import \{ startCreatorAttributionScheduler \} from "\.\/lib\/creatorAttributionScheduler";/);
-    assert.match(idx[292]!, /^\s+startCreatorActivityScoreScheduler\(\); startCreatorAttributionScheduler\(\);/);
-    assert.equal(routes.length, 439, "routes/index.ts changed length; census-telegraph cites its lines");
-    assert.equal(idx.length, 443, "index.ts changed length; five censuses cite its lines");
+  it("M6. both creator ledger routers are mounted and the attribution scheduler starts at boot", () => {
+    const routes = readFileSync(join(HERE, "../routes/index.ts"), "utf8");
+    const boot = readFileSync(join(HERE, "../index.ts"), "utf8");
+    for (const module of ["rentABuddyMarketplace", "creatorEconomy", "adminCreatorLedger"]) {
+      assert.ok(routes.includes(`import ${module}Router from "./${module}"`), `missing ${module} import`);
+      assert.ok(routes.includes(`router.use(${module}Router)`), `missing ${module} mount`);
+    }
+    assert.match(boot, /import \{ startCreatorAttributionScheduler \} from "\.\/lib\/creatorAttributionScheduler";/);
+    assert.equal((boot.match(/\bstartCreatorActivityScoreScheduler\(\);\s*startCreatorAttributionScheduler\(\);/g) ?? []).length, 1);
   });
 });

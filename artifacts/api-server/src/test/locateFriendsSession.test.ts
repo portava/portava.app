@@ -147,7 +147,7 @@ function makeDb(opts: FakeOpts = {}) {
       });
     };
 
-    function run(): { data: any; error: any } {
+    function run(): { data: any; error: any; count?: number } {
       const store = tables[table] ?? (tables[table] = []);
       if (failReads.has(table)) return { data: null, error: { message: `read failed: ${table}` } };
 
@@ -177,7 +177,7 @@ function makeDb(opts: FakeOpts = {}) {
         writes[table] = (writes[table] ?? 0) + 1;
         return { data: null, error: null };
       }
-      return { data: store.filter(match), error: null };
+      return { data: store.filter(match), error: null, count: store.filter(match).length };
     }
 
     const first = () => {

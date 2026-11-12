@@ -20,10 +20,39 @@
  * Run: pnpm run test:component -- tabsLayout.wallEntry
  */
 import React from 'react';
-import { render, screen } from '@testing-library/react-native';
+import { act, render, screen } from '@testing-library/react-native';
+import { StyleSheet, View } from 'react-native';
+import { useBottomInset } from '../../src/hooks/useBottomInset.ts';
+import { NavBarFiller } from '../../src/hooks/useNavBarCollapse.ts';
+import { router } from 'expo-router';
 
 // jest only permits a `mock`-prefixed out-of-scope variable inside a mock factory.
 let mockWallFlagOn = false;
+let mockDimensions = { width: 390, height: 844, scale: 3, fontScale: 1 };
+let mockPathname = '/';
+let mockDesktop = false;
+let mockCity: string | null = null;
+let mockSwipe: ((event: { translationX: number; translationY: number; velocityX: number }) => void) | undefined;
+const mockPrefetchCounts = jest.fn().mockResolvedValue({});
+const mockPrefetchPlaces = jest.fn().mockResolvedValue([]);
+jest.mock('../../src/services/discovery.ts', () => ({
+  ...jest.requireActual('../../src/services/discovery.ts'),
+  getDiscoveryCategoryCountsBatch: (...args: unknown[]) => mockPrefetchCounts(...args),
+  getDiscoveryPlaces: (...args: unknown[]) => mockPrefetchPlaces(...args),
+}));
+jest.mock('react-native-gesture-handler', () => {
+  const actual = jest.requireActual('react-native-gesture-handler');
+  return { ...actual, GestureDetector: ({ children }: any) => children,
+    Gesture: { ...actual.Gesture, Pan: () => {
+      const gesture = { minDistance: () => gesture, runOnJS: () => gesture,
+        onEnd: (callback: typeof mockSwipe) => { mockSwipe = callback; return gesture; } };
+      return gesture;
+    } } };
+});
+jest.mock('react-native', () => {
+  const actual = jest.requireActual('react-native');
+  return Object.defineProperty(Object.create(actual), 'useWindowDimensions', { value: () => mockDimensions });
+});
 
 // NOTE: exhaustive by design — the flag value is the variable under test, so it must
 // be driven per-case rather than read through the real provider's network fetch.
@@ -41,7 +70,7 @@ jest.mock('expo-router', () => {
   return {
     Tabs,
     router: { push: jest.fn(), replace: jest.fn(), back: jest.fn() },
-    usePathname: () => '/(tabs)',
+    usePathname: () => mockPathname,
     useRouter: () => ({ push: jest.fn() }),
     useFocusEffect: () => {},
     Link: ({ children }: any) => children,
@@ -50,7 +79,7 @@ jest.mock('expo-router', () => {
 
 // NOTE: exhaustive by design — pins the MOBILE branch so the assertions target
 // FloatingTabBar. DesktopSidebar is covered by the same NAV list it maps over.
-jest.mock('../../src/hooks/useBreakpoint', () => ({ useIsDesktop: () => false }));
+jest.mock('../../src/hooks/useBreakpoint', () => ({ useIsDesktop: () => mockDesktop }));
 // NOTE: exhaustive by design — TabLayout renders nothing until authed; a real session
 // would require Supabase auth in a test about tab-bar contents.
 jest.mock('../../src/context/SessionContext', () => ({
@@ -78,8 +107,8 @@ jest.mock('../../src/components/LocationPermissionPrompt', () => ({ LocationPerm
 // prefetch Discovery; a real provider would need device geolocation.
 jest.mock('../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
-    resolvedLocation: { place: { city: null } },
-    locationState: { place: { city: null } },
+    resolvedLocation: { place: { city: mockCity } },
+    locationState: { place: { city: mockCity } },
   }),
   LocationProvider: ({ children }: any) => children,
 }));
@@ -90,9 +119,10 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 import TabLayout from '../(tabs)/_layout.tsx';
+function Clearance() { const inset = useBottomInset(); return <View testID="tab-scroll-clearance" style={{ paddingBottom: inset }}><NavBarFiller /></View>; }
 
 describe('(tabs)/_layout — the Wall entry appears in the navigation that is actually rendered', () => {
-  afterEach(() => { mockWallFlagOn = false; });
+  afterEach(() => { mockWallFlagOn = false; mockDimensions = { width: 390, height: 844, scale: 3, fontScale: 1 }; mockPathname = '/'; mockDesktop = false; mockCity = null; mockSwipe = undefined; jest.clearAllMocks(); jest.useRealTimers(); });
 
   it('shows no Wall entry while wall_enabled is off', async () => {
     mockWallFlagOn = false;
@@ -116,5 +146,84 @@ describe('(tabs)/_layout — the Wall entry appears in the navigation that is ac
     for (const label of ['Pulse', 'Discovery', 'Roam', 'Trips', 'Passport']) {
       expect(screen.queryByText(label)).not.toBeNull();
     }
+  });
+
+  it('keeps six narrow-screen labels in bounded slots with full accessibility names and intentional overflow', async () => {
+    mockWallFlagOn = true; mockDimensions = { ...mockDimensions, width: 320 };
+    await render(<TabLayout />);
+    for (const label of ['Pulse', 'Discovery', 'Roam', 'Trips', 'Passport', 'Wall']) {
+      const button = screen.getByLabelText(label);
+      expect(StyleSheet.flatten(button.props.style)).toMatchObject({ minHeight: 44, minWidth: 0 });
+      expect(screen.getByText(label).props).toMatchObject({ numberOfLines: 1, ellipsizeMode: 'tail', maxFontSizeMultiplier: 2 });
+    }
+    expect(StyleSheet.flatten(screen.getByText('Discovery').props.style)).toMatchObject({ fontSize: 9, width: '100%', textAlign: 'center' });
+    expect(StyleSheet.flatten(screen.getByTestId('floating-tab-pill').props.style).height).toBe(64);
+  });
+
+  it('grows the scaled label line, pill and both scroll clearances together', async () => {
+    mockWallFlagOn = true; mockDimensions = { ...mockDimensions, width: 320, fontScale: 2 };
+    await render(<><TabLayout /><Clearance /></>);
+    const height = StyleSheet.flatten(screen.getByTestId('floating-tab-pill').props.style).height;
+    expect(height).toBe(77);
+    const clearance = screen.getByTestId('tab-scroll-clearance');
+    expect(StyleSheet.flatten(clearance.props.style).paddingBottom).toBe(height + 32);
+    expect(StyleSheet.flatten(screen.getByTestId('nav-bar-filler').props.style).height).toBe(height + 32);
+    expect(screen.getByLabelText('Discovery')).toBeTruthy();
+  });
+
+  it.each([
+    ['/', 'Pulse'], ['/(tabs)/', 'Pulse'], ['/passport', 'Passport'],
+    ['/(tabs)/passport/', 'Passport'], ['/passport/edit', 'Passport'], ['/discovery/', 'Discovery'],
+  ])('selects only the correct tab for pathname %s', async (pathname, selected) => {
+    mockWallFlagOn = true; mockPathname = pathname;
+    await render(<TabLayout />);
+    for (const label of ['Pulse', 'Discovery', 'Roam', 'Trips', 'Passport', 'Wall']) {
+      expect(screen.getByLabelText(label).props.accessibilityState.selected).toBe(label === selected);
+    }
+  });
+
+  it('does not confuse a similarly prefixed route with a tab', async () => {
+    mockWallFlagOn = true; mockPathname = '/passportx';
+    await render(<TabLayout />);
+    expect(screen.getByLabelText('Passport').props.accessibilityState.selected).toBe(false);
+    expect(screen.getByLabelText('Pulse').props.accessibilityState.selected).toBe(false);
+  });
+
+  it('uses the same ungrouped-path selection for the desktop sidebar', async () => {
+    mockWallFlagOn = true; mockDesktop = true; mockPathname = '/passport/edit/';
+    await render(<TabLayout />);
+    expect(screen.getByLabelText('Passport').props.accessibilityState.selected).toBe(true);
+    expect(screen.getByLabelText('Pulse').props.accessibilityState.selected).toBe(false);
+    expect(screen.getByLabelText('Discovery').props.accessibilityState.selected).toBe(false);
+  });
+
+  it.each<[string, number, string | null]>([
+    ['/passport', -100, null], ['/passport', 100, '/(tabs)/trips'],
+    ['/discovery', -100, '/(tabs)/media'], ['/discovery', 100, '/(tabs)/'],
+    ['/', -100, '/(tabs)/discovery'], ['/', 100, null],
+    ['/(tabs)/passport/edit/', 100, '/(tabs)/trips'], ['/passportx', -100, null], ['/media', 100, null],
+  ])('swipes from %s by %s using the real current tab and retains end bounds', async (pathname, translationX, destination) => {
+    mockPathname = pathname;
+    await render(<TabLayout />);
+    expect(mockSwipe).toBeDefined();
+    await act(async () => { mockSwipe?.({ translationX, translationY: 0, velocityX: 400 }); });
+    if (destination) expect(router.replace).toHaveBeenCalledWith(destination);
+    else expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it.each(['/', '/trips', '/(tabs)/trips/'])('warms Discovery when the real adjacent path is %s', async pathname => {
+    jest.useFakeTimers(); mockPathname = pathname; mockCity = 'Cebu';
+    await render(<TabLayout />);
+    await act(async () => { jest.advanceTimersByTime(300); });
+    expect(mockPrefetchCounts).toHaveBeenCalledWith('Cebu', 10);
+    expect(mockPrefetchPlaces).toHaveBeenCalledWith('Cebu', 'for_you', { radiusKm: 25, openNow: false, minRating: null });
+  });
+
+  it('does not warm Discovery from an unrelated similarly prefixed route', async () => {
+    jest.useFakeTimers(); mockPathname = '/tripsx'; mockCity = 'Cebu';
+    await render(<TabLayout />);
+    await act(async () => { jest.advanceTimersByTime(300); });
+    expect(mockPrefetchCounts).not.toHaveBeenCalled();
+    expect(mockPrefetchPlaces).not.toHaveBeenCalled();
   });
 });

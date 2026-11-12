@@ -28,12 +28,16 @@ import { canViewEvent, checkEventEligibility } from "./events.js";
 import { canReadPost, isPostPublished, needsFollowerCheck, needsTripMembershipCheck } from "../lib/postVisibility.js";
 import { isAcceptedTripMember } from "../lib/http.js";
 import { canViewTrip } from "../domain/trips/policies/tripPolicy.js"; import { removeFromOwnCollections } from "../lib/collectionUnfile.js";
+import { collectionPlacePreviews } from "../lib/savedPlaceLibrary.js";
+
+import { filterCurrentPostAuthors } from '../lib/postAuthorAudience.js';
+import { savedGemPreviews } from '../lib/savedGemPreviews.js';
 
 const router = Router();
 
 const VALID_ENTITY_TYPES = [
   "post", "event", "trip", "memory", "highlight",
-  "place", "profile", "hashtag",
+  "place", "profile", "hashtag", "gem",
 ] as const;
 type EntityType = typeof VALID_ENTITY_TYPES[number];
 
@@ -464,13 +468,15 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
     byType[row.entity_type].push(row.entity_id as string);
   }
 
-  const previewMap: Record<string, { title: string; coverUrl: string | null }> = {};
+  const previewMap: Record<string, { title: string; coverUrl: string | null; placeId?: string }> = {};
 
   // Resolve each type
   await Promise.all(
     Object.entries(byType).map(async ([type, ids]) => {
       try {
-        if (type === "profile") {
+        if (type === "gem") {
+          for (const [id, preview] of await savedGemPreviews(sc, user.id, ids)) previewMap[`gem:${id}`] = preview;
+        } else if (type === "profile") {
           const { data } = await sc
             .from("profiles")
             .select("id, handle, name, avatar_url")
@@ -478,7 +484,7 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
           const allowedNames = await nameVisibilitySet(sc, ids);
           for (const r of (data ?? []) as any[]) {
             const shownName = presentedName(r, r.id === user.id || allowedNames.has(r.id));
-            previewMap[r.id] = { title: shownName ?? (r.handle ? `@${r.handle}` : r.id), coverUrl: r.avatar_url ?? null };
+            previewMap[`${type}:${r.id}`] = { title: shownName ?? (r.handle ? `@${r.handle}` : r.id), coverUrl: r.avatar_url ?? null };
           }
         } else if (type === "post") {
           // A SAVED ID IS NOT A READ GRANT, for posts either (lane R wave 2;
@@ -493,11 +499,11 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
           // only withhold.
           const { data, error } = await sc
             .from("posts")
-            .select("id, content, author_id, visibility, trip_id, status, post_status")
+            .select("id, content, author_id, visibility, trip_id, status, post_status, deleted_at")
             .in("id", ids)
             .eq("status", "active");
           if (error) throw error;
-          const postRows = (data ?? []) as any[];
+          const postRows = await filterCurrentPostAuthors(sc, user.id, ((data ?? []) as any[]).filter(row => row.deleted_at == null));
           const blocks = await blockedAmong(sc, user.id, postRows.map((r) => r.author_id as string));
           if (!blocks.ok) {
             req.log.error({ err: blocks.error, type }, "collections: blocks read failed — withholding every post preview the viewer did not write");
@@ -535,7 +541,7 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
               }
               if (!canReadPost(r, user.id, member, follower)) continue;
             }
-            previewMap[r.id] = { title: r.content ?? "Post", coverUrl: null };
+            previewMap[`${type}:${r.id}`] = { title: r.content ?? "Post", coverUrl: null };
           }
         } else if (type === "trip") {
           // Same defect: a trip's destination and cover for any saved id. The
@@ -556,7 +562,7 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
               req.log.error({ err, type, tripId: r.id }, "collections: trip visibility could not be decided — preview withheld");
             }
             if (!allowed) continue;
-            previewMap[r.id] = { title: r.destination_city ?? "Trip", coverUrl: r.cover_url ?? null };
+            previewMap[`${type}:${r.id}`] = { title: r.destination_city ?? "Trip", coverUrl: r.cover_url ?? null };
           }
         } else if (type === "event") {
           // Same defect: an event's title and cover for any saved id — invite-
@@ -580,7 +586,7 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
               if (!(await canViewEvent(sc, r, user.id))) continue;
               if (!(await checkEventEligibility(sc, r, user.id)).ok) continue;
             }
-            previewMap[r.id] = { title: r.title ?? "Event", coverUrl: r.cover_url ?? null };
+            previewMap[`${type}:${r.id}`] = { title: r.title ?? "Event", coverUrl: r.cover_url ?? null };
           }
         } else if (type === "memory") {
           // A SAVED ID IS NOT A READ GRANT (census-highlights-memories H189).
@@ -613,7 +619,7 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
               if (!blocks.ok || blocks.blocked.has(r.owner_id)) continue;
               if (!(await canReadMemory(sc, r, user.id, "single"))) continue;
             }
-            previewMap[r.id] = { title: r.title ?? "Memory", coverUrl: null };
+            previewMap[`${type}:${r.id}`] = { title: r.title ?? "Memory", coverUrl: null };
           }
         } else if (type === "hashtag") {
           const { data } = await sc
@@ -621,15 +627,12 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
             .select("id, name, slug")
             .in("id", ids);
           for (const r of (data ?? []) as any[]) {
-            previewMap[r.id] = { title: `#${r.slug ?? r.name}`, coverUrl: null };
+            previewMap[`${type}:${r.id}`] = { title: `#${r.slug ?? r.name}`, coverUrl: null };
           }
         } else if (type === "place") {
-          const { data } = await sc
-            .from("discovery_places")
-            .select("id, name, image_url")
-            .in("id", ids);
-          for (const r of (data ?? []) as any[]) {
-            previewMap[r.id] = { title: r.name ?? "Place", coverUrl: r.image_url ?? null };
+          const places = await collectionPlacePreviews(sc, user.id, ids);
+          for (const [id, place] of places) {
+            previewMap[`place:${id}`] = { title: place.title, coverUrl: place.coverUrl, placeId: place.placeId };
           }
         } else if (type === "highlight") {
           // Same defect, louder payload: a caption AND a media URL, for any
@@ -647,7 +650,7 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
           const access = await decideHighlightViewAccessMany(sc, user.id, ids, req.log);
           for (const r of (data ?? []) as any[]) {
             if (!access.get(r.id as string)?.ok) continue;
-            previewMap[r.id] = {
+            previewMap[`${type}:${r.id}`] = {
               title: (r.caption as string | null) ?? "Highlight",
               coverUrl: (r.media_url as string | null) ?? null,
             };
@@ -669,8 +672,9 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
       entityType: row.entity_type as string,
       entityId:   row.entity_id as string,
       savedAt:    row.saved_at as string,
-      title:      previewMap[row.entity_id as string]?.title ?? null,
-      coverUrl:   previewMap[row.entity_id as string]?.coverUrl ?? null,
+      title:      previewMap[`${row.entity_type}:${row.entity_id}`]?.title ?? null,
+      ...(row.entity_type === "place" ? { placeId: previewMap[`place:${row.entity_id}`]?.placeId ?? null } : {}),
+      coverUrl:   previewMap[`${row.entity_type}:${row.entity_id}`]?.coverUrl ?? null,
     })),
     hasMore,
     nextCursor: hasMore ? (page[page.length - 1] as any).saved_at as string : null,
@@ -700,6 +704,17 @@ router.post("/saves", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  if (collection_id != null && !isValidUuid(collection_id)) {
+    sendError(res, "invalid_payload", "collection_id must be a valid UUID"); return;
+  }
+  if (entity_type === "gem") {
+    try {
+      if (!(await savedGemPreviews(sc, user.id, [entity_id])).has(entity_id)) {
+        sendError(res, "not_found", "Gem not found"); return;
+      }
+    } catch { sendError(res, "degraded_unavailable", "Gem access could not be checked"); return; }
+  }
 
   let colId: string | null = null;
 
@@ -772,6 +787,12 @@ router.delete("/saves", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
+  if (entity_type === "gem") {
+    const { error } = await sc.from("hidden_gem_saves").delete().eq("gem_id", entity_id).eq("user_id", user.id);
+    if (error) { sendError(res, "db_error", "Gem could not be unsaved"); return; }
+    res.json({ saved: false, entityType: entity_type, entityId: entity_id }); return;
+  }
+
   // From every collection the caller owns. The collections read is bound
   // (lib/collectionUnfile.ts): unbound, a failed read removed nothing and still
   // answered saved:false.
@@ -809,10 +830,11 @@ router.get("/users/me/saves", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Find user's collection ids
-  const { data: cols } = await sc
+  const { data: cols, error: colsError } = await sc
     .from("collections")
     .select("id")
     .eq("owner_id", user.id);
+  if (colsError) { sendError(res, "db_error", "Collections could not be read"); return; }
 
   const colIds = (cols ?? []).map((c: any) => c.id as string);
 
@@ -839,6 +861,24 @@ router.get("/users/me/saves", async (req, res) => {
     saved: foundCollectionIds.length > 0,
     collectionIds: foundCollectionIds,
   });
+});
+
+// All gem bookmarks, including saves made before collections were introduced.
+router.get("/users/me/saved-gems", async (req, res) => {
+  const auth = await requireUser(req, res); if (!auth) return;
+  const sc = getServiceClient(); if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  const cursor = typeof req.query.before === 'string' ? req.query.before : null;
+  if (cursor && !isUuid(cursor)) { sendError(res, "invalid_payload", "Invalid gem cursor"); return; }
+  let query = sc.from('hidden_gem_saves').select('gem_id,saved_at').eq('user_id', auth.user.id).order('gem_id').limit(41);
+  if (cursor) query = query.gt('gem_id', cursor);
+  const { data, error } = await query;
+  if (error) { sendError(res, "db_error", "Saved gems could not be read"); return; }
+  const page = (data ?? []).slice(0,40);
+  try {
+    const previews = await savedGemPreviews(sc, auth.user.id, page.map(r => r.gem_id));
+    res.json({ gems: page.map(r => ({ id: r.gem_id, savedAt: r.saved_at, title: previews.get(r.gem_id)?.title ?? null })),
+      nextCursor: (data ?? []).length > 40 ? page[page.length-1]!.gem_id : null });
+  } catch { sendError(res, "degraded_unavailable", "Saved gem visibility could not be checked"); }
 });
 
 // =============================================================================

@@ -115,8 +115,66 @@ it('reader errors and inactive cells clear text rather than preserving a stale t
   jest.mocked(captions.readCaptionTrack).mockRejectedValueOnce(new Error('stale'));
   await mounted.rerender(<MediaCaptionControls source="video" status={{ isLoaded: true, positionMillis: 500 }} />);
   await fireEvent.press(await screen.findByLabelText('Show timed captions'));
-  await screen.findByText('Captions unavailable. Close and reopen this video to refresh.');
+  await screen.findByText('Captions unavailable. Try again.');
   expect(screen.queryByText('First cue')).toBeNull();
+});
+
+it('offers recovery after source resolution fails and prevents duplicate retries while loading', async () => {
+  jest.mocked(captions.resolveCaptionSource).mockRejectedValueOnce(new Error('offline'));
+  await render(<MediaCaptionControls source="video" status={null} />);
+  await screen.findByText('Captions unavailable. Try again.');
+  let finish!: (value: typeof source) => void;
+  jest.mocked(captions.resolveCaptionSource).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  await fireEvent.press(screen.getByLabelText('Retry captions'));
+  await screen.findByText('Loading captions…');
+  expect(screen.getByLabelText('Retry captions').props.accessibilityState.disabled).toBe(true);
+  await fireEvent.press(screen.getByLabelText('Retry captions'));
+  expect(captions.resolveCaptionSource).toHaveBeenCalledTimes(2);
+  await act(async () => finish(source));
+  await screen.findByLabelText('Show timed captions');
+  expect(screen.queryByLabelText('Retry captions')).toBeNull();
+  expect(captions.readCaptionTrack).not.toHaveBeenCalled();
+});
+
+it('re-resolves the current video generation when retrying a failed track and preserves CC intent', async () => {
+  jest.mocked(captions.readCaptionTrack).mockRejectedValueOnce(new Error('generation changed'));
+  await render(<MediaCaptionControls source="video" status={{ isLoaded: true, positionMillis: 500 }} />);
+  await fireEvent.press(await screen.findByLabelText('Show timed captions'));
+  await screen.findByText('Captions unavailable. Try again.');
+  const replacement = { ...source, version: 3 };
+  jest.mocked(captions.resolveCaptionSource).mockResolvedValueOnce(replacement);
+  jest.mocked(captions.readCaptionTrack).mockResolvedValueOnce({ ...result, version: 3 });
+  await fireEvent.press(screen.getByLabelText('Retry captions'));
+  await screen.findByText('First cue');
+  expect(captions.resolveCaptionSource).toHaveBeenCalledTimes(2);
+  expect(captions.readCaptionTrack).toHaveBeenLastCalledWith(replacement, expect.anything(), undefined);
+  expect(screen.getByLabelText('Hide timed captions').props.accessibilityState.selected).toBe(true);
+});
+
+it('keeps draft review intent when recovering a failed draft read', async () => {
+  jest.mocked(captions.readCaptionDraft).mockRejectedValueOnce(new Error('offline'));
+  await render(<MediaCaptionControls source="video" status={null} />);
+  await fireEvent.press(await screen.findByLabelText('Review generated caption draft'));
+  await fireEvent.press(await screen.findByLabelText('Retry captions'));
+  await screen.findByText('AI transcription — review every cue before publishing. Language and speech accuracy are not guaranteed.');
+  expect(captions.readCaptionDraft).toHaveBeenCalledTimes(2);
+  expect(captions.readCaptionTrack).not.toHaveBeenCalled();
+});
+
+it('aborts a pending caption retry on account replacement and ignores its late failure', async () => {
+  jest.mocked(captions.resolveCaptionSource).mockRejectedValueOnce(new Error('offline'));
+  const mounted = await render(<MediaCaptionControls source="video" status={null} />);
+  let refuse!: (error: Error) => void;
+  jest.mocked(captions.resolveCaptionSource).mockImplementationOnce(() => new Promise((_resolve, reject) => { refuse = reject; }));
+  await fireEvent.press(await screen.findByLabelText('Retry captions'));
+  const pendingSignal = jest.mocked(captions.resolveCaptionSource).mock.calls[1][1];
+  mockViewer = 'another-account';
+  await mounted.rerender(<MediaCaptionControls source="video" status={null} />);
+  await screen.findByLabelText('Show timed captions');
+  expect(pendingSignal?.aborted).toBe(true);
+  await act(async () => refuse(new Error('old account failed')));
+  expect(screen.queryByLabelText('Retry captions')).toBeNull();
+  expect(screen.queryByText('Captions unavailable. Try again.')).toBeNull();
 });
 
 it('owner editor requires explicit consent, submits exact WebVTT and generation, no duplicate save', async () => {
@@ -133,7 +191,7 @@ it('owner editor requires explicit consent, submits exact WebVTT and generation,
   await act(async () => finishSave({ ...result, version: 3 }));
   await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
   expect(captions.saveCaptionTrack).toHaveBeenCalledTimes(1);
-  expect(captions.saveCaptionTrack).toHaveBeenCalledWith(source, result.vtt, true, 'und');
+  expect(captions.saveCaptionTrack).toHaveBeenCalledWith(source, result.vtt, true, 'und', expect.anything());
 });
 
 it('delete requires confirmation and reports the cleared state', async () => {
@@ -174,7 +232,7 @@ it('ASR review requires the creator to confirm consent before publishing the edi
   expect(captions.publishCaptionDraft).not.toHaveBeenCalled();
   await fireEvent.press(screen.getByLabelText("I have permission to share these captions with this video's audience"));
   await fireEvent.press(screen.getByLabelText('Save timed captions'));
-  await waitFor(() => expect(captions.publishCaptionDraft).toHaveBeenCalledWith(source, 'draft-id', 'Reviewed WebVTT', true));
+  await waitFor(() => expect(captions.publishCaptionDraft).toHaveBeenCalledWith(source, 'draft-id', 'Reviewed WebVTT', true, expect.anything()));
   expect(captions.saveCaptionTrack).not.toHaveBeenCalled();
 });
 
@@ -250,4 +308,18 @@ it('does not announce a successful manifest change after a failed caption save',
   await fireEvent.press(screen.getByLabelText('Save timed captions'));
   await screen.findByText('Caption save refused');
   expect(screen.getByText('Playback invalidations: 0')).toBeTruthy();
+});
+
+it('cancels a pending editor write on dismissal and ignores a late receipt', async () => {
+  let finish!: (value: typeof result) => void;
+  jest.mocked(captions.saveCaptionTrack).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  const onSaved = jest.fn();
+  const mounted = await render(<CaptionAuthoringSheet source={source} initialVtt={null} onClose={jest.fn()} onSaved={onSaved} />);
+  await fireEvent.press(screen.getByLabelText("I have permission to share these captions with this video's audience"));
+  await fireEvent.press(screen.getByLabelText('Save timed captions'));
+  const signal = jest.mocked(captions.saveCaptionTrack).mock.calls[0][4];
+  await mounted.unmount();
+  expect(signal?.aborted).toBe(true);
+  await act(async () => finish(result));
+  expect(onSaved).not.toHaveBeenCalled();
 });

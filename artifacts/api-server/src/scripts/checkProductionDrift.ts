@@ -75,7 +75,7 @@ const BASELINE_DIR = join(API_SERVER_ROOT, "baseline");
  * stale silently on the next refresh, which is how two cases in
  * productionDriftExtraction.test.ts came to assert the opposite of the truth.
  */
-export const PRODUCTION_SNAPSHOT = "20261104_production_tables.txt"; // 2026-11-04 refresh after release 2 (the header of that file)
+export const PRODUCTION_SNAPSHOT = "20261109_post_4021_production_tables.txt";
 
 /**
  * `unmerged-pr` HAS NO MEMBERS AS OF 2026-09-15, AND IS KEPT — ruling, with the
@@ -1035,13 +1035,19 @@ function readProductionSnapshot(): Set<string> {
   return new Set(names);
 }
 
+/** This snapshot covers public tables; consume qualified names before filtering. */
+export function publicTableNames(sql: string): string[] {
+  const re = /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:"?([a-z0-9_]+)"?\s*\.\s*)?"?([a-z0-9_]+)"?/gi;
+  return [...stripSqlNoise(sql).matchAll(re)]
+    .filter(m => !m[1] || m[1].toLowerCase() === "public")
+    .map(m => m[2].toLowerCase());
+}
+
 export function declaredTables(): Set<string> {
   const out = new Set<string>();
-  const re = /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:"?public"?\.)?"?([a-z0-9_]+)"?/gi;
   for (const file of readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql"))) {
-    const sql = stripSqlNoise(readFileSync(join(MIGRATIONS_DIR, file), "utf8"));
-    for (const m of sql.matchAll(re)) {
-      const name = m[1].toLowerCase();
+    const sql = readFileSync(join(MIGRATIONS_DIR, file), "utf8");
+    for (const name of publicTableNames(sql)) {
       if (!NOT_TABLE_NAMES.has(name)) out.add(name);
     }
   }
@@ -1054,11 +1060,9 @@ export function declaredTables(): Set<string> {
  */
 function declaringMigrations(): Map<string, string[]> {
   const out = new Map<string, string[]>();
-  const re = /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:"?public"?\.)?"?([a-z0-9_]+)"?/gi;
   for (const file of readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql"))) {
-    const sql = stripSqlNoise(readFileSync(join(MIGRATIONS_DIR, file), "utf8"));
-    for (const m of sql.matchAll(re)) {
-      const name = m[1].toLowerCase();
+    const sql = readFileSync(join(MIGRATIONS_DIR, file), "utf8");
+    for (const name of publicTableNames(sql)) {
       if (NOT_TABLE_NAMES.has(name)) continue;
       const list = out.get(name) ?? [];
       if (!list.includes(file)) list.push(file);

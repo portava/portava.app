@@ -208,7 +208,11 @@ describe("census-media §44.18 — 3364: no client role writes pulse_geo_tags", 
 
   it("G4-5 — the rollback round-trips byte-identically on both shapes, never widens, and deletes the ledger row", () => {
     // Tree shape: the database as it stands, rolled back and re-applied.
+    const before = snaps(exec(SNAPSHOT))[0];
     const tree = snaps(exec(`BEGIN;
+      ${unwrapped(ROLLBACK)}
+      GRANT INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON public.pulse_geo_tags TO anon, authenticated;
+      ${unwrapped(MIGRATION)}
       INSERT INTO public.schema_migration_ledger (filename, checksum, applied_by, notes)
         VALUES ('${LEDGER_NAME}', 'test', 'manual', 'pulseGeoTagsWriteBoundary.db.test.ts') ON CONFLICT (filename) DO NOTHING;
       ${SNAPSHOT}
@@ -246,6 +250,6 @@ describe("census-media §44.18 — 3364: no client role writes pulse_geo_tags", 
     assert.deepEqual(back.clientWrites, pre.clientWrites, "…and never widens: no TRUNCATE, REFERENCES or TRIGGER comes back");
 
     // The database is untouched by this test.
-    assert.deepEqual(snaps(exec(SNAPSHOT))[0], { ...now, ledger: 0 });
+    assert.deepEqual(snaps(exec(SNAPSHOT))[0], before);
   });
 });

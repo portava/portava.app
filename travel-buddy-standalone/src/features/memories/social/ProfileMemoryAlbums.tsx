@@ -1,3 +1,5 @@
+import { PostReferenceCover } from '../../../components/PostReferenceCard.tsx';
+import { POST_REFERENCE_MEDIA_TYPE } from '../../../services/postDestinations.ts';
 /**
  * ProfileMemoryAlbums — a user's `memories` albums on their profile (HM-F14).
  *
@@ -12,7 +14,7 @@
  * those are passport entries, these are Memory albums — different tables with
  * different ids — and each opens its own screen.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { BookImage } from 'lucide-react-native';
@@ -25,31 +27,39 @@ type State =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; memories: Memory[]; nextCursor: string | null; loadingMore: boolean; moreError: string | null };
 
-export function ProfileMemoryAlbums({ userId }: { userId: string }) {
+export type MemoryAlbumReader = (cursor: string | null) => ReturnType<typeof getUserMemories>;
+export function ProfileMemoryAlbums({ userId, readPage }: { userId: string; readPage?: MemoryAlbumReader }) {
   const [state, setState] = useState<State>({ kind: 'loading' });
+  const revision = useRef(0);
+  const latestUser = useRef(userId); latestUser.current = userId;
+  const fetchPage = useCallback((cursor: string | null) => readPage ? readPage(cursor) : getUserMemories(userId, cursor), [userId, readPage]);
 
   const load = useCallback(async () => {
+    const epoch = ++revision.current;
     setState({ kind: 'loading' });
-    const res = await getUserMemories(userId, null);
+    const res = await fetchPage(null);
+    if (revision.current !== epoch || latestUser.current !== userId) return;
     setState(res.ok
       ? { kind: 'ready', memories: res.memories, nextCursor: res.nextCursor, loadingMore: false, moreError: null }
       : { kind: 'error', message: 'Memories could not be loaded right now.' });
-  }, [userId]);
+  }, [userId, fetchPage]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); return () => { revision.current++; }; }, [load]);
 
   const more = useCallback(async () => {
     if (state.kind !== 'ready' || !state.nextCursor || state.loadingMore) return;
     const cursor = state.nextCursor;
+    const epoch = revision.current;
     setState({ ...state, loadingMore: true, moreError: null });
-    const res = await getUserMemories(userId, cursor);
+    const res = await fetchPage(cursor);
+    if (revision.current !== epoch || latestUser.current !== userId) return;
     setState((prev) => {
       if (prev.kind !== 'ready') return prev;
       if (!res.ok) return { ...prev, loadingMore: false, moreError: 'More memories could not be loaded.' };
       const seen = new Set(prev.memories.map((m) => m.id));
       return { kind: 'ready', memories: [...prev.memories, ...res.memories.filter((m) => !seen.has(m.id))], nextCursor: res.nextCursor, loadingMore: false, moreError: null };
     });
-  }, [state, userId]);
+  }, [state, userId, fetchPage]);
 
   return (
     <View style={s.wrap} testID="profile-memory-albums">
@@ -72,7 +82,7 @@ export function ProfileMemoryAlbums({ userId }: { userId: string }) {
             const cover = m.cover?.mediaUrl ?? m.items?.[0]?.mediaUrl ?? null;
             return (
               <Pressable key={m.id} style={s.card} onPress={() => router.push(`/memory/${m.id}` as never)} accessibilityRole="button" testID={`profile-memory-${m.id}`}>
-                {cover ? <CachedImage source={{ uri: cover }} style={s.cover} /> : (
+                {(m.cover?.mediaType ?? m.items?.[0]?.mediaType) === POST_REFERENCE_MEDIA_TYPE ? <View style={s.cover}><PostReferenceCover uri={cover} /></View> : cover ? <CachedImage source={{ uri: cover }} style={s.cover} /> : (
                   <View style={[s.cover, s.coverEmpty]}><BookImage size={22} color={color.mute} /></View>
                 )}
                 <Text style={s.title} numberOfLines={1}>{m.title || 'Untitled memory'}</Text>

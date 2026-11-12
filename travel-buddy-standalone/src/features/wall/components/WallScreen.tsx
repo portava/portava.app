@@ -19,13 +19,14 @@
  */
 
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
+import { AppState, View, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { color } from '../../../theme/tokens.ts';
 import { WallHeader } from './WallHeader.tsx';
 import { FeedModeSwitcher } from './FeedModeSwitcher.tsx';
 import { WallFeed } from './WallFeed.tsx';
 import { LiveForYouStrip } from './LiveForYouStrip.tsx'; import { WallMomentsStrip } from './WallMomentsStrip.tsx';
+import { PostTakeover } from '../../../components/PostTakeover.tsx';
 import { QuickMediaRow, type QuickMediaEntry } from './QuickMediaRow.tsx';
 import { useWallFeed } from '../hooks/useWallFeed.ts';
 import { useLiveForYou } from '../hooks/useLiveForYou.ts';
@@ -34,6 +35,8 @@ import { useQuickMedia } from '../hooks/useQuickMedia.ts';
 import { trackFeedOpen, trackModeSelect } from '../services/wallAnalytics.ts';
 import type { ResolvedWallIntent } from '../services/wallSessionIntent.ts';
 import type { StructuredIntent, WallMode } from '../types/wallProjection.ts';
+import { useInputAccountEpoch } from '../../../platform/input-assistance/hooks/useInputAccountEpoch.ts';
+import { WallActionContext, type WallActionOptions } from './WallActionContext.tsx';
 
 function intentLabelOf(intent: StructuredIntent | null, fallback: string | null): string | null {
   if (!intent) return fallback;
@@ -42,6 +45,8 @@ function intentLabelOf(intent: StructuredIntent | null, fallback: string | null)
 }
 
 export interface WallScreenProps {
+  active?: boolean;
+  openPlanPicker?: WallActionOptions['openPlanPicker'];
   city?: string | null;
   topInset?: number;
   /** Live For You feature gate — the strip idles when false (spec §4/§34). */
@@ -53,18 +58,31 @@ export interface WallScreenProps {
   quickMedia?: QuickMediaEntry[];
 }
 
-export function WallScreen({
+export function WallScreen(props: WallScreenProps) {
+  const epoch = useInputAccountEpoch();
+  return <WallScreenForAccount key={epoch} {...props} />;
+}
+
+function WallScreenForAccount({
+  active = true,
   city,
   topInset = 0,
   liveEnabled = true,
   quickMedia,
+  openPlanPicker,
 }: WallScreenProps) {
+  const actions = React.useMemo(() => ({ openPlanPicker }), [openPlanPicker]);
+  const [foreground, setForeground] = React.useState(AppState.currentState !== 'background' && AppState.currentState !== 'inactive');
+  React.useEffect(() => { const sub = AppState.addEventListener('change', state => setForeground(state === 'active')); return () => sub.remove(); }, []);
+  const visible = active && foreground;
+  const [quickPostId, setQuickPostId] = React.useState<string | null>(null);
   const [mode, setMode] = React.useState<WallMode>('for_you');
 
+  React.useEffect(() => { if (!visible) setQuickPostId(null); }, [visible]);
   const intent = useWallSessionIntent();
   const feed = useWallFeed(mode, intent.intentText);
-  const live = useLiveForYou({ enabled: liveEnabled });
-  const quick = useQuickMedia({ enabled: quickMedia === undefined });
+  const live = useLiveForYou({ enabled: liveEnabled && visible });
+  const quick = useQuickMedia({ enabled: visible && quickMedia === undefined });
   const quickEntries = quickMedia ?? quick.entries;
 
   // Feed open (once).
@@ -96,12 +114,7 @@ export function WallScreen({
     <>
       <QuickMediaRow
         entries={quickEntries}
-        // Open lands in the canonical media viewer for the person's newest
-        // item (the projection is never the object, spec §24); an entry with
-        // no canonical post falls back to the media home.
-        onOpen={(entry) =>
-          router.push((entry.postId ? `/media-viewer/${entry.postId}` : '/media') as never)
-        }
+        onOpen={entry => { if (entry.postId) setQuickPostId(entry.postId); else router.push('/media' as never); }}
       />
       <LiveForYouStrip
         items={live.items}
@@ -113,7 +126,7 @@ export function WallScreen({
   );
 
   return (
-    <View style={[s.root, { paddingTop: topInset }]} testID="wall-screen">
+    <WallActionContext.Provider value={actions}><View style={[s.root, { paddingTop: topInset }]} testID="wall-screen">
       <WallHeader
         city={city}
         intentActive={intent.active}
@@ -141,7 +154,8 @@ export function WallScreen({
         onHide={feed.hide}
         ListHeaderComponent={header}
       />
-    </View>
+      {quickPostId && visible && <PostTakeover postId={quickPostId} onClose={() => setQuickPostId(null)} />}
+    </View></WallActionContext.Provider>
   );
 }
 

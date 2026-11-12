@@ -1,3 +1,11 @@
+jest.mock('../../lib/supabase.ts', () => {
+  const listeners = new Set();
+  return { isSupabaseConfigured: true, supabase: { auth: { listeners, onAuthStateChange: (listener: unknown) => {
+    listeners.add(listener); return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } };
+  } } } };
+});
+import { seedObservedOwnerSession, disposeObservedOwnerSession } from '../../services/__tests__/observedOwnerSessionFixture.ts';
+import { setDiscoveryViewerFromSession } from '../../services/discoveryViewerScope.ts';
 /**
  * SaveToCollectionSheet — verifies the bottom sheet is wrapped in the
  * canonical keyboard-avoiding structure (KeyboardAvoidingView with
@@ -11,6 +19,7 @@ import { SaveToCollectionSheet } from '../SaveToCollectionSheet.tsx';
 
 jest.mock('../../services/collections.ts', () => ({
   ...jest.requireActual('../../services/collections.ts'),
+  checkSaved: jest.fn(async () => ({ ok: true, saved: false, collectionIds: [] })),
   readCollections: jest.fn(async () => ({ ok: true, data: [] })),
   createCollection: jest.fn(async () => null),
   saveItem: jest.fn(async () => undefined),
@@ -34,5 +43,8 @@ it('wraps the sheet body in a KeyboardAvoidingView', async () => {
   const kavs = tr.root.findAllByType(KeyboardAvoidingView);
   expect(kavs.length).toBe(1);
   expect(kavs[0].props.behavior).toBe(expectedBehavior);
-  await tr.unmount();
+  await act(async () => { tr.unmount(); });
 });
+
+beforeEach(() => { setDiscoveryViewerFromSession('owner-a'); seedObservedOwnerSession('owner-a', 'session-a'); });
+afterEach(() => { disposeObservedOwnerSession(); setDiscoveryViewerFromSession(null); });

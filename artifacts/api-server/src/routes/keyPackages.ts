@@ -1,9 +1,9 @@
 /**
  * KeyPackages — E-1 MLS key package pool management.
  *
- * KeyPackages are one-shot: each is consumed when a new MLS group is created
- * with this device as a recipient. The client maintains a pool (default 10)
- * and refills when inventory drops below a threshold.
+ * KeyPackages are one-shot. Native clients retain one matching private pending
+ * package and replenish after a Welcome has committed. Publication is atomic
+ * and idempotent even after consumption (migration 4014).
  *
  * Routes:
  *   POST /me/devices/:deviceId/key-packages        — upload a batch
@@ -50,76 +50,23 @@ router.post("/me/devices/:deviceId/key-packages", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "service client unavailable"); return; }
 
-  // Verify device belongs to this user
-  const { data: device } = await sc
-    .from("devices")
-    .select("id, key_package_count")
-    .eq("id", deviceId)
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (!device) {
-    sendError(res, "not_found", "Device not found");
-    return;
+  if (!keyPackages.every((value) => typeof value === "string" && value.length >= 4 && value.length <= 65536 && /^[A-Za-z0-9_+/=-]+$/.test(value))) {
+    sendError(res, "invalid_payload", "KeyPackages must be base64-encoded public packages"); return;
   }
-
-  // Insert each KeyPackage
-  const rows = (keyPackages as string[]).map((kpB64) => ({
-    device_id: deviceId,
-    key_package_b64: kpB64,
-  }));
-
-  const { error: insertError } = await sc.from("key_packages").insert(rows);
-  if (insertError) {
-    req.log.error({ err: insertError }, "key-packages: insert failed");
-    sendError(res, "db_error", "Failed to store KeyPackages", { exposeDetail: true });
-    return;
+  const { data, error } = await sc.rpc("publish_key_packages", {
+    p_owner_id: user.id, p_device_id: deviceId, p_packages: keyPackages,
+  });
+  if (error) {
+    if (error.code === "42501") { sendError(res, "not_found", "Device not found"); return; }
+    if (error.code === "22023" || error.code === "54000") { sendError(res, "invalid_payload", "Invalid key package batch or pool capacity exceeded"); return; }
+    req.log.error({ code: error.code }, "key-packages: atomic publication failed");
+    sendError(res, "db_error", "Failed to store KeyPackages"); return;
   }
-
-  // ── THE POOL COUNTER IS WHAT MAKES THE DEVICE REACHABLE ────────────────────
-  // This update was issued blind: no `.select()`, no `{ error }`. supabase-js
-  // RESOLVES on a database error, so a counter that never advanced looked
-  // exactly like one that did, and the route answered HTTP 201
-  // `{ totalPool: <the number it hoped for> }`.
-  //
-  // devices.key_package_count is not decoration. GET
-  // /users/:userId/key-packages/consume selects the target's device with
-  // `.gt("key_package_count", 0)`, so a device whose counter stayed at 0 is
-  // INVISIBLE to every peer trying to start an E2EE thread with this user —
-  // while its key_packages rows sit in the table, uploaded and unusable. The
-  // peer is told "No KeyPackages available for this user", the owner was told
-  // their pool is full, and nothing in either answer points at the counter.
-  //
-  // A zero-row match is the same outcome by a different cause (the device row
-  // disappeared between the ownership read above and this write), so it is
-  // refused too.
-  const newCount = ((device as any).key_package_count ?? 0) + keyPackages.length;
-  const { data: countedRows, error: countErr } = await sc
-    .from("devices")
-    .update({ key_package_count: newCount })
-    .eq("id", deviceId)
-    .select("id");
-
-  if (countErr || !countedRows || (countedRows as any[]).length === 0) {
-    // The KeyPackages themselves are already stored; only the counter is behind,
-    // so this is reported rather than rolled back. The caller must know the
-    // upload did not complete — a client that believes its pool is full will not
-    // refill, and the device stays unreachable until something else moves the
-    // counter.
-    req.log.error(
-      { err: countErr, deviceId, uploaded: keyPackages.length, matched: (countedRows as any[] | null)?.length ?? 0 },
-      "key-packages: pool counter update did not land — device will be invisible to consume despite stored KeyPackages",
-    );
-    sendError(
-      res,
-      "db_error",
-      "KeyPackages were stored but the device pool counter could not be updated",
-      { exposeDetail: true },
-    );
-    return;
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row || !Number.isSafeInteger(row.uploaded) || !Number.isSafeInteger(row.total_pool) || row.uploaded < 0 || row.total_pool < 0) {
+    sendError(res, "db_error", "KeyPackage publication was not confirmed"); return;
   }
-
-  res.status(201).json({ uploaded: keyPackages.length, totalPool: newCount });
+  res.status(201).json({ uploaded: row.uploaded, totalPool: row.total_pool });
 });
 
 // ── GET /me/devices/:deviceId/key-packages/inventory ─────────────────────────
@@ -205,7 +152,7 @@ router.get("/users/:userId/key-packages/consume", async (req, res) => {
   // Consume one KeyPackage ATOMICALLY (oldest first) + decrement the pool count.
   // A prior SELECT-then-DELETE let two concurrent consumers receive the SAME
   // one-shot key (MLS key reuse); consume_key_package (migration 2177) claims a
-  // single row with FOR UPDATE SKIP LOCKED so concurrent callers never collide.
+  // device row before either publication or consumption; the ledger survives consumption.
   const { data: consumed, error: consumeErr } = await sc.rpc("consume_key_package", {
     p_device_id: (device as any).id,
   });

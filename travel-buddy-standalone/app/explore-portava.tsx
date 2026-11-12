@@ -102,7 +102,7 @@ export const SECTIONS: DirectorySection[] = [
       { key: 'active-trip',      label: 'Active Trip',               Icon: Navigation,   iconColor: '#FF4D2E', route: '/(tabs)/trips' },
       { key: 'trip-calendar',    label: 'Trip Calendar',             Icon: CalendarDays, iconColor: '#2563EB', disabled: true },
       { key: 'trip-map',         label: 'Trip Map',                  Icon: Map,          iconColor: '#059669', disabled: true },
-      { key: 'saved-places',     label: 'Saved Places',              Icon: Bookmark,     iconColor: '#D4A017', route: '/saved' },
+      { key: 'saved-places',     label: 'Saved Places',              Icon: Bookmark,     iconColor: '#D4A017', route: '/saved-places' },
       { key: 'boarding-passes',  label: 'Boarding Passes',           Icon: CreditCard,   iconColor: '#4F46E5', disabled: true },
       { key: 'trip-invitations', label: 'Trip Invitations',          Icon: MailOpen,     iconColor: '#0891B2', route: '/(tabs)/trips' },
       { key: 'trip-requests',    label: 'Trip Requests',             Icon: TicketCheck,  iconColor: '#DB2777', disabled: true },

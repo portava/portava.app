@@ -703,6 +703,11 @@ export default function SignIn() {
 
             {/* Error / notice */}
             {error  && <Text style={s.errorText}>{error}</Text>}
+            {error && mode === 'signin' ? (
+              <Pressable accessibilityRole="link" onPress={() => router.push('/(auth)/account-access')}>
+                <Text style={s.forgotLink}>Account access & appeals</Text>
+              </Pressable>
+            ) : null}
             {notice && <Text style={s.noticeText}>{notice}</Text>}
 
             {/* Primary CTA */}

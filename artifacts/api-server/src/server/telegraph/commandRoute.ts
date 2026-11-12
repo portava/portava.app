@@ -1,3 +1,4 @@
+import { publishMessageMutation } from '../../lib/telegraphOutboxDrainScheduler.js';
 /**
  * Telegraph §13.1 — `POST /api/telegraph/commands`.
  *
@@ -56,6 +57,8 @@ import {
   type TelegraphCommandResult,
 } from "../../domain/telegraph/commands/telegraphCommands.js";
 import { redactForWire } from "../../domain/telegraph/contracts/telegraphReasonCodes.js";
+import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { schemaToStamp } from "../../services/telegraph/structuredSchemas.js";
 
 const router = Router();
 const log = rootLogger.child({ route: "telegraphCommands.kernel" });
@@ -182,6 +185,15 @@ router.post(
     const nowMs = Date.now();
     const envelopePlan = isEnvelopeCommand(type) ? planEnvelopeCommand(type, params, nowMs) : null;
     if (envelopePlan && !envelopePlan.ok) { sendError(res, "invalid_payload", envelopePlan.message); return; }
+    // The command bus writes the same envelopes as the dedicated doors. A
+    // named unsupported schema must fail before a write (or burst allowance).
+    let schemaId: string | null = null;
+    const structuredKind = envelopePlan?.ok ? envelopePlan.kind : type === "CREATE_COORDINATION_SESSION" ? "COORDINATION_SESSION" : null;
+    if (structuredKind && await isFlagEnabled(sc, "telegraph_structured_schemas_enabled")) {
+      const stamp = schemaToStamp({ kind: structuredKind }, body["schema"]);
+      if (!stamp.ok) { res.status(400).json({ error: "invalid_payload", message: stamp.error, supported: stamp.supported }); return; }
+      schemaId = stamp.schemaId;
+    }
     if (GUARDED_WRITE_COMMANDS.has(type) && (await refuseGuardedWrite(res, sc, type, conversationId, user.id, textOfPayload(body)))) return;
     /**
      * §13.1 `CREATE_COORDINATION_SESSION`, handled before the switch because
@@ -210,6 +222,8 @@ router.post(
         planObjectId: typeof params["planObjectId"] === "string" ? (params["planObjectId"] as string) : null,
         note: typeof params["note"] === "string" ? (params["note"] as string) : null,
         idempotencyKey: envelopeKey || paramKey,
+        schemaId,
+        now: new Date(nowMs),
         // §14.3's window is not applied here. This endpoint's membership check
         // above is the gate, and the idempotency lookup reads the caller's own
         // conversation; narrowing it by a window the caller has not been handed
@@ -259,7 +273,7 @@ router.post(
       const written = await writeThreadEnvelope(sc, {
         threadId: conversationId,
         senderId: user.id,
-        envelope: envelopePlan.envelope,
+        envelope: schemaId ? { ...(envelopePlan.envelope as Record<string, unknown>), schema: schemaId } : envelopePlan.envelope,
         msgType: envelopePlan.msgType,
         subtype: envelopePlan.subtype,
         nowMs,
@@ -387,7 +401,7 @@ async function unsendMessage(
   // §13.2 `message.unsent`, after the write. The outbox trigger has already
   // written the durable event inside the same transaction as the UPDATE; this
   // is the realtime nudge, and it carries no body because there is none.
-  void publishToThread(sc, conversationId, {
+  void publishMessageMutation(sc, conversationId, {
     type: "message.unsent",
     payload: { messageId, unsentAt, senderId: userId },
   }, { excludeUserId: userId });

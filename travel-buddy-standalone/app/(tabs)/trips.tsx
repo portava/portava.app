@@ -1,3 +1,5 @@
+import { useTripWindowClock } from '../../src/hooks/useTripWindowClock.ts';
+import { tripWindowEnded } from '../../src/lib/tripCalendar.ts';
 import React, { useState, useCallback } from 'react';
 import Animated from 'react-native-reanimated';
 import { useCollapsingHeader } from '../../src/hooks/useCollapsingHeader';
@@ -197,7 +199,9 @@ function InviteCard({ invite, onDone }: { invite: TripInvite; onDone: () => void
 function PendingInvitesSection({ onAccepted }: { onAccepted: () => void }) {
   const { invites, reload } = usePendingTripInvites();
 
-  if (!invites.length) return null;
+  const now = useTripWindowClock(invites);
+  const currentInvites = invites.filter(invite => !tripWindowEnded(invite, now));
+  if (!currentInvites.length) return null;
 
   async function handleDone() {
     await reload();
@@ -207,7 +211,7 @@ function PendingInvitesSection({ onAccepted }: { onAccepted: () => void }) {
   return (
     <View style={styles.inviteSection}>
       <Text style={styles.inviteSectionTitle}>Trip Invites</Text>
-      {invites.map((inv) => (
+      {currentInvites.map((inv) => (
         <InviteCard key={inv.tripId} invite={inv} onDone={handleDone} />
       ))}
     </View>
@@ -219,7 +223,7 @@ type TripsTab = 'trips' | 'events';
 function TripsScreen() {
   const { configured, isAuthed } = useSession();
   const live = configured && isAuthed;
-  const { data: realTrips, loading, error, reload } = useMyTrips();
+  const { data: realTrips, loading, error, reload } = useMyTrips({ enabled: live });
   const { meetups: meetupCount } = useUnreadCounts();
   const [layoverOpen, setLayoverOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TripsTab>('trips');
@@ -282,26 +286,26 @@ function TripsScreen() {
   // (even empty) always wins over the snapshot so stale trips are never sticky.
   const [tripsLoadedOnce, setTripsLoadedOnce] = useState(false);
   React.useEffect(() => {
-    if (!loading && !tripsLoadedOnce) setTripsLoadedOnce(true);
-  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (live && !loading && !tripsLoadedOnce) setTripsLoadedOnce(true);
+  }, [live, loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Use snapshot only while the initial load is in-flight. Once any response
   // arrives (even empty) live data always wins — no stale trips left on screen.
-  const displayTrips = tripsLoadedOnce ? realTrips : (tripsSnapshot ?? realTrips);
+  const tripSource = tripsLoadedOnce ? realTrips : (tripsSnapshot ?? realTrips);
+  const now = useTripWindowClock(tripSource);
+  const displayTrips = tripSource.filter(trip => !tripWindowEnded(trip, now));
 
   useFocusEffect(useCallback(() => {
     postCompassFrontloadEvent({ eventType: 'navigation', screen: 'trips' }).catch(() => {});
   }, []));
 
-  React.useEffect(() => { if (live) reload(); }, [live, reload]);
-
   // Persist trip list to snapshot after each successful load.
   // Save even on empty arrays so a genuinely-empty list clears the old snapshot.
   React.useEffect(() => {
-    if (!loading && !error) {
+    if (live && !loading && !error) {
       saveTripsSnapshot(realTrips);
     }
-  }, [realTrips, loading, error, saveTripsSnapshot]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [live, realTrips, loading, error, saveTripsSnapshot]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Perf timing: before first load, fire when snapshot has data;
   // after first load, fire only when live data is present.
@@ -475,6 +479,7 @@ function TripCardItem({ tr, onPickTrip }: { tr: any; onPickTrip?: (tripId: strin
       destinationCountry={tr.destinationCountry ?? null}
       startDate={tr.startDate ?? null}
       endDate={tr.endDate ?? null}
+      timezone={tr.timezone ?? null}
       status={tr.status}
       coverUrl={tr.coverUrl ?? null}
       onPress={() => (onPickTrip ? onPickTrip(tr.id) : router.push(`/trip/${tr.id}`))}

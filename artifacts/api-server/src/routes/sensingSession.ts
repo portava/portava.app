@@ -3,7 +3,7 @@
  * that carries an identity, and the place CONSENT is checked.
  *
  *   POST /v1/sensing/session        (Authorization: Bearer <account token>)
- *     → 201 { credential, rotationEpoch, expiresAt, purposeScopes }
+ *     → 201 { credential, rotationEpoch, rotationPeriodSeconds, expiresAt, purposeScopes }
  *
  * ── WHAT WAS MISSING ─────────────────────────────────────────────────────────
  * The device transport (travel-buddy-standalone/src/services/sensing/
@@ -145,6 +145,7 @@ router.post(
     return res.status(201).json({
       credential,
       rotationEpoch: rotationEpochFor(nowMs),
+      rotationPeriodSeconds: SENSING_ANON_POLICY_V1.credential.rotationPeriodSeconds,
       expiresAt: built.row.expires_at,
       purposeScopes: built.row.purpose_scopes,
     });

@@ -90,7 +90,7 @@ function makeClient(tables: Record<string, Row[]>, opts: Opts = {}) {
       const filters: Array<(r: Row) => boolean> = [];
       let single = false;
       const chain: any = {
-        select: () => chain,
+        select: () => chain, limit: () => chain,
         eq: (col: string, val: any) => { filters.push((r) => r[col] === val); return chain; },
         in: (col: string, vals: any[]) => { filters.push((r) => vals.includes(r[col])); return chain; },
         is: (col: string, val: any) => { filters.push((r) => (r[col] ?? null) === val); return chain; },
@@ -100,8 +100,8 @@ function makeClient(tables: Record<string, Row[]>, opts: Opts = {}) {
         then: (onF: any, onR: any) => Promise.resolve(settle()).then(onF, onR),
       };
       function settle() {
-        const rows = (tables[table] ?? []).filter((r) => filters.every((f) => f(r)));
-        return { data: single ? rows[0] ?? null : rows, error: null };
+        const rows = (tables[table] ?? []).map(r=>table === "places" ? {moderation_status:"visible",merged_into_place_id:null,...r}:r).filter((r) => filters.every((f) => f(r)));
+        return { data: single ? rows[0] ?? null : rows, error: null, count:rows.length };
       }
       return chain;
     },

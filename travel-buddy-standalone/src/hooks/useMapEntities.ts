@@ -72,7 +72,9 @@
  * contract for surfaces that have migrated. Each entity's `payload` is its
  * MapObject, so a component can migrate incrementally without a second fetch.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTripWindowClock } from './useTripWindowClock.ts';
+import { tripWindowEnded, type TripWindow } from '../lib/tripCalendar.ts';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MapEntity, ToggleableEntityType } from '../types/mapTypes.ts';
 import { mapObjectsToEntities } from '../types/mapTypes.ts';
 import type { MapObject, MapObjectKind } from '../types/mapObjects.ts';
@@ -939,9 +941,12 @@ export function useMapEntities(opts: {
     void doFetch();
   }, [doFetch]);
 
+  const windows = useMemo(() => objects.flatMap(obj => obj.kind === 'trip_stop' && obj.payload ? [{ ...(obj.payload as TripWindow), expiresAt: obj.expiresAt }] : []), [objects]);
+  const now = useTripWindowClock(windows);
+  const expired = new Set(objects.filter(obj => obj.kind === 'trip_stop' && obj.payload && tripWindowEnded({ ...(obj.payload as TripWindow), expiresAt: obj.expiresAt }, now)).map(obj => obj.id));
   return {
-    entities,
-    objects,
+    entities: expired.size ? entities.filter(entity => !expired.has(entity.id)) : entities,
+    objects: expired.size ? objects.filter(obj => !expired.has(obj.id)) : objects,
     loading: loading && !hasLoaded.current,
     error,
     refresh,

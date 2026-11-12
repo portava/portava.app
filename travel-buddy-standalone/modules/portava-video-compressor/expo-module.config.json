@@ -1,6 +1,16 @@
 {
-  "platforms": ["ios"],
+  "platforms": [
+    "ios",
+    "android"
+  ],
   "apple": {
-    "modules": ["PortavaVideoCompressorModule"]
+    "modules": [
+      "PortavaVideoCompressorModule"
+    ]
+  },
+  "android": {
+    "modules": [
+      "com.portava.media.compression.PortavaVideoCompressorModule"
+    ]
   }
 }

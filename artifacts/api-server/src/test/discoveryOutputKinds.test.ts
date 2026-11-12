@@ -37,6 +37,7 @@ const trailRow = (id: string, createdMsAgo: number): Row => ({
 
 function trailWorld(): Record<string, Row[]> {
   return {
+    discovery_places: [{ id: P.TRAIL_MEMBER, status: 'active' }],
     feature_flags: [flagRow("discovery_output_kinds_enabled", true)],
     trails: [trailRow(T_OLD, 90 * 86_400_000), trailRow(T_NEW, 86_400_000)],
     content_trails: [{ trail_id: T_OLD, source_type: "place", source_id: P.TRAIL_MEMBER, relationship: "signal", signal: "rooftop", created_at: iso(1) }],
@@ -94,7 +95,8 @@ describe("DC-01 — Trails, Shared Moments and emerging discoveries, ranked by P
     assert.deepEqual(result.items, []);
     assert.equal(result.status, "unavailable");
     assert.equal(result.rankedBy, "none");
-    assert.equal(result.unavailable, "profiles.standing");
+    // The shared loader now refuses unreadable profiles before ranking begins.
+    assert.equal(result.unavailable, "shared_moment_memberships");
     assert.deepEqual(db.writes, []);
   });
 

@@ -1,3 +1,5 @@
+import { PostReferenceCover } from './PostReferenceCard.tsx';
+import { POST_REFERENCE_MEDIA_TYPE } from '../services/postDestinations.ts';
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator,
@@ -55,7 +57,7 @@ export function MemoriesStrip({ limit = 8 }: MemoriesStripProps) {
             style={styles.card}
             onPress={() => router.push(`/memory/${m.id}` as any)}
           >
-            <DisplayMediaImage
+            {m.cover?.mediaType === POST_REFERENCE_MEDIA_TYPE ? <View style={styles.cover}><PostReferenceCover uri={m.cover?.mediaUrl} /></View> : <DisplayMediaImage
               uri={m.cover?.mediaUrl}
               width={CARD_W}
               height={80}
@@ -63,7 +65,7 @@ export function MemoriesStrip({ limit = 8 }: MemoriesStripProps) {
               fallbackIcon={<BookImage size={22} color={color.onInk} />}
               fallbackBg={color.deep}
               alt={m.title ?? 'Memory'}
-            />
+            />}
             <View style={styles.cardBody}>
               <Text style={styles.cardTitle} numberOfLines={1}>
                 {m.title ?? 'Untitled Memory'}

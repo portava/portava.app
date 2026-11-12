@@ -1,3 +1,7 @@
+import { usePrivateSurfaceKey } from '../hooks/usePrivateSurfaceKey.ts';
+import { useRecordingStampDraft } from '../features/capture-stamps/useRecordingStampDraft.ts';
+import { RecordingStampOption } from '../features/capture-stamps/RecordingStamp.tsx';
+import { beginCaptureSession, bindCameraRecording } from '../features/capture-stamps/recordingStamp.ts';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, TextInput,
@@ -163,22 +167,30 @@ export function PulseFilterSheet({
 }
 
 /* ── Unified post composer ── */
-export function UnifiedPostComposer({
-  onClose,
-  onSuccess,
-  openCameraOnMount = false,
-  initialPlace = null,
-  initialBucket = null, tripId = null,
-}: {
+type UnifiedPostComposerProps = {
   onClose: () => void;
   onSuccess?: () => void;
   /** When true, the camera launches immediately on mount (native only). */
   openCameraOnMount?: boolean;
   /** Pre-selected place (e.g. when opened from a place page CTA). */
   initialPlace?: Place | null;
+  /** A link shared from another post; editable and unpublished until submit. */
+  initialText?: string;
   /** Bucket hint passed from a place-page bucket CTA (e.g. 'night'). */
   initialBucket?: string | null; /** Post TO this trip (the trip page's Add Post): sent as `tripId`, so the post lands in the trip's own list. The server keeps trip posts out of the public feeds, and the composer says so. */ tripId?: string | null;
-}) {
+};
+export function UnifiedPostComposer(props: UnifiedPostComposerProps) {
+  const scope = usePrivateSurfaceKey();
+  return <PostDraft key={scope} {...props} />;
+}
+function PostDraft({
+  onClose,
+  onSuccess,
+  openCameraOnMount = false,
+  initialPlace = null,
+  initialText = '',
+  initialBucket = null, tripId = null,
+}: UnifiedPostComposerProps) {
   const insets = useSafeAreaInsets();
   const { create, submitting } = usePostActions();
   const { signOut } = useSession();
@@ -189,9 +201,9 @@ export function UnifiedPostComposer({
   // upload → create lifecycle, not just the create phase.
   const [inFlight, setInFlight] = useState(false);
 
-  const [selectedType, setSelectedType] = useState<PostTypeId | null>(null);
-  const [selectedCategory, setSelectedCategory] = useState<PostCategory | null>(null);
-  const [text, setText] = useState('');
+  const [selectedType, setSelectedType] = useState<PostTypeId | null>(initialText ? 'post_update' : null);
+  const [selectedCategory, setSelectedCategory] = useState<PostCategory | null>(initialText ? resolveDefaultCategory('post_update') : null);
+  const [text, setText] = useState(initialText);
   const [placeName, setPlaceName] = useState('');
   const mentionRef = useRef<MentionInputHandle>(null);
   // Shared lock across concurrent handleSubmit() calls — prevents double-close
@@ -253,6 +265,7 @@ export function UnifiedPostComposer({
   // already provide clean state.
 
   const { pickMedia } = useMediaPicker();
+  const stamp = useRecordingStampDraft();
 
   // Auto-open camera on mount (native only). Fires exactly once.
   // If the user captures something, 'share_moment' is auto-selected and the
@@ -262,17 +275,22 @@ export function UnifiedPostComposer({
   useEffect(() => {
     if (!openCameraOnMount || didAutoOpenCamera.current || Platform.OS === 'web') return;
     didAutoOpenCamera.current = true;
+    let mounted = true;
     (async () => {
       try {
         const perm = await ImagePicker.requestCameraPermissionsAsync();
-        if (!perm.granted) return;
+        if (!mounted || !perm.granted) return;
+        const capture = await beginCaptureSession();
+        if (!mounted) { capture?.owner.invalidate(); return; }
         const result = await ImagePicker.launchCameraAsync({
           mediaTypes: ['images', 'videos'],
           quality: CAPTURE_QUALITY,
           videoMaxDuration: 60,
         });
-        if (result.canceled || !result.assets?.[0]) return;
+        if (!mounted || result.canceled || !result.assets?.[0]) { capture?.owner.invalidate(); return; }
         const asset = await normalizeForUpload(result.assets[0]); // HEIC → JPEG, oversize photos fitted, the camera's .mov labelled QuickTime
+        bindCameraRecording(capture, result.assets[0], asset);
+        stamp.select(asset);
         const mime = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
         const picked: PickedMedia = {
           uri: asset.uri,
@@ -298,6 +316,7 @@ export function UnifiedPostComposer({
         }
       } catch { /* silently show regular composer */ }
     })();
+    return () => { mounted = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally no deps — runs once on mount
 
@@ -305,7 +324,7 @@ export function UnifiedPostComposer({
     setError(null);
     const maxDuration = selectedType === 'share_highlight' ? 10 : 60;
     pickMedia({
-      title: 'Add media',
+      title: 'Add media', recordingStamp: true,
       mediaTypes: ['images', 'videos'],
       videoMaxDuration: maxDuration,
     }).then((assets) => {
@@ -314,6 +333,7 @@ export function UnifiedPostComposer({
   }
 
   function handlePickResult(asset: ImagePicker.ImagePickerAsset) {
+    stamp.select(asset);
     const mime = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
     const durationSec = asset.duration != null ? asset.duration / 1000 : null;
     const picked: PickedMedia = {
@@ -367,6 +387,10 @@ export function UnifiedPostComposer({
 
   async function handleSubmit() {
     if (!selectedType || submitting || inFlight) return;
+    if (stamp.pending) {
+      if (await stamp.finish(stamp.pending)) { onSuccess?.(); onClose(); }
+      return;
+    }
     // Acquire the shared submit lock before any async work.
     // The `submitting` flag from usePostActions only flips true inside create(),
     // AFTER the upload phase — so without this lock a rapid double-tap could
@@ -390,7 +414,12 @@ export function UnifiedPostComposer({
       let mediaUrl: string | null = null; let mediaThumbnailUrl: string | null = null;
       let mediaType: string | undefined = undefined;
       if (media) {
-        const up = await uploadMedia(media);
+        const stamped = stamp.selected;
+        if (stamp.enabled && (!stamped || stamped.uri !== media.uri)) { setError('Recording stamp unavailable. Turn it off to post this video.'); return; }
+        const up = await uploadMedia(media, stamped ? { recording: stamped, maxVideoDurationSeconds: 60 } : { maxVideoDurationSeconds: 60 }, stamped?.session.owner);
+        if (stamped && (!up.captureAccepted || !stamped.session.owner.isCurrent())) {
+          setError(up.message || 'Recording stamp upload was not accepted. Try again or turn off the stamp.'); return;
+        }
         const outcome = await handleUploadResult(up, {
           onClose: closeOnce,
           signOut,
@@ -431,8 +460,11 @@ export function UnifiedPostComposer({
         filterIntensity,
         ...locationRequestFields(locationPrivacyMode, scheduledTime),
         category: resolveCreateCategory(selectedCategory),
-      });
+      }, stamp.selected?.session.owner);
 
+      if (res.ok && res.data?.id && stamp.selected) {
+        if (!(await stamp.finish({ recording: stamp.selected, type: 'post', id: res.data.id }))) return;
+      }
       await handleSubmitResult(res, {
         onSuccess,
         onClose: closeOnce, onHeld: notifyHeldPost, // a post with a live location is held until you leave, and the sheet just closed: on the owner's iPhone camera posts "never showed" (2026-10-23)
@@ -627,11 +659,11 @@ export function UnifiedPostComposer({
                 {/* photo picker */}
                 <View style={uc.field}>
                   <Text style={uc.fieldLabel}>{photoLabel(selectedType)}</Text>
-                  <Pressable style={uc.mediaPicker} onPress={openPickerSheet} disabled={submitting}>
+                  <Pressable style={uc.mediaPicker} onPress={openPickerSheet} disabled={submitting || inFlight || !!stamp.pending}>
                     {media ? (
                       <View style={uc.mediaPreviewWrap}>
                         {media.type === 'video' ? (<View style={[uc.mediaPreview, uc.videoPreview]} accessibilityLabel="Video attached"><VideoIcon size={28} color="#fff" /><Text style={uc.videoPreviewText}>{media.duration ? `Video · ${Math.round(media.duration)}s` : 'Video'}</Text></View>) : <Image source={{ uri: media.uri }} style={uc.mediaPreview} resizeMode="cover" />}{/* an <Image> cannot draw a video: the preview was blank */}
-                        <Pressable style={uc.mediaRemove} onPress={() => setMedia(null)} hitSlop={8}>
+                        <Pressable style={uc.mediaRemove} onPress={() => { if (!stamp.pending) { stamp.select(null); setMedia(null); } }} hitSlop={8}>
                           <X size={14} color="#fff" />
                         </Pressable>
                       </View>
@@ -648,6 +680,11 @@ export function UnifiedPostComposer({
                       </View>
                     )}
                   </Pressable>
+                  {media?.type === 'video' && stamp.recording?.uri === media.uri && <RecordingStampOption selected={stamp.enabled}
+                    disabled={inFlight || !!stamp.pending} onChange={stamp.setEnabled} />}
+                  {stamp.stampError ? <><Text accessibilityRole="alert">{stamp.stampError}</Text>
+                    <Pressable accessibilityRole="button" onPress={() => void handleSubmit()}><Text>Retry recording stamp</Text></Pressable>
+                    <Pressable accessibilityRole="button" onPress={() => { onSuccess?.(); onClose(); }}><Text>Done</Text></Pressable></> : null}
                 </View>
 
                 {/* add to passport toggle — for types that make sense */}

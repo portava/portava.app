@@ -76,6 +76,8 @@ const REQUIRED_DIRS = [
  * rule, which is worse than an import.
  */
 const ALLOWED_SERVICE_IMPORTS: Record<string, string> = {
+  "services/telegraph/conversationRelationship":
+    "Telegraph's own request-scoped relationship reader, shared by capability and context projections; delegates to the canonical relationship decider without embedding another domain's policy",
   "services/groupChatHistoryBound":
     "the §14.3 window predicate the real read path applies — re-implementing it would fork an authorization rule",
   "services/passport/OpenToPlansService":

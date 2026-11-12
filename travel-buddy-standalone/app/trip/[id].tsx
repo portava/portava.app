@@ -530,7 +530,7 @@ function TripDetailScreen() {
           )}
           </ScrollView>
         </View>
-        <TripHero trip={trip} />
+        <TripHero trip={trip} timezone={realTrip.timezone} />
 
         {/* Destination city overview card — shows city/country heading + any
             trip notes as a city description; tappable to open in maps */}
@@ -599,7 +599,7 @@ function TripDetailScreen() {
             Asked once the trip is over or completed: "Did you make it to X?"
             with the two answers RECORD_OUTCOME takes. Recorded only on the
             server's word; refused by name without the kernel. */}
-        {live && trip.id && (deriveTripDisplayStatus(trip.status, trip.endDate) === 'completed' || trip.status === 'completed') ? <TripCloseoutCard tripId={trip.id} /> : null}{live && trip.id && (deriveTripDisplayStatus(trip.status, trip.endDate) === 'completed' || trip.status === 'completed') ? <TripPostTripCard tripId={trip.id} /> : null}
+        {live && trip.id && (deriveTripDisplayStatus(trip.status, trip.endDate, realTrip.timezone) === 'completed' || trip.status === 'completed') ? <TripCloseoutCard tripId={trip.id} /> : null}{live && trip.id && (deriveTripDisplayStatus(trip.status, trip.endDate, realTrip.timezone) === 'completed' || trip.status === 'completed') ? <TripPostTripCard tripId={trip.id} /> : null}
 
         {/* ── Trip Readiness — renders nothing when flag is off (null response) ── */}
         {live && trip.id ? (
@@ -649,7 +649,7 @@ function TripDetailScreen() {
 
         {/* Planning prompts don't make sense once the trip has ended — derive
             from end date rather than the (possibly stale) stored status. */}
-        {deriveTripDisplayStatus(trip.status, trip.endDate) !== 'completed' && (
+        {deriveTripDisplayStatus(trip.status, trip.endDate, realTrip.timezone) !== 'completed' && (
           <TodayNextUp nextUp={null} tripId={trip.id} action={nextBestAction} onViewPlan={scrollToPlan} />
         )}
 

@@ -82,3 +82,26 @@ describe('useWallFeed — stale-gen resolution keeps the in-flight guard', () =>
     expect(result.current.items).toHaveLength(0);
   });
 });
+
+it('coalesces refresh while busy and aborts unfinished requests on cleanup', async () => {
+  const resolvers: Array<(r: FetchWallResult) => void> = [];
+  fetchWallMock.mockImplementation(() => new Promise<FetchWallResult>(resolve => resolvers.push(resolve)));
+  const view = await renderHook(() => useWallFeed('for_you'));
+  await act(async () => { view.result.current.refresh(); view.result.current.refresh(); });
+  expect(fetchWallMock).toHaveBeenCalledTimes(1);
+  await act(async () => { resolvers[0](okResult()); });
+  expect(fetchWallMock).toHaveBeenCalledTimes(2);
+  const signal = fetchWallMock.mock.calls[1][0].signal;
+  await view.unmount(); expect(signal.aborted).toBe(true);
+  await act(async () => { resolvers[1](okResult()); });
+  expect(fetchWallMock).toHaveBeenCalledTimes(2);
+});
+it('a thrown feed request becomes retryable feedback instead of an unhandled rejection', async () => {
+  fetchWallMock.mockRejectedValueOnce(new Error('offline')).mockResolvedValue(okResult());
+  const view = await renderHook(() => useWallFeed('for_you'));
+  await waitFor(() => expect(view.result.current.error).toContain('could not load'));
+  expect(view.result.current.loading).toBe(false);
+  await act(async () => { view.result.current.refresh(); });
+  await waitFor(() => expect(view.result.current.error).toBeNull());
+  await view.unmount();
+});

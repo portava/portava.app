@@ -155,9 +155,9 @@ function specOf(state: FakeState, table: string): TableSpec {
 /** Chainable PostgREST-ish query over in-memory rows — only the operators the
  *  code under test actually uses, so an unimplemented one cannot silently pass. */
 function buildQuery(spec: TableSpec) {
-  let rows = [...(spec.rows ?? [])];
+  let rows = (spec.rows ?? []).map(row => ({ moderation_status: "visible", merged_into_place_id: null, ...row }));
   const err = spec.error ?? null;
-  const result = () => (err ? { data: null, error: err } : { data: rows, error: null });
+  const result = () => (err ? { data: null, error: err } : { data: rows, error: null, count: rows.length });
 
   const q: any = {
     select() { return q; },

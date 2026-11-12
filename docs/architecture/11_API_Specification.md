@@ -181,7 +181,7 @@ Four corollaries, each with a live example:
    `?.field === false` all convert "unknown" into the permissive answer.
 2. **Distinguish failure from emptiness in every list response.** An empty list with no failure
    marker must be a *positive statement* that the collection is empty.
-3. **Never infer terminality from a read that did not happen.** `wall.ts:407-410` derives
+3. **Never infer terminality from a read that did not happen.** `wall.ts:408-411` derives
    `followingReachedEnd` from `primary.length < CANDIDATE_FETCH`; a permission error satisfies
    `0 < 150`, so the response asserts `caughtUp: true` and the outage renders as
    *"You're all caught up."*
@@ -369,7 +369,7 @@ There is effectively none. **29** registrations sit under `/api/v1/*` — the in
 `…/claims:action`, a colon-suffixed custom method that appears nowhere else. Treat `/v1` as an
 island one unit adopted, not a scheme.
 
-`intelReadModels.ts:63-71,175-177` is the only conditional-request implementation in the tree:
+`intelReadModels.ts:64-72,162-164` is the only conditional-request implementation in the tree:
 weak `ETag` from a state-version token, `304` on a matching `If-None-Match`.
 
 ## What is NOT built, and why

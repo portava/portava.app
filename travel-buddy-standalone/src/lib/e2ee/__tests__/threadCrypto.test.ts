@@ -258,3 +258,14 @@ test('group creation failure aborts negotiation', async () => {
   assert.equal(r.ok, false);
   assert.equal(r.failure, 'group_create_failed');
 });
+
+test('a delayed legacy Welcome uses its retained private state and clears only that state', async () => {
+  reset(); state.hasSession = false;
+  const used: string[] = [];
+  const multi = { ...port, getPendingKeyPackageStates: async () => ['new-pending', 'legacy-pending'],
+    initGroupAsRecipient: async (_thread: string, _welcome: string, pending: string) => { if (pending === 'new-pending') throw new Error('different key'); return true; },
+    clearPendingKeyPackageState: async (pending?: string) => { used.push(pending!); },
+  };
+  assert.equal(await tc.joinFromWelcomeIfNeeded(multi, 'thread', [{ id: 'welcome', body: 'WELCOME', msgType: 'system', subtype: tc.E2EE_WELCOME_SUBTYPE }]), true);
+  assert.deepEqual(used, ['legacy-pending']);
+});

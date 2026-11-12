@@ -16,15 +16,38 @@
  * The caller mounts it only for the one card that should play and unmounts it
  * when that changes, which also stops the video and frees the decoder.
  */
-import React, { useState } from 'react';
-import { View, StyleSheet } from 'react-native';
+import { usePostPlaybackLayer } from '../../hooks/usePostPlaybackLayer.ts';
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { Platform, View, StyleSheet } from 'react-native';
 import { Video, ResizeMode } from 'expo-av';
 import { VolumeX } from 'lucide-react-native';
 import { useHydratedMedia } from '../../services/mediaUrl.ts';
 import { playbackUriState } from '../../services/playbackUri.ts';
 import { avatar } from '../../theme/tokens.ts';
 
-export function FeedAutoplayVideo({ uri }: { uri: string }) {
+export interface FeedAutoplayVideoHandle { pause: () => Promise<void> }
+type FeedVideoProps = { uri: string; muted?: boolean; initialPositionMillis?: number; onPositionChange?: (position: number) => void };
+export const FeedAutoplayVideo = forwardRef<FeedAutoplayVideoHandle, FeedVideoProps>(function FeedAutoplayVideo(props, ref) {
+  const layer = usePostPlaybackLayer();
+  const position = useRef({ uri: props.uri, millis: props.initialPositionMillis ?? 0 });
+  if (position.current.uri !== props.uri) position.current = { uri: props.uri, millis: props.initialPositionMillis ?? 0 };
+  const notePosition = useCallback((millis: number) => {
+    if (!layer.isCurrent() || props.uri !== position.current.uri) return;
+    position.current.millis = millis;
+    props.onPositionChange?.(millis);
+  }, [layer.isCurrent, props.uri, props.onPositionChange]);
+  return layer.allowed ? <FeedVideoDecoder key={props.uri} {...props} ref={ref} initialPositionMillis={position.current.millis} onPositionChange={notePosition} /> : null;
+});
+const FeedVideoDecoder = forwardRef<FeedAutoplayVideoHandle, FeedVideoProps>(function FeedVideoDecoder({ uri, muted = true, initialPositionMillis = 0, onPositionChange }, ref) {
+  const player = useRef<Video>(null);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const initialStatus = useRef({ positionMillis: initialPositionMillis }).current;
+  const [resuming, setResuming] = useState(Platform.OS === 'web' && initialPositionMillis > 0);
+  useImperativeHandle(ref, () => ({ pause: async () => {
+    const status = await player.current?.pauseAsync();
+    if (mounted.current && status?.isLoaded) onPositionChange?.(status.positionMillis);
+  } }), [onPositionChange]);
   const { resolved } = useHydratedMedia([uri]);
   const source = playbackUriState(uri, resolved);
   const [shownFor, setShownFor] = useState<string | null>(null);
@@ -41,25 +64,29 @@ export function FeedAutoplayVideo({ uri }: { uri: string }) {
       pointerEvents="none"
     >
       <Video
+        ref={player}
         key={playbackUri}
         source={{ uri: playbackUri }}
         style={StyleSheet.absoluteFill}
         resizeMode={ResizeMode.COVER}
-        shouldPlay
+        shouldPlay={!resuming}
         isLooping
-        isMuted
+        isMuted={muted}
         useNativeControls={false}
+        status={initialStatus}
+        onLoad={() => { if (resuming) void player.current?.setPositionAsync(initialStatus.positionMillis).then(() => { if (mounted.current) setResuming(false); }).catch(() => { if (mounted.current) setFailedFor(playbackUri); }); }}
+        onPlaybackStatusUpdate={status => { if (mounted.current && !resuming && status.isLoaded) onPositionChange?.(status.positionMillis); }}
         onReadyForDisplay={() => setShownFor(playbackUri)}
         onError={() => setFailedFor(playbackUri)}
       />
-      {shown ? (
-        <View style={s.mutedBadge} accessibilityLabel="Playing without sound. Open the post to hear it.">
+      {shown && muted ? (
+        <View style={s.mutedBadge} accessibilityLabel="Playing without sound. Tap the video to open it full screen.">
           <VolumeX size={14} color="#fff" />
         </View>
       ) : null}
     </View>
   );
-}
+});
 
 const s = StyleSheet.create({
   hidden: { opacity: 0 },

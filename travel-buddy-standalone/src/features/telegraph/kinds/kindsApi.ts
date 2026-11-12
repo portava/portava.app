@@ -8,7 +8,9 @@
  *   GET  /api/telegraph/message-kinds
  */
 import { isSupabaseConfigured } from '../../../lib/supabase.ts';
-import { freshToken } from '../../../services/apiToken.ts';
+import { captureMessagingOwnerRequest } from '../../../services/messagingOwnerRequest.ts';
+import { fetchOwnedApi } from '../../../services/ownedApiRequest.ts';
+import { telegraphIndexHeaders } from '../negotiation/clientCapabilities.ts';
 
 export const DRAWER_TABS = ['MEDIA', 'PLACES', 'PORTAVA', 'VOICE', 'GIFS', 'LINKS', 'FILES'] as const;
 export type DrawerTab = (typeof DRAWER_TABS)[number];
@@ -90,26 +92,17 @@ function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 }
 
-async function call<T>(path: string, init?: RequestInit): Promise<KindsResult<T>> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'unconfigured' };
-  const token = await freshToken();
-  if (!token) return { ok: false, error: 'unauthenticated' };
+async function call<T>(path: string, init?: {method?:string;body?:object}): Promise<KindsResult<T>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok:false, error:'unconfigured' };
+  const owner = captureMessagingOwnerRequest();
+  if (!owner) return { ok:false, error:'unauthenticated' };
   try {
-    const res = await fetch(`${apiBase()}${path}`, {
-      ...init,
-      headers: {
-        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-        Authorization: `Bearer ${token}`,
-        ...(init?.headers ?? {}),
-      },
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}) as any);
-      return { ok: false, error: String(body?.error ?? res.status), message: body?.message };
-    }
-    return { ok: true, data: (await res.json()) as T };
-  } catch (e) {
-    return { ok: false, error: 'network', message: e instanceof Error ? e.message : undefined };
+    const res = await fetchOwnedApi(path, { ...init, owner, headers: !init?.method || init.method === 'GET' ? telegraphIndexHeaders() : {} });
+    const body = await res.json();
+    if (!res.ok) return { ok:false, error:String(body?.error ?? res.status), message:body?.message };
+    return { ok:true, data:body as T };
+  } catch(e) {
+    return { ok:false, error:owner.isCurrent() ? 'network' : 'unauthenticated', message:e instanceof Error ? e.message : undefined };
   }
 }
 
@@ -118,9 +111,9 @@ export async function sendTypedMessage(
   kind: SendableKind,
   payload: unknown,
 ): Promise<KindsResult<{ id: string; msgType: string; subtype: string | null }>> {
-  return call(`/api/threads/${threadId}/typed-messages`, {
+  return call(`/api/threads/${encodeURIComponent(threadId)}/typed-messages`, {
     method: 'POST',
-    body: JSON.stringify({ kind, payload }),
+    body: { kind, payload },
   });
 }
 
@@ -129,7 +122,7 @@ export async function fetchDrawer(
   tab?: DrawerTab | null,
 ): Promise<KindsResult<DrawerResponse>> {
   const q = tab ? `?tab=${encodeURIComponent(tab)}` : '';
-  return call<DrawerResponse>(`/api/threads/${threadId}/drawer${q}`);
+  return call<DrawerResponse>(`/api/threads/${encodeURIComponent(threadId)}/drawer${q}`);
 }
 
 export async function searchThread(
@@ -139,7 +132,7 @@ export async function searchThread(
 ): Promise<KindsResult<SearchResponse>> {
   const params = new URLSearchParams({ q: query });
   if (tab) params.set('tab', tab);
-  return call<SearchResponse>(`/api/threads/${threadId}/search?${params.toString()}`);
+  return call<SearchResponse>(`/api/threads/${encodeURIComponent(threadId)}/search?${params.toString()}`);
 }
 
 /**

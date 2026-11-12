@@ -133,14 +133,14 @@ describe('consentDisclosure — device and server agree', () => {
     // foreground and on every Settings change. The property is unchanged — the
     // sensing consent is read at start AND on every re-check — but it is now one
     // read site reached from every trigger, so pin the site and each trigger.
-    const reads = src.match(/sensingCaptureDecision\(await readSensingConsent\(\)\)/g) ?? [];
+    const reads = src.match(/const read = await readSensingConsent\(\);[\s\S]*?decision = sensingCaptureDecision\(read\)/g) ?? [];
     assert.equal(reads.length, 1, 'exactly one consent read site, inside recheck()');
-    const recheckBody = src.match(/async function recheck\(\): Promise<void> \{[\s\S]*?\n  \}\n/);
+    const recheckBody = src.match(/async function recheck\([^)]*\): Promise<void> \{[\s\S]*?\n  \}\n/);
     assert.ok(recheckBody, 'recheck() found');
-    assert.match(recheckBody![0], /sensingCaptureDecision\(await readSensingConsent\(\)\)/, 'the consent is read inside recheck()');
+    assert.match(recheckBody![0], /const read = await readSensingConsent\(\);[\s\S]*?decision = sensingCaptureDecision\(read\)/, 'the consent is read inside recheck()');
     assert.doesNotMatch(src, /async function start\(/, 'no second entry point that could start capture without the read');
     assert.match(src, /\n  void recheck\(\);\n/, 'read at start: the installer runs recheck() on install');
-    assert.match(src, /AppState\.addEventListener\('change',[\s\S]*?void recheck\(\);/, 'read on every foreground');
+    assert.match(src, /AppState\.addEventListener\('change',[\s\S]*?void recheck\(true\);/, 'read on every foreground');
     assert.match(src, /onSensingConsentChange\(\(\) => \{ if \(!disposed\) void recheck\(\); \}\)/, 'read on every Settings change');
     assert.doesNotMatch(src, /getIntelConsent|consentCoversPassiveSensing|hasValidConsent/);
   });

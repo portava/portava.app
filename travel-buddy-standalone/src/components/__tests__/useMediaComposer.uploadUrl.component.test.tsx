@@ -14,7 +14,7 @@ import { TouchableOpacity } from 'react-native';
 import { render, act } from '@testing-library/react-native';
 import { fireEvent } from '@testing-library/react-native';
 import { useMediaComposer } from '../../hooks/useMediaComposer.ts';
-import type { ContentMediaPolicyKey } from '../../lib/contentMediaPolicy.ts';
+import type { ContentPolicyKey } from '../../lib/contentMediaPolicy.ts';
 import type * as ImagePickerNS from 'expo-image-picker';
 
 // NOTE: exhaustive by design — only the two permission functions are used here;
@@ -64,7 +64,7 @@ function UploadHarness({
   assetId = 'test',
   onDone,
 }: {
-  policyKey: ContentMediaPolicyKey;
+  policyKey: ContentPolicyKey;
   assetId?: string;
   onDone: (url: string | null) => void;
 }) {

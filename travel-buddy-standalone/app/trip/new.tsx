@@ -23,6 +23,7 @@ import type { CanonicalPlaceBinding } from '../../src/platform/input-assistance/
 // validation on the trip title (e.g. date-conflict explanation). A trip is not a
 // deduped entity kind, so this surfaces validation only. Degrades to nothing when
 // the (parallel-PR) endpoint is absent; never blocks or changes submit.
+import { useScreenFocused } from '../../src/hooks/useScreenFocused.ts';
 import { useCreationAssistance } from '../../src/hooks/useCreationAssistance.ts';
 import { CreationAssist, AiWritingAssist, CREATION_FIELD_IDS, reportServedTask, tripCreationServed } from '../../src/platform/input-assistance';
 // Global Input Intelligence — Phase 7 (Compass + AI). OPT-IN, provenance-marked
@@ -38,6 +39,7 @@ export default function NewTrip() {
   const { pickMedia } = useMediaPicker();
   const { configured, isAuthed } = useSession();
   const live = configured && isAuthed;
+  const focused = useScreenFocused();
   const { checkForNewStamps } = useStampToast();
 
   // ── NL draft box ──────────────────────────────────────────────────────────
@@ -65,7 +67,10 @@ export default function NewTrip() {
   const titleAssist = useCreationAssistance({
     context: 'trip_title',
     fieldId: CREATION_FIELD_IDS.tripTitle,
-    text: title,
+    // This field's deterministic rule compares dates. Title wording is used
+    // only by the separately opted-in writing action below.
+    text: '',
+    enabled: focused && live && !!(startDate || endDate),
     allowedKinds: [],
     sessionContext: {
       surface: 'trip_create',
@@ -81,7 +86,8 @@ export default function NewTrip() {
     context: 'trip_title',
     fieldId: CREATION_FIELD_IDS.tripTitle,
     text: title,
-    optedIn: titleAiOptIn,
+    optedIn: titleAiOptIn && aiWritingOn,
+    enabled: focused && live,
     city: destBinding?.city ?? null,
     draft: {
       city: destBinding?.city ?? undefined,

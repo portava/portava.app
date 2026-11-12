@@ -599,12 +599,12 @@ describe("Gates, more actions, and ranking (census-media §47)", () => {
 });
 
 describe("further arms (census-media §47)", () => {
-  it("MA7 — POST /media/:gem/save keeps hidden_gems.save_count in step and answers the count", async () => {
+  it("MA7 — POST /media/:gem/save answers the count without a racing application-level aggregate write", async () => {
     use(seed());
     const r = await call("POST", `/media/${GEM}/save`);
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.saveCount, 1, "one hidden_gem_saves row (the viewer's, idempotent)");
-    assert.equal(db.tables.hidden_gems.find((g) => g.id === GEM)!.save_count, 1, "the cached 50 follows the write");
+    assert.equal(db.tables.hidden_gems.find((g) => g.id === GEM)!.save_count, 50, "this fixture does not run 4012 triggers; the API must not overwrite their transactional counter");
   });
 
   it("MA8 — POST /media/:gem/save with the count unread: saveCount null, named, cache kept", async () => {

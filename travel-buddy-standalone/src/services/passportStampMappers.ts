@@ -60,6 +60,9 @@ export function toLegacyStamp(s: PassportStampNew): PassportStamp {
     : s.stampType === 'hidden_gem'? 'gem'
     : s.stampType === 'safe_return'? 'safe'
     : s.stampType === 'host'      ? 'host'
+    : ['safety', 'trust'].includes(s.definition?.category ?? s.stampType) ? 'safe'
+    : s.definition?.category === 'rent_buddy' || s.stampType === 'rent_buddy' ? 'host'
+    : ['social', 'community', 'trip', 'trips', 'events', 'event'].includes(s.definition?.category ?? s.stampType) ? 'plan'
     : 'city'
   ) as PassportStamp['kind'];
   const sub: string[] = [];
@@ -68,6 +71,8 @@ export function toLegacyStamp(s: PassportStampNew): PassportStamp {
   return {
     id: s.id,
     kind,
+    artworkIconKey: ({ first_step: 'Footprints', trip_planner: 'Route', first_trip_created: 'Plane', first_post: 'MessageCircle', first_postcard: 'Image' } as Record<string, string>)[s.definition?.slug ?? s.stampType],
+    rarity: s.definition?.rarity,
     label,
     sublabel: sub.join(' · ') || undefined,
     earnedAt: s.earnedAt,
@@ -116,5 +121,6 @@ export function mapStamp(r: any): PassportStampNew {
     catalogId:          r.catalog_id ?? r.catalogId ?? null,
     // Active artwork URL sourced from joined catalog row or pre-fetched batch map
     activeArtworkUrl:   r.activeArtworkUrl ?? r.active_artwork_url ?? r.universal_stamp_catalog?.active_artwork_url ?? null,
+    thumbnailUrl:       r.thumbnailUrl ?? r.thumbnail_url ?? r.universal_stamp_catalog?.thumbnail_url ?? null,
   };
 }

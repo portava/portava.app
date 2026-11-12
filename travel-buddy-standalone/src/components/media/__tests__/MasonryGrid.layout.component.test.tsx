@@ -119,8 +119,8 @@ describe('MasonryGrid — bottom clearance', () => {
     mockInsets = { top: 0, bottom, left: 0, right: 0 };
     await renderGrid();
     const content = StyleSheet.flatten(scrollView().props.contentContainerStyle);
-    expect(content.paddingBottom).toBe(NAV_BAR_FILLER_HEIGHT + bottom);
-    // The pill's top edge is 12 + 64 above insets.bottom; the last row clears it.
+    expect(content.paddingBottom).toBe(NAV_BAR_FILLER_HEIGHT + 13 + bottom);
+    // Native Jest fixture uses fontScale=2: the tab label adds 13pt to its base height.
     expect(content.paddingBottom).toBeGreaterThanOrEqual(bottom + 12 + 64);
   });
 

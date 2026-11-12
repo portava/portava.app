@@ -12,6 +12,8 @@ import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import DiscoveryHub from '../discovery.tsx';
 import { color } from '../../../src/theme/tokens';
+import { getDiscoveryCategoryCounts } from '../../../src/services/discovery';
+import { listMyTrips } from '../../../src/services/trips';
 
 const mockForYouModes: (string | undefined)[] = [];
 const mockOpenCityPicker = jest.fn();
@@ -202,6 +204,20 @@ describe('DiscoveryHub — context mode chips', () => {
     jest.clearAllMocks();
     mockForYouModes.length = 0;
     mockLocationState = { place: { city: null, country: null }, coords: null };
+  });
+
+  it('does not request category counts before a destination is known', async () => {
+    await render(<DiscoveryHub />);
+    await act(async () => {});
+    expect(getDiscoveryCategoryCounts).not.toHaveBeenCalled();
+  });
+
+  it('loads category counts once when stored filters match and skips an unused trip lookup', async () => {
+    mockLocationState = { place: { city: 'Cebu', country: 'Philippines' }, coords: { lat: 10.3, lng: 123.9 } };
+    await render(<DiscoveryHub />);
+    await act(async () => {});
+    expect(getDiscoveryCategoryCounts).toHaveBeenCalledTimes(1);
+    expect(listMyTrips).not.toHaveBeenCalled();
   });
 
   // NOTE (standalone fork): unlike the mobile tree, this screen has no

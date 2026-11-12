@@ -598,7 +598,7 @@
         },
         {
           "table": "trips",
-          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at"
+          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, end_date, timezone, status, visibility, created_at"
         },
         {
           "table": "profiles",
@@ -613,6 +613,10 @@
         {
           "table": "trips",
           "expr": "title.ilike.%zork%,destination_city.ilike.%zork%,destination_country.ilike.%zork%"
+        },
+        {
+          "table": "trips",
+          "expr": "end_date.is.null,end_date.gte.2026-09-28"
         }
       ],
       "ilikes": []
@@ -735,7 +739,7 @@
         },
         {
           "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date, end_date, timezone"
         },
         {
           "table": "profiles",
@@ -2836,9 +2840,9 @@
         "profiles",
         "profiles",
         "location_preferences",
-        "profiles",
         "profile_privacy_settings",
         "event_rsvps",
+        "profiles",
         "trips",
         "post_media",
         "location_preferences",
@@ -2939,7 +2943,7 @@
         },
         {
           "table": "trips",
-          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at"
+          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, end_date, timezone, status, visibility, created_at"
         },
         {
           "table": "trip_plan_items",
@@ -2966,10 +2970,6 @@
           "cols": "user_id, location_mode, sharing_paused, discovery_visibility"
         },
         {
-          "table": "profiles",
-          "cols": "id"
-        },
-        {
           "table": "profile_privacy_settings",
           "cols": "user_id"
         },
@@ -2978,8 +2978,12 @@
           "cols": "event_id"
         },
         {
+          "table": "profiles",
+          "cols": "id"
+        },
+        {
           "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date, end_date, timezone"
         },
         {
           "table": "post_media",
@@ -3082,6 +3086,10 @@
         {
           "table": "trips",
           "expr": "title.ilike.%zork%,destination_city.ilike.%zork%,destination_country.ilike.%zork%"
+        },
+        {
+          "table": "trips",
+          "expr": "end_date.is.null,end_date.gte.2026-09-28"
         },
         {
           "table": "profiles",
@@ -3282,9 +3290,9 @@
         "profiles",
         "profiles",
         "location_preferences",
-        "profiles",
         "profile_privacy_settings",
         "event_rsvps",
+        "profiles",
         "trips",
         "post_media",
         "location_preferences",
@@ -3385,7 +3393,7 @@
         },
         {
           "table": "trips",
-          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at"
+          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, end_date, timezone, status, visibility, created_at"
         },
         {
           "table": "trip_plan_items",
@@ -3412,10 +3420,6 @@
           "cols": "user_id, location_mode, sharing_paused, discovery_visibility"
         },
         {
-          "table": "profiles",
-          "cols": "id"
-        },
-        {
           "table": "profile_privacy_settings",
           "cols": "user_id"
         },
@@ -3424,8 +3428,12 @@
           "cols": "event_id"
         },
         {
+          "table": "profiles",
+          "cols": "id"
+        },
+        {
           "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date, end_date, timezone"
         },
         {
           "table": "post_media",
@@ -3528,6 +3536,10 @@
         {
           "table": "trips",
           "expr": "title.ilike.%zork%,destination_city.ilike.%zork%,destination_country.ilike.%zork%"
+        },
+        {
+          "table": "trips",
+          "expr": "end_date.is.null,end_date.gte.2026-09-28"
         },
         {
           "table": "profiles",
@@ -3735,7 +3747,7 @@
         },
         {
           "table": "trips",
-          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at"
+          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, end_date, timezone, status, visibility, created_at"
         },
         {
           "table": "trip_plan_items",
@@ -3846,6 +3858,10 @@
         {
           "table": "trips",
           "expr": "title.ilike.%zork\\_alice%,destination_city.ilike.%zork\\_alice%,destination_country.ilike.%zork\\_alice%"
+        },
+        {
+          "table": "trips",
+          "expr": "end_date.is.null,end_date.gte.2026-09-28"
         },
         {
           "table": "profiles",
@@ -4425,9 +4441,9 @@
         "profiles",
         "profiles",
         "location_preferences",
-        "profiles",
         "profile_privacy_settings",
         "event_rsvps",
+        "profiles",
         "trips",
         "post_media",
         "location_preferences",
@@ -4522,7 +4538,7 @@
         },
         {
           "table": "trips",
-          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at"
+          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, end_date, timezone, status, visibility, created_at"
         },
         {
           "table": "trip_plan_items",
@@ -4549,10 +4565,6 @@
           "cols": "user_id, location_mode, sharing_paused, discovery_visibility"
         },
         {
-          "table": "profiles",
-          "cols": "id"
-        },
-        {
           "table": "profile_privacy_settings",
           "cols": "user_id"
         },
@@ -4561,8 +4573,12 @@
           "cols": "event_id"
         },
         {
+          "table": "profiles",
+          "cols": "id"
+        },
+        {
           "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date, end_date, timezone"
         },
         {
           "table": "post_media",
@@ -4645,6 +4661,10 @@
         {
           "table": "trips",
           "expr": "title.ilike.%zork%,destination_city.ilike.%zork%,destination_country.ilike.%zork%"
+        },
+        {
+          "table": "trips",
+          "expr": "end_date.is.null,end_date.gte.2026-09-28"
         },
         {
           "table": "profiles",
@@ -5222,9 +5242,9 @@
         "profiles",
         "profiles",
         "location_preferences",
-        "profiles",
         "profile_privacy_settings",
         "event_rsvps",
+        "profiles",
         "trips",
         "post_media",
         "location_preferences",
@@ -5325,7 +5345,7 @@
         },
         {
           "table": "trips",
-          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at"
+          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, end_date, timezone, status, visibility, created_at"
         },
         {
           "table": "trip_plan_items",
@@ -5352,10 +5372,6 @@
           "cols": "user_id, location_mode, sharing_paused, discovery_visibility"
         },
         {
-          "table": "profiles",
-          "cols": "id"
-        },
-        {
           "table": "profile_privacy_settings",
           "cols": "user_id"
         },
@@ -5364,8 +5380,12 @@
           "cols": "event_id"
         },
         {
+          "table": "profiles",
+          "cols": "id"
+        },
+        {
           "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date, end_date, timezone"
         },
         {
           "table": "post_media",
@@ -5468,6 +5488,10 @@
         {
           "table": "trips",
           "expr": "title.ilike.%zork%,destination_city.ilike.%zork%,destination_country.ilike.%zork%"
+        },
+        {
+          "table": "trips",
+          "expr": "end_date.is.null,end_date.gte.2026-09-28"
         },
         {
           "table": "profiles",
@@ -6101,9 +6125,9 @@
         "profiles",
         "profiles",
         "location_preferences",
-        "profiles",
         "profile_privacy_settings",
         "event_rsvps",
+        "profiles",
         "trips",
         "post_media",
         "location_preferences",
@@ -6204,7 +6228,7 @@
         },
         {
           "table": "trips",
-          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at"
+          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, end_date, timezone, status, visibility, created_at"
         },
         {
           "table": "trip_plan_items",
@@ -6231,10 +6255,6 @@
           "cols": "user_id, location_mode, sharing_paused, discovery_visibility"
         },
         {
-          "table": "profiles",
-          "cols": "id"
-        },
-        {
           "table": "profile_privacy_settings",
           "cols": "user_id"
         },
@@ -6243,8 +6263,12 @@
           "cols": "event_id"
         },
         {
+          "table": "profiles",
+          "cols": "id"
+        },
+        {
           "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date, end_date, timezone"
         },
         {
           "table": "post_media",
@@ -6347,6 +6371,10 @@
         {
           "table": "trips",
           "expr": "title.ilike.%zork%,destination_city.ilike.%zork%,destination_country.ilike.%zork%"
+        },
+        {
+          "table": "trips",
+          "expr": "end_date.is.null,end_date.gte.2026-09-28"
         },
         {
           "table": "profiles",
@@ -6941,9 +6969,9 @@
         "profiles",
         "profiles",
         "location_preferences",
-        "profiles",
         "profile_privacy_settings",
         "event_rsvps",
+        "profiles",
         "trips",
         "post_media",
         "location_preferences",
@@ -7044,7 +7072,7 @@
         },
         {
           "table": "trips",
-          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at"
+          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, end_date, timezone, status, visibility, created_at"
         },
         {
           "table": "trip_plan_items",
@@ -7071,10 +7099,6 @@
           "cols": "user_id, location_mode, sharing_paused, discovery_visibility"
         },
         {
-          "table": "profiles",
-          "cols": "id"
-        },
-        {
           "table": "profile_privacy_settings",
           "cols": "user_id"
         },
@@ -7083,8 +7107,12 @@
           "cols": "event_id"
         },
         {
+          "table": "profiles",
+          "cols": "id"
+        },
+        {
           "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date, end_date, timezone"
         },
         {
           "table": "post_media",
@@ -7187,6 +7215,10 @@
         {
           "table": "trips",
           "expr": "title.ilike.%zork%,destination_city.ilike.%zork%,destination_country.ilike.%zork%"
+        },
+        {
+          "table": "trips",
+          "expr": "end_date.is.null,end_date.gte.2026-09-28"
         },
         {
           "table": "profiles",
@@ -7875,8 +7907,8 @@
         "trip_plan_items",
         "profiles",
         "location_preferences",
-        "profiles",
         "event_rsvps",
+        "profiles",
         "profile_privacy_settings",
         "post_media",
         "trips",
@@ -7990,7 +8022,7 @@
         },
         {
           "table": "trips",
-          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at"
+          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, end_date, timezone, status, visibility, created_at"
         },
         {
           "table": "profiles",
@@ -8013,12 +8045,12 @@
           "cols": "user_id, location_mode, sharing_paused, discovery_visibility"
         },
         {
-          "table": "profiles",
-          "cols": "id"
-        },
-        {
           "table": "event_rsvps",
           "cols": "event_id"
+        },
+        {
+          "table": "profiles",
+          "cols": "id"
         },
         {
           "table": "profile_privacy_settings",
@@ -8030,7 +8062,7 @@
         },
         {
           "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date, end_date, timezone"
         },
         {
           "table": "location_preferences",
@@ -8129,6 +8161,10 @@
         {
           "table": "trips",
           "expr": "title.ilike.%zork%,destination_city.ilike.%zork%,destination_country.ilike.%zork%"
+        },
+        {
+          "table": "trips",
+          "expr": "end_date.is.null,end_date.gte.2026-09-28"
         },
         {
           "table": "profiles",
@@ -8700,8 +8736,8 @@
         "trip_plan_items",
         "canonical_locations",
         "profiles",
-        "profiles",
         "event_rsvps",
+        "profiles",
         "feature_flags"
       ],
       "selects": [
@@ -8787,7 +8823,7 @@
         },
         {
           "table": "trips",
-          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at"
+          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, end_date, timezone, status, visibility, created_at"
         },
         {
           "table": "profiles",
@@ -8806,12 +8842,12 @@
           "cols": "id, handle, username, name, display_name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly"
         },
         {
-          "table": "profiles",
-          "cols": "id"
-        },
-        {
           "table": "event_rsvps",
           "cols": "event_id"
+        },
+        {
+          "table": "profiles",
+          "cols": "id"
         }
       ],
       "ors": [
@@ -8854,6 +8890,10 @@
         {
           "table": "trips",
           "expr": "title.ilike.%lis%,destination_city.ilike.%lis%,destination_country.ilike.%lis%"
+        },
+        {
+          "table": "trips",
+          "expr": "end_date.is.null,end_date.gte.2026-09-28"
         },
         {
           "table": "profiles",
@@ -9448,8 +9488,8 @@
         "trip_plan_items",
         "profiles",
         "location_preferences",
-        "profiles",
         "event_rsvps",
+        "profiles",
         "profile_privacy_settings",
         "post_media",
         "trips",
@@ -9563,7 +9603,7 @@
         },
         {
           "table": "trips",
-          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at"
+          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, end_date, timezone, status, visibility, created_at"
         },
         {
           "table": "profiles",
@@ -9582,12 +9622,12 @@
           "cols": "user_id, location_mode, sharing_paused, discovery_visibility"
         },
         {
-          "table": "profiles",
-          "cols": "id"
-        },
-        {
           "table": "event_rsvps",
           "cols": "event_id"
+        },
+        {
+          "table": "profiles",
+          "cols": "id"
         },
         {
           "table": "profile_privacy_settings",
@@ -9599,7 +9639,7 @@
         },
         {
           "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date, end_date, timezone"
         },
         {
           "table": "location_preferences",
@@ -9698,6 +9738,10 @@
         {
           "table": "trips",
           "expr": "title.ilike.%zork%,destination_city.ilike.%zork%,destination_country.ilike.%zork%"
+        },
+        {
+          "table": "trips",
+          "expr": "end_date.is.null,end_date.gte.2026-09-28"
         },
         {
           "table": "profiles",
@@ -10275,8 +10319,8 @@
         "trip_plan_items",
         "profiles",
         "location_preferences",
-        "profiles",
         "event_rsvps",
+        "profiles",
         "profile_privacy_settings",
         "post_media",
         "trips",
@@ -10390,7 +10434,7 @@
         },
         {
           "table": "trips",
-          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at"
+          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, end_date, timezone, status, visibility, created_at"
         },
         {
           "table": "profiles",
@@ -10409,12 +10453,12 @@
           "cols": "user_id, location_mode, sharing_paused, discovery_visibility"
         },
         {
-          "table": "profiles",
-          "cols": "id"
-        },
-        {
           "table": "event_rsvps",
           "cols": "event_id"
+        },
+        {
+          "table": "profiles",
+          "cols": "id"
         },
         {
           "table": "profile_privacy_settings",
@@ -10426,7 +10470,7 @@
         },
         {
           "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date, end_date, timezone"
         },
         {
           "table": "location_preferences",
@@ -10525,6 +10569,10 @@
         {
           "table": "trips",
           "expr": "title.ilike.%zork%,destination_city.ilike.%zork%,destination_country.ilike.%zork%"
+        },
+        {
+          "table": "trips",
+          "expr": "end_date.is.null,end_date.gte.2026-09-28"
         },
         {
           "table": "profiles",
@@ -10777,8 +10825,8 @@
         "profiles",
         "profiles",
         "location_preferences",
-        "profiles",
         "profile_privacy_settings",
+        "profiles",
         "event_rsvps",
         "trips",
         "post_media",
@@ -10900,7 +10948,7 @@
         },
         {
           "table": "trips",
-          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at"
+          "cols": "id, title, destination_city, destination_country, owner_id, cover_url, start_date, end_date, timezone, status, visibility, created_at"
         },
         {
           "table": "profiles",
@@ -10927,12 +10975,12 @@
           "cols": "user_id, location_mode, sharing_paused, discovery_visibility"
         },
         {
-          "table": "profiles",
-          "cols": "id"
-        },
-        {
           "table": "profile_privacy_settings",
           "cols": "user_id"
+        },
+        {
+          "table": "profiles",
+          "cols": "id"
         },
         {
           "table": "event_rsvps",
@@ -10940,7 +10988,7 @@
         },
         {
           "table": "trips",
-          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date"
+          "cols": "id, visibility, show_in_discovery, owner_id, status, start_date, end_date, timezone"
         },
         {
           "table": "post_media",
@@ -11055,6 +11103,10 @@
         {
           "table": "trips",
           "expr": "title.ilike.%zork%,destination_city.ilike.%zork%,destination_country.ilike.%zork%"
+        },
+        {
+          "table": "trips",
+          "expr": "end_date.is.null,end_date.gte.2026-09-28"
         },
         {
           "table": "profiles",

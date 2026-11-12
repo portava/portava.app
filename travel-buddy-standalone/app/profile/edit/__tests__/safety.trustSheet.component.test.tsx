@@ -223,10 +223,24 @@ describe('SafetyVerificationScreen — Trust Score sheet', () => {
       ['Your Reports', '/profile/edit/reports'],
       ['Safe Return', '/profile/edit/location'],
       ['Emergency Contacts', '/profile/edit/emergency-contacts'],
+      ['Community Guidelines', '/settings/community-guidelines'],
+      ['Restrictions & Appeals', '/appeals'],
     ]) {
       await fireEvent.press(ui.getByText(label));
       expect(router.push).toHaveBeenLastCalledWith(route);
     }
+  });
+
+  it('recovers a rejected verification read without blocking the safety tools', async () => {
+    mockGetMyProfile.mockRejectedValueOnce(new Error('Network unavailable'))
+      .mockResolvedValueOnce({ ok: true, data: makeProfile() });
+    const ui = await render(<SafetyVerificationScreen />);
+    await ui.findByText('Could not load verification status. Please try again.');
+    await fireEvent.press(ui.getByText('Community Guidelines'));
+    expect(router.push).toHaveBeenLastCalledWith('/settings/community-guidelines');
+    await fireEvent.press(ui.getByText('Retry verification status'));
+    await ui.findByText('Trust');
+    expect(ui.queryByText('Retry verification status')).toBeNull();
   });
 
   it('opens the sheet when the Trust row is tapped', async () => {

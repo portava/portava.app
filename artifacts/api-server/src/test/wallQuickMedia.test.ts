@@ -23,6 +23,7 @@ import express from "express";
 import { _setTestClient, _clearTestClient } from "../lib/http.js";
 import {
   loadQuickMediaItems,
+  loadQuickMediaRow,
   QUICK_MEDIA_WINDOW_MS,
 } from "../services/wall/WallCandidateLoaders.js";
 import wallRouter from "../routes/wall.js";
@@ -191,6 +192,14 @@ const HAPPY_LIVE: Fixture = {
 };
 
 describe("loadQuickMediaItems — the §18 data source", () => {
+  it("reports missing or unreadable author eligibility as degradation", async () => {
+    for (const fixture of [{ ...HAPPY, profiles: [] }, { ...HAPPY, throwOn: "profiles" }]) {
+      const row = await loadQuickMediaRow(fakeClient(fixture), VIEWER, { nowMs: NOW });
+      assert.deepEqual(row.items, []);
+      assert.equal(row.failed, true);
+    }
+  });
+
   it("returns a followed person's recent media published through a readable post, with the stored ref unsigned", async () => {
     const items = await loadQuickMediaItems(fakeClient(HAPPY), VIEWER, { nowMs: NOW });
     assert.equal(items.length, 1);

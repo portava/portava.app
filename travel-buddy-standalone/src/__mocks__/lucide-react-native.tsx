@@ -9,16 +9,17 @@
 import React from 'react';
 import { View } from 'react-native';
 
-// `size` is forwarded onto the stand-in View so tests can assert the size an
-// icon actually renders at. Without it no test could observe lucide sizing at
+// `size` and `color` are forwarded onto the stand-in View so tests can assert
+// actual icon sizing and contrast on the rendered surface. Without size no
+// test could observe lucide sizing at
 // all, which is how a whole action row drifted out of alignment unnoticed —
 // see components/ui/__tests__/ActionRowIcon.component.test.tsx.
 // View's prop types reject unknown props; the test renderer just records them.
 const ProbeView = View as unknown as React.ComponentType<Record<string, unknown>>;
 
 const makeIcon = (name: string) =>
-  function MockIcon({ size }: { size?: number; color?: string; [key: string]: unknown }) {
-    return <ProbeView testID={`icon-${name}`} size={size} />;
+  function MockIcon({ size, color }: { size?: number; color?: string; [key: string]: unknown }) {
+    return <ProbeView testID={`icon-${name}`} size={size} color={color} />;
   };
 
 const cache: Record<string, ReturnType<typeof makeIcon>> = {};

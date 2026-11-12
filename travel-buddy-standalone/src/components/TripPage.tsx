@@ -41,7 +41,7 @@ const TRIP_VISIBILITY_LABEL: Record<string, string> = {
 };
 
 /* ── Trip hero header ── */
-export function TripHero({ trip }: { trip: TripDetail }) {
+export function TripHero({ trip, timezone }: { trip: TripDetail; timezone?: string | null }) {
   const [addPlanOpen, setAddPlanOpen] = useState(false);
   const hasDates = !!(trip.startDate && trip.endDate);
   const dates = hasDates
@@ -49,7 +49,7 @@ export function TripHero({ trip }: { trip: TripDetail }) {
     : null;
   // Derive from end date rather than trusting the stored status column, which
   // is only recomputed on writes and can go stale once a trip's dates pass.
-  const displayStatus = deriveTripDisplayStatus(trip.status, trip.endDate);
+  const displayStatus = deriveTripDisplayStatus(trip.status, trip.endDate, timezone);
   return (
     <View style={hero.wrap}>
       <View style={hero.imageCard}>

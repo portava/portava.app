@@ -358,6 +358,8 @@ describe("aggregation — routes through the real privacy gate", () => {
 // justified by one of those five words does not belong on this list, and adding
 // it here is the visible act that makes that claim in a diff.
 const PERMITTED_REFERRERS = new Map<string, string>([
+  [join("routes", "sensingRevocation.ts"), "Explicit device-preimage revocation, no account reads, never inserts or publishes contributions."],
+  [join("lib", "sensingAtomicAdmission.ts"), "Atomic privacy-reduced contribution admission and budget; no identity is persisted."],
   [
     join("lib", "sensingAnonService.ts"),
     'the service-role bindings for "privacy-reduced sensor contributions", ' +
@@ -709,8 +711,8 @@ describe("exactly one writer, reached only through the opaque credential", () =>
       .sort();
     assert.deepEqual(
       reachers,
-      [ISSUER, WRITER].sort(),
-      "a route outside the ingest and its issuer imports the anonymous store — a second transport is a change to what census-sensing §11 authorised",
+      [ISSUER, WRITER, join("routes", "sensingRevocation.ts")].sort(),
+      "a route outside ingest, issuer and proof-based erasure imports the anonymous store — a second transport is a change to what census-sensing §11 authorised",
     );
     // WRITING means naming the table or calling a writer. Only the ingest does.
     const writers = routes
@@ -779,8 +781,8 @@ describe("exactly one writer, reached only through the opaque credential", () =>
 
   it("it walks the EXISTING ladder rather than a second copy of it", () => {
     assert.match(WRITER_CODE, /admitWithSensingSession/, "session validity + policy admission is the session module's");
-    assert.match(WRITER_CODE, /consumeSensingSessionRpc/, "the budget is 2480's atomic SQL decrement");
-    assert.match(WRITER_CODE, /recordAnonSensingContribution/, "the write is the service-role binding's");
+    assert.match(WRITER_CODE, /recordSensingContributionAtomically/, "the write and budget use one transaction");
+    assert.doesNotMatch(WRITER_CODE, /consumeSensingSessionRpc|recordAnonSensingContribution/, "there is no split write/consume fallback");
     // No re-implemented threshold, scope vocabulary or time bound.
     assert.doesNotMatch(WRITER_CODE, /minUniqueActors|minIndependentGroups|72 \* 60 \* 60|"collect"|"aggregate"/);
   });
@@ -789,7 +791,7 @@ describe("exactly one writer, reached only through the opaque credential", () =>
     // 2340's replay key makes a duplicate a no-op. If the budget were spent
     // first, replaying your own contribution would drain your own budget, and an
     // honest retry is indistinguishable from a replay.
-    assert.match(WRITER_CODE, /if \(!written\.duplicate\)[\s\S]{0,200}consumeSensingSessionRpc/);
+    assert.match(WRITER_CODE, /const budgetConsumed = !written\.duplicate/);
   });
 
   it("it returns no aggregate, no count and no cohort size", () => {

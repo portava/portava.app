@@ -22,6 +22,7 @@ interface State {
   circle_invites: any[];
   circle_memberships: any[];
   trip_members: any[];
+  trips: Array<{ id: string; status: string; end_date: string | null; timezone: string }>;
   circle_age_settings: any[];
   profiles: any[];
   user_interaction_cooldowns: any[];
@@ -48,6 +49,7 @@ function baseState(): State {
     circle_invites: [],
     circle_memberships: [],
     trip_members: [],
+    trips: [{ id: TRIP_ID, status: "active", end_date: null, timezone: "UTC" }],
     circle_age_settings: [],
     profiles: [
       { id: OWNER_ID, handle: "owner", name: "Owner", avatar_url: null, date_of_birth: null },
@@ -274,6 +276,19 @@ describe("trip_invite update failure surfaces db_error", () => {
       const r = await post(srv.port, `/api/me/requests/trip_invite/${TRIP_ID}/accept`, "recip-tok");
       assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
       assert.equal(state.trip_members[0].role, "member");
+    } finally { await srv.close(); }
+  });
+
+  it("an expired trip returns gone without consuming the invite", async () => {
+    const state = baseState();
+    state.trip_members.push(invitedTripMember());
+    state.trips[0].end_date = "2000-01-01";
+    const srv = await startServer(state);
+    try {
+      const r = await post(srv.port, `/api/me/requests/trip_invite/${TRIP_ID}/accept`, "recip-tok");
+      assert.equal(r.status, 410);
+      assert.deepEqual(r.body, { error: "gone", message: "This trip is no longer active" });
+      assert.equal(state.trip_members[0].role, "invited");
     } finally { await srv.close(); }
   });
 

@@ -12,16 +12,11 @@
  *                       each message is announced ONCE, from the row written in
  *                       its own transaction (V-TR F1). Rows older than
  *                       TELEGRAPH_OUTBOX_FANOUT_MAX_AGE_MS are acked `expired`.
- *   message.edited / .unsent / .deleted
- *                     → acked `route_direct`: their routes still publish their
- *                       own events directly; the row is the durable record.
- *                       Saying so is the point of the disposition column — an
- *                       ack that claimed a projection ran when none did is the
- *                       "half-built drainer" 2810's header warned against.
- * There is no message PUSH notification anywhere in this tree (only @mention
- * notifications, which the send route still issues), so there is no push
- * consumer here: inventing one would be a product decision, not a reliability
- * mechanism (reported as an owner decision).
+ *   message.edited / .unsent / .deleted → current-state invalidations, without
+ *                       bodies. Retractions are delivered even after the new-
+ *                       message horizon; an old delete still retires a cache.
+ * Push notifications remain owned by messageNotifications; this queue owns
+ * realtime invalidation and does not create a second notification.
  *
  * THE FLAG: telegraph_outbox_fanout_enabled (3655, seeded FALSE) AND
  * telegraph_message_kernel_enabled. Both must be on — the kernel flag is what
@@ -117,6 +112,9 @@ export async function publishMessageCreated(
   return publishToThread(sc, threadId, event, options);
 }
 
+/** UPDATE transitions use the same transactional writer and dispatch switch. */
+export const publishMessageMutation = publishMessageCreated;
+
 export interface OutboxClaimRow {
   id: string;
   event_type: string;
@@ -183,6 +181,32 @@ async function consumeMessageSent(
   return { ack: "fanned_out" };
 }
 
+/** A retry reads today's lifecycle; an old edit can never resurrect a tombstone. */
+async function consumeMessageMutation(db: any, row: OutboxClaimRow, publish: typeof publishToThread): Promise<{ack:Disposition} | {fail:string}> {
+  if (!row.message_id) return {ack:'message_absent'};
+  const {data:m,error} = await db.from('messages')
+    .select('id, thread_id, sender_id, edited_at, deleted_at, unsent_at')
+    .eq('id',row.message_id).maybeSingle();
+  if (error) return {fail:'message_unreadable'};
+  if (m && m.thread_id !== row.conversation_id) return {fail:'conversation_mismatch'};
+  let type: 'message.updated' | 'message.unsent' | 'message.deleted';
+  let timestamp: Record<string, string>;
+  if (!m || m.deleted_at || m.unsent_at) {
+    type = m?.unsent_at ? 'message.unsent' : 'message.deleted';
+    timestamp = type === 'message.unsent' ? {unsentAt:m.unsent_at} : {deletedAt:m?.deleted_at ?? row.created_at};
+  } else if (row.event_type === 'message.edited' && m.edited_at) {
+    type = 'message.updated'; timestamp = {editedAt:m.edited_at};
+  } else return {fail:'lifecycle_mismatch'};
+  const outcome = await publish(db,row.conversation_id,{type,payload:{
+    messageId:row.message_id, senderId:m?.sender_id ?? row.actor_id,
+    ...timestamp, dedupeKey:row.dedupe_key,
+    sequence:row.sequence == null ? null : Number(row.sequence),
+  }});
+  // Include the actor's other sessions for mutations: clearing a cached body
+  // is idempotent and must reach every currently authorized device.
+  return outcome === 'audience_unreadable' ? {fail:'audience_unreadable'} : {ack:'fanned_out'};
+}
+
 /** One drain pass. Never throws. */
 export async function runTelegraphOutboxDrainPass(
   opts: { client?: any; limit?: number; publish?: typeof publishToThread; nowMs?: number } = {},
@@ -211,11 +235,13 @@ export async function runTelegraphOutboxDrainPass(
       let decision: { ack: Disposition } | { fail: string };
       try {
         const age = nowMs - Date.parse(row.created_at);
-        decision = row.event_type !== "message.sent"
-          ? { ack: "route_direct" }
-          : Number.isFinite(age) && age > TELEGRAPH_OUTBOX_FANOUT_MAX_AGE_MS
+        decision = row.event_type === 'message.sent'
+          ? Number.isFinite(age) && age > TELEGRAPH_OUTBOX_FANOUT_MAX_AGE_MS
             ? { ack: "expired" }
-            : await consumeMessageSent(db, row, publish);
+            : await consumeMessageSent(db, row, publish)
+          : ['message.edited','message.unsent','message.deleted'].includes(row.event_type)
+            ? await consumeMessageMutation(db,row,publish)
+            : {fail:'unsupported_event'};
       } catch {
         decision = { fail: "consumer_threw" };
       }

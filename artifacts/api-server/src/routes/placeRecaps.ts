@@ -1,3 +1,4 @@
+import { readCanonicalPlaceVisibility } from "../lib/places/placeGovernance.js";
 import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
@@ -78,10 +79,15 @@ router.post("/place-recaps", asyncHandler(async (req, res) => {
   const table = kind === "moment" ? "shared_moments" : "place_days";
   const parentId = parsed.data.momentId ?? parsed.data.placeDayId!;
   const { data: parent, error: parentError } = await ctx.sc.from(table).select("*").eq("id", parentId).maybeSingle();
-  if (parentError || !parent || (kind === "place" && !["closing", "archived"].includes(parent.status)) || (kind === "moment" && (parent.owner_id !== ctx.userId || parent.status !== "archived"))) {
+  if (parentError) { sendError(res, "degraded_unavailable", "Recap information is temporarily unavailable."); return; }
+  if (!parent || (kind === "place" && !["closing", "archived"].includes(parent.status)) || (kind === "moment" && (parent.owner_id !== ctx.userId || parent.status !== "archived"))) {
     sendError(res, "not_found", "Eligible recap parent not found"); return;
   }
-  const { data: place } = await ctx.sc.from("places").select("id, name, city").eq("id", parent.place_id).maybeSingle();
+  const visibility=await readCanonicalPlaceVisibility(ctx.sc,[parent.place_id]);
+  if(!visibility.ok){sendError(res,'degraded_unavailable');return;}
+  if(!visibility.visibleIds.has(parent.place_id)){sendError(res,'not_found');return;}
+  const { data: place, error: placeError } = await ctx.sc.from("places").select("id, name, city").eq("id", parent.place_id).maybeSingle();
+  if (placeError) { sendError(res, "degraded_unavailable", "Place information is temporarily unavailable."); return; }
   if (!place) { sendError(res, "not_found", "Place not found"); return; }
   const collected = await collectSources(ctx.sc, parent, kind, ctx.userId);
   if (collected.error) { sendError(res, "db_error", "Eligible recap sources could not be verified", { exposeDetail: true }); return; }

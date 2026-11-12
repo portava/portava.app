@@ -57,10 +57,10 @@ describe('FeedAutoplayVideo', () => {
     await render(<FeedAutoplayVideo uri="post-media/u-1/a.mov" />);
     const flat = (style: unknown) => Object.assign({}, ...([] as unknown[]).concat(style as never).flat(5).filter(Boolean) as object[]);
     expect(flat((screen.getByTestId('feed-autoplay-video') as any).props.style).opacity).toBe(0);
-    expect(screen.queryByLabelText('Playing without sound. Open the post to hear it.')).toBeNull();
+    expect(screen.queryByLabelText('Playing without sound. Tap the video to open it full screen.')).toBeNull();
     await act(async () => { mockVideoProps!.onReadyForDisplay(); });
     expect(flat((screen.getByTestId('feed-autoplay-video') as any).props.style).opacity).toBeUndefined();
-    expect(screen.getByLabelText('Playing without sound. Open the post to hear it.')).toBeTruthy();
+    expect(screen.getByLabelText('Playing without sound. Tap the video to open it full screen.')).toBeTruthy();
   });
 
   it('a video that fails to load leaves the poster alone (the player unmounts)', async () => {

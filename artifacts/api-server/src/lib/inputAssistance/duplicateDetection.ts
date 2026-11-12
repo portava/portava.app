@@ -1,3 +1,4 @@
+import { readCanonicalPlaceVisibility } from "../places/placeGovernance.js";
 /**
  * DuplicateDetectionService (Phase 5 — Creation, spec §20/§36/§55).
  *
@@ -407,6 +408,10 @@ export async function scanDuplicatePlaces(
   } catch {
     return UNREADABLE_PLACES;
   }
+
+  const visibility=await readCanonicalPlaceVisibility(sc,rows.map(row=>row.id));
+  if(!visibility.ok) return UNREADABLE_PLACES;
+  rows=rows.filter(row=>visibility.visibleIds.has(row.id));
 
   const candLike: PlaceLike = {
     name: input.name ?? '',

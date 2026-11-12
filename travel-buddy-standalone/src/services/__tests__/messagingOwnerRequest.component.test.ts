@@ -1,4 +1,5 @@
 import './configuredSupabaseEnvFixture.ts';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase.ts';
 import { realCryptoPort } from '../../lib/e2ee/realPort.ts';
@@ -81,7 +82,7 @@ function deferred<Value>() {
 }
 
 async function reached(mock: jest.Mock, count = 1) {
-  for (let attempt = 0; attempt < 40 && mock.mock.calls.length < count; attempt += 1) await Promise.resolve();
+  for (let attempt = 0; attempt < 300 && mock.mock.calls.length < count; attempt += 1) await Promise.resolve();
   expect(mock.mock.calls.length).toBeGreaterThanOrEqual(count);
 }
 
@@ -103,7 +104,9 @@ function invoke(transport: Transport) {
   return sendMessage('thread-one', 'Original intent', { msgType: 'system', subtype: 'post_card', clientId: 'client-one', replyToId: 'reply-one' });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  // The send path now persists retries; each test starts with an empty device.
+  await AsyncStorage.clear();
   disposeMessagingOwnerObserver();
   _resetDiscoveryViewerScopeForTests();
   setDiscoveryViewerFromSession('owner-A');
@@ -119,7 +122,7 @@ beforeEach(() => {
   crypto.initGroupAsInitiator.mockReset().mockResolvedValue({ welcomeB64: 'welcome-only' });
   fetchMock.mockReset().mockImplementation(async input => jsonResponse(routeData(pathFor(input))));
   global.fetch = fetchMock;
-  process.env.EXPO_PUBLIC_API_BASE_URL = 'http://example.invalid';
+  process.env.EXPO_PUBLIC_API_BASE_URL = 'https://example.invalid';
   initializeMessagingOwnerObserver();
   emit('INITIAL_SESSION', currentSession);
 });
@@ -431,16 +434,29 @@ describe('message preparation and existing contracts', () => {
 
   it('preserves rate-limit retry information', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'rate_limited', message: 'Wait' }, 429));
-    expect(await invoke('send')).toEqual({ ok: false, data: null, errorKind: 'rate_limited', message: 'Wait', retryAfterSeconds: 9 });
+    expect(await invoke('send')).toEqual({ ok: false, data: null, errorKind: 'rate_limited', message: 'Wait', retryAfterSeconds: 9, retryable: true });
   });
 
   it('does not apply the owner context to unrelated private helper callers', async () => {
     disposeMessagingOwnerObserver();
     expect((await getMyMessageSettings()).ok).toBe(true);
     expect((await updateMyMessageSettings({ allow_message_requests: false })).ok).toBe(true);
-    expect((await resolveShareProjections('thread-one', [{ objectType: 'POST', objectId: 'post-one' }])).ok).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(auth.listeners.size).toBe(0);
+  });
+
+  it('share projections require an observed owner and reject a response after an account switch', async () => {
+    disposeMessagingOwnerObserver();
+    expect(await resolveShareProjections('thread-one', [{ objectType: 'POST', objectId: 'post-one' }])).toEqual({ ok: false, error: 'unauthenticated' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    emit('INITIAL_SESSION', currentSession);
+    const body = deferred<unknown>();
+    fetchMock.mockResolvedValueOnce({ ...jsonResponse(null), json: () => body.promise } as Response);
+    const pending = resolveShareProjections('thread-one', [{ objectType: 'POST', objectId: 'post-one' }]);
+    await reached(fetchMock);
+    switchAccount();
+    body.resolve({ threadId: 'thread-one', projections: [], unsupported: [] });
+    expect(await pending).toEqual({ ok: false, error: 'unauthenticated' });
   });
 });
 
@@ -494,8 +510,10 @@ describe('created-thread negotiation retains one original context', () => {
     newlyCreated = true;
     expect(await openDirectThread('recipient')).toEqual({ ok: true, data: { threadId: 'thread-one', created: true } });
     expect(wirePaths()).toEqual(paths);
-    expect(crypto.initGroupAsInitiator).toHaveBeenCalledWith('thread-one', 'owner-A', 'peer-package', expect.any(Function));
-    expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toEqual({ body: 'welcome-only', msgType: 'system', subtype: 'e2ee_welcome' });
+    expect(crypto.initGroupAsInitiator).toHaveBeenCalledWith('thread-one', 'owner-A', 'peer-package', expect.any(Function), expect.objectContaining({ ownerId: 'owner-A', sessionId: 'session-A1' }));
+    const welcome = JSON.parse(String(fetchMock.mock.calls[2][1]?.body));
+    expect(welcome).toEqual({ body: 'welcome-only', msgType: 'system', subtype: 'e2ee_welcome', clientId: expect.any(String), idempotencyKey: expect.any(String) });
+    expect(welcome.clientId).toBe(welcome.idempotencyKey);
     expect(JSON.parse(String(fetchMock.mock.calls[3][1]?.body))).toEqual({});
     expect(auth.onAuthStateChange).toHaveBeenCalledTimes(1);
   });

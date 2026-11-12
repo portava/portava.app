@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet,
   ActivityIndicator, ScrollView, RefreshControl,
@@ -11,6 +11,8 @@ import {
   postCompassFrontloadEvent, postCompassAskStream,
   confirmCompassProposal, declineCompassProposal,
 } from '../../src/services/compass';
+import { sensingZoneHint } from '../../src/services/sensing/sensingZoneHint';
+import { currentDiscoveryScope, isCurrentDiscoveryScope, onDiscoveryScopeChange, type DiscoveryScope } from '../../src/services/discoveryViewerScope';
 import type { CompassAskResponse, CompassPendingProposal, CompassUiPlace } from '../../src/services/compass';
 import { CompassChatBlocks, usePlaceNavigation } from '../../src/components/compass/CompassChatBlocks'; import { solePlaceCard, soleEventCard } from '../../src/lib/compassActionTarget.ts';
 import { AppHeader } from '../../src/components/ui/AppHeader';
@@ -37,13 +39,29 @@ type ChatEntry =
   // Failed request (timeout, network, server error) — always offers a retry
   // of the exact prompt that failed, so a slow or stalled reply never leaves
   // the user stuck with no next step.
-  | { kind: 'ai_error'; id: string; text: string; prompt: string }
+  | { kind: 'ai_error'; id: string; text: string; prompt: string; mediaId?: string }
   // Live-streaming assistant reply — replaced by a 'rec' entry on finalize.
   | { kind: 'stream';  id: string; text: string };
 
+type CompassHandoff = { prompt: string; mediaId?: string; owner: DiscoveryScope };
+const scopeEpoch = () => currentDiscoveryScope().epoch;
+
 export default function AiChat() {
-  const router = useRouter();
+  const epoch = useSyncExternalStore(onDiscoveryScopeChange, scopeEpoch, scopeEpoch);
   const { prefillMessage, mediaId } = useLocalSearchParams<{ prefillMessage?: string; mediaId?: string }>();
+  const handoff = useMemo<CompassHandoff | null>(() => (
+    typeof prefillMessage === 'string' && prefillMessage.trim()
+      ? { prompt: prefillMessage, mediaId: typeof mediaId === 'string' ? mediaId : undefined, owner: currentDiscoveryScope() }
+      : null
+  ), [prefillMessage, mediaId]);
+  return <CompassConversation key={epoch} handoff={handoff} />;
+}
+
+function CompassConversation({ handoff }: { handoff: CompassHandoff | null }) {
+  const router = useRouter();
+  const [selectedArea, setSelectedArea] = useState<{ zone: string; owner: DiscoveryScope } | null>(null);
+  const area = sensingZoneHint();
+  const areaSelected = Boolean(selectedArea && selectedArea.zone === area && isCurrentDiscoveryScope(selectedArea.owner));
   const planPicker = usePlanPicker(); const openPlace = usePlaceNavigation();
   // Pre-seed Compass with the user's resolved city (GPS → last-known → home)
   // so it never has to ask "where are you right now?" when the app already
@@ -86,6 +104,7 @@ export default function AiChat() {
   // scrolls up mid-stream; resumes once they return near the bottom.
   const followBottom = useRef(true);
   const streamingRef = useRef(false);
+  const conversationId = useRef<string | undefined>(undefined);
 
   // Pull-to-refresh — always available. On the empty chat it refreshes the
   // Compass Home surface; mid-conversation it re-syncs the live-session
@@ -103,21 +122,22 @@ export default function AiChat() {
     postCompassFrontloadEvent({ eventType: 'navigation', screen: 'ai_chat' }).catch(() => {});
   }, []));
 
-  // Layover's "Ask locals" hands off a ready-made prompt (airport + city +
-  // time-to-spare context) via router params — auto-send it once so the
-  // traveler lands in a live conversation instead of a blank chat that
-  // silently dropped their layover context.
-  const sentPrefillRef = useRef(false);
+  // Each navigation carries one question. Keep arrivals in order while the previous
+  // reply is in flight, including a repeat visit with the same prompt or another video.
+  const consumedHandoff = useRef<CompassHandoff | null>(null);
+  const pendingHandoffs = useRef<CompassHandoff[]>([]);
   useEffect(() => {
-    if (!prefillMessage || sentPrefillRef.current) return;
-    sentPrefillRef.current = true;
-    // The media action rail hands off both a prompt and (optionally) the media
-    // id so Compass grounds its first reply in the media context (§32); the
-    // context only needs to ride the initiating turn — follow-ups carry it via
-    // the conversation id.
-    send(prefillMessage, typeof mediaId === 'string' ? mediaId : undefined);
+    if (handoff && handoff !== consumedHandoff.current && isCurrentDiscoveryScope(handoff.owner)) {
+      consumedHandoff.current = handoff;
+      pendingHandoffs.current.push(handoff);
+      router.setParams({ prefillMessage: undefined, mediaId: undefined });
+    }
+    if (loading || streamingRef.current) return;
+    const next = pendingHandoffs.current.shift();
+    if (next && isCurrentDiscoveryScope(next.owner)) void send(next.prompt, next.mediaId);
+    // send uses the current render's city and conversation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefillMessage]);
+  }, [handoff, loading]);
 
   function scrollToEnd() {
     setTimeout(() => scroll.current?.scrollToEnd({ animated: true }), 80);
@@ -141,57 +161,50 @@ export default function AiChat() {
     }
   }, []);
 
-  async function send(promptOverride?: string, mediaIdOverride?: string) {
+  async function send(promptOverride?: string, mediaIdOverride?: string, retryId?: string) {
     const text = (promptOverride ?? input).trim();
-    if (!text || loading) return;
+    if (!text || streamingRef.current) return;
+    streamingRef.current = true;
+    const includeArea = !promptOverride && selectedArea && isCurrentDiscoveryScope(selectedArea.owner)
+      && selectedArea.zone === sensingZoneHint() ? selectedArea.zone : null;
+    setSelectedArea(null);
     if (!promptOverride) setInput('');
 
-    const userId = 'u_' + Date.now();
-    const typingId = 'typing_' + Date.now();
-
+    const pendingId = 'reply_' + Date.now();
     setEntries((prev) => [
-      ...prev,
-      { kind: 'user',   id: userId,   text },
-      { kind: 'typing', id: typingId },
+      ...(retryId ? prev.filter(e => e.id !== retryId) : [...prev, { kind: 'user' as const, id: 'u_' + Date.now(), text }]),
+      { kind: 'typing', id: pendingId },
     ]);
     setLoading(true);
-    followBottom.current = true;   // a fresh send always re-pins to the bottom
-    streamingRef.current = true;
+    followBottom.current = true;
     scrollToEnd();
 
-    // Stream the reply so it types out live; postCompassAskStream falls back
-    // to the plain non-streaming request on any SSE failure.
-    const streamId = 'stream_' + Date.now();
-    const result = await postCompassAskStream(text, { city: currentCity, mediaId: mediaIdOverride }, {
-      onDelta: (messageSoFar) => {
-        setEntries((prev) => {
-          const without = prev.filter((e) => e.id !== typingId && e.id !== streamId);
-          return [...without, { kind: 'stream', id: streamId, text: messageSoFar }];
-        });
-      },
-    });
-
-    setEntries((prev) => {
-      const without = prev.filter((e) => e.id !== typingId && e.id !== streamId);
-      if (!result.ok || !result.data) {
-        const isTimeout = result.error === 'timeout';
-        return [
-          ...without,
-          {
-            kind: 'ai_error',
-            id: 'err_' + Date.now(),
-            text: isTimeout
-              ? "Compass is unavailable right now — that's taking longer than it should."
-              : "Compass is unavailable right now — couldn't reach it.",
-            prompt: text,
-          },
-        ];
+    function finish(entry: ChatEntry) {
+      setEntries(prev => prev.map(e => e.id === pendingId ? entry : e));
+    }
+    try {
+      const result = await postCompassAskStream(text, { city: currentCity, mediaId: mediaIdOverride, conversationId: conversationId.current, ...(includeArea ? { sensingZoneIds: [includeArea] } : {}) }, {
+        onDelta: (messageSoFar) => finish({ kind: 'stream', id: pendingId, text: messageSoFar }),
+      });
+      if (result.data?.conversationId) conversationId.current = result.data.conversationId;
+      if (result.ok && result.data?.message?.trim() && !result.data.fallback) {
+        finish({ kind: 'rec', id: pendingId, rec: result.data });
+      } else {
+        const message = result.data?.message || (
+          result.error === 'timeout' ? "Compass took too long to reply. Try again." :
+          result.error === 'http_401' ? "Sign in to ask Compass a question." :
+          result.error === 'http_429' ? "Compass has reached its request limit. Try again shortly." :
+          "Compass couldn't finish this reply. Try again."
+        );
+        finish({ kind: 'ai_error', id: pendingId, text: message, prompt: text, mediaId: mediaIdOverride });
       }
-      return [...without, { kind: 'rec', id: 'rec_' + Date.now(), rec: result.data }];
-    });
-    streamingRef.current = false;
-    setLoading(false);
-    if (followBottom.current) scrollToEnd();
+    } catch {
+      finish({ kind: 'ai_error', id: pendingId, text: "Compass couldn't finish this reply. Try again.", prompt: text, mediaId: mediaIdOverride });
+    } finally {
+      streamingRef.current = false;
+      setLoading(false);
+      if (followBottom.current) scrollToEnd();
+    }
   }
 
   // Phase 4: confirm/decline an add_to_trip proposal. Nothing is written to a
@@ -377,7 +390,7 @@ export default function AiChat() {
                 </View>
                 <Text style={styles.aiText}>{e.text}</Text>
                 <Pressable
-                  onPress={() => send(e.prompt)}
+                  onPress={() => send(e.prompt, e.mediaId, e.id)}
                   disabled={loading}
                   style={({ pressed }) => [styles.retryButton, pressed && { opacity: 0.7 }]}
                 >
@@ -451,6 +464,18 @@ export default function AiChat() {
         </View>
       ) : null}
 
+      {area && input.trim() ? (
+        <Pressable
+          style={styles.aiOptInBtn}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: areaSelected }}
+          accessibilityLabel="Include my approximate area in this Compass reply"
+          onPress={() => setSelectedArea(areaSelected ? null : { zone: area, owner: currentDiscoveryScope() })}
+        >
+          <Map size={14} color={color.signal} />
+          <Text style={styles.aiOptInText}>{areaSelected ? 'Area included for this reply' : 'Include my area for this reply'}</Text>
+        </Pressable>
+      ) : null}
       <View style={styles.inputBar}>
         <Pressable
           style={styles.layoverBtn}

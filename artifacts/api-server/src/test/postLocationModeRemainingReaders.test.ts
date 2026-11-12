@@ -107,13 +107,16 @@ function projectRow(row: any, cols: string): any {
 }
 
 function fakeDb(opts: FakeOpts, log: FakeLog = { selects: [], writes: [], rpcs: [] }): any {
+  // Current catalog gate requires affirmative publication state, including in legacy fixture worlds.
+  if (opts.tables.places) opts.tables.places = opts.tables.places.map(place => ({ status: "active", moderation_status: "visible", governance_version: 0, ...place }));
   const from = (table: string) => {
     const filters: Array<(r: any) => boolean> = [];
     const orders: Array<{ col: string; asc: boolean }> = [];
     let limitN = Infinity;
     let offset = 0;
     let cols = "*";
-    const exec = (): { data: any; error: any } => {
+    let exactCount = false;
+    const exec = (): { data: any; error: any; count?: number } => {
       if (opts.failTables?.has(table)) return { data: null, error: { message: `unreadable ${table}`, code: "XX000" } };
       let rows = (opts.tables[table] ?? []).filter((r) => filters.every((f) => f(r)));
       if (orders.length > 0) {
@@ -127,8 +130,9 @@ function fakeDb(opts: FakeOpts, log: FakeLog = { selects: [], writes: [], rpcs: 
           return 0;
         });
       }
+      const count = rows.length;
       rows = rows.slice(offset, limitN === Infinity ? undefined : offset + limitN);
-      return { data: rows.map((r) => projectRow(r, cols)), error: null };
+      return { data: rows.map((r) => projectRow(r, cols)), error: null, ...(exactCount ? { count } : {}) };
     };
     const resolved = (value: any) => {
       const p: any = Promise.resolve(value);
@@ -139,7 +143,7 @@ function fakeDb(opts: FakeOpts, log: FakeLog = { selects: [], writes: [], rpcs: 
       return p;
     };
     const b: any = {
-      select(c?: string) { cols = c ?? "*"; log.selects.push({ table, cols }); return b; },
+      select(c?: string, options?: { count?: string }) { cols = c ?? "*"; exactCount = options?.count === "exact"; log.selects.push({ table, cols }); return b; },
       eq(c: string, v: any) { filters.push((r) => r[c] === v); return b; },
       neq(c: string, v: any) { filters.push((r) => r[c] !== v); return b; },
       in(c: string, vs: any[]) { filters.push((r) => vs.includes(r[c])); return b; },
@@ -1176,7 +1180,7 @@ describe("C. Place pages — a post whose owner withheld its place is not listed
     const living = await h.request("GET", `/api/places/${LPLACE}/living`, null);
     assert.deepEqual(living.json.timeline.posts.map((p: any) => p.id), ["n1", "n2", "n3"], "the living payload is cached for up to 24 h, so it cannot honour a window that ends inside it");
     assert.deepEqual(living.json.bestOf.experiences.map((e: any) => e.postId), ["n1", "n2", "n3"]);
-    for (const sel of log.selects.filter((x) => x.table === "posts")) assert.doesNotMatch(sel.cols, /\bpublished_at\b/, `living-payload read: ${sel.cols}`);
+    assert.ok(log.selects.some(sel => sel.table === "posts" && /\bpublished_at\b/.test(sel.cols)), "the fresh serving check now revalidates release windows; persisted assembly remains conservative");
     assert.deepEqual(log.writes.find((w) => w.table === "place_ai_summaries")!.row.post_ids_used, ["n1", "n2", "n3"], "the persisted AI summary is never written from it");
     const world: Tables = {
       ...dayWorld([{ ...dpost("mine", "rv", "none", "10") }, { ...dpost("n1", "a1", "none", "11") }, { ...dpost("w", "aw", "delayed_until_exit", "12"), ...inWindow }]),

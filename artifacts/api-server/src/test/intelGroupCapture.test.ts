@@ -7,6 +7,7 @@
  * solo group; else null. The stored group_key is checked against deriveGroupKey so
  * the whole path — not just the pieces — is verified.
  */
+import { canonicalPlaceFixture } from './helpers/canonicalPlaceFixture.js';
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { writeObservation } from "../services/intel/IntelCaptureService.js";
@@ -31,6 +32,7 @@ const ACTIVE = { start_date: isoDay(-1), end_date: isoDay(1) };
 function makeDb(cfg: { trips?: any[]; members?: any[] }) {
   const inserted: any[] = [];
   function from(table: string) {
+    if (table === "places") return canonicalPlaceFixture([{ id: PLACE }]);
     let op: "select" | "insert" = "select";
     let payload: any = null;
     const eqs: [string, any][] = [];
@@ -52,7 +54,6 @@ function makeDb(cfg: { trips?: any[]; members?: any[] }) {
     }
     function run() {
       if (table === "feature_flags") return { data: { enabled: true }, error: null };
-      if (table === "places") return { data: { id: PLACE }, error: null };
       // The actor has granted Intelligence Contributions consent (D4 gate).
       if (table === "intel_contribution_consent") return { data: { enabled: true, withdrawn_at: null }, error: null };
       if (op === "insert") { const row = { id: "obs-1", schema_version: 1, ...payload }; inserted.push(row); return { data: row, error: null }; }

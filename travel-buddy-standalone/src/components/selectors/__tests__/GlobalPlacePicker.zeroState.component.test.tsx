@@ -68,7 +68,7 @@ jest.mock('../../../platform/input-assistance/services/selectionRecorder.ts', ()
 }));
 // NOTE: exhaustive-by-design stub — provider search is out of scope; the empty field never queries it.
 jest.mock('../../../hooks/usePlaceSearch.ts', () => ({
-  usePlaceSearch: () => ({ results: mockPlaceSearch.current, loading: false, error: null }),
+  usePlaceSearch: () => ({ results: mockPlaceSearch.current, loading: mockPlaceSearch.loading, error: null }),
   fetchPlacesFromApi: jest.fn(),
 }));
 // NOTE: exhaustive-by-design stub — Google autocomplete is out of scope here.
@@ -76,7 +76,7 @@ jest.mock('../../../hooks/useGooglePlacesAutocomplete.ts', () => ({
   useGooglePlacesAutocomplete: () => ({ places: [], loading: false }),
   fetchGooglePlaceDetails: jest.fn(),
 }));
-const mockLocalRecents: { current: any[] } = { current: [] }; const mockPlaceSearch: { current: any[] } = { current: [] }; // census G222 (wave 4): the provider search stub answers [] for every case but the provider-dedup one
+const mockLocalRecents: { current: any[] } = { current: [] }; const mockPlaceSearch: { current: any[]; loading: boolean } = { current: [], loading: false }; // census G222 (wave 4): the provider search stub answers [] for every case but the provider-dedup one
 // NOTE: exhaustive-by-design stub — the picker's own /api/me/recent-places list.
 jest.mock('../../../hooks/useRecentPlaces.ts', () => ({
   useRecentPlaces: () => ({ recents: mockLocalRecents.current, saveRecent: jest.fn() }),
@@ -108,6 +108,7 @@ jest.mock('../../../services/location.ts', () => ({
 }));
 
 import { GlobalPlacePicker } from '../GlobalPlacePicker.tsx';
+import { resetTelemetrySink, setTelemetrySink } from '../../../platform/input-assistance/services/inputTelemetry.ts';
 import { requestSuggestions } from '../../../platform/input-assistance/services/inputAssistance.ts';
 import { recordSuggestionSelection } from '../../../platform/input-assistance/services/selectionRecorder.ts';
 import { registerField, unregisterField } from '../../../platform/input-assistance/contexts/fieldRegistry.ts';
@@ -197,7 +198,7 @@ beforeEach(() => {
   setDiscoveryViewerFromSession(_TEST_ACCOUNT);
   mockRequest.mockReset();
   mockRecord.mockReset();
-  mockLocalRecents.current = []; mockPlaceSearch.current = [];
+  mockLocalRecents.current = []; mockPlaceSearch.current = []; mockPlaceSearch.loading = false;
   sharedSuggestionCache.clear();
   detachLocalRecents();
   clearLocalZeroState();
@@ -208,6 +209,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   await cleanup();
+  resetTelemetrySink();
   unregisterField(FIELD);
   disposeObservedOwnerSession();
 });
@@ -456,4 +458,24 @@ describe('census G222 — the server\'s provider rows in the picker', () => {
     expect(resolvedWith).toMatchObject({ id: 'foursquare-fsq-1', source: 'foursquare', name: 'Skyline Bar', lat: 16.07 });
     expect(onSelect.mock.calls[0][0]).toMatchObject({ name: 'Skyline Bar' });
   });
+});
+
+it('a normal trip picker gets canonical suggestions and an accepted city using just its declared purpose', async () => {
+  const onSelect = jest.fn();
+  const telemetry = jest.fn(); setTelemetrySink(telemetry);
+  mockPlaceSearch.loading = true;
+  mockRequest.mockImplementation(async req => served(req.text ? [recentRow] : []));
+  const view = await render(picker({ assistContext: undefined, assistFieldId: undefined, onSelect }));
+  await fireEvent.changeText(view.getByPlaceholderText('Search cities, hotels, landmarks…'), 'hoi');
+  await waitFor(() => expect(view.getByText('Hoi An')).toBeTruthy());
+  expect(mockRequest.mock.calls.map(([req]) => req)).toEqual(expect.arrayContaining([
+    expect.objectContaining({ fieldId: 'trip.destination', context: 'trip_destination', text: 'hoi' }),
+  ]));
+  await fireEvent(view.getByPlaceholderText('Search cities, hotels, landmarks…'), 'submitEditing');
+  await waitFor(() => expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ name: 'Hoi An' })));
+  expect(telemetry).toHaveBeenCalledWith(expect.objectContaining({
+    name: 'suggestion_selected', fieldId: 'trip.destination', requestId: 'r',
+    props: { source: 'memory', suggestionType: 'recent' },
+  }));
+  expect(mockRecord).toHaveBeenCalledWith(recentRow, expect.objectContaining({ query: 'hoi' }));
 });

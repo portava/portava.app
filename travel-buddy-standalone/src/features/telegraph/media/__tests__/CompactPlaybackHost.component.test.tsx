@@ -446,6 +446,14 @@ describe('T62 — fail-closed stops (Q-PB1 default: the opening conversation onl
     expectStopped('signed_out');
   });
 
+  it('switching accounts never mounts the prior account video for the replacement viewer', async () => {
+    const view = await docked();
+    mockUserId = 'me-2';
+    await act(async () => { await view.rerender(<App />); });
+    expectStopped('signed_out');
+    expect(mockVideo.mounts).toBe(1);
+  });
+
   it('a refusal at open: the player never mounts (a re-open after revocation cannot play from cache)', async () => {
     mockSign.refuses.add(REF);
     await render(<App />);

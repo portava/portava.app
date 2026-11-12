@@ -303,10 +303,10 @@ export function usePostActions() {
   const [submitting, setSubmitting] = useState(false);
 
   const create = useCallback(
-    async (input: Parameters<typeof createPost>[0]): Promise<PostResult<PostRow>> => {
+    async (input: Parameters<typeof createPost>[0], owner?: Parameters<typeof createPost>[1]): Promise<PostResult<PostRow>> => {
       setSubmitting(true);
       try {
-        return await createPost(input);
+        return await createPost(input, owner);
       } finally {
         setSubmitting(false);
       }

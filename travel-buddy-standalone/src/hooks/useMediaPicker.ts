@@ -15,6 +15,7 @@
  * directly should switch to pickMedia() so users always get the
  * Take Photo / Library choice.
  */
+import { beginCaptureSession, bindCameraRecording } from '../features/capture-stamps/recordingStamp.ts';
 import { useCallback } from 'react';
 import { Alert, Linking, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
@@ -26,6 +27,7 @@ import { COMPATIBLE_LIBRARY_OPTIONS, normalizeAllForUpload } from '../lib/media/
 // ---------------------------------------------------------------------------
 
 export interface UseMediaPickerOptions {
+  recordingStamp?: boolean;
   /** Alert/sheet title. Default: "Add photo" */
   title?: string;
   /** Media types to allow. Default: ['images'] */
@@ -210,6 +212,7 @@ export function useMediaPicker(): UseMediaPickerReturn {
         const launchCamera = async () => {
           const ok = await requestCamera();
           if (!ok) { resolve(null); return; }
+          const session = options.recordingStamp && hasVideo ? await beginCaptureSession() : null;
           const result = await ImagePicker.launchCameraAsync({
             mediaTypes,
             allowsEditing,
@@ -218,7 +221,9 @@ export function useMediaPicker(): UseMediaPickerReturn {
             videoMaxDuration,
           });
           // Every pick leaves here uploadable: HEIC → JPEG, oversize photos fitted without distortion, .mov labelled QuickTime.
-          resolve(result.canceled ? null : await normalizeAllForUpload(result.assets));
+          const picked = result.canceled ? null : await normalizeAllForUpload(result.assets);
+          bindCameraRecording(session, result.assets?.[0] ?? null, picked?.[0] ?? null);
+          resolve(picked);
         };
 
         const launchLibrary = async () => {

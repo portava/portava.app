@@ -38,6 +38,7 @@
  *   4. an OWNERSHIP signal (a registered venue zone) still resolves to a place —
  *      the rule is "proximity is not ownership", not "nothing is".
  */
+import { canonicalPlaceFixture } from "./helpers/canonicalPlaceFixture.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -205,6 +206,7 @@ function makeDb(opts: { geoZones?: any[]; places?: any[] } = {}) {
 
   function from(table: string) {
     reads.push(table);
+    if (table === "places") return canonicalPlaceFixture(tables.places);
     let op: "select" | "insert" | "insert_select" = "select";
     let payload: any = null;
     const filters: Array<{ col: string; val: any }> = [];

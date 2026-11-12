@@ -1,3 +1,5 @@
+import { PostReferenceCover } from './PostReferenceCard.tsx';
+import { POST_REFERENCE_MEDIA_TYPE } from '../services/postDestinations.ts';
 /**
  * FollowingHighlightsStrip — horizontal stories-style tray for the Explore tab.
  *
@@ -15,6 +17,7 @@ import {
   View, Text, ScrollView, StyleSheet, Pressable,
 } from 'react-native';
 import { HighlightRing } from './HighlightRing.tsx';
+import { viewedHighlightIds } from '../hooks/useHighlightRingState.ts';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { color, space } from '../theme/tokens.ts';
 import type { HighlightFeedUser, HighlightErrorKind } from '../services/highlights.ts';
@@ -41,6 +44,7 @@ interface Props {
   unreadable?: HighlightErrorKind | null;
   /** Retry the feed read. Only offered for a failure that can be retried. */
   onRetry?: () => void;
+  onViewerClose?: () => void;
 }
 
 /**
@@ -53,7 +57,7 @@ function resolveRingPosterUri(user: HighlightFeedUser): string | null {
   if (user.avatarUrl) return user.avatarUrl;
 
   const first = user.highlights[0];
-  if (!first) return null;
+  if (!first || first.mediaType === POST_REFERENCE_MEDIA_TYPE) return null;
 
   // For video highlights, only use a dedicated thumbnail — never the raw video URL
   if (first.mediaType.startsWith('video/')) {
@@ -65,10 +69,11 @@ function resolveRingPosterUri(user: HighlightFeedUser): string | null {
 }
 
 export function FollowingHighlightsStrip({
-  users, sessionViewedIds, onMarkViewed, unreadable = null, onRetry,
+  users, sessionViewedIds, onMarkViewed, unreadable = null, onRetry, onViewerClose,
 }: Props) {
   const { userId: currentUserId } = useSession();
-  const [viewingUser, setViewingUser] = useState<HighlightFeedUser | null>(null);
+  const [viewingUserId, setViewingUserId] = useState<string | null>(null);
+  const viewingUser = users.find(user => user.userId === viewingUserId);
 
   // §28.11. The read failed and we have nothing to show. Say that. Rendering
   // null here would put the same picture on screen as "nobody you follow has
@@ -104,9 +109,11 @@ export function FollowingHighlightsStrip({
 
   const handleClose = () => {
     if (viewingUser) {
-      onMarkViewed(viewingUser.highlights.map((h) => h.id));
+      const watched = viewingUser.highlights.filter(h => viewedHighlightIds.has(h.id)).map(h => h.id);
+      if (watched.length) onMarkViewed(watched);
     }
-    setViewingUser(null);
+    setViewingUserId(null);
+    onViewerClose?.();
   };
 
   return (
@@ -129,7 +136,7 @@ export function FollowingHighlightsStrip({
             <Pressable
               key={u.userId}
               style={styles.item}
-              onPress={() => setViewingUser(u)}
+              onPress={() => setViewingUserId(u.userId)}
               accessibilityRole="button"
               accessibilityLabel={`View ${label}'s highlights`}
             >
@@ -155,6 +162,8 @@ export function FollowingHighlightsStrip({
                     }
                     testID={`following-highlight-avatar-${u.userId}`}
                   />
+                ) : firstHighlight?.mediaType === POST_REFERENCE_MEDIA_TYPE ? (
+                  <PostReferenceCover uri={firstHighlight.mediaUrl} />
                 ) : (
                   <View style={[styles.avatar, styles.avatarFallback]}>
                     <Text style={styles.avatarInitial}>

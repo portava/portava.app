@@ -1,10 +1,7 @@
 /**
  * (tabs)/wall — the Wall route (Wall spec §3/§29).
  *
- * Mounts the Wall client shell. The Wall is flag-gated OFF server-side, so this
- * route is added NON-DISRUPTIVELY: it does not replace the Pulse landing tab and
- * its tab-bar entry is hidden (href: null in the tabs layout). It is reachable
- * as a secondary surface (deep-link / push) until the server flag is turned on.
+ * Mounts the canonical Wall client shell; availability is decided by the server.
  *
  * This route file owns the two environment dependencies (safe-area insets and
  * the current city from LocationContext) and passes them to WallScreen, which
@@ -12,19 +9,23 @@
  */
 
 import React from 'react';
+import { useIsFocused } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 import { WallScreen } from '../../src/features/wall/components/WallScreen.tsx';
 import { useLocationContext } from '../../src/context/LocationContext';
+import { usePlanPicker } from '../../src/components/PlanPickerController.tsx';
 
 export default function WallRoute() {
+  const active = useIsFocused();
   const insets = useSafeAreaInsets();
   const { locationState } = useLocationContext();
   const city = locationState.place.city ?? null;
+  const { open: openPlanPicker } = usePlanPicker();
 
   return (
     <ScreenErrorBoundary>
-      <WallScreen city={city} topInset={insets.top} />
+      <WallScreen active={active} city={city} topInset={insets.top} openPlanPicker={openPlanPicker} />
     </ScreenErrorBoundary>
   );
 }

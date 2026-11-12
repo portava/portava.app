@@ -46,6 +46,7 @@
  * plausible empty world". The paths stay overridable through
  * EXPO_PUBLIC_SENSING_SESSION_PATH / EXPO_PUBLIC_SENSING_INGEST_PATH.
  */
+import { runSensingRequest } from './sensingRequest.ts';
 import type { SensingContributionPayload } from '../../lib/sensing/contributionPayload.ts';
 import { toWireContribution } from '../../lib/sensing/wireContribution.ts';
 
@@ -58,6 +59,7 @@ export const SENSING_CREDENTIAL_HEADER = 'X-Sensing-Credential';
 export interface SensingCredential {
   credential: string;
   rotationEpoch: number;
+  rotationPeriodSeconds: number;
   /** ISO. A credential is short-lived by design; past this it is re-fetched. */
   expiresAt: string;
 }
@@ -94,12 +96,16 @@ export interface SensingTransportDeps {
   now: () => number;
   sessionPath?: string;
   ingestPath?: string;
+  requestTimeoutMs?: number;
+  surfaceAllowed?: () => boolean;
 }
 
 export interface SensingTransport {
   submit(payload: SensingContributionPayload): Promise<SubmitOutcome>;
   /** Invalidate pending dispatch and drop the cached credential. */
-  reset(): void;
+  reset(options?: { keepCredential?: boolean }): void;
+  /** Current opaque session token, only for explicit device-contribution erasure. */
+  revocationCredential(): string | null;
 }
 
 function credentialIsFresh(c: SensingCredential | null, nowMs: number): boolean {
@@ -113,28 +119,43 @@ export function createSensingTransport(deps: SensingTransportDeps): SensingTrans
   const ingestPath = deps.ingestPath ?? DEFAULT_SENSING_INGEST_PATH;
   let cached: SensingCredential | null = null;
   let generation = 0;
+  let cachedSurface = false;
+  const controllers = new Set<AbortController>();
+  let pendingCredential: { generation: number; promise: Promise<SensingCredential | null> } | null = null;
 
-  async function credential(expected: number): Promise<SensingCredential | null> {
-    if (credentialIsFresh(cached, deps.now())) return cached;
+  async function request<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    controllers.add(controller);
+    try { return await runSensingRequest(operation, controller, deps.requestTimeoutMs ?? 15_000); }
+    finally { controllers.delete(controller); }
+  }
+
+  async function loadCredential(expected: number): Promise<SensingCredential | null> {
+    const surface = deps.surfaceAllowed?.() === true;
+    if (cachedSurface === surface && credentialIsFresh(cached, deps.now())) return cached;
     try {
-      const token = await deps.getEligibilityToken();
-      if (expected !== generation || !token) return null;
-      const res = await deps.fetchImpl(`${deps.baseUrl}${sessionPath}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          // The ONLY request in this file that carries an identity.
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ purposeScopes: ['collect', 'retain', 'aggregate'] }),
+      const body = await request(async (signal) => {
+        const token = await deps.getEligibilityToken();
+        if (signal.aborted || expected !== generation || !token) return null;
+        const res = await deps.fetchImpl(`${deps.baseUrl}${sessionPath}`, {
+          method: 'POST', signal,
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          // The issuer intersects current consent for each scope with its active policy.
+          body: JSON.stringify(surface ? {} : { purposeScopes: ['collect', 'retain', 'aggregate'] }),
+        });
+        if (!res.ok || signal.aborted) return null;
+        return await res.json() as Partial<SensingCredential>;
       });
-      if (expected !== generation || !res.ok) return null;
-      const body = (await res.json()) as Partial<SensingCredential>;
-      if (expected !== generation || !body || typeof body.credential !== 'string') return null;
+      if (expected !== generation || !body || typeof body.credential !== 'string' || !body.credential.trim() || !Number.isSafeInteger(body.rotationEpoch) || Number(body.rotationEpoch) < 0 || typeof body.expiresAt !== 'string' || !Number.isFinite(Date.parse(body.expiresAt)) || Date.parse(body.expiresAt) <= deps.now()) return null;
+      // Servers predating this response field use the hourly v1 rotation.
+      const period = body.rotationPeriodSeconds === undefined ? 3600 : body.rotationPeriodSeconds;
+      if (!Number.isSafeInteger(period) || period < 1) return null;
+      cachedSurface = surface;
       cached = {
         credential: body.credential,
-        rotationEpoch: typeof body.rotationEpoch === 'number' ? body.rotationEpoch : 0,
-        expiresAt: typeof body.expiresAt === 'string' ? body.expiresAt : new Date(deps.now()).toISOString(),
+        rotationEpoch: body.rotationEpoch!,
+        rotationPeriodSeconds: period,
+        expiresAt: body.expiresAt,
       };
       return cached;
     } catch {
@@ -142,10 +163,22 @@ export function createSensingTransport(deps: SensingTransportDeps): SensingTrans
     }
   }
 
+  function credential(expected: number): Promise<SensingCredential | null> {
+    if (cachedSurface === (deps.surfaceAllowed?.() === true) && credentialIsFresh(cached, deps.now())) return Promise.resolve(cached);
+    if (pendingCredential?.generation === expected) return pendingCredential.promise;
+    const promise = loadCredential(expected).finally(() => { if (pendingCredential?.promise === promise) pendingCredential = null; });
+    pendingCredential = { generation: expected, promise };
+    return promise;
+  }
+
   return {
-    reset() {
+    revocationCredential: () => credentialIsFresh(cached, deps.now()) ? cached!.credential : null,
+    reset(options) {
       generation += 1;
-      cached = null;
+      if (!options?.keepCredential) cached = null;
+      pendingCredential = null;
+      for (const controller of controllers) controller.abort();
+      controllers.clear();
     },
     async submit(payload): Promise<SubmitOutcome> {
       if (!deps.baseUrl) return { ok: false, reason: 'not_configured' };
@@ -153,26 +186,30 @@ export function createSensingTransport(deps: SensingTransportDeps): SensingTrans
       const cred = await credential(expected);
       if (expected !== generation) return { ok: false, reason: 'cancelled' };
       if (!cred) return { ok: false, reason: 'no_credential' };
+      const rotationEpoch = Math.floor(payload.observed_at_ms / (cred.rotationPeriodSeconds * 1000));
+      if (!Number.isSafeInteger(rotationEpoch) || rotationEpoch < 0) return { ok: false, reason: 'invalid_payload' };
       let commitment: string | null;
-      try { commitment = await deps.commitmentFor(cred.rotationEpoch); } catch { commitment = null; }
+      try { commitment = await request(() => deps.commitmentFor(rotationEpoch)); } catch { commitment = null; }
       if (expected !== generation) return { ok: false, reason: 'cancelled' };
+      if (!credentialIsFresh(cred, deps.now())) return { ok: false, reason: 'no_credential' };
       if (!commitment) return { ok: false, reason: 'no_commitment' };
       let body: string;
       try {
-        body = JSON.stringify(toWireContribution(payload, { commitment, rotationEpoch: cred.rotationEpoch }));
+        body = JSON.stringify(toWireContribution(payload, { commitment, rotationEpoch }));
       } catch {
         return { ok: false, reason: 'invalid_payload' };
       }
       try {
         if (expected !== generation) return { ok: false, reason: 'cancelled' };
-        const res = await deps.fetchImpl(`${deps.baseUrl}${ingestPath}`, {
+        const res = await request(signal => deps.fetchImpl(`${deps.baseUrl}${ingestPath}`, {
+          signal,
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             [SENSING_CREDENTIAL_HEADER]: cred.credential,
           },
           body,
-        });
+        }));
         if (expected !== generation) return { ok: false, reason: 'cancelled' };
         if (res.ok) return { ok: true };
         if (res.status === 404) {
@@ -185,7 +222,7 @@ export function createSensingTransport(deps: SensingTransportDeps): SensingTrans
         }
         return { ok: false, reason: 'rejected', status: res.status };
       } catch {
-        return { ok: false, reason: 'network_error' };
+        return { ok: false, reason: expected !== generation ? 'cancelled' : 'network_error' };
       }
     },
   };

@@ -152,18 +152,19 @@ function crew(purpose: string | null | undefined, extra: Partial<Row> = {}): Rec
 beforeEach(() => { invalidateTripOperationalProjectionsGate(); });
 
 // ── 1. The CHECK is the registry ─────────────────────────────────────────────
-describe("3753's CHECK is lib/locationPurposes.ts's id list", () => {
+describe("3753's CHECK is the registry of purposes admitted to the live-share table", () => {
   const sql = readFileSync(MIGRATION, "utf8");
-  it("the CHECK enumerates exactly the registry ids", () => {
+  it("the CHECK enumerates exactly the supported share purposes", () => {
     const m = sql.match(/ADD CONSTRAINT trip_crew_location_sessions_purpose_check CHECK \(\s*purpose IS NULL OR purpose = ANY \(ARRAY\[([\s\S]*?)\]::text\[\]\)/);
     assert.ok(m, "the purpose CHECK was not found in 3753");
     const ids = [...m![1]!.matchAll(/'([a-z_]+)'/g)].map((x) => x[1]);
-    assert.deepEqual([...ids].sort(), [...LOCATION_PURPOSES.map((p) => p.id)].sort());
+    for (const id of ids) assert.ok(LOCATION_PURPOSES.some(p => p.id === id), `unregistered share purpose: ${id}`);
+    for (const id of purposesDeclaringShareTable()) assert.ok(ids.includes(id), `declared share purpose missing from CHECK: ${id}`);
     assert.deepEqual([...SHARE_PURPOSE_CHECK_IDS].sort(), [...ids].sort());
   });
   it("the postcondition checks the same list", () => {
     const post = sql.slice(sql.indexOf("DO $post$"));
-    for (const p of LOCATION_PURPOSES) assert.ok(post.includes(`'${p.id}'`), `postcondition omits ${p.id}`);
+    for (const id of SHARE_PURPOSE_CHECK_IDS) assert.ok(post.includes(`'${id}'`), `postcondition omits ${id}`);
   });
   it("the column is nullable with NO default (no silent purposing of legacy or direct rows)", () => {
     assert.match(sql, /ADD COLUMN IF NOT EXISTS purpose text NULL;/);
@@ -193,6 +194,9 @@ describe("shareAdmittedFor: a share is visible only to the purpose it was grante
   it("an unknown stored purpose, a non-string, or an unknown reader purpose admits nothing", () => {
     assert.equal(shareAdmittedFor("meetup", "meetup"), false);
     assert.equal(shareAdmittedFor("meetup", CREW_LIVE_SHARE_PURPOSE), false);
+    for (const p of LOCATION_PURPOSES.filter(p => !SHARE_PURPOSE_CHECK_IDS.includes(p.id))) {
+      assert.equal(shareAdmittedFor(p.id, p.id), false, `an unrelated purpose must not authorize a share: ${p.id}`);
+    }
     assert.equal(shareAdmittedFor(42 as any, CREW_LIVE_SHARE_PURPOSE), false);
     assert.equal(shareAdmittedFor(CREW_LIVE_SHARE_PURPOSE, "nearby_discovery"), false);
     assert.equal(shareAdmittedFor(null, "nearby_discovery"), false);

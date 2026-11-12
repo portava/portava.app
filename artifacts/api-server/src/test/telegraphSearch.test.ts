@@ -102,7 +102,7 @@ function fixture() {
       { thread_id: T_LEFT, user_id: ALICE, left_at: "2026-04-01T00:00:00.000Z", visible_from_at: null },
       { thread_id: T_FOREIGN, user_id: BOB, left_at: null, visible_from_at: null },
     ],
-    places: [{ id: "5ca00000-0000-4000-8000-000000000036", name: "Sky36 Rooftop", city: "Hanoi", neighborhood: null, primary_category: "bar", status: "active", updated_at: null }],
+    places: [{ id: "5ca00000-0000-4000-8000-000000000036", name: "Sky36 Rooftop", city: "Hanoi", neighborhood: null, primary_category: "bar", status: "active", moderation_status: "visible", merged_into_place_id: null, updated_at: null }],
     meetups: [{ id: "5ca00000-0000-4000-8000-0000000000a1", creator_id: ALICE, title: "Sky36 meetup", location_name: null, starts_at: null, status: "pending", visibility: "private", updated_at: null }],
     posts: [{ id: "5ca00000-0000-4000-8000-0000000000b1", author_id: BOB, content: "sky36 night", visibility: "public", status: "active", post_status: "published", deleted_at: null, media_urls: [], location_privacy_mode: "exact", created_at: "2026-05-05T00:00:00.000Z", updated_at: null }],
     profiles: [{ id: BOB, handle: "bob", account_status: "active" }],

@@ -13,7 +13,10 @@
  */
 
 // NOTE: exhaustive — the real token helper reaches the Supabase client.
-jest.mock('../../../../services/apiToken.ts', () => ({ freshToken: async () => 'tok' }));
+const mockToken = jest.fn<Promise<string | null>, []>();
+jest.mock('../../../../services/apiToken.ts', () => ({ freshToken: () => mockToken() }));
+import { fetchInputPolicies } from '../policyClient.ts';
+import { _resetDiscoveryViewerScopeForTests, setDiscoveryViewerFromSession } from '../../../../services/discoveryViewerScope.ts';
 
 import {
   requestSuggestions,
@@ -38,6 +41,8 @@ const REQ = { context: 'global_search' as const, fieldId: 'test.timeout', text: 
 
 beforeEach(() => {
   jest.useFakeTimers();
+  mockToken.mockReset().mockResolvedValue('tok');
+  _resetDiscoveryViewerScopeForTests();
   process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
 });
 afterEach(() => {
@@ -85,4 +90,44 @@ test('CONTROL: a prompt answer is served, and no timer is left behind', async ()
   const res = await requestSuggestions(REQ);
   expect(res.ok).toBe(true);
   expect(jest.getTimerCount()).toBe(0);
+});
+
+test('a stalled sign-in cannot keep the suggestion, map or policy request alive or send late text', async () => {
+  const resolvers: Array<(token: string) => void> = [];
+  mockToken.mockImplementation(() => new Promise(resolve => resolvers.push(resolve)));
+  const send = jest.fn();
+  global.fetch = send;
+  const attempts = [requestSuggestions(REQ), requestMapSearchPage('test city'), fetchInputPolicies()];
+  await jest.advanceTimersByTimeAsync(SUGGEST_TIMEOUT_MS);
+  const [suggest, map, policy] = await Promise.all(attempts);
+  expect(suggest).toMatchObject({ ok: false, aborted: false, unavailable: true });
+  expect(map.ok).toBe(false);
+  expect(policy).toMatchObject({ ok: false, unavailable: true });
+  resolvers.forEach(resolve => resolve('late-token'));
+  await Promise.resolve();
+  expect(send).not.toHaveBeenCalled();
+});
+
+test('superseding input or switching accounts during token lookup sends no retired query', async () => {
+  let resolveToken!: (token: string) => void;
+  mockToken.mockImplementation(() => new Promise(resolve => { resolveToken = resolve; }));
+  const send = jest.fn(); global.fetch = send;
+  const controller = new AbortController();
+  const old = requestSuggestions(REQ, controller.signal);
+  controller.abort();
+  expect(await old).toMatchObject({ ok: false, aborted: true });
+  const moved = requestSuggestions(REQ);
+  setDiscoveryViewerFromSession('other');
+  resolveToken('other-token');
+  expect(await moved).toMatchObject({ ok: false, aborted: true });
+  expect(send).not.toHaveBeenCalled();
+});
+
+test('a stalled response body and a temporarily unavailable gateway activate fallback', async () => {
+  global.fetch = jest.fn(async () => ({ ok: true, json: () => new Promise(() => {}) })) as unknown as typeof fetch;
+  const attempt = requestSuggestions(REQ);
+  await jest.advanceTimersByTimeAsync(SUGGEST_TIMEOUT_MS);
+  expect(await attempt).toMatchObject({ ok: false, unavailable: true });
+  global.fetch = jest.fn(async () => ({ ok: false, status: 503 })) as unknown as typeof fetch;
+  expect(await requestSuggestions(REQ)).toMatchObject({ ok: false, unavailable: true });
 });

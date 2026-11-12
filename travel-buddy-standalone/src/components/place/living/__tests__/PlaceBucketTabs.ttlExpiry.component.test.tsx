@@ -169,7 +169,7 @@ describe('PlaceBucketTabs — weekTimelineCache TTL expiry', () => {
     // Wait until stale posts appear — cache entry is now written with
     // expiresAt = FIXED_NOW + WEEK_TIMELINE_CACHE_TTL_MS.
     await waitFor(() => expect(getStale('Stale post from last hour')).toBeTruthy());
-    expect(mockGetTimeline).toHaveBeenCalledWith('place-ttl', 'week');
+    expect(mockGetTimeline).toHaveBeenCalledWith('place-ttl', 'week', expect.objectContaining({ signal: expect.any(AbortSignal), isCurrent: expect.any(Function) }));
 
     unmount();
 
@@ -194,7 +194,7 @@ describe('PlaceBucketTabs — weekTimelineCache TTL expiry', () => {
 
     // getPlaceTimeline must be called — the expired entry is bypassed.
     await waitFor(() =>
-      expect(mockGetTimeline).toHaveBeenCalledWith('place-ttl', 'week'),
+      expect(mockGetTimeline).toHaveBeenCalledWith('place-ttl', 'week', expect.objectContaining({ signal: expect.any(AbortSignal), isCurrent: expect.any(Function) })),
     );
     expect(mockGetTimeline).toHaveBeenCalledTimes(1);
 

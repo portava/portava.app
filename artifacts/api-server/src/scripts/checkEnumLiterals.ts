@@ -223,15 +223,6 @@ export const KNOWN_DEAD_WRITE_LITERALS: Record<string, { count: number; note: st
       "an upheld appeal silently does nothing. This one looks like a plain rename, " +
       "but it changes user-visible outcomes and belongs with the others.",
   },
-  "src/routes/admin.ts:posts.post_status:removed": {
-    count: 1,
-    note:
-      "Admin report-resolution content removal fails for a post. The column is the " +
-      "delayed_post_status enum (canceled | draft | expired | pending_delay | " +
-      "pending_location_exit | pending_safety_review | private | published) — note " +
-      "it is NOT posts.status, which is the enum that does have removal labels. Two " +
-      "status columns on one table, and the wrong one was written.",
-  },
   "src/routes/tripCrewLocation.ts:trip_crew_location_events.event_type:ghost_mode_on": {
     count: 1,
     note:

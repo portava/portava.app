@@ -43,6 +43,12 @@ jest.mock('../../../src/components/CachedImage', () => {
   const { View } = require('react-native');
   return { CachedImage: (props: object) => <View testID="existing-image" {...props} /> };
 });
+// NOTE: shared-video hydration/decoding has its own suite; this checks that a
+// non-owner gets a player and never the owner's segment mutation surface.
+jest.mock('../../../src/components/ui/SharedVideoPlayer.tsx', () => {
+  const { View } = require('react-native');
+  return { SharedVideoPlayer: (props: object) => <View testID="shared-memory-video" {...props} /> };
+});
 jest.mock('../../../src/features/memories/social/MemorySocialBar', () => { return { MemorySocialBar: () => null }; });
 jest.mock('../../../src/features/memories/social/MemoryBrowseLinks', () => { return { MemoryBrowseLinks: () => null }; });
 jest.mock('../../../src/features/memories/social/MemoryParticipantsSection', () => { return { MemoryParticipantsSection: () => null, MemoryTagConsentFallback: () => null }; });
@@ -102,12 +108,13 @@ it('reaches list/add/play/remove from the existing owner Memory, with one origin
   expect(screen.getAllByTestId('original-video')).toHaveLength(1);
 });
 
-it('does not mount owner segments or change the existing non-owner media path', async () => {
+it('does not mount owner segments and renders non-owner videos with a player', async () => {
   mockUserId = source.assetId;
   await render(<MemoryDetailScreen />);
   await screen.findByText('My video');
   expect(screen.queryByTestId('memory-video-segments')).toBeNull();
-  expect(screen.getAllByTestId('existing-image')).toHaveLength(2);
+  expect(screen.getAllByTestId('existing-image')).toHaveLength(1);
+  expect(screen.getByTestId('shared-memory-video').props.uri).toBe(`post-media/${ownerId}/original.mp4`);
   expect(mockList).not.toHaveBeenCalled();
 });
 

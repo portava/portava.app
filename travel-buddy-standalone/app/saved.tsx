@@ -3,9 +3,10 @@
  *
  * Shows all of the user's collections as a grid of cards.
  * Tapping a collection opens its items list within the same screen.
- * The legacy place-bookmarks are preserved in the default "Saved" collection.
+ * The Saved places entry includes Discovery and map wishlist bookmarks.
  */
 import React, { useState, useCallback, useRef } from 'react';
+import { usePrivateSurfaceKey } from '../src/hooks/usePrivateSurfaceKey.ts';
 import {
   View, Text, ScrollView, FlatList, StyleSheet,
   ActivityIndicator, Pressable, Animated, TextInput, Modal,
@@ -15,7 +16,6 @@ import { EmptyState } from '../src/components/ui/EmptyState';
 import { ErrorState } from '../src/components/ui/ErrorState';
 import { getPlaceCategoryFallback } from '../src/utils/placeCategoryFallback';
 import { useFocusEffect, router } from 'expo-router';
-import { FEED_FOCUS_TTL_MS } from '../src/hooks/usePosts';
 import { AppHeader } from '../src/components/ui/AppHeader';
 import { color, space, radius, shadow, type as t } from '../src/theme/tokens';
 import {
@@ -23,8 +23,10 @@ import {
   getCollectionItems,
   type Collection, type CollectionItem,
 } from '../src/services/collections';
+import { SavedGemsList } from '../src/components/SavedGemsList.tsx';
 import { SavedPostsList } from '../src/components/SavedPostsList';
-import { withOptimisticRemoveBool } from '../src/utils/optimisticRemove';
+import { SaveToCollectionSheet } from '../src/components/SaveToCollectionSheet';
+import { KeyboardSafeView } from '../src/components/ui/KeyboardSafeView.tsx';
 import { useNavBarScrollHandler } from '../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../src/hooks/useNavBarCollapse';
 import {
@@ -57,9 +59,11 @@ function routeForItem(item: CollectionItem): string | null {
     // entityId is the profile's user id (uuid) — the /u/ route resolves
     // uuid params to the canonical handle via its UuidHandleRedirect fallback.
     case 'profile':   return `/u/${item.entityId}`;
-    case 'place':     return `/place/${item.entityId}`;
+    case 'place':     return `/place/${encodeURIComponent(item.placeId ?? item.entityId)}`;
     case 'hashtag':   return `/hashtag/${item.title?.startsWith('#') ? item.title.slice(1) : item.entityId}`;
-    case 'highlight': return null;
+    case 'memory':    return `/memory/${encodeURIComponent(item.entityId)}`;
+    case 'gem':       return `/gems/${encodeURIComponent(item.entityId)}`;
+    case 'highlight': return `/highlights/${encodeURIComponent(item.entityId)}`;
     default:          return null;
   }
 }
@@ -70,13 +74,15 @@ interface CollectionCardProps {
   onPress: () => void;
   onDelete?: () => void;
   onRename?: () => void;
+  deleting?: boolean;
 }
 
-function CollectionCard({ col, onPress, onDelete, onRename }: CollectionCardProps) {
+function CollectionCard({ col, onPress, onDelete, onRename, deleting }: CollectionCardProps) {
   return (
     <Pressable
       style={({ pressed }) => [s.colCard, pressed && { opacity: 0.8 }]}
       onPress={onPress}
+      disabled={deleting}
     >
       <View style={s.colCoverPlaceholder}>
         <Folder size={28} color={color.signal} />
@@ -93,6 +99,8 @@ function CollectionCard({ col, onPress, onDelete, onRename }: CollectionCardProp
             hitSlop={8}
             onPress={(e) => { (e as any).stopPropagation?.(); onRename(); }}
             style={s.actionBtn}
+            disabled={deleting}
+            accessibilityLabel={`Rename ${col.name}`}
           >
             <Pencil size={14} color={color.mute} />
           </Pressable>
@@ -102,8 +110,10 @@ function CollectionCard({ col, onPress, onDelete, onRename }: CollectionCardProp
             hitSlop={8}
             onPress={(e) => { (e as any).stopPropagation?.(); onDelete(); }}
             style={s.actionBtn}
+            disabled={deleting}
+            accessibilityLabel={`Delete ${col.name}`}
           >
-            <Trash2 size={14} color={color.mute} />
+            {deleting ? <ActivityIndicator size="small" color={color.mute} /> : <Trash2 size={14} color={color.mute} />}
           </Pressable>
         )}
         <ChevronRight size={16} color={color.faint} />
@@ -138,7 +148,7 @@ function PlaceThumb({ coverUrl }: { coverUrl: string | null }) {
   );
 }
 
-function CollectionItemRow({ item }: { item: CollectionItem }) {
+function CollectionItemRow({ item, onOrganize }: { item: CollectionItem; onOrganize: (item: CollectionItem) => void }) {
   const dest = routeForItem(item);
   const isPlace = item.entityType === 'place';
   const inner = (
@@ -160,15 +170,17 @@ function CollectionItemRow({ item }: { item: CollectionItem }) {
     </View>
   );
 
-  if (!dest) return inner;
-
   return (
-    <Pressable
-      onPress={() => router.push(dest as any)}
-      style={({ pressed }) => [pressed && { opacity: 0.7 }]}
-    >
-      {inner}
-    </Pressable>
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      {dest ? (
+        <Pressable onPress={() => router.push(dest as any)} style={({ pressed }) => [{ flex: 1 }, pressed && { opacity: 0.7 }]}>
+          {inner}
+        </Pressable>
+      ) : <View style={{ flex: 1 }}>{inner}</View>}
+      <Pressable onPress={() => onOrganize(item)} style={s.actionBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel={`Add ${item.title ?? 'item'} to collection`}>
+        <FolderPlus size={20} color={color.deep} />
+      </Pressable>
+    </View>
   );
 }
 
@@ -176,46 +188,64 @@ function CollectionItemRow({ item }: { item: CollectionItem }) {
 interface CollectionItemsViewProps {
   collection: Collection;
   onBack: () => void;
+  onOrganize: (item: CollectionItem) => void;
+  revision: number;
 }
 
-function CollectionItemsView({ collection, onBack }: CollectionItemsViewProps) {
+function CollectionItemsView({ collection, onBack, onOrganize, revision }: CollectionItemsViewProps) {
   const navBarScrollHandler = useNavBarScrollHandler();
   const [items, setItems]     = useState<CollectionItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(false);
   const [cursor, setCursor]   = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
-  const lastLoadedAt = useRef(0);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [moreFailed, setMoreFailed] = useState(false);
+  const generation = useRef(0);
+  const pendingPage = useRef(false);
 
   const load = useCallback(async () => {
+    const attempt = ++generation.current;
+    pendingPage.current = false;
     setLoading(true);
+    setLoadingMore(false);
     const result = await getCollectionItems(collection.id);
-    setItems(result.items);
-    setHasMore(result.hasMore);
-    setCursor(result.nextCursor);
-    lastLoadedAt.current = Date.now();
+    if (generation.current !== attempt) return;
+    setLoadFailed(!result.ok);
+    setMoreFailed(false);
+    if (result.ok) {
+      setItems(result.items);
+      setHasMore(result.hasMore);
+      setCursor(result.nextCursor);
+    }
     setLoading(false);
-  }, [collection.id]);
+  }, [collection.id, revision]);
 
   useFocusEffect(useCallback(() => {
-    if (Date.now() - lastLoadedAt.current >= FEED_FOCUS_TTL_MS) {
-      void load();
-    }
+    void load();
+    return () => { generation.current += 1; pendingPage.current = false; };
   }, [load]));
 
   const loadMore = async () => {
-    if (!hasMore || !cursor || loadingMore) return;
+    if (!hasMore || !cursor || loading || pendingPage.current) return;
+    pendingPage.current = true;
+    const attempt = generation.current;
     setLoadingMore(true);
     const result = await getCollectionItems(collection.id, cursor);
-    setItems((prev) => [...prev, ...result.items]);
-    setHasMore(result.hasMore);
-    setCursor(result.nextCursor);
+    if (generation.current !== attempt) return;
+    pendingPage.current = false;
+    setMoreFailed(!result.ok);
+    if (result.ok) {
+      setItems((prev) => [...new Map([...prev, ...result.items].map(item => [item.id, item])).values()]);
+      setHasMore(result.hasMore);
+      setCursor(result.nextCursor);
+    }
     setLoadingMore(false);
   };
 
   const subHeader = (
     <View style={s.subHeader}>
-      <Pressable onPress={onBack} style={s.backBtn} hitSlop={8}>
+      <Pressable onPress={onBack} style={s.backBtn} hitSlop={8} accessibilityLabel="Back to collections">
         <ChevronLeft size={22} color={color.ink} />
       </Pressable>
       <Text style={s.subHeaderTitle} numberOfLines={1}>{collection.name}</Text>
@@ -232,6 +262,11 @@ function CollectionItemsView({ collection, onBack }: CollectionItemsViewProps) {
           {subHeader}
           <View style={s.center}><ActivityIndicator color={color.signal} /></View>
         </View>
+      ) : loadFailed ? (
+        <View style={{ flex: 1 }}>
+          {subHeader}
+          <ErrorState message="This collection could not be loaded. Please try again." onRetry={() => void load()} />
+        </View>
       ) : items.length === 0 ? (
         <View style={{ flex: 1 }}>
           {subHeader}
@@ -243,17 +278,19 @@ function CollectionItemsView({ collection, onBack }: CollectionItemsViewProps) {
         </View>
       ) : (
         <FlatList
+          testID="saved-collection-items"
           data={items}
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ padding: space.lg, gap: space.sm }}
-          renderItem={({ item }) => <CollectionItemRow item={item} />}
+          renderItem={({ item }) => <CollectionItemRow item={item} onOrganize={onOrganize} />}
           onScroll={navBarScrollHandler}
           scrollEventThrottle={16}
-          onEndReached={loadMore}
+          onEndReached={moreFailed ? undefined : loadMore}
           onEndReachedThreshold={0.3}
           ListHeaderComponent={subHeader}
           ListFooterComponent={
             <>
+              {moreFailed ? <ErrorState message="More saved items could not be loaded." onRetry={() => void loadMore()} /> : null}
               {loadingMore ? (
                 <View style={{ paddingVertical: space.lg, alignItems: 'center' }}>
                   <ActivityIndicator color={color.signal} />
@@ -270,42 +307,53 @@ function CollectionItemsView({ collection, onBack }: CollectionItemsViewProps) {
 
 // ── Create collection modal ───────────────────────────────────────────────────
 interface CreateCollectionModalProps {
-  visible: boolean;
+  initialName: string;
   existingNames: string[];
   onClose: () => void;
   onCreated: (col: Collection) => void;
 }
 
 function CreateCollectionModal({
-  visible, existingNames, onClose, onCreated,
+  initialName, existingNames, onClose, onCreated,
 }: CreateCollectionModalProps) {
-  const [name, setName]       = useState('');
+  const [name, setName]       = useState(initialName);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const busy = useRef(false);
+  const mounted = useRef(true);
+  React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const handleCreate = async () => {
     const trimmed = name.trim();
-    if (!trimmed || loading) return;
+    if (!trimmed || busy.current) return;
+    busy.current = true;
+    setError(null);
     setLoading(true);
-    const col = await createCollection(trimmed);
+    const col = await createCollection(trimmed).catch(() => null);
+    if (!mounted.current) return;
+    busy.current = false;
     setLoading(false);
     if (col) { setName(''); onCreated(col); }
+    else setError('Couldn’t create this collection. Try again.');
   };
 
   const suggestions = STARTER_SUGGESTIONS.filter((n) => !existingNames.includes(n));
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={s.modalBackdrop} onPress={onClose} />
+      <KeyboardSafeView contentContainerStyle={s.modalContainer}>
       <View style={s.modalBox}>
         <View style={s.modalHeader}>
           <Text style={s.modalTitle}>New collection</Text>
-          <Pressable onPress={onClose} hitSlop={8}>
+          <Pressable onPress={onClose} hitSlop={8} accessibilityLabel="Close new collection">
             <X size={20} color={color.ink} />
           </Pressable>
         </View>
         <TextInput
           style={s.modalInput}
           value={name}
+          editable={!loading}
           onChangeText={setName}
           placeholder="Collection name"
           placeholderTextColor={color.faint}
@@ -317,12 +365,13 @@ function CreateCollectionModal({
         {suggestions.length > 0 && (
           <View style={s.suggestRow}>
             {suggestions.map((sug) => (
-              <Pressable key={sug} style={chips.chip} onPress={() => setName(sug)}>
+              <Pressable key={sug} style={chips.chip} onPress={() => setName(sug)} disabled={loading}>
                 <Text style={chips.chipLabel}>{sug}</Text>
               </Pressable>
             ))}
           </View>
         )}
+        {error ? <Text accessibilityRole="alert" style={{ color: color.signal }}>{error}</Text> : null}
         <Pressable
           style={[s.modalConfirm, (!name.trim() || loading) && s.btnDisabled]}
           onPress={handleCreate}
@@ -334,13 +383,14 @@ function CreateCollectionModal({
           }
         </Pressable>
       </View>
+      </KeyboardSafeView>
     </Modal>
   );
 }
 
 // ── Rename collection modal ───────────────────────────────────────────────────
 interface RenameCollectionModalProps {
-  collection: Collection | null;
+  collection: Collection;
   onClose: () => void;
   onRenamed: (col: Collection) => void;
 }
@@ -348,32 +398,40 @@ interface RenameCollectionModalProps {
 function RenameCollectionModal({ collection, onClose, onRenamed }: RenameCollectionModalProps) {
   const [name, setName]       = useState(collection?.name ?? '');
   const [loading, setLoading] = useState(false);
-
-  // Keep input in sync when the target collection changes
-  React.useEffect(() => { setName(collection?.name ?? ''); }, [collection?.id]);
+  const [error, setError] = useState<string | null>(null);
+  const busy = useRef(false);
+  const mounted = useRef(true);
+  React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const handleRename = async () => {
     const trimmed = name.trim();
-    if (!trimmed || !collection || loading || trimmed === collection.name) return;
+    if (!trimmed || busy.current || trimmed === collection.name) return;
+    busy.current = true;
+    setError(null);
     setLoading(true);
-    const updated = await updateCollection(collection.id, { name: trimmed });
+    const updated = await updateCollection(collection.id, { name: trimmed }).catch(() => null);
+    if (!mounted.current) return;
+    busy.current = false;
     setLoading(false);
     if (updated) onRenamed(updated);
+    else setError('Couldn’t rename this collection. Try again.');
   };
 
   return (
     <Modal visible={!!collection} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={s.modalBackdrop} onPress={onClose} />
+      <KeyboardSafeView contentContainerStyle={s.modalContainer}>
       <View style={s.modalBox}>
         <View style={s.modalHeader}>
           <Text style={s.modalTitle}>Rename collection</Text>
-          <Pressable onPress={onClose} hitSlop={8}>
+          <Pressable onPress={onClose} hitSlop={8} accessibilityLabel="Close rename collection">
             <X size={20} color={color.ink} />
           </Pressable>
         </View>
         <TextInput
           style={s.modalInput}
           value={name}
+          editable={!loading}
           onChangeText={setName}
           placeholder="Collection name"
           placeholderTextColor={color.faint}
@@ -383,6 +441,7 @@ function RenameCollectionModal({ collection, onClose, onRenamed }: RenameCollect
           onSubmitEditing={handleRename}
           selectTextOnFocus
         />
+        {error ? <Text accessibilityRole="alert" style={{ color: color.signal }}>{error}</Text> : null}
         <Pressable
           style={[s.modalConfirm, (!name.trim() || loading || name.trim() === collection?.name) && s.btnDisabled]}
           onPress={handleRename}
@@ -394,6 +453,7 @@ function RenameCollectionModal({ collection, onClose, onRenamed }: RenameCollect
           }
         </Pressable>
       </View>
+      </KeyboardSafeView>
     </Modal>
   );
 }
@@ -442,56 +502,86 @@ function SavedPostsEntry({ onPress }: { onPress: () => void }) {
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export default function SavedScreen() {
+  const scope = usePrivateSurfaceKey();
+  return <SavedForViewer key={scope} />;
+}
+
+function SavedForViewer() {
   const navBarScrollHandler = useNavBarScrollHandler();
   const [collections, setCollections]           = useState<Collection[]>([]);
   const [loading, setLoading]                   = useState(true);
   const [loadFailed, setLoadFailed]             = useState(false);
   const [activeCollection, setActiveCollection] = useState<Collection | null>(null);
+  const [savedGemsOpen, setSavedGemsOpen] = useState(false);
   const [savedPostsOpen, setSavedPostsOpen]     = useState(false);
+  const [organizeItem, setOrganizeItem] = useState<Pick<CollectionItem, 'entityType' | 'entityId'> | null>(null);
   const [createOpen, setCreateOpen]             = useState(false);
+  const [createName, setCreateName] = useState('');
+  const [contentsRevision, setContentsRevision] = useState(0);
   const [renameTarget, setRenameTarget]         = useState<Collection | null>(null);
+  const [deleting, setDeleting] = useState<ReadonlySet<string>>(new Set());
+  const pendingDeletes = useRef(new Set<string>());
+  const generation = useRef(0);
+  const mounted = useRef(true);
   const [removeError, setRemoveError]           = useState<string | null>(null);
   const errorY = useRef(new Animated.Value(80)).current;
-  const lastLoadedAt = useRef(0);
+  const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      generation.current += 1;
+      if (errorTimer.current) clearTimeout(errorTimer.current);
+      errorY.stopAnimation();
+    };
+  }, [errorY]);
 
   const showError = useCallback((msg: string) => {
+    if (!mounted.current) return;
+    if (errorTimer.current) clearTimeout(errorTimer.current);
     setRemoveError(msg);
     Animated.spring(errorY, { toValue: 0, useNativeDriver: true }).start();
-    setTimeout(() => {
+    errorTimer.current = setTimeout(() => {
       Animated.timing(errorY, { toValue: 80, duration: 220, useNativeDriver: true }).start(
-        () => setRemoveError(null),
+        () => { if (mounted.current) setRemoveError(null); },
       );
     }, 3000);
   }, [errorY]);
 
   const load = useCallback(async () => {
+    const attempt = ++generation.current;
     setLoading(true);
     const read = await readCollections();
+    if (!mounted.current || generation.current !== attempt) return;
     setCollections(read.data);
     setLoadFailed(!read.ok);
-    // Only a successful read counts as fresh: a failed one is retried on the next focus.
-    if (read.ok) lastLoadedAt.current = Date.now();
     setLoading(false);
   }, []);
 
   useFocusEffect(useCallback(() => {
-    if (Date.now() - lastLoadedAt.current >= FEED_FOCUS_TTL_MS) {
-      void load();
-    }
+    // A collection may have been created or filled on the screen we just left.
+    void load();
+    return () => { generation.current += 1; };
   }, [load]));
 
   const handleDelete = useCallback(async (col: Collection) => {
-    await withOptimisticRemoveBool({
-      target: col,
-      getItems: () => collections,
-      setItems: setCollections,
-      match: (item, t) => item.id === t.id,
-      deleteOp: (c) => deleteCollection(c.id),
-      onError: showError,
-    });
-  }, [collections, showError]);
+    if (pendingDeletes.current.has(col.id)) return;
+    pendingDeletes.current.add(col.id);
+    setDeleting(new Set(pendingDeletes.current));
+    const ok = await deleteCollection(col.id).catch(() => false);
+    if (!mounted.current) return;
+    generation.current += 1;
+    setLoading(false);
+    pendingDeletes.current.delete(col.id);
+    setDeleting(new Set(pendingDeletes.current));
+    if (ok) setCollections(previous => previous.filter(item => item.id !== col.id));
+    else showError('Couldn’t delete this collection. Try again.');
+  }, [showError]);
 
   const handleRenamed = useCallback((updated: Collection) => {
+    generation.current += 1;
+    setLoading(false);
     setCollections((cs) => cs.map((c) => c.id === updated.id ? updated : c));
     setRenameTarget(null);
   }, []);
@@ -500,18 +590,23 @@ export default function SavedScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: color.paper }}>
-      {savedPostsOpen ? (
-        <SavedPostsList onBack={() => setSavedPostsOpen(false)} />
+      {savedGemsOpen ? (
+        <SavedGemsList revision={contentsRevision} onBack={() => setSavedGemsOpen(false)} onOrganize={gemId => setOrganizeItem({ entityType: 'gem', entityId: gemId })} />
+      ) : savedPostsOpen ? (
+        <SavedPostsList revision={contentsRevision} onBack={() => setSavedPostsOpen(false)} onOrganize={(postId) => setOrganizeItem({ entityType: 'post', entityId: postId })} />
       ) : activeCollection ? (
         <CollectionItemsView
-          collection={activeCollection}
+          key={activeCollection.id}
+          collection={collections.find(item => item.id === activeCollection.id) ?? activeCollection}
+          revision={contentsRevision}
           onBack={() => setActiveCollection(null)}
+          onOrganize={setOrganizeItem}
         />
       ) : (
         <>
+          <AppHeader variant="detail" title="Saved" onBack={router.back} />
           {loading ? (
             <View style={{ flex: 1 }}>
-              <AppHeader variant="detail" title="Saved" onBack={router.back} />
               <View style={s.center}><ActivityIndicator color={color.signal} /></View>
             </View>
           ) : loadFailed && collections.length === 0 ? (
@@ -520,9 +615,12 @@ export default function SavedScreen() {
               onScroll={navBarScrollHandler}
               scrollEventThrottle={16}
             >
-              <AppHeader variant="detail" title="Saved" onBack={router.back} />
+              <Pressable style={s.newCollectionRow} accessibilityRole="button" accessibilityLabel="Saved places" onPress={() => router.push('/saved-places' as never)}>
+                <MapPin size={18} color={color.deep} /><Text style={s.newCollectionText}>Saved places</Text>
+              </Pressable>
               <SavedPeopleEntry />
               <SavedPostsEntry onPress={() => setSavedPostsOpen(true)} />
+              <Pressable style={s.newCollectionRow} accessibilityRole="button" accessibilityLabel="Saved gems" onPress={() => setSavedGemsOpen(true)}><Bookmark size={18} color={color.deep} /><Text style={s.newCollectionText}>Saved gems</Text></Pressable>
               {/* Not the empty state: its starter chips would make duplicates of collections that exist. */}
               <View testID="collections-load-error">
                 <ErrorState message="Your collections could not be loaded. They are still saved." onRetry={() => void load()} />
@@ -535,14 +633,17 @@ export default function SavedScreen() {
               onScroll={navBarScrollHandler}
               scrollEventThrottle={16}
             >
-              <AppHeader variant="detail" title="Saved" onBack={router.back} />
+              <Pressable style={s.newCollectionRow} accessibilityRole="button" accessibilityLabel="Saved places" onPress={() => router.push('/saved-places' as never)}>
+                <MapPin size={18} color={color.deep} /><Text style={s.newCollectionText}>Saved places</Text>
+              </Pressable>
               <SavedPeopleEntry />
               <SavedPostsEntry onPress={() => setSavedPostsOpen(true)} />
+              <Pressable style={s.newCollectionRow} accessibilityRole="button" accessibilityLabel="Saved gems" onPress={() => setSavedGemsOpen(true)}><Bookmark size={18} color={color.deep} /><Text style={s.newCollectionText}>Saved gems</Text></Pressable>
               <EmptyState
                 icon={Bookmark}
                 title="No collections yet"
-                description="Saved posts and people are listed above. Save places, events, and more into collections — they'll appear here."
-                primaryAction={{ label: 'Create a collection', onPress: () => setCreateOpen(true) }}
+                description="Saved places, posts, gems and people are listed above. Save places, events, and more into collections — they'll appear here."
+                primaryAction={{ label: 'Create a collection', onPress: () => { setCreateName(''); setCreateOpen(true); } }}
               />
               <Text style={s.suggestLabel}>Starter ideas</Text>
               <View style={s.suggestRow}>
@@ -550,10 +651,7 @@ export default function SavedScreen() {
                   <Pressable
                     key={name}
                     style={chips.chip}
-                    onPress={async () => {
-                      const col = await createCollection(name);
-                      if (col) setCollections((prev) => [...prev, col]);
-                    }}
+                    onPress={() => { setCreateName(name); setCreateOpen(true); }}
                   >
                     <Text style={chips.chipLabel}>{name}</Text>
                   </Pressable>
@@ -570,10 +668,13 @@ export default function SavedScreen() {
               scrollEventThrottle={16}
               ListHeaderComponent={
                 <>
-                  <AppHeader variant="detail" title="Saved" onBack={router.back} />
-                  <SavedPeopleEntry />
+                      <Pressable style={s.newCollectionRow} accessibilityRole="button" accessibilityLabel="Saved places" onPress={() => router.push('/saved-places' as never)}>
+                <MapPin size={18} color={color.deep} /><Text style={s.newCollectionText}>Saved places</Text>
+              </Pressable>
+              <SavedPeopleEntry />
                   <SavedPostsEntry onPress={() => setSavedPostsOpen(true)} />
-                  <Pressable style={s.newCollectionRow} onPress={() => setCreateOpen(true)}>
+              <Pressable style={s.newCollectionRow} accessibilityRole="button" accessibilityLabel="Saved gems" onPress={() => setSavedGemsOpen(true)}><Bookmark size={18} color={color.deep} /><Text style={s.newCollectionText}>Saved gems</Text></Pressable>
+                  <Pressable style={s.newCollectionRow} onPress={() => { setCreateName(''); setCreateOpen(true); }}>
                     <FolderPlus size={18} color={color.deep} />
                     <Text style={s.newCollectionText}>New collection</Text>
                   </Pressable>
@@ -582,6 +683,7 @@ export default function SavedScreen() {
               renderItem={({ item: col }) => (
                 <CollectionCard
                   col={col}
+                  deleting={deleting.has(col.id)}
                   onPress={() => setActiveCollection(col)}
                   onDelete={col.isDefault ? undefined : () => handleDelete(col)}
                   onRename={col.isDefault ? undefined : () => setRenameTarget(col)}
@@ -593,22 +695,37 @@ export default function SavedScreen() {
         </>
       )}
 
-      <CreateCollectionModal
-        visible={createOpen}
+      {createOpen ? <CreateCollectionModal
+        initialName={createName}
         existingNames={existingNames}
         onClose={() => setCreateOpen(false)}
         onCreated={(col) => {
-          setCollections((prev) => [...prev, col]);
+          generation.current += 1;
+          setLoading(false);
+          setCollections((prev) => [...prev.filter(item => item.id !== col.id), col]);
           setCreateOpen(false);
           setActiveCollection(col);
         }}
-      />
+      /> : null}
 
-      <RenameCollectionModal
+      {organizeItem ? (
+        <SaveToCollectionSheet
+          key={`${organizeItem.entityType}:${organizeItem.entityId}`}
+          visible
+          entityType={organizeItem.entityType}
+          entityId={organizeItem.entityId}
+          isSaved
+          onSaved={() => {}}
+          onClose={() => { setOrganizeItem(null); setContentsRevision(value => value + 1); void load(); }}
+        />
+      ) : null}
+
+      {renameTarget ? <RenameCollectionModal
+        key={renameTarget.id}
         collection={renameTarget}
         onClose={() => setRenameTarget(null)}
         onRenamed={handleRenamed}
-      />
+      /> : null}
 
       {removeError && (
         <Animated.View
@@ -630,7 +747,6 @@ const s = StyleSheet.create({
   emptyState: {
     alignItems: 'center',
     padding: space.lg,
-    paddingTop: space.xxxl,
     gap: space.md,
   },
   emptyTitle: { ...t.heading, color: color.ink, fontSize: 17 },
@@ -717,11 +833,11 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
   modalBox: {
-    position: 'absolute', top: '30%', left: space.lg, right: space.lg,
     backgroundColor: color.paperRaised,
     borderRadius: radius.lg, padding: space.lg, gap: space.md,
     ...shadow.float,
   },
+  modalContainer: { flexGrow: 1, justifyContent: 'center', padding: space.lg },
   modalHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
   },

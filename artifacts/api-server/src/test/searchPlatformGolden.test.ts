@@ -25,6 +25,10 @@
  * and every select/or/ilike, was unchanged; each affected case gained exactly one
  * feature_flags read, and the extra await reordered the concurrent bucket reads.
  *
+ * Re-recorded 2026-11-09 for trip expiry. Fourteen cases now record the
+ * end-date and timezone reads, the lower calendar-date bound, and the ordering
+ * of concurrent reads. All 41 stored response bodies and statuses are identical.
+ *
  * Date is frozen (node:test mock timers, Date only) so recency and "upcoming"
  * terms cannot drift the golden between runs.
  *

@@ -212,7 +212,7 @@ function trendDb(rows: Row[]) {
         order(_c: string, o?: { ascending?: boolean }) { desc = o?.ascending === false; return b; },
         limit(n: number) { limitN = n; return b; },
         then(res, rej) {
-          if (table === "trend_integrity_reviews") return Promise.resolve({ data: [] as Row[], error: null as null }).then(res, rej); if (table !== "place_momentum") throw new Error(`trendDb: ${table}`);  // §93 (H-W10T-1): 3486 readable, no review recorded — the rows are served as stored
+          if (['places', 'discovery_places', 'external_place_references', 'trend_integrity_reviews'].includes(table)) return Promise.resolve({ data: [] as Row[], error: null as null, count: 0 }).then(res, rej); if (table !== "place_momentum") throw new Error(`trendDb: ${table}`);  // Current governance is readable; this fixture has only community places.
           let out = rows.filter((r) => filters.every((f) => f(r)));
           out = [...out].sort((a, z) => (String(a["computed_at"]) < String(z["computed_at"]) ? -1 : 1) * (desc ? -1 : 1));
           if (limitN !== null) out = out.slice(0, limitN);
@@ -302,6 +302,7 @@ const P_G = ["33333333-3333-4333-8333-3333333333a1", "33333333-3333-4333-8333-33
 async function trendingValues() {
   const iso = (msAgo: number) => new Date(NOW - msAgo).toISOString();
   const seed = (): Record<string, Row[]> => ({
+    discovery_places: P_G.map(id => ({ id, status: 'active' })),
     trails: [{ id: T_G, slug: "slug-g", title: "Trail G", description: null, destination: "bangkok", place_scope: null,
       parent_trail_id: null, review_state: "approved", lifecycle_status: "active", created_by: "11111111-1111-4111-8111-111111111111",
       created_at: iso(86_400_000), updated_at: iso(86_400_000) }],

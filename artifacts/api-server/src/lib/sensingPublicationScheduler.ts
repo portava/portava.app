@@ -187,9 +187,10 @@ export async function runSensingPublicationPass(
       logger.warn({ error: (error as any)?.message ?? String(error) }, "sensing publication pass: cohort listing failed");
       return SKIPPED("cohorts_unreadable");
     }
+    if (!Array.isArray(data)) return SKIPPED("cohorts_unreadable");
     const byKey = new Map<string, CohortRef>();
     for (const r of (data as CohortRef[]) ?? []) {
-      if (!r || typeof r.cohort_key !== "string" || r.cohort_key === "") continue;
+      if (!r || typeof r.cohort_key !== "string" || r.cohort_key === "") return SKIPPED("cohorts_unreadable");
       if (!byKey.has(r.cohort_key)) byKey.set(r.cohort_key, r);
       if (byKey.size >= maxCohorts) break;
     }

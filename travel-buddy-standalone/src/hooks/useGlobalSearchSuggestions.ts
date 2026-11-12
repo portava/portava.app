@@ -56,6 +56,7 @@ import { useSearchSuggestions, type UseSearchSuggestionsOpts } from './useSearch
 import type { SuggestGroup } from '../services/discovery.ts';
 import { useInputAssistance } from '../platform/input-assistance/hooks/useInputAssistance.ts';
 import { mapSuggestionsToGroups, findSuggestionForRow } from '../platform/input-assistance/search/globalSearch.ts';
+import { emitInputEvent } from '../platform/input-assistance/services/inputTelemetry.ts';
 import { recordSuggestionSelection } from '../platform/input-assistance/services/selectionRecorder.ts';
 import { extractActionSuggestions } from '../platform/input-assistance/search/smartActions.ts';
 import { GLOBAL_SEARCH_CAPABILITIES } from '../platform/input-assistance/contexts/clientCapabilities.ts';
@@ -192,9 +193,11 @@ export function useGlobalSearchSuggestions(
       if (!preferGateway) return;
       const suggestion = findSuggestionForRow(gateway.suggestions, row);
       if (!suggestion) return;
+      if (gateway.policy) emitInputEvent('suggestion_selected', gateway.policy.fieldId, gateway.policy.context,
+        { suggestionType: suggestion.type, source: suggestion.source }, gateway.policy.telemetryPolicy, gateway.requestId);
       recordSuggestionSelection(suggestion, { policy: gateway.policy, query });
     },
-    [preferGateway, gateway.suggestions, gateway.policy, query],
+    [preferGateway, gateway.suggestions, gateway.policy, gateway.requestId, query],
   );
   const shown = preferGateway ? 'gateway' : 'legacy'; useEffect(() => { if (enabled) shownRef.current = shown; }, [enabled, shown]); // round 4: what the screen last showed, read by the next render's handoff
   return {

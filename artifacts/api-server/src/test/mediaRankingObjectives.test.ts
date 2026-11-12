@@ -17,6 +17,7 @@
  *   SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *   node --import tsx/esm --test src/test/mediaRankingObjectives.test.ts
  */
+import { makeFakeClient as makeCatalogClient } from './telegraphCertificationHarness.js';
 import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -131,6 +132,7 @@ function makeSc(data: Dataset, opts: { failing?: string[] } = {}) {
   const calls: string[] = [];
   const builder = (table: string): any => {
     calls.push(table);
+    if (table === "places") return makeCatalogClient({ places: data.places ?? [] }, opts.failing?.includes(table) ? {errors: {places: {message: "catalog unavailable"}}} : {}).from(table);
     const filters: Array<(r: any) => boolean> = [];
     let limit: number | null = null;
     const resolveRows = () => {
@@ -606,6 +608,7 @@ function worldPost(id: string, o: { author?: string; placeId?: string; createdAg
 
 function worldData(extra: Dataset): Dataset {
   return {
+    places: [{ id: PLACE_1 }, { id: PLACE_2 }, { id: PLACE_3 }],
     profiles: [{ id: VIEWER, location_country: "VN", date_of_birth: "1990-01-01", account_status: "active" }],
     blocks: [], user_mutes: [], user_follows: [], trip_members: [], trips: [], feature_flags: [],
     ...extra,

@@ -18,6 +18,19 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 
 import { WatchFeed } from '../WatchFeed.tsx';
 import { getOverlayHeaderTotalHeight } from '../../ui/AppHeader.tsx';
+import { seedObservedOwnerSession, disposeObservedOwnerSession } from '../../../services/__tests__/observedOwnerSessionFixture.ts';
+import { setDiscoveryViewerFromSession } from '../../../services/discoveryViewerScope.ts';
+import * as collections from '../../../services/collections.ts';
+
+jest.mock('../../../lib/supabase.ts', () => {
+  const listeners = new Set();
+  return { isSupabaseConfigured: true, supabase: { auth: { listeners, onAuthStateChange: (listener: unknown) => {
+    listeners.add(listener); return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } };
+  } } } };
+});
+jest.mock('../../../services/collections.ts', () => ({ ...jest.requireActual('../../../services/collections.ts'),
+  readCollections: jest.fn(), checkSaved: jest.fn(), saveItem: jest.fn() }));
+const mockSetSaved = jest.fn();
 
 const INSET_TOP = 62; // an iPhone with a Dynamic Island
 const MODE_SELECTOR_BOTTOM = getOverlayHeaderTotalHeight(INSET_TOP) + 4 + 44; // media.tsx: the pill sits 4pt under the header, 44pt tall
@@ -49,12 +62,16 @@ const mockFeed = {
 jest.mock('../../../hooks/useWatchFeed.ts', () => ({ useWatchFeed: () => mockFeed }));
 // NOTE: intentionally exhaustive — saves are not under test.
 jest.mock('../../../hooks/useMediaSave.ts', () => ({
-  useMediaSave: () => ({ savedSet: new Set<string>(), seed: jest.fn(), toggleSave: jest.fn() }),
+  useMediaSave: () => ({ savedSet: {}, seed: jest.fn(), toggleSave: jest.fn(), setSaved: mockSetSaved }),
 }));
 // NOTE: intentionally exhaustive — the viewer is not under test.
 jest.mock('../../../context/SessionContext.tsx', () => ({ useSession: () => ({ userId: 'u-1' }) }));
 // NOTE: intentionally exhaustive — the video list (native players) is not under test.
-jest.mock('../WatchFeedList.tsx', () => ({ WatchFeedList: () => null }));
+jest.mock('../WatchFeedList.tsx', () => {
+  const React = require('react');
+  const { Pressable, Text } = require('react-native');
+  return { WatchFeedList: ({ onSave }: { onSave: (id: string) => void }) => <Pressable onPress={() => onSave('v1')}><Text>Bookmark video</Text></Pressable> };
+});
 // NOTE: intentionally exhaustive — the sheets are closed.
 jest.mock('../MediaCommentSheet.tsx', () => ({ MediaCommentSheet: () => null }));
 // NOTE: intentionally exhaustive — the sheets are closed.
@@ -70,9 +87,23 @@ function toggleBarTop(): unknown {
 }
 
 beforeEach(() => {
+  setDiscoveryViewerFromSession('u-1'); seedObservedOwnerSession('u-1', 'session-a');
   mockFlagsOn.clear();
   jest.clearAllMocks();
   Object.assign(mockFeed, { feedType: 'for_you', items: [{ id: 'v1' }], loading: false, error: null });
+});
+afterEach(() => { disposeObservedOwnerSession(); });
+
+it('opens collections from the Watch bookmark and synchronizes the confirmed saved state', async () => {
+  jest.mocked(collections.readCollections).mockResolvedValue({ ok: true, data: [{ id: 'food', name: 'Food', coverUrl: null, isDefault: false, position: 0, itemCount: 0, createdAt: '', updatedAt: '' }] });
+  jest.mocked(collections.checkSaved).mockResolvedValue({ ok: true, saved: false, collectionIds: [] });
+  jest.mocked(collections.saveItem).mockResolvedValue(true);
+  await render(<WatchFeed />);
+  await fireEvent.press(screen.getByText('Bookmark video'));
+  expect(collections.saveItem).not.toHaveBeenCalled();
+  await fireEvent.press(await screen.findByLabelText('Save to Food'));
+  expect(collections.saveItem).toHaveBeenCalledWith('post', 'v1', 'food');
+  expect(mockSetSaved).toHaveBeenLastCalledWith('v1', true);
 });
 
 describe('WatchFeed — MEDIA_FOLLOWING_ENABLED gate', () => {

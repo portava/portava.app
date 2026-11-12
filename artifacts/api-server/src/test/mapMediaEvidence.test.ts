@@ -97,7 +97,7 @@ interface FakeOpts {
 function makeDb(flags: Record<string, boolean>, opts: FakeOpts = {}) {
   const tables: Record<string, any[]> = {
     feature_flags: Object.entries(flags).map(([flag, enabled]) => ({ flag, enabled })),
-    places: (opts.places ?? []).map((id) => ({ id })),
+    places: (opts.places ?? []).map((id) => ({ id, moderation_status: 'visible', merged_into_place_id: null })),
     intel_contribution_consent: Object.entries(opts.consent ?? {}).map(([user_id, state]) => ({
       user_id,
       enabled: state !== false,
@@ -122,6 +122,7 @@ function makeDb(flags: Record<string, boolean>, opts: FakeOpts = {}) {
   function from(table: string) {
     let op: "select" | "insert" | "insert_select" = "select";
     let payload: any = null;
+    let rowLimit = Infinity;
     const filters: Array<{ col: string; val: any; kind: string }> = [];
 
     const match = (row: any) =>
@@ -136,7 +137,7 @@ function makeDb(flags: Record<string, boolean>, opts: FakeOpts = {}) {
         }
       });
 
-    function run(): { data: any; error: any } {
+    function run(): { data: any; error: any; count?: number } {
       const store = tables[table] ?? (tables[table] = []);
       if (op === "insert" || op === "insert_select") {
         // uuid-SHAPED ids: the route validates `observationId` as a uuid, so a
@@ -161,7 +162,8 @@ function makeDb(flags: Record<string, boolean>, opts: FakeOpts = {}) {
         return { data: op === "insert_select" ? row : null, error: null };
       }
       reads.push(table);
-      return { data: store.filter(match), error: null };
+      const matched = store.filter(match);
+      return { data: matched.slice(0, rowLimit), count: matched.length, error: null };
     }
 
     const first = () => {
@@ -178,7 +180,7 @@ function makeDb(flags: Record<string, boolean>, opts: FakeOpts = {}) {
       lte(col: string, val: any) { filters.push({ col, val, kind: "lte" }); return b; },
       gte(col: string, val: any) { filters.push({ col, val, kind: "gte" }); return b; },
       order() { return b; },
-      limit() { return b; },
+      limit(value: number) { rowLimit = value; return b; },
       maybeSingle() { return Promise.resolve(first()); },
       single() { return Promise.resolve(first()); },
       then(resolve2: (r: any) => any) { return Promise.resolve(run()).then(resolve2); },

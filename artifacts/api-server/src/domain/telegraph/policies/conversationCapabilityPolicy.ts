@@ -42,6 +42,7 @@ import { isBlockedBetween } from "../../../lib/blockGuard.js"; import { isRabBoo
 import { isAcceptedTripMember } from "../../../lib/http.js"; import { CREW_LIVE_SHARE_PURPOSE, admitSharesForPurpose } from "../../../lib/locationSharePurpose.js"; // 3753: INPUT 8 reads the crew live share only
 import { logger as rootLogger } from "../../../lib/logger.js";
 import { getRestrictionState } from "../../../services/trust/TrustRestrictionService.js";
+import { readConversationRelationship, type ConversationRelationshipReading } from '../../../services/telegraph/conversationRelationship.js';
 import { historyBoundEnabled, membershipSelect, visibleFromOf } from "../../../services/groupChatHistoryBound.js"; import { decidePlanCreation, decideRestrictedCapability, decideRestrictedSend, planRestrictionMayApply, readPlanTarget, readRestrictionSendFacts } from "./restrictionSendPolicy.js"; // OD-TRUST-5 + lead ruling D-24: the SAME decisions the send guard and the call gateway take
 import {
   CONVERSATION_CAPABILITY_NAMES,
@@ -61,6 +62,9 @@ const MOST_PRECISE_LOCATION_LEVEL = "nearby";
 export interface ResolveCapabilitiesInput {
   viewerId: string;
   conversationId: string;
+  nowMs?: number;
+  /** Server-only request reuse: context receives the same read, never a wire field. */
+  onRelationshipRead?: (counterpartId: string | null, reading: ConversationRelationshipReading) => void;
 }
 
 interface Draft {
@@ -177,6 +181,20 @@ export async function resolveConversationCapabilities(
     }
   }
 
+  // §30A.1: only a direct conversation has a pairwise relationship. Active or
+  // temporary origins never grant permissions. Request-only/expired origins
+  // do not revoke an already admitted thread; its membership remains the gate.
+  // RESTRICTED still goes through the shared Trust decision below, which
+  // distinguishes a new conversation from an existing one (D-24).
+  const relationshipCounterpart = conversationType === 'direct' ? counterpartId : null;
+  const relationship = await readConversationRelationship(sc, viewerId, relationshipCounterpart, input.nowMs);
+  input.onRelationshipRead?.(relationshipCounterpart, relationship);
+  if (relationship.status === 'read') {
+    if (relationship.value.state === 'BLOCKED') return refuse('TELEGRAPH_AUTH_BLOCKED', conversationType);
+    inputsRead.push('relationshipPolicy');
+  }
+  if (relationship.status === 'unreadable') markDegraded('TELEGRAPH_DEGRADED_RELATIONSHIP_UNREADABLE');
+
   // ── INPUT 4: safety state (trust restrictions on the viewer) ─────────────
   const restriction = await getRestrictionState(sc, viewerId);
   inputsRead.push("safetyState");
@@ -285,6 +303,7 @@ export async function resolveConversationCapabilities(
   if (!threadActive) deny(d, "canSendMessage", "TELEGRAPH_POLICY_THREAD_ARCHIVED");
   else if (blockUnreadable) deny(d, "canSendMessage", "TELEGRAPH_DEGRADED_MEMBERSHIP_UNREADABLE");
   else if (blocked) deny(d, "canSendMessage", "TELEGRAPH_AUTH_BLOCKED");
+  else if (relationship.status === 'unreadable') deny(d, 'canSendMessage', 'TELEGRAPH_DEGRADED_RELATIONSHIP_UNREADABLE');
   else if (restrictionSend && !restrictionSend.allowed) deny(d, "canSendMessage", restrictionSend.reason);
   else grant(d, "canSendMessage");
 
@@ -305,6 +324,7 @@ export async function resolveConversationCapabilities(
   // GROUP trip's shared plan — never a direct or circle plan, never a solo trip.
   const planTrust = decidePlanCreation(restriction, planRestrictionMayApply(restriction) ? await readPlanTarget(sc, { tripId, threadType: conversationType, actorId: viewerId }) : "conversation");
   if (!threadActive) deny(d, "canCreatePlan", "TELEGRAPH_POLICY_THREAD_ARCHIVED");
+  else if (relationship.status === 'unreadable') deny(d, 'canCreatePlan', 'TELEGRAPH_DEGRADED_RELATIONSHIP_UNREADABLE');
   else if (!planTrust.allowed) deny(d, "canCreatePlan", planTrust.reason);
   else if (tripId && !tripMember) deny(d, "canCreatePlan", "TELEGRAPH_AUTH_NOT_TRIP_MEMBER");
   else grant(d, "canCreatePlan");

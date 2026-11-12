@@ -11,17 +11,35 @@
  * Mocks are TripCreate.taskOutcome.component.test.tsx's, with the flag and the gateway's answer switchable.
  */
 import React from 'react';
-import { render, fireEvent, screen, act } from '@testing-library/react-native';
+import { waitFor, render, fireEvent, screen, act } from '@testing-library/react-native';
 import NewTrip from '../../../app/trip/new.tsx';
 
 let mockAiWritingOn = false;
 let mockAiAnswers = false;
 
+import { _seedPolicyForTests, sharedPolicyStore } from '../../platform/input-assistance/services/policyStore.ts';
+import type { SuggestRequest } from '../../platform/input-assistance/types/inputSuggestion.ts';
+let mockRefocus: (() => void | (() => void)) | undefined;
+let mockBlur: void | (() => void);
+let mockTripWindow = { start: '2027-01-12', end: '2027-01-15' };
+const mockTitleGateway = jest.fn(async (req: SuggestRequest) => ({
+  ok: true, requestId: req.fieldId, policyVersion: 'test', suggestions: [],
+}));
+// NOTE: only the gateway transport is replaced. The mounted form uses its actual field policy, date controls and debounce.
+jest.mock('../../platform/input-assistance/services/inputAssistance.ts', () => ({
+  ...jest.requireActual('../../platform/input-assistance/services/inputAssistance.ts'),
+  requestSuggestions: (req: SuggestRequest) => mockTitleGateway(req),
+}));
 const CITY = '22222222-2222-4222-8222-222222222222';
 
 // NOTE: intentionally exhaustive — expo-router pulls native navigation internals.
 const mockReplace = jest.fn();
 jest.mock('expo-router', () => ({
+  useFocusEffect: (effect: () => void | (() => void)) => jest.requireActual<typeof import('react')>('react').useEffect(() => {
+    mockRefocus = effect;
+    mockBlur = effect();
+    return () => { if (mockBlur) mockBlur(); };
+  }, [effect]),
   router: { replace: (...a: unknown[]) => mockReplace(...a), push: jest.fn(), back: jest.fn() },
 }));
 
@@ -103,7 +121,13 @@ jest.mock('../../components/selectors/GlobalPlacePicker', () => {
 
 // NOTE: intentionally exhaustive — GlobalCalendarPicker pulls calendar native modules.
 jest.mock('../../components/selectors/GlobalCalendarPicker', () => ({
-  GlobalCalendarPicker: () => null,
+  GlobalCalendarPicker: (props: { onConfirm: (dates: { start: string; end: string }) => void }) => {
+    const React = jest.requireActual<typeof import('react')>('react');
+    const { Pressable } = jest.requireActual<typeof import('react-native')>('react-native');
+    return React.createElement(Pressable, { testID: 'select-test-trip-dates',
+      onPress: () => props.onConfirm(mockTripWindow),
+    });
+  },
 }));
 
 // NOTE: intentionally exhaustive — KeyboardSafeScrollView wraps a native scroll view.
@@ -145,4 +169,31 @@ describe('Create trip — the AI title control', () => {
     expect(screen.getByLabelText('AI suggestion: Coastal Da Nang')).toBeTruthy();
     expect(screen.queryByText('No AI suggestion right now.')).toBeNull();
   });
+});
+
+it('validates a candidate date range once and sends zero title keystrokes to the deterministic gateway', async () => {
+  _seedPolicyForTests(['trip_title'], { trip_title: { debounceMs: 0, minChars: 1, privacyClass: 'viewer_scoped' } });
+  mockTitleGateway.mockClear();
+  try {
+    await typeTitle();
+    await fireEvent.changeText(screen.getByPlaceholderText('Visayas, June'), 'Weekend getaway');
+    expect(mockTitleGateway).not.toHaveBeenCalled();
+    await fireEvent.press(screen.getByTestId('select-test-trip-dates'));
+    await waitFor(() => expect(mockTitleGateway).toHaveBeenCalledTimes(1));
+    expect(mockTitleGateway.mock.calls[0][0]).toMatchObject({
+      text: '', context: 'trip_title',
+      sessionContext: { startDate: '2027-01-12', endDate: '2027-01-15' },
+    });
+    await fireEvent.changeText(screen.getByPlaceholderText('Visayas, June'), 'Weekend in Cebu');
+    expect(mockTitleGateway).toHaveBeenCalledTimes(1);
+    mockTripWindow = { start: '2027-02-08', end: '2027-02-10' };
+    await fireEvent.press(screen.getByTestId('select-test-trip-dates'));
+    await waitFor(() => expect(mockTitleGateway).toHaveBeenCalledTimes(2));
+    expect(mockTitleGateway.mock.calls[1][0].sessionContext).toMatchObject({ startDate: '2027-02-08' });
+    await act(async () => { if (mockBlur) mockBlur(); });
+    await act(async () => { mockBlur = mockRefocus?.(); });
+    await waitFor(() => expect(mockTitleGateway).toHaveBeenCalledTimes(3));
+  } finally {
+    await act(async () => { sharedPolicyStore.clear(); });
+  }
 });

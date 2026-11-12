@@ -232,6 +232,12 @@ export function routeKeyOf(
  * opened; every later call stops it if either has changed. Nobody signed in
  * at stamp time is itself a stop.
  */
+/** Render-time refusal avoids mounting a replacement player before effects stop it. */
+export function playbackContextIsCurrent(routeKey: string, accountId: string | null): boolean {
+  return Boolean(session && accountId && (openedIn === null || openedIn.key !== session.key
+    || openedIn.accountId === accountId && openedIn.routeKey === routeKey));
+}
+
 export function reconcilePlaybackContext(routeKey: string, accountId: string | null): void {
   if (!session) return;
   if (openedIn === null || openedIn.key !== session.key) {

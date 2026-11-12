@@ -11,7 +11,8 @@
  * the same thing with its `incomplete` flag for a partial result.
  */
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase.ts';
-import { freshToken } from '../../../services/apiToken.ts';
+import { captureMessagingOwnerRequest } from '../../../services/messagingOwnerRequest.ts';
+import { fetchOwnedApi } from '../../../services/ownedApiRequest.ts';
 import type { ConversationHeaderResponse, SharedContextResponse } from './types.ts';
 
 export type TelegraphFetchError =
@@ -39,18 +40,17 @@ function classify(status: number): TelegraphFetchError {
 
 async function get<T>(path: string): Promise<TelegraphResult<T>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'unconfigured' };
-  const token = await freshToken();
-  if (!token) return { ok: false, error: 'unauthenticated' };
+  const owner = captureMessagingOwnerRequest();
+  if (!owner) return { ok: false, error: 'unauthenticated' };
   try {
-    const res = await fetch(`${apiBase()}${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await fetchOwnedApi(path, {owner});
     if (!res.ok) {
       const body = await res.json().catch(() => ({}) as any);
       return { ok: false, error: classify(res.status), message: body?.message };
     }
     return { ok: true, data: (await res.json()) as T };
   } catch (e) {
+    if (!owner.isCurrent()) return {ok:false,error:'unauthenticated'};
     const msg = e instanceof Error ? e.message : 'Unknown';
     if (msg.includes('Network request failed') || msg.includes('fetch')) {
       return { ok: false, error: 'network' };
@@ -60,13 +60,13 @@ async function get<T>(path: string): Promise<TelegraphResult<T>> {
 }
 
 export async function fetchSharedContext(threadId: string): Promise<TelegraphResult<SharedContextResponse>> {
-  return get<SharedContextResponse>(`/api/threads/${threadId}/shared-context`);
+  return get<SharedContextResponse>(`/api/threads/${encodeURIComponent(threadId)}/shared-context`);
 }
 
 export async function fetchConversationHeader(
   threadId: string,
 ): Promise<TelegraphResult<ConversationHeaderResponse>> {
-  return get<ConversationHeaderResponse>(`/api/threads/${threadId}/conversation-header`);
+  return get<ConversationHeaderResponse>(`/api/threads/${encodeURIComponent(threadId)}/conversation-header`);
 }
 
 /** Re-exported so tests can assert the module is wired to the real supabase flag. */

@@ -20,8 +20,8 @@
  */
 
 export interface LiveSchema {
-  relations: Set<string>; // tables + views + matviews
-  columns: Set<string>; // "table.column"
+  relations: Set<string>; // tables + views + matviews; non-public names retain "schema."
+  columns: Set<string>; // "table.column" or "schema.table.column"
   functions: Set<string>; // public only
   /**
    * `authz` functions, kept SEPARATE from `functions` on purpose.
@@ -120,6 +120,13 @@ export function functionClaimKey(schema: string | undefined, fn: string): string
   return s && s !== "public" && s !== "authz" ? `${s}.${f}` : f;
 }
 
+/** Public names retain their historical keys; other namespaces must match exactly. */
+export function relationClaimKey(schema: string | undefined, relation: string): string {
+  const s = (schema ?? "").replace(/"/g, "").toLowerCase();
+  const name = relation.toLowerCase();
+  return s && s !== "public" ? `${s}.${name}` : name;
+}
+
 export function isMissing(claim: Claim, live: LiveSchema): boolean {
   const key = claim.key.slice(claim.kind.length + 1);
   switch (claim.kind) {
@@ -128,7 +135,7 @@ export function isMissing(claim: Claim, live: LiveSchema): boolean {
       // legacy buddy_* relations live as views; any relation kind counts
       return !live.relations.has(key);
     case "column": {
-      const [table] = key.split(".");
+      const table = key.slice(0, key.lastIndexOf("."));
       // If the table itself is missing it's already reported; a column claim
       // on a view (compat layer) is checked against columns of that view too
       // (information_schema.columns includes view columns).
@@ -165,7 +172,7 @@ export function isMissing(claim: Claim, live: LiveSchema): boolean {
       return !live.rlsEnabled.has(key);
     }
     case "grant": {
-      const [table] = key.split(".");
+      const table = key.split(".").slice(0, -2).join(".");
       if (!live.relations.has(table)) return false;
       return !live.tableGrants.has(key);
     }

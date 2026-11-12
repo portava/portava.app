@@ -47,16 +47,21 @@ function makeFakeClient(state: FakeState) {
     },
     rpc: async () => ({ data: null, error: null }),
     from: (table: string) => {
-      const sourceRows: any[] = [...(state[table] ?? [])];
+      let sourceRows: any[] = [...(state[table] ?? [])];
       const filters: Array<(r: any) => boolean> = [];
       let _rangeStart = 0;
       let _rangeEnd = Infinity;
       let _limitN = Infinity;
       const builder: any = {
-        select() { return builder; },
+        select(columns?: string) {
+          if (table === 'trip_members' && columns?.includes('trips!inner(')) {
+            sourceRows = sourceRows.flatMap(m => (state.trips ?? []).filter(t => t.id === m.trip_id).map(trips => ({...m, trips})));
+          }
+          return builder;
+        },
         eq(col: string, val: any) { filters.push((r) => r[col] === val); return builder; },
         neq(col: string, val: any) { filters.push((r) => r[col] !== val); return builder; },
-        in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return builder; },
+        in(col: string, vals: any[]) { filters.push((r) => vals.includes(col === 'trips.status' ? r.trips?.status : r[col])); return builder; },
         not(col: string, op: string, val: any) {
           if (op === "is") filters.push((r) => r[col] !== val && r[col] != null);
           return builder;
@@ -71,6 +76,7 @@ function makeFakeClient(state: FakeState) {
           return builder;
         },
         or(expr: string) {
+          if (expr === 'status.is.null,status.eq.accepted') { filters.push(r => r.status == null || r.status === 'accepted'); return builder; }
           const parts = expr.split(",").map((p) => {
             const m = p.trim().match(/^(\w+)\.([\w]+)\.(.+)$/);
             if (!m) return null;

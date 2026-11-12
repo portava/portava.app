@@ -86,7 +86,7 @@ function makeRecapClient(state: RecapState) {
       function source(): any[] {
         if (table === "feature_flags")              return state.flags;
         if (table === "place_days")                 return state.place_days;
-        if (table === "places")                     return state.places;
+        if (table === "places")                     return state.places.map(r=>({moderation_status:"visible",merged_into_place_id:null,...r}));
         if (table === "blocks")                     return state.blocks;
         if (table === "posts")                      return state.posts;
         if (table === "user_follows")               return state.user_follows;
@@ -132,7 +132,7 @@ function makeRecapClient(state: RecapState) {
           return Promise.resolve({ data: applyAll(source())[0] ?? null, error: null });
         },
         then(onF: any, onR?: any) {
-          return Promise.resolve({ data: applyAll(source()), error: null }).then(onF, onR);
+          return Promise.resolve({ data: applyAll(source()), error: null, count:applyAll(source()).length }).then(onF, onR);
         },
       };
       return b;

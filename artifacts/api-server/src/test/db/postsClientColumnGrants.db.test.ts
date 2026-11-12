@@ -56,6 +56,9 @@ import { fileURLToPath } from "node:url";
 import { HAVE_DB, exec, psql, rows, scalar, seedUser, deleteUser } from "./localDb.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
+// The historical migrations deliberately reject any column they have never
+// classified. Replay them on their original table shape inside ROLLBACK.
+const HISTORICAL_POSTS = "ALTER TABLE public.posts DROP COLUMN IF EXISTS post_reference_id;";
 const MIGRATION = resolve(__dir, "../../migrations/3362_posts_client_column_grants.sql");
 const M3801 = resolve(__dir, "../../migrations/3801_posts_release_timing_columns_withheld.sql");
 const ROLLBACK = resolve(__dir, "../../../../../db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql");
@@ -96,7 +99,7 @@ const WITHHELD = [
 const WITHHELD_BY_3801 = ["updated_at", "publish_at"] as const;
 /** The chain's end state: 3362's lists, narrowed by 3801. */
 const GRANTED_NOW = GRANTED.filter((c) => !(WITHHELD_BY_3801 as readonly string[]).includes(c));
-const WITHHELD_NOW = [...WITHHELD, ...WITHHELD_BY_3801];
+const WITHHELD_NOW = [...WITHHELD, ...WITHHELD_BY_3801, "post_reference_id"];
 
 type Who = { role: "anon" } | { role: "authenticated"; uid: string };
 
@@ -258,7 +261,7 @@ describe("census-media §44 — 3362: the columns of posts a client role may rea
           AND (a.grantee = 0 OR a.grantee IN ('anon'::regrole, 'authenticated'::regrole))`,
     );
     assert.deepEqual(tableLevel, [], "anon/authenticated/PUBLIC must hold no table-level privilege on posts");
-    assert.equal(COLS.length, GRANTED.filter((c) => COLS.includes(c)).length + WITHHELD.filter((c) => COLS.includes(c)).length,
+    assert.equal(COLS.length, present(GRANTED_NOW).length + present(WITHHELD_NOW).length,
       "every column of posts is classified, once");
   });
 
@@ -324,7 +327,7 @@ describe("census-media §44 — 3362: the columns of posts a client role may rea
     }
     // Across rollback → re-apply (in a transaction that is rolled back), the
     // policy catalog is byte-identical: 3362 touches no policy and no RLS flag.
-    const out = exec(`BEGIN;\n${SNAPSHOT}\n${unwrapped(RB3801)}\n${unwrapped(ROLLBACK)}\n${SNAPSHOT}\n${unwrapped(MIGRATION)}\n${SNAPSHOT}\nROLLBACK;`);
+    const out = exec(`BEGIN;\n${HISTORICAL_POSTS}\n${SNAPSHOT}\n${unwrapped(RB3801)}\n${unwrapped(ROLLBACK)}\n${SNAPSHOT}\n${unwrapped(MIGRATION)}\n${SNAPSHOT}\nROLLBACK;`);
     const snaps = out.filter((l) => l.startsWith("{")).map((l) => JSON.parse(l));
     assert.equal(snaps.length, 3);
     assert.deepEqual(snaps[1].policies, snaps[0].policies, "the rollback changes no policy");
@@ -358,7 +361,8 @@ describe("census-media §44 — 3362: the columns of posts a client role may rea
   });
 
   it("G1-5 — the rollback restores 2148's grants exactly, and 3362 (then 3801) re-applies to the identical state", () => {
-    const out = exec(`BEGIN;\n${SNAPSHOT}\n${unwrapped(RB3801)}\n${unwrapped(ROLLBACK)}\n${SNAPSHOT}\n${unwrapped(MIGRATION)}\n${unwrapped(M3801)}\n${SNAPSHOT}\nROLLBACK;`);
+    const before = JSON.parse(exec(SNAPSHOT)[0]!);
+    const out = exec(`BEGIN;\n${HISTORICAL_POSTS}\n${SNAPSHOT}\n${unwrapped(RB3801)}\n${unwrapped(ROLLBACK)}\n${SNAPSHOT}\n${unwrapped(MIGRATION)}\n${unwrapped(M3801)}\n${SNAPSHOT}\nROLLBACK;`);
     const [now, rolled, reapplied] = out.filter((l) => l.startsWith("{")).map((l) => JSON.parse(l));
     assert.ok(now && rolled && reapplied, "three snapshots");
     // 2148's state: the table ACL as it is now plus anon=r and authenticated=r
@@ -370,7 +374,7 @@ describe("census-media §44 — 3362: the columns of posts a client role may rea
     // And re-applying 3362 (then 3801, the chain's next word on posts) on top reproduces today's catalog byte for byte.
     assert.deepEqual(reapplied, now, "3362 + 3801 after the rollback is the state the chain left");
     // The DB is untouched by this test (it ran in a rolled-back transaction).
-    assert.deepEqual(JSON.parse(exec(SNAPSHOT)[0]!), now);
+    assert.deepEqual(JSON.parse(exec(SNAPSHOT)[0]!), before);
     // The rollback deletes 3362's ledger row, which the runner writes in 3362's
     // own transaction, so a later runner pass re-applies 3362 (census-media §44.11).
     const led = exec(`BEGIN;

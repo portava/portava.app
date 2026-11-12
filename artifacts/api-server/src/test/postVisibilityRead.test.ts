@@ -317,6 +317,26 @@ describe("BLOCKS-POSTS: post detail and comment-list authorization over HTTP", (
 
   for (const suffix of ["", "/comments"]) {
     describe(`GET /posts/:postId${suffix}`, () => {
+      it("withdraws a public post when its author becomes private, and rechecks approved follows", async () => {
+        database.tables.profiles.find(row => row.id === authorId)!.is_private = true;
+        await assertNotFound(suffix);
+        database.tables.user_follows.push({ follower_id: viewerId, following_id: authorId });
+        assert.equal((await request(suffix)).status, 200);
+        database.tables.user_follows.length = 0;
+        database.reads.length = 0;
+        await assertNotFound(suffix);
+      });
+
+      it("withholds the source and comments after a current author ban or post tombstone", async () => {
+        const author = database.tables.profiles.find(row => row.id === authorId)!;
+        author.user_account_states = [{ state: "banned", expires_at: null }];
+        await assertNotFound(suffix);
+        author.user_account_states = [{ state: "banned", expires_at: "2000-01-01T00:00:00Z" }];
+        assert.equal((await request(suffix)).status, 200);
+        database.tables.posts[0].deleted_at = "2026-11-05T00:00:00Z";
+        database.reads.length = 0;
+        await assertNotFound(suffix);
+      });
       for (const direction of ["outgoing", "incoming", "mutual"]) {
         it(`refuses a ${direction} viewer/author block exactly like a missing post`, async () => {
           if (direction !== "incoming") database.tables.blocks.push({ blocker_id: viewerId, blocked_id: authorId });

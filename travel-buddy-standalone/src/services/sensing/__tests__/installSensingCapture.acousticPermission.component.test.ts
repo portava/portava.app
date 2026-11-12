@@ -1,6 +1,7 @@
 import type { SensingCaptureHandle } from '../sensingCapture.ts';
 import { ACOUSTIC_PERMISSION_STORAGE_KEY, acousticCaptureAllowed } from '../../../lib/sensing/acousticPermission.ts';
 
+const OWNER_STORAGE_KEY = `${ACOUSTIC_PERMISSION_STORAGE_KEY}:${encodeURIComponent('u:sensing-test-user')}`;
 const mockStorage = new Map<string, string>();
 const mockGet = jest.fn(async (key: string) => mockStorage.get(key) ?? null);
 const mockSet = jest.fn(async (key: string, value: string) => { mockStorage.set(key, value); });
@@ -27,7 +28,7 @@ jest.mock('expo-av', () => ({
 }));
 jest.mock('react-native', () => {
   const native = jest.requireActual('react-native');
-  return Object.defineProperty(Object.create(native), 'AppState', { value: { ...native.AppState, addEventListener: (_event: string, callback: (state: string) => void) => {
+  return Object.defineProperty(Object.create(native), 'AppState', { value: { ...native.AppState, currentState: 'active', addEventListener: (_event: string, callback: (state: string) => void) => {
     mockForeground = callback;
     return { remove: mockRemoveForeground };
   } } });
@@ -42,6 +43,7 @@ jest.mock('../sensingTransport.ts', () => ({
   ...jest.requireActual('../sensingTransport.ts'), createSensingTransport: () => ({ submit: mockSubmit, reset: mockReset }),
 }));
 jest.mock('../deviceSensorSources.ts', () => ({
+  onAreaLocationGranted: () => () => {},
   ...jest.requireActual('../deviceSensorSources.ts'), createDeviceMotionSource: () => null,
   createDeviceLocationSource: () => ({ subscribe: (callback: (sample: unknown) => void) => {
     mockLocationCallbacks.add(callback); return () => mockLocationCallbacks.delete(callback);
@@ -67,10 +69,11 @@ jest.mock('../sensingCapture.ts', () => ({
 }));
 
 let permissions: typeof import('../acousticSensingPermission.ts');
+let changeOwner: (id: string | null) => void;
 let installSensingCapture: typeof import('../installSensingCapture.ts').installSensingCapture;
 let installations: Array<{ dispose(): void }>;
 function consent(capture: boolean, upload: boolean) {
-  return { status: 'ok', state: { consents: {
+  return { status: 'ok', state: { available: true, consents: {
     capture: { effective: capture }, upload: { effective: upload }, surface: { effective: false },
   } } };
 }
@@ -111,6 +114,8 @@ beforeEach(() => {
   mockConsentListeners.clear(); mockLocationCallbacks.clear(); mockMeterCallbacks.clear(); mockCaptures.length = 0;
   installations = [];
   jest.isolateModules(() => {
+    changeOwner = require('../../discoveryViewerScope.ts').setDiscoveryViewerFromSession;
+    changeOwner('sensing-test-user');
     permissions = require('../acousticSensingPermission.ts');
     ({ installSensingCapture } = require('../installSensingCapture.ts'));
   });
@@ -134,10 +139,10 @@ test('withdrawal detaches immediately before persistence resolves and omits acou
 });
 test('failed withdrawal never reloads an old stored grant through foreground or installer remount', async () => {
   const first = await install();
-  const savedGrant = mockStorage.get(ACOUSTIC_PERMISSION_STORAGE_KEY);
+  const savedGrant = mockStorage.get(OWNER_STORAGE_KEY);
   mockSet.mockRejectedValue(new Error('Synthetic storage unavailable'));
   await permissions.withdrawAcousticSensingPermission();
-  expect(mockStorage.get(ACOUSTIC_PERMISSION_STORAGE_KEY)).toBe(savedGrant);
+  expect(mockStorage.get(OWNER_STORAGE_KEY)).toBe(savedGrant);
   expect(acousticCaptureAllowed(await permissions.readAcousticSensingPermission())).toBe(false);
   mockForeground?.('active'); await settle(); await window();
   expect(mockSubmit.mock.calls[0][0]).not.toHaveProperty('acoustic');
@@ -150,7 +155,7 @@ test('explicit withdrawal retry saves denial and a later explicit grant alone ma
   mockSet.mockRejectedValueOnce(new Error('Synthetic storage unavailable'));
   await permissions.withdrawAcousticSensingPermission();
   await permissions.withdrawAcousticSensingPermission();
-  expect(JSON.parse(mockStorage.get(ACOUSTIC_PERMISSION_STORAGE_KEY)!)).toMatchObject({ granted: false });
+  expect(JSON.parse(mockStorage.get(OWNER_STORAGE_KEY)!)).toMatchObject({ granted: false });
   expect(mockOsRequest).toHaveBeenCalledTimes(1);
   await permissions.requestAcousticSensingPermission(); await settle();
   expect(mockMeterCallbacks.size).toBe(1);
@@ -168,7 +173,7 @@ test('late OS opt-in completion cannot overtake withdrawal or persist a grant', 
   const grant = permissions.requestAcousticSensingPermission();
   await permissions.withdrawAcousticSensingPermission();
   pending.resolve({ granted: true }); await grant;
-  expect(JSON.parse(mockStorage.get(ACOUSTIC_PERMISSION_STORAGE_KEY)!)).toMatchObject({ granted: false });
+  expect(JSON.parse(mockStorage.get(OWNER_STORAGE_KEY)!)).toMatchObject({ granted: false });
   expect(acousticCaptureAllowed(await permissions.readAcousticSensingPermission())).toBe(false);
 });
 test('an in-flight grant write is followed by the newer withdrawal, never the reverse', async () => {
@@ -178,7 +183,7 @@ test('an in-flight grant write is followed by the newer withdrawal, never the re
   const withdrawal = permissions.withdrawAcousticSensingPermission(); await settle();
   expect(mockSet).toHaveBeenCalledTimes(1);
   pending.resolve(); await Promise.all([grant, withdrawal]);
-  expect(JSON.parse(mockStorage.get(ACOUSTIC_PERMISSION_STORAGE_KEY)!)).toMatchObject({ granted: false });
+  expect(JSON.parse(mockStorage.get(OWNER_STORAGE_KEY)!)).toMatchObject({ granted: false });
 });
 test('queued superseded grant is skipped while a later withdrawal still saves', async () => {
   const pending = deferred<void>();
@@ -192,7 +197,7 @@ test('queued superseded grant is skipped while a later withdrawal still saves', 
 for (const stage of ['storage', 'OS']) {
   test(`late ${stage} read cannot restore withdrawn permission`, async () => {
     await permissions.requestAcousticSensingPermission();
-    const stored = mockStorage.get(ACOUSTIC_PERMISSION_STORAGE_KEY)!;
+    const stored = mockStorage.get(OWNER_STORAGE_KEY)!;
     const pendingStorage = deferred<string>();
     const pendingOs = deferred<{ granted: boolean }>();
     if (stage === 'storage') mockGet.mockReturnValueOnce(pendingStorage.promise);
@@ -244,7 +249,7 @@ test('a later OS denial cannot be overwritten by an earlier OS-granted read', as
   expect(acousticCaptureAllowed(await old)).toBe(false);
 });
 test('overlapping healthy passive readers preserve saved-grant startup without prompting', async () => {
-  mockStorage.set(ACOUSTIC_PERMISSION_STORAGE_KEY, JSON.stringify({ scope: 'sensing.acoustic.energy', granted: true,
+  mockStorage.set(OWNER_STORAGE_KEY, JSON.stringify({ scope: 'sensing.acoustic.energy', granted: true,
     grantedAt: '2026-10-16T12:00:00Z', revokedAt: null, osMicrophoneGranted: false }));
   const pending = deferred<{ granted: boolean }>();
   const installation = installSensingCapture(); installations.push(installation);
@@ -267,7 +272,7 @@ test('a failing permission listener cannot reverse denial or prevent persistence
   const unsubscribe = permissions.onAcousticSensingPermissionChange(() => { throw Error('listener'); });
   await permissions.withdrawAcousticSensingPermission(); unsubscribe();
   expect(acousticCaptureAllowed(await permissions.readAcousticSensingPermission())).toBe(false);
-  expect(JSON.parse(mockStorage.get(ACOUSTIC_PERMISSION_STORAGE_KEY)!).granted).toBe(false);
+  expect(JSON.parse(mockStorage.get(OWNER_STORAGE_KEY)!).granted).toBe(false);
   expect(mockMeterCallbacks.size).toBe(0);
 });
 for (const stage of ['consent', 'OS']) {
@@ -285,8 +290,31 @@ for (const stage of ['consent', 'OS']) {
   });
 }
 test('cold start still honors a saved explicit grant without prompting', async () => {
-  mockStorage.set(ACOUSTIC_PERMISSION_STORAGE_KEY, JSON.stringify({ scope: 'sensing.acoustic.energy', granted: true,
+  mockStorage.set(OWNER_STORAGE_KEY, JSON.stringify({ scope: 'sensing.acoustic.energy', granted: true,
     grantedAt: '2026-10-16T12:00:00Z', revokedAt: null, osMicrophoneGranted: false }));
   await install(false);
   expect(mockMeterCallbacks.size).toBe(1); expect(mockOsRequest).not.toHaveBeenCalled();
+});
+
+
+test('an acoustic grant never crosses to another account or signed-out state', async () => {
+  await install(); expect(mockMeterCallbacks.size).toBe(1);
+  changeOwner('different-user'); await settle();
+  expect(mockMeterCallbacks.size).toBe(0);
+  expect(acousticCaptureAllowed(await permissions.readAcousticSensingPermission())).toBe(false);
+  changeOwner(null); await settle();
+  expect(mockLocationCallbacks.size).toBe(0);
+  expect(acousticCaptureAllowed(await permissions.requestAcousticSensingPermission())).toBe(false);
+  expect(mockOsRequest).toHaveBeenCalledTimes(1);
+});
+test('a delayed OS grant cannot authorize the account selected while its prompt was open', async () => {
+  const held = deferred<{ granted: boolean }>(); mockOsRequest.mockReturnValueOnce(held.promise);
+  const request = permissions.requestAcousticSensingPermission();
+  changeOwner('different-user'); held.resolve({ granted: true }); await request;
+  expect(mockSet).not.toHaveBeenCalled();
+  expect(acousticCaptureAllowed(await permissions.readAcousticSensingPermission())).toBe(false);
+});
+test('an ownerless historical grant cannot silently grant acoustic sensing to a signed-in person', async () => {
+  mockStorage.set(ACOUSTIC_PERMISSION_STORAGE_KEY, JSON.stringify({ scope: 'sensing.acoustic.energy', granted: true, grantedAt: '2026-10-16T12:00:00Z', revokedAt: null }));
+  await install(false); expect(mockMeterCallbacks.size).toBe(0); expect(mockOsRequest).not.toHaveBeenCalled();
 });

@@ -10,7 +10,8 @@
  * The answer arrives the way Layover's "Ask locals" hands one in: a `prefillMessage` route param is sent once.
  */
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { registerSensingZoneSource } from '../../../src/services/sensing/sensingZoneHint.ts';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 
 const mockRab = { enabled: false };
 // NOTE: intentionally exhaustive — the flag is the input under test; the real hook fetches /api/feature-flags.
@@ -19,12 +20,13 @@ jest.mock('../../../src/hooks/useRentABuddyFlag', () => ({
 }));
 
 const mockPush = jest.fn();
+let mockPrefill: string | undefined = 'Who could show me around Da Nang?';
 // NOTE: intentionally exhaustive — expo-router needs a NavigationContainer; useFocusEffect runs once on mount.
 jest.mock('expo-router', () => {
   const R = jest.requireActual('react');
   return {
-    useRouter: () => ({ push: (...a: unknown[]) => mockPush(...a), back: jest.fn(), replace: jest.fn(), canGoBack: () => true }),
-    useLocalSearchParams: () => ({ prefillMessage: 'Who could show me around Da Nang?' }),
+    useRouter: () => ({ push: (...a: unknown[]) => mockPush(...a), back: jest.fn(), setParams: jest.fn(), replace: jest.fn(), canGoBack: () => true }),
+    useLocalSearchParams: () => ({ prefillMessage: mockPrefill }),
     useFocusEffect: (cb: () => void) => R.useEffect(cb, []),
   };
 });
@@ -80,8 +82,9 @@ jest.mock('../../../src/platform/input-assistance', () => ({
 }));
 
 import AiChat from '../ai.tsx';
+import { noteDiscoveryViewer, _resetDiscoveryViewerScopeForTests } from '../../../src/services/discoveryViewerScope.ts';
 
-beforeEach(() => { mockRab.enabled = false; mockPush.mockClear(); });
+beforeEach(() => { _resetDiscoveryViewerScopeForTests(); jest.requireMock('../../../src/services/compass').postCompassAskStream.mockClear(); mockRab.enabled = false; mockPush.mockClear(); mockPrefill = 'Who could show me around Da Nang?'; });
 
 describe('Compass — Find Buddy behind rent_buddy_enabled', () => {
   it('A1: flag off → the answer\'s other chips, no "Find Buddy"', async () => {
@@ -95,5 +98,103 @@ describe('Compass — Find Buddy behind rent_buddy_enabled', () => {
     await render(<AiChat />);
     await fireEvent.press(await screen.findByText('Find Buddy'));
     expect(mockPush).toHaveBeenCalledWith('/(rent-a-buddy)');
+  });
+});
+
+
+describe('Compass composer', () => {
+  it('shows the terminal reply, keeps the conversation on the next send and retries a broken stream in place', async () => {
+    mockPrefill = undefined;
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'http://test.local';
+    process.env.EXPO_PUBLIC_SUPABASE_URL ??= 'https://test.supabase.co';
+    process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ??= 'test-anon-key';
+    const service = jest.requireActual('../../../src/services/compass') as typeof import('../../../src/services/compass');
+    const { postCompassAskStream } = jest.requireMock('../../../src/services/compass');
+    const originalImplementation = postCompassAskStream.getMockImplementation();
+    postCompassAskStream.mockImplementation(service.postCompassAskStream);
+    registerSensingZoneSource(() => 'u4pruy');
+    const turns: Array<{ prompt: string; conversationId?: string; sensingZoneIds?: string[] }> = [];
+    service._setTestAuthToken('test-token');
+    service._setTestStreamFetch((async (url, init) => {
+      expect(url).toBe('http://test.local/api/compass/ask');
+      expect(init?.headers).toEqual(expect.objectContaining({ Authorization: 'Bearer test-token' }));
+      turns.push(JSON.parse(String(init?.body)));
+      const answer = turns.length === 1 ? 'Start near the river.' : 'Return by tram.';
+      const frame = turns.length === 2 ? 'data: {"delta":"unfinished"}\n\n' :
+        `data: ${JSON.stringify({ done: true, conversationId: 'c-1', message: answer })}\r\n\r\n`;
+      return {
+        ok: true, headers: { get: () => 'text/event-stream' }, body: null,
+        text: async () => frame,
+      } as unknown as Response;
+    }) as typeof fetch);
+    try {
+      await render(<AiChat />);
+      const field = screen.getByPlaceholderText('Ask about Cebu, your saves, or a plan…');
+      await fireEvent.changeText(field, 'Where should I walk?');
+      await fireEvent.press(screen.getByLabelText('Send message'));
+      expect(await screen.findByText('Start near the river.')).toBeTruthy();
+      await fireEvent.changeText(field, 'And how do I return?');
+      await fireEvent.press(screen.getByLabelText('Include my approximate area in this Compass reply'));
+      await fireEvent(field, 'submitEditing');
+      await fireEvent.press(await screen.findByText('Retry'));
+      expect(await screen.findByText('Return by tram.')).toBeTruthy();
+      expect(screen.getAllByText('And how do I return?')).toHaveLength(1);
+      expect(screen.queryByText('Retry')).toBeNull();
+      expect(turns.map(({ sensingZoneIds }) => sensingZoneIds)).toEqual([undefined, ['u4pruy'], undefined]);
+      expect(turns.map(({ prompt, conversationId }) => [prompt, conversationId])).toEqual([
+        ['Where should I walk?', undefined], ['And how do I return?', 'c-1'], ['And how do I return?', 'c-1'],
+      ]);
+    } finally {
+      registerSensingZoneSource(null);
+      service._setTestAuthToken(null);
+      service._setTestStreamFetch(undefined);
+      postCompassAskStream.mockImplementation(originalImplementation);
+    }
+  });
+});
+
+describe('Compass repeated navigation and session ownership', () => {
+  it('answers a second handoff on the mounted tab and permits a repeated question after consuming params', async () => {
+    const { postCompassAskStream } = jest.requireMock('../../../src/services/compass');
+    const view = await render(<AiChat />);
+    expect(await screen.findByText('Open Map')).toBeTruthy();
+    mockPrefill = undefined;
+    await view.rerender(<AiChat />);
+    mockPrefill = 'What about tomorrow?';
+    await view.rerender(<AiChat />);
+    await waitFor(() => expect(postCompassAskStream).toHaveBeenCalledTimes(2));
+    mockPrefill = undefined;
+    await view.rerender(<AiChat />);
+    mockPrefill = 'What about tomorrow?';
+    await view.rerender(<AiChat />);
+    await waitFor(() => expect(postCompassAskStream).toHaveBeenCalledTimes(3));
+    expect(postCompassAskStream.mock.calls.map((args: unknown[]) => args[0])).toEqual([
+      'Who could show me around Da Nang?', 'What about tomorrow?', 'What about tomorrow?',
+    ]);
+  });
+
+  it('queues the next navigation while a reply is pending', async () => {
+    const { postCompassAskStream } = jest.requireMock('../../../src/services/compass');
+    let finish!: (value: unknown) => void;
+    postCompassAskStream.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const view = await render(<AiChat />);
+    mockPrefill = 'A different video question';
+    await view.rerender(<AiChat />);
+    expect(postCompassAskStream).toHaveBeenCalledTimes(1);
+    await act(() => finish({ ok: true, data: { message: 'First answer', conversationId: 'first', quickActions: [], pendingProposals: [] } }));
+    await waitFor(() => expect(postCompassAskStream).toHaveBeenCalledTimes(2));
+    expect(postCompassAskStream.mock.calls[1][1].conversationId).toBe('first');
+  });
+
+  it('clears the transcript and suppresses a prior account response without replaying its prompt', async () => {
+    const { postCompassAskStream } = jest.requireMock('../../../src/services/compass');
+    let finish!: (value: unknown) => void;
+    postCompassAskStream.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await render(<AiChat />);
+    await act(() => noteDiscoveryViewer('u:second'));
+    await act(() => finish({ ok: true, data: { message: 'Private previous answer', conversationId: 'old', quickActions: [], pendingProposals: [] } }));
+    expect(screen.queryByText('Private previous answer')).toBeNull();
+    expect(screen.queryByText('Who could show me around Da Nang?')).toBeNull();
+    expect(postCompassAskStream).toHaveBeenCalledTimes(1);
   });
 });

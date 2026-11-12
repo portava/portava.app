@@ -6,8 +6,8 @@
  * NEVER writes to the database — the client must call the normal trip-create
  * endpoint after the user confirms the draft.
  *
- * Extraction discipline matches reservationExtract, but on gpt-4o-mini so
- * temperature 0 is still available here:
+ * Extraction discipline matches reservationExtract, using gpt-5.4-mini with
+ * reasoning disabled and a strict-JSON extraction request:
  * strict JSON, UGC-wrapped input treated as data (never instructions), facts
  * only — nothing invented, unknown fields omitted.
  */
@@ -102,9 +102,9 @@ router.post("/trips/draft-from-text", asyncHandler(async (req, res) => {
   let completion: unknown;
   try {
     completion = await getOpenAI().chat.completions.create({
-      model:                 "gpt-4o-mini",
-      temperature:           0,
+      model:                 "gpt-5.4-mini",
       max_completion_tokens: 400,
+      reasoning_effort:      "none",
       messages: [
         { role: "system", content: DRAFT_SYSTEM },
         {

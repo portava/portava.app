@@ -160,3 +160,23 @@ describe("computeTripStatus — a window derived in UTC is not a window derived 
     );
   });
 });
+
+
+describe("trip end date on active surfaces", () => {
+  it("expires when the destination enters the next day, including the DST fall-back day", async () => {
+    const { tripExpiryInstant, tripStatusAtRead, tripHasEnded } = await import("../domain/trips/invariants/tripStatus.js");
+    for (const [end_date, timezone, at] of [
+      ["2026-11-01", "America/Los_Angeles", "2026-11-02T08:00:00.000Z"],
+      ["2026-03-08", "America/Los_Angeles", "2026-03-09T07:00:00.000Z"],
+      ["2026-11-01", "Asia/Kathmandu", "2026-11-01T18:15:00.000Z"],
+      ["2026-11-01", "invalid", "2026-11-02T00:00:00.000Z"],
+    ]) {
+      const row = { status: "active", start_date: null, end_date, timezone };
+      assert.equal(tripExpiryInstant(end_date, timezone), at);
+      assert.equal(tripHasEnded(row, new Date(Date.parse(at) - 1)), false);
+      assert.equal(tripStatusAtRead(row, new Date(at)), "completed");
+    }
+    assert.equal(tripHasEnded({ status: "planning", end_date: null }), false);
+    assert.equal(tripHasEnded({ status: "completed", end_date: null }), true);
+  });
+});

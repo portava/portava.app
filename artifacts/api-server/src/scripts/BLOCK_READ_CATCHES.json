@@ -156,6 +156,16 @@
       "why": "The empty catch falls through to step 4 'Nothing references it → DENY (fail-closed)': the generated visual is not served."
     },
     {
+      "key": "lib/places/placeLivingDedup.ts::projectLivingDedup::catch#1",
+      "kind": "catch",
+      "reads": [
+        "readBlockExclusions"
+      ],
+      "fingerprint": "301f698a92045cfc",
+      "closedBy": "answers-unreadable",
+      "why": "An unreadable block set throws before any samples are projected. The catch returns dedupStatus unavailable with dedupGroups empty, withholding every sampled post and media URL. The blocks failure case in placeLivingDedup.test.ts exercises this refusal."
+    },
+    {
       "key": "lib/telegraphEvents.ts::presenceAudience::catch#1",
       "kind": "catch",
       "reads": [

@@ -58,7 +58,7 @@ export const MediaAlbumPayload = z.object({
 });
 
 /** §6.2 GIF — "distinct lightweight looping content". */
-export const GifPayload = z.object({
+const LegacyGifPayload = z.object({
   url: z.string().min(1).max(2048),
   /** A still frame, so a data-saver or reduced-motion viewer has something. */
   stillUrl: z.string().max(2048).nullish(),
@@ -68,6 +68,11 @@ export const GifPayload = z.object({
   provider: z.string().max(40).nullish(),
   altText: z.string().max(300).nullish(),
 });
+
+/** A provider reference stores only an opaque id, never expiring CDN URLs. */
+export const ProviderGifPayload=z.object({provider:z.literal('giphy'),providerId:z.string().regex(/^[A-Za-z0-9]{1,128}$/)}).strict();
+export const GifPayload=z.union([ProviderGifPayload,LegacyGifPayload]);
+export function isProviderGifPayload(payload:unknown):boolean { return ProviderGifPayload.safeParse(payload).success; }
 
 /**
  * The purposes an in-thread location share may declare.

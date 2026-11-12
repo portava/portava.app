@@ -50,7 +50,7 @@ export function StampCard({ stamp, isOwner, onPress }: Props) {
           activeArtworkUrl={stamp.activeArtworkUrl ?? stamp.definition?.universalArtworkUrl}
           thumbnailUrl={stamp.thumbnailUrl}
           stamp={legacy}
-          size={64}
+          size={80}
           showPendingLabel={false}
         />
         {isOwner && isNonPublic && (

@@ -33,7 +33,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { hasRealTreeControl } from "../scripts/checkGuardReachability.js";
+import { GUARD_PROBE_TIMEOUT_MS, hasRealTreeControl } from "../scripts/checkGuardReachability.js";
 import { GUARDS as REAL_GUARDS } from "../scripts/guardRegistry.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -92,10 +92,16 @@ function withRegistry(name: string, entries: unknown[], extra: Record<string, st
 
 describe("guard reachability ratchet", () => {
   it("CONTROL — the real tree and the real registry pass", () => {
+    // The real registry runs its probes serially to detect tracked-file
+    // mutations attributable to each guard. A fixture's timeout cannot cover
+    // the whole registry. Each individual probe still has its original limit.
+    const probeCount = REAL_GUARDS.reduce((count, guard) =>
+      count + Number(Boolean(guard.inspects)) + Number(guard.reach.kind === "manual"), 0);
+    const timeout = SPAWN_TIMEOUT_MS + probeCount * GUARD_PROBE_TIMEOUT_MS;
     const r = spawnSync(process.execPath, ["--import", "tsx/esm", CHECKER], {
-      cwd: API_ROOT, encoding: "utf8", timeout: SPAWN_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024,
+      cwd: API_ROOT, encoding: "utf8", timeout, maxBuffer: 64 * 1024 * 1024,
     });
-    assert.equal(r.status, 0, `${r.stdout ?? ""}${r.stderr ?? ""}${describeSpawn(r)}`);
+    assert.equal(r.status, 0, `${r.stdout ?? ""}${r.stderr ?? ""}${describeSpawn(r, timeout)}`);
     // A silent pass proves nothing: the inventory must actually be printed, and
     // the unenforced count must be stated rather than rounded away.
     assert.match(r.stdout, /guard\(s\) on disk/);

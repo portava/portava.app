@@ -497,7 +497,6 @@ export function trailsSubject(): Subject {
       "rpc/unknown-function": { mode: "refused", why: "no rpc surface; `.rpc()` throws" },
       "insert/unique-violation-23505": { mode: "divergent", why: "no unique constraints are modelled; a duplicate insert appends" },
       "error/unknown-column-42703": { mode: "divergent", why: "only columns named in `missingColumns` fail; there is no schema" },
-      "select/count-exact": { mode: "divergent", why: "no count surface; `count` is always absent" },
       "rls/denied-read-yields-zero-rows": { mode: "divergent", why: "no service-vs-user distinction; there is one seed and no policies" },
       "rls/denied-write-yields-42501": { mode: "divergent", why: "no service-vs-user distinction; there is one seed and no policies" },
     },

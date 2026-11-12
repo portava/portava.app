@@ -1,3 +1,4 @@
+import { publishMessageMutation } from '../lib/telegraphOutboxDrainScheduler.js';
 /**
  * Telegraph §7 — receipts and unsend-before-seen.
  *
@@ -75,6 +76,8 @@ import {
   withinWindow,
 } from "../services/groupChatHistoryBound.js";
 
+import { sequenceStateEnabled, acknowledgeMessage } from '../services/telegraph/sequenceState.js';
+
 const log = rootLogger.child({ route: "telegraphLifecycle" });
 const router = Router();
 
@@ -118,11 +121,12 @@ async function memberGate(client: any, threadId: string, userId: string): Promis
 async function readMembers(
   client: any,
   threadId: string,
+  sequenced = false,
 ): Promise<{ ok: true; members: ReceiptMember[] } | { ok: false }> {
-  const { data, error } = await client
-    .from("message_thread_members")
-    .select(MEMBER_COLUMNS)
-    .eq("thread_id", threadId);
+  const query = sequenced
+    ? client.from("message_thread_members").select(`${MEMBER_COLUMNS}, delivered_sequence, seen_sequence`)
+    : client.from("message_thread_members").select(MEMBER_COLUMNS);
+  const { data, error } = await query.eq("thread_id", threadId);
   if (error) return { ok: false };
   return { ok: true, members: ((data as any[]) ?? []) as ReceiptMember[] };
 }
@@ -166,7 +170,8 @@ router.get(
       return;
     }
 
-    const membersRead = await readMembers(client, threadId);
+    const sequenced = await sequenceStateEnabled(client);
+    const membersRead = await readMembers(client, threadId, sequenced);
     if (!membersRead.ok) {
       // A failed member read is not "nobody has seen it" — that would be a
       // receipt asserting a negative it never measured.
@@ -174,9 +179,10 @@ router.get(
       return;
     }
 
-    const { data: rows, error: rowErr } = await client
-      .from("messages")
-      .select(MESSAGE_COLUMNS)
+    const messagesQuery = sequenced
+      ? client.from("messages").select(`${MESSAGE_COLUMNS}, sequence`)
+      : client.from("messages").select(MESSAGE_COLUMNS);
+    const { data: rows, error: rowErr } = await messagesQuery
       .eq("thread_id", threadId)
       .in("id", ids);
     if (rowErr) {
@@ -216,12 +222,22 @@ router.get(
        * delivery signal, so every receipt reports `delivered: null` and says
        * why, rather than reporting a false it never measured.
        */
-      deliveredUnavailableReason: DELIVERED_UNAVAILABLE,
+      deliveredUnavailableReason: sequenced ? null : DELIVERED_UNAVAILABLE,
       /** §7.3's prohibition, stated by the endpoint that could have broken it. */
       receiptStorage: "one row per member per thread; none per message",
     });
   }),
 );
+
+router.post('/threads/:threadId/delivered', asyncHandler(async (req: any, res: any) => {
+  const auth = await requireUser(req, res); if (!auth) return;
+  const threadId = req.params.threadId;
+  const messageId = req.body?.upToMessageId;
+  if (!UUID.test(threadId) || typeof messageId !== 'string' || !UUID.test(messageId)) { sendError(res, 'invalid_payload', 'Invalid message id'); return; }
+  const result = await acknowledgeMessage(auth.client, threadId, auth.user.id, messageId, 'delivered');
+  if (!result.ok) { sendError(res, result.code, 'Could not record message delivery'); return; }
+  res.status(200).json({ ...result.data, threadId });
+}));
 
 // ── POST /api/threads/:threadId/messages/:messageId/unsend ───────────────────
 
@@ -303,14 +319,9 @@ router.post(
     // §13.2 `message.unsent`, as the realtime nudge. It carries no body because
     // there is none.
     //
-    // 2810's outbox trigger fires on the same UPDATE and would write the
-    // DURABLE event in the same transaction — but only where 2810 has been
-    // applied AND `telegraph_message_kernel_enabled` is true, since the trigger
-    // reads that flag and RETURNs NULL when it is not. 2810 is applied to no
-    // database, so on every deployment that exists there is no trigger to fire
-    // and this publish is the ONLY notification. That is why it is here and not
-    // deleted as a duplicate, and why the client keeps a polling fallback.
-    void publishToThread(client, threadId, {
+    // The transactional outbox owns delivery when enabled. Otherwise retain
+    // direct fan-out, so an unconfigured queue cannot suppress the event.
+    void publishMessageMutation(client, threadId, {
       type: "message.unsent",
       payload: { messageId, unsentAt, senderId: user.id },
     }, { excludeUserId: user.id });
@@ -424,6 +435,16 @@ router.post(
     const gate = await memberGate(client, threadId, user.id);
     if (!gate.ok) {
       sendError(res, gate.code as any, gate.message);
+      return;
+    }
+
+    if (await sequenceStateEnabled(client)) {
+      const result = await acknowledgeMessage(client, threadId, user.id, parsed.data.upToMessageId, 'seen');
+      if (!result.ok) { sendError(res, result.code, 'Could not record this read position'); return; }
+      res.status(200).json({ ...result.data, threadId, readerId: user.id });
+      if (result.data.advanced) {
+        void publishToThread(client, threadId, { type: 'message.seen', payload: { readerId: user.id, messageIds: result.data.seenMessageIds, seenAt: result.data.lastReadAt, seenSequence: result.data.sequence } });
+      }
       return;
     }
 

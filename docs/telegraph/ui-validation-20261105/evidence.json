@@ -1,0 +1,29 @@
+{
+  "date": "2026-11-05",
+  "scope": "Actual GifPickerSheet and RecapSheet components rendered with React Native Web; synthetic owner, API and provider boundaries; no production data or real message",
+  "viewports": [
+    {
+      "width": 440,
+      "height": 956
+    },
+    {
+      "width": 320,
+      "height": 568
+    }
+  ],
+  "console": {
+    "errors": 0,
+    "warnings": 0
+  },
+  "limitations": [
+    "Not physical-device or native keyboard certification",
+    "No live GIPHY request or key configured",
+    "Small Recap viewport scrolls lower curation actions; header close remains visible"
+  ],
+  "files": [
+    "portava-gif-320.png",
+    "portava-gif-440.png",
+    "portava-recap-440-final.png",
+    "portava-recap-320-final.png"
+  ]
+}

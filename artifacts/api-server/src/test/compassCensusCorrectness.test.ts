@@ -328,7 +328,7 @@ describe("C. both builds are WIRED, not merely written", () => {
     // matched loosely. Both branches must pass BOTH inputs: a branch that
     // grounded against the tool log alone would be checked against an empty
     // band on any tool-less turn, which is the vacuity S79 exists to remove.
-    assert.equal((src.match(/groundCompassAnswer\(_rawMessage, toolLog, liveClaimEvidence\)/g) ?? []).length, 2);
+    assert.equal((src.match(/const venue = groundVenueTerms\(_rawMessage, _parsed\.payload, toolLog, prompt, _parsed\.quickActions\);\s*const _grounded\s*= groundCompassAnswer\(venue\.message, toolLog, liveClaimEvidence\)/g) ?? []).length, 2);
     // L-CL02a (census-compass §57): a live layover — the explicit yes included —
     // is answered with the certified text before any model call, so both
     // branches publish the grounded text as before (no layover lead, no
@@ -342,7 +342,7 @@ describe("C. both builds are WIRED, not merely written", () => {
       "the streamed branch does not emit the correction to the client",
     );
     // And the violation travels on the response rather than being swallowed.
-    assert.equal((src.match(/groundingViolations: _grounded\.violations\.map\(\(v\) => v\.kind\)/g) ?? []).length, 2);
+    assert.equal((src.match(/groundingViolations: \[\.\.\._grounded\.violations\.map\(\(v\) => v\.kind\), \.\.\.venue\.violations\]/g) ?? []).length, 2);
   });
 
   it("C2 — the scheduled rebuild sweeps BEFORE it derives anything from the graph", () => {

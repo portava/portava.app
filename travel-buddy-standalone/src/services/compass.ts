@@ -5,6 +5,7 @@
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import { currentDiscoveryScope, isCurrentDiscoveryScope, viewerKeyForToken, type DiscoveryScope } from './discoveryViewerScope.ts';
 import { withSensingZone } from './sensing/sensingZoneHint.ts';
 
 type AsyncStorageStub = {
@@ -34,8 +35,17 @@ async function freshToken(): Promise<string | null> {
   return freshApiToken();
 }
 
-async function authedFetch(path: string, opts: RequestInit = {}): Promise<Response> {
+async function tokenForCompass(owner?: DiscoveryScope): Promise<string | null> {
   const token = await freshToken();
+  if (owner && (!isCurrentDiscoveryScope(owner) || (owner.viewer !== undefined && owner.viewer !== viewerKeyForToken(token)))) {
+    throw new Error('session_changed');
+  }
+  return token;
+}
+
+async function authedFetch(path: string, opts: RequestInit = {}, owner?: DiscoveryScope): Promise<Response> {
+  const token = await tokenForCompass(owner);
+  if (owner && !isCurrentDiscoveryScope(owner)) throw new Error('session_changed');
   return fetch(`${apiBase()}${path}`, {
     ...opts,
     headers: {
@@ -691,7 +701,7 @@ export interface CompassAskResponse {
 export type CompassAskRecommendation = CompassAskResponse;
 
 // S39: both ask paths spread `withSensingZone(opts)` (services/sensing/
-// sensingZoneHint) so the device's own coarse zone rides on the turn while
+// sensingZoneHint) so only an area explicitly chosen for the current turn travels while
 // capture runs. The rule lives in that module so it is testable under node.
 export async function postCompassAsk(
   prompt:  string,
@@ -703,35 +713,63 @@ export async function postCompassAsk(
     stream?:          boolean;
     /** Optional media context (§32): the server hydrates it via CompassMediaContext. */
     mediaId?:         string;
-    /** S39: this device's own current coarse sensing zone(s). Defaults to the
-     *  live capture's zone hint; absent whenever capture is not running. */
+    /** Coarse area explicitly included by the traveler for this question. */
     sensingZoneIds?:  string[];
   } = {},
 ): Promise<{ ok: boolean; data?: CompassAskResponse; error?: string }> {
   if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  const owner = currentDiscoveryScope();
   const { signal, cancel } = timeoutSignal(COMPASS_ASK_TIMEOUT_MS);
   try {
-    const r = await authedFetch('/api/compass/ask', {
+    const r = await untilCompassTimeout(authedFetch('/api/compass/ask', {
       method: 'POST',
       body:   JSON.stringify({ prompt, ...withSensingZone(opts), tzOffsetMinutes: deviceTzOffsetMinutes() }),
       signal,
-    });
+    }, owner), signal);
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
-    return { ok: true, data: await r.json() };
+    const body = await untilCompassTimeout(r.json(), signal);
+    if (!isCurrentDiscoveryScope(owner)) return { ok: false, error: 'session_changed' };
+    return compassResponse(body);
   } catch {
-    if (signal.aborted) return { ok: false, error: 'timeout' };
-    return { ok: false, error: 'network_error' };
+    return { ok: false, error: signal.aborted ? 'timeout' : 'network_error' };
   } finally {
     cancel();
   }
 }
 
-// ── Streaming ask (SSE) ───────────────────────────────────────────────────────
-// The server streams the raw model output (a JSON envelope) as `delta` events,
-// then a `done` event with the parsed/validated fields (conversationId, payload,
-// quickActions, pendingProposals, uiBlocks…). The final message text is NOT on
-// the done event — the client reconstructs it from the accumulated raw stream.
+// expo/fetch can leave a native read pending after abort. Race the deadline
+// against each outstanding operation, including token refresh and body reads.
+function untilCompassTimeout<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = () => reject(new Error('timeout'));
+    if (signal.aborted) timeout();
+    else signal.addEventListener('abort', timeout, { once: true });
+    operation.then(resolve, reject).finally(() => signal.removeEventListener('abort', timeout));
+  });
+}
 
+function compassResponse(event: Record<string, unknown>, raw = ''): { ok: boolean; data?: CompassAskResponse; error?: string } {
+  const message = typeof event.message === 'string' && event.message.trim() ? event.message : finalizeCompassMessage(raw);
+  if (!message.trim()) return { ok: false, error: 'empty_response' };
+  return {
+    ok: true,
+    data: {
+      conversationId: typeof event.conversationId === 'string' ? event.conversationId : null,
+      message,
+      payload: (event.payload as CompassAskPayload | undefined) ?? null,
+      quickActions: Array.isArray(event.quickActions) ? event.quickActions as CompassQuickAction[] : [],
+      pendingProposals: Array.isArray(event.pendingProposals) ? event.pendingProposals as CompassPendingProposal[] : [],
+      uiBlocks: Array.isArray(event.uiBlocks) ? event.uiBlocks as CompassUiBlock[] : [],
+      promptVersion: typeof event.promptVersion === 'string' ? event.promptVersion : '',
+      intent: (event.intent as CompassAskResponse['intent']) ?? undefined,
+      fallback: event.error === true || event.fallback === true,
+      fallbackReason: typeof event.fallbackReason === 'string' ? event.fallbackReason : undefined,
+    },
+  };
+}
+
+// The terminal event contains the grounded, persisted answer. Deltas can be
+// absent or contain an earlier version before grounding corrected its text.
 /**
  * Extract the value of the envelope's "message" field from a PARTIAL raw model
  * stream, decoding JSON string escapes as far as the stream has progressed.
@@ -796,17 +834,17 @@ export function finalizeCompassMessage(raw: string): string {
  * unterminated remainder to carry into the next chunk. Exported for tests.
  */
 export function splitCompassSseBuffer(buffer: string): { events: Array<Record<string, unknown>>; rest: string } {
-  const parts = buffer.split('\n\n');
+  const parts = buffer.split(/\r?\n\r?\n/);
   const rest = parts.pop() ?? '';
   const events: Array<Record<string, unknown>> = [];
   for (const part of parts) {
-    for (const line of part.split('\n')) {
-      if (!line.startsWith('data:')) continue;
-      try {
-        const parsed = JSON.parse(line.slice(5).trim());
-        if (parsed && typeof parsed === 'object') events.push(parsed);
-      } catch { /* skip malformed event */ }
-    }
+    const data = part.split(/\r?\n/).filter(line => line.startsWith('data:'))
+      .map(line => line.slice(5).trimStart()).join('\n');
+    if (!data) continue;
+    try {
+      const parsed = JSON.parse(data);
+      if (parsed && typeof parsed === 'object') events.push(parsed);
+    } catch { /* Ignore comments, keepalives and malformed events. */ }
   }
   return { events, rest };
 }
@@ -833,12 +871,9 @@ export interface CompassAskStreamHandlers {
 }
 
 /**
- * Streaming variant of postCompassAsk. Consumes the SSE delta events for a
- * progressive-typing UI and finalizes message/quickActions/pendingProposals/
- * uiBlocks from the done event. On any streaming failure (transport error,
- * unsupported streams, missing done event, or a server error event) it falls
- * back to the plain non-streaming postCompassAsk — callers always get the
- * same result envelope. `streamed` reports whether deltas were live.
+ * Use one POST per prompt. A streaming-capable client consumes deltas as they
+ * arrive. Buffered clients parse the same response once it arrives. The server
+ * may return a regular JSON refusal before it opens the event stream.
  */
 export async function postCompassAskStream(
   prompt: string,
@@ -846,12 +881,15 @@ export async function postCompassAskStream(
   handlers: CompassAskStreamHandlers = {},
 ): Promise<{ ok: boolean; data?: CompassAskResponse; error?: string; streamed?: boolean }> {
   if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  const doFetch = _testStreamFetch !== undefined ? _testStreamFetch : getStreamFetch();
+  if (!doFetch) return { ...await postCompassAsk(prompt, opts), streamed: false };
+  const owner = currentDiscoveryScope();
   const { signal, cancel } = timeoutSignal(COMPASS_ASK_TIMEOUT_MS);
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
-    const doFetch = _testStreamFetch !== undefined ? _testStreamFetch : getStreamFetch();
-    if (!doFetch) throw new Error('stream_unsupported');
-    const token = await freshToken();
-    const r = await doFetch(`${apiBase()}/api/compass/ask`, {
+    const token = await untilCompassTimeout(tokenForCompass(owner), signal);
+    if (!isCurrentDiscoveryScope(owner)) return { ok: false, error: 'session_changed' };
+    const r = await untilCompassTimeout(doFetch(`${apiBase()}/api/compass/ask`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -860,68 +898,44 @@ export async function postCompassAskStream(
       },
       body: JSON.stringify({ prompt, ...withSensingZone(opts), stream: true, tzOffsetMinutes: deviceTzOffsetMinutes() }),
       signal,
-    });
+    }), signal);
     if (!r.ok) return { ok: false, error: `http_${r.status}`, streamed: false };
-    const body: any = (r as any).body;
-    if (!body || typeof body.getReader !== 'function') throw new Error('stream_unsupported');
-
-    const reader = body.getReader();
-    const decoder = new TextDecoder();
+    if (r.headers.get('content-type')?.includes('application/json')) {
+      const body = await untilCompassTimeout(r.json(), signal);
+      if (!isCurrentDiscoveryScope(owner)) return { ok: false, error: 'session_changed' };
+      return { ...compassResponse(body), streamed: false };
+    }
+    const body = r.body;
+    const live = typeof body?.getReader === 'function' && typeof TextDecoder === 'function';
     let buffer = '';
     let raw = '';
-    let doneEvent: Record<string, unknown> | null = null;
-    let serverError = false;
+    if (live) reader = body!.getReader();
+    else buffer = await untilCompassTimeout(r.text(), signal);
+    const decoder = reader ? new TextDecoder() : null;
     for (;;) {
-      // Belt-and-braces alongside the fetch `signal`: some fetch polyfills
-      // (notably expo/fetch) don't reliably unblock a pending reader.read()
-      // when the request signal aborts, which is exactly the "spins forever
-      // with no error" failure mode this timeout exists to prevent.
-      if (signal.aborted) throw new Error('timeout');
-      const { value, done: eof } = await reader.read();
-      if (value) buffer += decoder.decode(value, { stream: true });
-      if (eof) buffer += '\n\n'; // flush a final unterminated event, if any
+      const chunk = reader ? await untilCompassTimeout(reader.read(), signal) : { done: true, value: undefined };
+      if (!isCurrentDiscoveryScope(owner)) return { ok: false, error: 'session_changed' };
+      if (chunk.value) buffer += decoder!.decode(chunk.value, { stream: true });
+      if (chunk.done) buffer += (decoder?.decode() ?? '') + '\n\n';
       const { events, rest } = splitCompassSseBuffer(buffer);
       buffer = rest;
-      for (const ev of events) {
-        if (typeof ev['delta'] === 'string') {
-          raw += ev['delta'] as string;
-          if (handlers.onDelta) {
-            const partial = extractPartialCompassMessage(raw);
-            if (partial) handlers.onDelta(partial);
-          }
-        } else if (ev['done']) {
-          doneEvent = ev;
-        } else if (ev['error']) {
-          serverError = true;
+      for (const event of events) {
+        if (event.done || event.error) {
+          return { ...compassResponse(event, event.error ? '' : raw), streamed: live };
+        }
+        if (typeof event.delta === 'string') {
+          raw += event.delta;
+          const partial = extractPartialCompassMessage(raw);
+          if (partial && live) handlers.onDelta?.(partial);
         }
       }
-      if (eof) break;
+      if (chunk.done) return { ok: false, error: 'stream_incomplete', streamed: live };
     }
-    if (serverError || !doneEvent) throw new Error('stream_incomplete');
-
-    const data: CompassAskResponse = {
-      conversationId:   (doneEvent['conversationId'] as string | null | undefined) ?? null,
-      message:          finalizeCompassMessage(raw),
-      payload:          (doneEvent['payload'] as CompassAskPayload | null | undefined) ?? null,
-      quickActions:     Array.isArray(doneEvent['quickActions']) ? doneEvent['quickActions'] as CompassQuickAction[] : [],
-      pendingProposals: Array.isArray(doneEvent['pendingProposals']) ? doneEvent['pendingProposals'] as CompassPendingProposal[] : [],
-      uiBlocks:         Array.isArray(doneEvent['uiBlocks']) ? doneEvent['uiBlocks'] as CompassUiBlock[] : [],
-      promptVersion:    typeof doneEvent['promptVersion'] === 'string' ? doneEvent['promptVersion'] as string : '',
-      intent:           (doneEvent['intent'] as CompassAskResponse['intent']) ?? undefined,
-    };
-    return { ok: true, data, streamed: true };
-  } catch (err) {
-    // A genuine timeout means the whole request is stuck — don't retry via
-    // the non-streaming fallback, which would just wait the full timeout
-    // again. Surface it immediately so the UI can fail soft with a retry.
-    if (signal.aborted || (err instanceof Error && err.message === 'timeout')) {
-      return { ok: false, error: 'timeout', streamed: false };
-    }
-    // Non-streaming fallback — same request minus stream:true.
-    const fallback = await postCompassAsk(prompt, opts);
-    return { ...fallback, streamed: false };
+  } catch {
+    return { ok: false, error: signal.aborted ? 'timeout' : 'network_error', streamed: false };
   } finally {
     cancel();
+    if (reader) void reader.cancel?.().catch(() => {});
   }
 }
 
@@ -935,7 +949,7 @@ export async function confirmCompassProposal(
     const r = await authedFetch(`/api/compass/proposals/${encodeURIComponent(proposalId)}/confirm`, {
       method: 'POST',
       body:   JSON.stringify({ conversationId }),
-    });
+    }, currentDiscoveryScope());
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     return { ok: true };
   } catch {
@@ -953,7 +967,7 @@ export async function declineCompassProposal(
     const r = await authedFetch(`/api/compass/proposals/${encodeURIComponent(proposalId)}/decline`, {
       method: 'POST',
       body:   JSON.stringify({ conversationId }),
-    });
+    }, currentDiscoveryScope());
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     return { ok: true };
   } catch {

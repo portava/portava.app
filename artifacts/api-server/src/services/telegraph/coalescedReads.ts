@@ -1,3 +1,4 @@
+import { SHARED_AUTHOR_SELECT } from '../sharedPostSource.js';
 /**
  * Read coalescing for a batch of §5 share resolutions — census-telegraph T448 /
  * T359 / T445 (lane w-tg-cardtruth, 2026-10-14): "batch the re-resolution, no
@@ -30,14 +31,12 @@
  * EVERY caller in it with that error (so each loader takes its own
  * fail-closed `unknown` branch); `.maybeSingle()` over more than one matching
  * row answers an error, as PostgREST does; a column the batch had to add to
- * match rows back is stripped from what the caller receives. Only simple
- * comma-separated column lists are coalesced — an embedded resource or `*` is
- * replayed.
+ * match rows back is stripped from what the caller receives. Simple column lists and the exact shared-author restriction projection are coalesced. Other embedded resources and `*` are replayed.
  */
 
 type Call = readonly [method: string, args: readonly unknown[]];
 
-type Answer = { data: unknown; error: unknown; count: null };
+type Answer = { data: unknown; error: unknown; count: number | null };
 
 interface Waiter {
   resolve: (a: Answer) => void;
@@ -57,10 +56,12 @@ const ID_CHUNK = 100;
 const PAIR_PRODUCT_MAX = 900;
 
 function columnsOf(cols: string): string[] {
+  if (cols === SHARED_AUTHOR_SELECT) return ['id','handle','is_private','account_status','user_account_states'];
   return cols.split(",").map((c) => c.trim()).filter((c) => c.length > 0);
 }
 
 function withColumns(cols: string, extra: string[]): string {
+  if (cols === SHARED_AUTHOR_SELECT) return cols;
   const have = columnsOf(cols);
   const add = extra.filter((c) => !have.includes(c));
   return [...have, ...add].join(", ");
@@ -83,13 +84,26 @@ export function coalescableShape(
   calls: readonly Call[],
 ):
   | { kind: "id"; cols: string; id: unknown }
+  | { kind: "checked_ids"; cols: string; ids: string[] }
   | { kind: "pair"; cols: string; a: string; x: unknown; b: string; y: unknown; terminal: "maybeSingle" | "limit1" }
   | null {
   if (calls.length < 3) return null;
   const [first, ...rest] = calls;
+  // Canonical moderation readers require an exact count to detect truncation.
+  // Coalesce this precise bounded shape without caching an authorization answer.
+  if (calls.length === 3 && first[0] === 'select' && typeof first[1][0] === 'string'
+      && SIMPLE_COLUMNS.test(first[1][0]) && first[1].length === 2
+      && JSON.stringify(first[1][1]) === '{"count":"exact"}'
+      && rest[0][0] === 'in' && rest[0][1].length === 2 && rest[0][1][0] === 'id' && Array.isArray(rest[0][1][1])) {
+    const ids = rest[0][1][1];
+    if (ids.length > 0 && ids.length <= ID_CHUNK && ids.every(id => typeof id === 'string')
+        && new Set(ids).size === ids.length && rest[1][0] === 'limit' && rest[1][1].length === 1 && rest[1][1][0] === ids.length + 1) {
+      return { kind: 'checked_ids', cols: first[1][0], ids };
+    }
+  }
   if (first[0] !== "select" || first[1].length !== 1 || typeof first[1][0] !== "string") return null;
   const cols = first[1][0] as string;
-  if (!SIMPLE_COLUMNS.test(cols)) return null;
+  if (!SIMPLE_COLUMNS.test(cols) && cols !== SHARED_AUTHOR_SELECT) return null;
   const last = rest[rest.length - 1];
   const terminal =
     last[0] === "maybeSingle" && last[1].length === 0 ? "maybeSingle"
@@ -128,6 +142,9 @@ export function coalescingClient<C extends object>(real: C, stats: CoalescingSta
   type PairGroup = { table: string; cols: string; a: string; b: string; reqs: PairReq[] };
   const idGroups = new Map<string, IdGroup>();
   const pairGroups = new Map<string, PairGroup>();
+  const postMediaGroups = new Map<string, IdGroup>();
+  type CheckedGroup = { table: string; cols: string; reqs: Array<{ ids: string[]; waiter: Waiter }> };
+  const checkedGroups = new Map<string, CheckedGroup>();
   let scheduled = false;
 
   const schedule = () => {
@@ -223,9 +240,65 @@ export function coalescingClient<C extends object>(real: C, stats: CoalescingSta
   async function flush(): Promise<void> {
     const ids = [...idGroups.values()];
     const pairs = [...pairGroups.values()];
+    const checked = [...checkedGroups.values()];
+    const attachments = [...postMediaGroups.values()];
+    postMediaGroups.clear();
     idGroups.clear();
     pairGroups.clear();
-    await Promise.all([...ids.map(flushIdGroup), ...pairs.map(flushPairGroup)]);
+    checkedGroups.clear();
+    await Promise.all([...ids.map(flushIdGroup), ...pairs.map(flushPairGroup), ...checked.map(flushCheckedGroup), ...attachments.map(flushAttachments)]);
+  }
+
+  // A page of plain post shares must not issue a post_media read per card.
+  // Verify the count before partitioning the batch: a truncated response must
+  // never masquerade as "no attachments" and revive a moderated legacy URL.
+  async function flushAttachments(group: IdGroup): Promise<void> {
+    const ids = [...group.byId.keys()];
+    for (let i = 0; i < ids.length; i += ID_CHUNK) {
+      const chunk = ids.slice(i, i + ID_CHUNK);
+      let rows: Record<string, unknown>[] = [];
+      let error: unknown = null;
+      try {
+        stats.issued += 1;
+        const res = await realFrom('post_media').select(withColumns(group.cols, ['post_id']), {count:'exact'}).in('post_id', chunk);
+        if (res.error || !Array.isArray(res.data) || res.count !== res.data.length) throw res.error ?? new Error('incomplete post attachments');
+        rows = res.data;
+        if (rows.some(row => !chunk.includes(String(row.post_id)))) throw new Error('unexpected post attachment');
+      } catch (err) { error = err; }
+      for (const id of chunk) {
+        const items = rows.filter(row => row.post_id === id).map(row => projectRow(row, columnsOf(group.cols)));
+        for (const waiter of group.byId.get(id) ?? []) {
+          stats.coalesced += 1;
+          waiter.resolve({data: error ? null : items, error, count:null});
+        }
+      }
+    }
+  }
+
+  async function flushCheckedGroup(g: CheckedGroup): Promise<void> {
+    const ids = [...new Set(g.reqs.flatMap(r => r.ids))];
+    const rows: Array<Record<string, unknown>> = [];
+    let error: unknown = null;
+    try {
+      for (let i = 0; i < ids.length; i += ID_CHUNK) {
+        const part = ids.slice(i, i + ID_CHUNK);
+        stats.issued += 1;
+        const result = await realFrom(g.table).select(withColumns(g.cols, ['id']), { count: 'exact' }).in('id', part).limit(part.length + 1);
+        if (result.error || !Array.isArray(result.data) || !Number.isInteger(result.count)
+            || result.count !== result.data.length || result.data.length > part.length
+            || result.data.some((r: any) => !r || !part.includes(r.id))
+            || new Set(result.data.map((r: any) => r.id)).size !== result.data.length) {
+          throw result.error ?? new Error('Incomplete canonical batch');
+        }
+        rows.push(...result.data);
+      }
+    } catch (err) { error = err ?? new Error('Canonical batch unreadable'); }
+    for (const r of g.reqs) {
+      stats.coalesced += 1;
+      const hits = rows.filter(row => r.ids.includes(String(row.id)));
+      r.waiter.resolve(error ? { data: null, error, count: null }
+        : { data: hits.map(row => projectRow(row, columnsOf(g.cols))), error: null, count: hits.length });
+    }
   }
 
   function recordingBuilder(table: string): any {
@@ -234,7 +307,29 @@ export function coalescingClient<C extends object>(real: C, stats: CoalescingSta
 
     const run = (): Promise<Answer> => {
       if (settled) return settled;
+      if (table === 'post_media' && calls.length === 2 && calls[0][0] === 'select' && calls[0][1].length === 1
+          && typeof calls[0][1][0] === 'string' && SIMPLE_COLUMNS.test(calls[0][1][0])
+          && calls[1][0] === 'eq' && calls[1][1][0] === 'post_id' && typeof calls[1][1][1] === 'string') {
+        const cols = calls[0][1][0], id = calls[1][1][1];
+        settled = new Promise<Answer>(resolve => {
+          const group = postMediaGroups.get(cols) ?? { table, cols, byId: new Map<string, Waiter[]>() };
+          postMediaGroups.set(cols, group);
+          const waiters = group.byId.get(id) ?? []; waiters.push({resolve}); group.byId.set(id, waiters);
+          schedule();
+        });
+        return settled;
+      }
       const shape = coalescableShape(calls);
+      if (shape?.kind === 'checked_ids') {
+        settled = new Promise<Answer>((resolve) => {
+          const gk = `${table}\u0000${shape.cols}`;
+          let g = checkedGroups.get(gk);
+          if (!g) { g = { table, cols: shape.cols, reqs: [] }; checkedGroups.set(gk, g); }
+          g.reqs.push({ ids: shape.ids, waiter: { resolve } });
+          schedule();
+        });
+        return settled;
+      }
       if (shape?.kind === "id") {
         settled = new Promise<Answer>((resolve) => {
           const gk = `${table}\u0000${shape.cols}`;

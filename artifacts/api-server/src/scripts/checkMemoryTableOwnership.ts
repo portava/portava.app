@@ -141,7 +141,13 @@ const LEGACY_SIDE = new Set([
 
 /** Files that touch the COMMAND kernel's log. */
 const KERNEL_SIDE = new Set([ "test/memoryFromOwnMedia.pglite.test.ts" /* builds the command kernel log, memory_domain_events, as its fixture */, "migrations/3990_memory_snapshots.sql", "migrations/3992_memory_import_batches.sql", "migrations/3993_owner_resurfacing_policy.sql", "test/MemorySnapshot.pglite.test.ts", "test/memoryImportBatches.pglite.test.ts", "test/memoryImportBatches.postgres.test.ts", "test/resurfacingPolicyCommand.test.ts", "test/resurfacingPolicy.native.test.ts", "test/memoryTimeCorrection.test.ts",
+  // 4007's native proof creates and asserts the COMMAND kernel event log for
+  // post-reference destinations; it never reads the projection family's log.
+  "test/postDestinations.native.test.ts",
   "migrations/2711_memory_kernel_execute.sql", "migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql" /* 2711's function re-created with the create's participants and canonical fields (census-highlights-memories §CB) */,
+  // Both revisions of memory_kernel_execute append to the command event log.
+  "migrations/3912_memory_kernel_item_visibility_and_moderation_restore.sql",
+  "migrations/3913_memory_kernel_tag_block_gate.sql",
   "lib/memoryOutbox.ts",
   "test/memoryCommandKernelFake.ts",
   "test/memoryCommandRoutes.test.ts",

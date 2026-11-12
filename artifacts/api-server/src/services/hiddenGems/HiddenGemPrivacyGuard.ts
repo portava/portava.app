@@ -16,6 +16,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { canSeePlanItemLocation, PLAN_ITEM_PRIVACY_COLUMNS } from "../../domain/trips/policies/privateAnchorAccess.js";
 import { planItemAccessFor } from "../../server/trips/privateAnchorShares.js";
+import { readCanonicalPlaceVisibility } from '../../lib/places/placeGovernance.js';
 
 const logger = rootLogger.child({ service: "HiddenGemPrivacyGuard" });
 
@@ -184,6 +185,19 @@ export async function applyGemPrivacy(
   callerId: string | null,
   callerTripId?: string | null,
 ): Promise<any> {
+  const rows = await visibleGemPlaces([raw], db);
+  return rows.length ? projectGemPrivacy(raw, db, callerId, callerTripId) : null;
+}
+
+async function visibleGemPlaces(rows: any[], db: SupabaseClient | null): Promise<any[]> {
+  const ids = [...new Set(rows.map(row => row.canonical_place_id).filter((id): id is string => typeof id === 'string' && id.length > 0))];
+  if (!ids.length) return rows;
+  const state = await readCanonicalPlaceVisibility(db, ids);
+  if (!state.ok) throw new Error('Linked place visibility could not be checked');
+  return rows.filter(row => !row.canonical_place_id || state.visibleIds.has(row.canonical_place_id));
+}
+
+async function projectGemPrivacy(raw: any, db: SupabaseClient | null, callerId: string | null, callerTripId?: string | null): Promise<any> {
   const coords = await resolveGemCoords(
     raw,
     db,
@@ -211,7 +225,8 @@ export async function applyGemPrivacyBatch(
   callerId: string | null,
   callerTripId?: string | null,
 ): Promise<any[]> {
-  return Promise.all(rows.map((r) => applyGemPrivacy(r, db, callerId, callerTripId)));
+  const visible = await visibleGemPlaces(rows, db);
+  return Promise.all(visible.map((r) => projectGemPrivacy(r, db, callerId, callerTripId)));
 }
 
 /**

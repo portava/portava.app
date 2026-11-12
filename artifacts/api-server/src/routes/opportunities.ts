@@ -1,3 +1,4 @@
+import { readCanonicalPlaceVisibility } from "../lib/places/placeGovernance.js";
 /**
  * GET /api/intel/opportunities — Sensing §6's pipeline, reachable:
  *
@@ -131,6 +132,10 @@ router.get(
     // experience when the caller declared one (the decision engine needs its
     // live state to price the switching cost).
     const subjectIds = Array.from(new Set([...q.subjectIds, ...(q.currentSubjectId ? [q.currentSubjectId] : [])]));
+
+    const visibility=await readCanonicalPlaceVisibility(sc,subjectIds);
+    if(!visibility.ok){sendError(res,'degraded_unavailable','Place visibility unavailable');return;}
+    if(subjectIds.some(id=>!visibility.visibleIds.has(id))){sendError(res,'not_found','Place unavailable');return;}
 
     // ETA per subject: one distance from the viewer's position, when sent.
     // The position itself never enters the kernel.

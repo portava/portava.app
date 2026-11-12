@@ -26,19 +26,6 @@ import { VENUE_CATEGORIES, VENUE_LABELS } from '../../src/lib/intel/contracts';
 import { isCategoryPaused } from '../../src/lib/intel/promptPauseStorage';
 import { readIntelConsent, setIntelConsent, hasValidConsent, type IntelConsentRead, type IntelConsentState } from '../../src/services/intelConsent';
 import { disclosureFor, needsReconsent } from '../../src/lib/sensing/consentDisclosure';
-import {
-  ACOUSTIC_PERMISSION_DENIED,
-  getAcousticSensingPermissionSnapshot,
-  onAcousticSensingPermissionChange,
-  readAcousticSensingPermission,
-  requestAcousticSensingPermission,
-  withdrawAcousticSensingPermission,
-  type AcousticPermissionSnapshot,
-} from '../../src/services/sensing/acousticSensingPermission';
-import {
-  acousticCaptureAllowed,
-} from '../../src/lib/sensing/acousticPermission';
-
 export default function IntelPromptsSettingsScreen() {
   const {
     captureEnabled,
@@ -87,36 +74,6 @@ export default function IntelPromptsSettingsScreen() {
     else setConsentWriteFailed(true);
   }, [offered]);
 
-  // §4.1's SEPARATE acoustic permission. Not the call/video microphone: its own
-  // scope, its own storage key, its own switch, and off until this row is used.
-  const [acoustic, setAcoustic] = React.useState<AcousticPermissionSnapshot | undefined>(undefined);
-  const acousticAlive = React.useRef(false);
-  const acousticGrantAllowed = React.useRef(false);
-  acousticGrantAllowed.current = consentOn;
-  React.useEffect(() => {
-    let alive = true;
-    acousticAlive.current = true;
-    const revision = getAcousticSensingPermissionSnapshot().revision;
-    const unsubscribe = onAcousticSensingPermissionChange((state) => { if (alive) setAcoustic(state); });
-    readAcousticSensingPermission()
-      .then((permission) => {
-        const state = getAcousticSensingPermissionSnapshot();
-        if (alive && state.revision === revision) setAcoustic({ ...state, permission });
-      })
-      .catch(() => {
-        const state = getAcousticSensingPermissionSnapshot();
-        if (alive && state.revision === revision) setAcoustic({ ...state, permission: ACOUSTIC_PERMISSION_DENIED });
-      });
-    return () => { alive = false; acousticAlive.current = false; unsubscribe(); };
-  }, []);
-  const acousticOn = acousticCaptureAllowed(acoustic?.permission);
-  const acousticPending = acoustic?.persistence === 'pending';
-  const acousticPurposeOn = acoustic?.permission.granted === true || (acousticPending && acoustic.intent === 'grant');
-  const toggleAcoustic = React.useCallback(async (v: boolean) => {
-    if (!acousticAlive.current || (v && !acousticGrantAllowed.current)) return;
-    if (v) await requestAcousticSensingPermission();
-    else await withdrawAcousticSensingPermission();
-  }, []);
 
   return (
     <SettingsScreen title="Live intel prompts" subtitle="When we may ask you to share a signal">
@@ -162,49 +119,6 @@ export default function IntelPromptsSettingsScreen() {
         results to others — none bundled with the Quick Signals consent above.
       */}
       <SensingConsentSection />
-
-      {/*
-        Sensing spec §4.1: coarse acoustic energy/rhythm ONLY under separate
-        explicit permission. This is that permission, and this row is the only
-        place it can be granted. It is deliberately its OWN section and its own
-        switch: Portava already holds a microphone permission for calls and
-        video, and §3 requires purpose-scoped authorization, so the microphone a
-        traveller granted to talk to a friend must not silently become a sensor.
-        Turning this on is what asks the OS; turning it off withdraws the
-        purpose scope and leaves calls untouched.
-      */}
-      <SettingsSection
-        title="Sound level sensing"
-        subtitle="Separate from the microphone used for calls and video."
-      >
-        <ToggleRow
-          title="Use a coarse sound level"
-          subtitle={
-            acousticOn
-              ? 'On — Portava takes a coarse loudness and rhythm reading when area capture is allowed.'
-              : acousticPurposeOn
-                ? acousticPending ? 'Waiting for your explicit microphone choice and saved permission.' : 'Purpose permission is on, but OS microphone permission is not granted. You can still turn this purpose off.'
-                : 'Off for sound-level sensing. Granting the microphone for a call does not turn this on.'
-          }
-          value={acousticPurposeOn}
-          onValueChange={toggleAcoustic}
-          disabled={acoustic === undefined || (!acousticPurposeOn && (!consentOn || acousticPending))}
-        />
-        {acousticPending ? <FieldHint>Updating sound-level permission…</FieldHint> : null}
-        {acoustic?.persistence === 'failed' ? (
-          <FieldHint tone="error">
-            {acoustic.intent === 'withdraw'
-              ? "Sound-level permission is off for this run, but couldn't be saved. Your prior saved setting may return after an app restart. Retry saving withdrawal."
-              : "Couldn't save the sound-level grant. Sound-level permission stays off for this run. Your prior saved setting may return after an app restart. Turn it on again only if you still want to grant it."}
-          </FieldHint>
-        ) : null}
-        {acoustic?.persistence === 'failed' && acoustic.intent === 'withdraw' ? (
-          <SettingsRow title="Retry saving withdrawal" onPress={() => { void toggleAcoustic(false); }} chevron={false} />
-        ) : null}
-        <FieldHint>
-          Sound-level sensing uses a temporary microphone recording to measure loudness and rhythm. This sensing path sends coarse summaries, not the recording. Temporary files may remain if cleanup fails or the app exits.
-        </FieldHint>
-      </SettingsSection>
 
       {!captureEnabled ? (
         <View style={styles.offNote}>

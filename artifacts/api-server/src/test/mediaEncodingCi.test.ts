@@ -297,7 +297,9 @@ function successful(result: Awaited<ReturnType<typeof invoke>>) {
   assert.ok(result.logs.every(log => log.size < 4_000_000));
 }
 
-describe("Media encoding CI preparation executable synthetic controls", { timeout: 300_000 }, () => {
+// Each invocation has its own 18-second limit. A shared suite deadline can
+// cancel later cleanup cases when earlier, successful cases run under CPU load.
+describe("Media encoding CI preparation executable synthetic controls", () => {
   for (const cache of [undefined, { ffmpeg: "absent", x264: "absent" }, { x264: "absent" }] as const) it(`prepares both tools with ${JSON.stringify(cache ?? "verified cache")}`, async () => {
     const result = await invoke({ cache });
     successful(result);

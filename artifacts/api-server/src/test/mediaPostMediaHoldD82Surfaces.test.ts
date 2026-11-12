@@ -30,8 +30,8 @@ const ADMIN = "a0000000-0000-4000-8000-0000000000ad";
 const PORTAVA = "a0000000-0000-4000-8000-0000000000f0";
 const EVENT = "e0000000-0000-4000-8000-0000000000e1";
 const POST = "b0000000-0000-4000-8000-0000000000b1";
-const HELD_PATH = "author/held.jpg";
-const CLEAR_PATH = "author/clear.jpg";
+const HELD_PATH = `${ADMIN}/held.jpg`;
+const CLEAR_PATH = `${ADMIN}/clear.jpg`;
 const url = (path: string) => `${SUPABASE}/storage/v1/object/public/post-media/${path}`;
 
 type Row = Record<string, any>;
@@ -97,7 +97,15 @@ function fakeClient(opts: { stageOn: boolean; assetsFail?: boolean }) {
   }
   const client: any = {
     from,
-    rpc: () => Promise.resolve({ data: null, error: null }),
+    rpc: async (name: string, args: { p_actor_id: string; p_upload_paths: string[] }) => {
+      if (name !== "create_official_post_with_media") throw new Error(`Unexpected RPC: ${name}`);
+      if (args.p_actor_id !== ADMIN || args.p_upload_paths.some(path => !path.startsWith(`${ADMIN}/`))) {
+        return { data: null, error: { message: "official_media_not_owned" } };
+      }
+      const post = { id: POST, author_id: PORTAVA, post_status: "published", status: "active" };
+      writes.push({ table: "posts", op: "insert", row: post });
+      return { data: { post }, error: null };
+    },
     auth: { getUser: async (t: string) => (tokens[t] ? { data: { user: { id: tokens[t] } }, error: null } : { data: { user: null }, error: { message: "invalid" } }) },
     writes, reads,
   };
@@ -185,6 +193,12 @@ describe("B. /admin/portava/posts", () => {
     assert.equal(wrote(c, "posts"), 1);
   });
 
+  it("a foreign upload is refused even with the moderation stage off", async () => {
+    const c = fakeClient({ stageOn: false });
+    const r = await create(c, [url(`${HOST}/foreign.jpg`)]);
+    assert.equal(r.status, 403);
+    assert.equal(wrote(c, "posts"), 0);
+  });
   it("POST: stage OFF ⇒ written as before", async () => {
     const c = fakeClient({ stageOn: false });
     const r = await create(c, [url(HELD_PATH)]);
@@ -192,16 +206,18 @@ describe("B. /admin/portava/posts", () => {
     assert.ok(!c.reads.includes("media_assets"));
   });
 
-  it("PATCH: an edit that adds held media ⇒ 409 and no update; a cleared edit is applied", async () => {
+  it("PATCH: held uploads are refused; new uploads must be attached at creation; removing media is allowed", async () => {
     let c = fakeClient({ stageOn: true });
     let r = await edit(c, [url(HELD_PATH)]);
     assert.equal(r.status, 409, JSON.stringify(r.body));
     assert.equal(wrote(c, "posts"), 0);
     c = fakeClient({ stageOn: true });
     r = await edit(c, [url(CLEAR_PATH)]);
-    assert.notEqual(r.status, 409);
-    assert.notEqual(r.status, 503);
-    assert.equal(c.writes.some((w: any) => w.table === "posts" && Array.isArray(w.row.media_urls)), true, "the cleared media was written");
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(wrote(c, "posts"), 0);
+    r = await edit(c, []);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(c.writes.some((w: any) => w.table === "posts" && Array.isArray(w.row.media_urls)), true, "the edit removes the attachments");
   });
 
   it("verifier N3: admin media refs are validated like every post's (appMediaRef) — an arbitrary string is a 400 and nothing is written", async () => {

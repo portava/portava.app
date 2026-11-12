@@ -24,7 +24,7 @@ import { color } from '../../../theme/tokens.ts';
 import { HiddenGemsMediaScreen } from './HiddenGemsMediaScreen.tsx';
 import { WhyThisSheet } from '../../../components/media/WhyThisSheet.tsx';
 import { openClusterPerspectives, openExperiencePerspectives, openPersonPerspectives, openPlaceByIdPerspectives } from '../services/perspectiveOpeners.ts';
-import { lensNavReducer, INITIAL_LENS_NAV, modesForLens, isLens, defaultModeForLens } from '../state/lens.ts'; import { mediaSignalRecorder } from '../../../services/mediaInteractions.ts'; import { emitMediaSignal } from '../telemetry/mediaTelemetry.ts';
+import { lensNavReducer, INITIAL_LENS_NAV, modesForLens, lensDef, isLens, defaultModeForLens } from '../state/lens.ts'; import { mediaSignalRecorder } from '../../../services/mediaInteractions.ts'; import { emitMediaSignal } from '../telemetry/mediaTelemetry.ts';
 import { cachedAsOfLabel } from '../state/freshness.ts';
 import type { MediaLens, PresentationMode, CityVisualZone } from '../types/mediaContext.ts';
 import type { MediaProjection } from '../types/media.ts';
@@ -108,15 +108,17 @@ function MediaWorldShellInner({ cityId, cityName: cityNameProp = null, lat, lng,
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
+      {headerAccessory}
       <MediaWorldHeader
+        contextLabel={nav.lens === 'now' ? 'Around you now' : lensDef(nav.lens).label}
         cityName={cityName}
         asOfLabel={asOf}
         onSearch={() => router.push('/media-search' as never)}
         onCompass={() => router.push('/(tabs)/ai' as never)}
-      />{headerAccessory}
+      />
 
       <LensTabBar active={nav.lens} onSelect={selectLens} />
-      <PresentationModeBar modes={modes} active={nav.mode} onSelect={selectMode} />
+      <PresentationModeBar key={nav.lens} modes={modes} active={nav.mode} onSelect={selectMode} />
 
       <View style={styles.content}>
         {nav.lens === 'now' && (

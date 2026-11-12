@@ -1,3 +1,5 @@
+import { PostTakeover } from '../../../../components/PostTakeover.tsx';
+import { FullscreenPhoto } from '../../../../components/ui/FullscreenPhoto.tsx';
 /**
  * wallItemShared — presentational scaffolding shared by the distinct Wall object
  * renderers (Wall spec §7/§29).
@@ -21,7 +23,6 @@ import {
   Sparkles,
   MessageCircle,
   Share2,
-  Bookmark,
   EyeOff,
   Compass as CompassIcon,
 } from 'lucide-react-native';
@@ -39,6 +40,14 @@ import {
 import { askCompassFromWall } from '../../services/wallCompass.ts';
 import { sendAction, type WallActionEvent } from '../../services/wallApi.ts';
 import { saveItem, unsaveItem } from '../../../../services/collections.ts';
+import { SaveButton } from '../../../../components/SaveButton.tsx';
+import { ShareSheet } from '../../../../components/ShareSheet.tsx';
+import { currentDiscoveryScope, isCurrentDiscoveryScope } from '../../../../services/discoveryViewerScope.ts';
+import { useInputAccountEpoch } from '../../../../platform/input-assistance/hooks/useInputAccountEpoch.ts';
+import { useWallActionOptions, type WallActionOptions } from '../WallActionContext.tsx';
+import { followUser } from '../../../../services/follows.ts';
+import { bumpSocialVersion } from '../../../../hooks/useSocialVersion.ts';
+import { openDirectThread } from '../../../../services/messaging.ts';
 import type {
   DisplayMedia,
   PublicActorRef,
@@ -97,7 +106,7 @@ export function resolveActionRoute(
   action: WallAction,
   projection: WallProjection,
 ): string | null {
-  const placeId = action.targetId ?? projection.place?.placeId ?? null;
+  const placeId = action.targetType === 'place' ? action.targetId : projection.place?.placeId ?? null;
   const objId = projection.canonicalObjectId;
   switch (action.type) {
     case 'open_object':
@@ -112,17 +121,22 @@ export function resolveActionRoute(
     case 'open_map':
       // §35 entry: origin is a Wall item; the vocabulary has no 'wall' member,
       // so it is stated as unknown rather than guessed.
-      return '/map?entry=unknown';
+      if (!placeId) return '/map?entry=unknown';
+      const mapParams = new URLSearchParams({ focusId: placeId, entityTypes: 'place' });
+      const p = projection.place;
+      if (p?.placeId === placeId && Number.isFinite(p.lat) && Number.isFinite(p.lng)) {
+        mapParams.set('lat', String(p.lat)); mapParams.set('lng', String(p.lng));
+        mapParams.set('zoom', '15');
+      }
+      return `/map?entry=unknown&${mapParams}`;
     case 'add_to_trip':
-      return '/trips';
+      return null; // the canonical plan picker receives the place through WallActionContext
     case 'message':
-      // /messages/[id] takes a THREAD id, not a user id, and resolving the
-      // direct thread is an async canonical call — so the Wall hands off to the
-      // messages surface itself rather than inventing a thread route that would
-      // 404. The action is a bridge, never a send.
-      return '/messages';
+      // /messages/[id] takes a thread ID. Resolve the recipient asynchronously
+      // through the canonical messaging service; opening this action never sends.
+      return null; // the asynchronous direct-thread resolver below preserves the recipient
     case 'explore':
-      return '/gems';
+      return action.targetType === 'hidden_gem' && action.targetId ? `/gems/${encodeURIComponent(action.targetId)}` : '/gems';
     case 'see_who':
       return `/post/${objId}`;
     case 'see_live':
@@ -130,7 +144,7 @@ export function resolveActionRoute(
     case 'ask_compass':
       return null; // handled by askCompassFromWall (canonical prefill handoff, §21)
     case 'book_buddy':
-      return '/availability';
+      return action.targetId ? `/(rent-a-buddy)/buddy/${encodeURIComponent(action.targetId)}` : null;
     case 'join':
       // spec §2 "join". A `join` action names the CANONICAL event it belongs to
       // (`targetType: 'event'`), and the handoff opens that event's own screen,
@@ -230,27 +244,70 @@ export async function persistWallSave(
   }
 }
 
-export function runWallAction(action: WallAction, projection: WallProjection): void {
-  trackAction(projection, actionEventFor(action.type));
-
-  // A follow initiated from the feed — flag the discovery-follow conversion (§32).
-  if (action.type === 'follow') {
-    trackFollowFromFeed(projection, projection.objectType === 'discovery');
+export async function runWallAction(action: WallAction, projection: WallProjection, options: WallActionOptions = {}): Promise<boolean> {
+  const scope = currentDiscoveryScope();
+  const current = () => isCurrentDiscoveryScope(scope) && (options.isCurrent?.() ?? true);
+  if (!current()) return false;
+  if (action.type === 'follow' || action.type === 'message') {
+    const target = action.targetType === 'user' ? action.targetId : projection.actor?.userId;
+    if (!target) { Alert.alert('Could not open this action', 'The person is no longer available.'); return false; }
+    try {
+      if (action.type === 'follow') {
+        if (!current()) return false;
+        const res = await followUser(target);
+        if (!current()) return false;
+        if (!res.ok || res.data?.following !== true) throw new Error(res.message ?? 'Please try again.');
+        bumpSocialVersion();
+        trackFollowFromFeed(projection, projection.objectType === 'discovery');
+      } else {
+        if (!current()) return false;
+        const res = await openDirectThread(target);
+        if (!current()) return false;
+        if (!res.ok || !res.data?.threadId) throw new Error(res.message ?? 'Messaging is not available for this person.');
+        router.push(`/messages/${encodeURIComponent(res.data.threadId)}` as never);
+        trackHandoff(projection, 'buddy');
+      }
+      trackAction(projection, actionEventFor(action.type));
+      return true;
+    } catch (error) {
+      if (current()) Alert.alert(action.type === 'follow' ? 'Could not follow' : 'Could not open chat', error instanceof Error ? error.message : 'Please try again.');
+      return false;
+    }
   }
+  if (action.type === 'add_to_trip') {
+    const place = projection.place;
+    const placeId = typeof action.params?.placeId === 'string' ? action.params.placeId : action.targetType === 'place' ? action.targetId : place?.placeId;
+    if (!placeId || !options.openPlanPicker) {
+      Alert.alert('Could not add to a trip', 'This place is not available. Please open the place and try again.');
+      return false;
+    }
+    try {
+      const matchingPlace = place?.placeId === placeId ? place : undefined;
+      options.openPlanPicker({ id: placeId, type: 'place', title: matchingPlace?.name ?? 'Place', city: matchingPlace?.city ?? undefined, locationName: matchingPlace?.name, lat: matchingPlace?.lat, lng: matchingPlace?.lng });
+      trackAction(projection, 'tap');
+      trackHandoff(projection, 'trip');
+      return true;
+    } catch {
+      if (current()) Alert.alert('Could not add to a trip', 'Please try again.');
+      return false;
+    }
+  }
+  trackAction(projection, actionEventFor(action.type));
 
   // Ask Compass — hand the canonical object to the Compass ask surface (§21).
   // askCompassFromWall records the compass handoff itself, so return after it.
   if (action.type === 'ask_compass') {
     askCompassFromWall(projection);
-    return;
+    return true;
   }
 
   // `save` is a WRITE, not a navigation. It goes to the canonical save store and
   // returns — there is no surface to push (spec §2/§24).
   if (action.type === 'save') {
     const next = !(action.params?.saved === true);
-    void persistWallSave(projection, next);
-    return;
+    const ok = await persistWallSave(projection, next);
+    if (!ok && current()) Alert.alert('Could not save', 'Please try again.');
+    return ok;
   }
 
   // Record a Map/Place/Trip/Buddy bridge (§32) before routing.
@@ -267,23 +324,27 @@ export function runWallAction(action: WallAction, projection: WallProjection): v
   if (route) {
     try {
       router.push(route as never);
+      return true;
     } catch {
-      // A missing route must never crash the feed (spec §40).
+      Alert.alert('Could not open this item', 'Please try again.');
     }
   }
+  return false;
 }
 
 // ── Media (single-image frame with a processing placeholder, spec §34) ───────
 
 export function WallImage({
-  media,
+  media, postId,
   ratio = aspect.card,
   rounded = true,
 }: {
   media?: DisplayMedia;
+  postId?: string;
   ratio?: number;
   rounded?: boolean;
 }) {
+  const [opened, setOpened] = React.useState(false);
   const uri = pickWallImageRef(media, wallImageTargetPx(useWindowDimensions())); // §33: the smallest stored variant that covers the frame — the same pick the prefetch warms
   const frameStyle = [s.mediaFrame, { aspectRatio: ratio }, rounded ? s.mediaRounded : null];
   if (media?.processing || !uri) {
@@ -301,11 +362,13 @@ export function WallImage({
   // turn either into a signed URL, and shows a visible fallback on a null resolve
   // rather than blank space (spec §34/§35). Same private-bucket concern the avatar
   // and QuickMediaRow already route through CachedImage.
-  return (
-    <View style={frameStyle}>
-      <CachedImage source={{ uri }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackLabel="" />
-    </View>
-  );
+  const image = <CachedImage source={{ uri }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackLabel="" />;
+  if (postId) return <>
+    <Pressable accessibilityRole="button" accessibilityLabel="Open post" style={frameStyle} onPress={() => setOpened(true)}>{image}</Pressable>
+    {opened && <PostTakeover postId={postId} initialMediaUri={media?.url ?? undefined} onClose={() => setOpened(false)} />}
+  </>;
+  return media?.kind === 'image' ? <FullscreenPhoto uri={media.url ?? uri} style={frameStyle}>{image}</FullscreenPhoto>
+    : <View style={frameStyle}>{image}</View>;
 }
 
 // ── Actor byline ─────────────────────────────────────────────────────────────
@@ -365,14 +428,14 @@ export function hasAskCompassAction(projection: WallProjection): boolean {
   return (projection.actions ?? []).some((a) => a.type === 'ask_compass');
 }
 
-export function PlaceLine({ projection }: { projection: WallProjection }) {
+export function PlaceLine({ projection, onDark = false }: { projection: WallProjection; onDark?: boolean }) {
   if (!projection.place) return null;
   const p = projection.place;
   const label = [p.name, p.city].filter(Boolean).join(' · ');
   return (
     <View style={s.placeRow}>
-      <MapPin size={icon.s14} color={color.deep} />
-      <Text style={s.placeText} numberOfLines={1}>
+      <MapPin size={icon.s14} color={onDark ? color.onInk : color.deep} />
+      <Text style={[s.placeText, onDark && { color: color.onInk }]} numberOfLines={1}>
         {label}
       </Text>
       {/* Ask Compass from a place-linked post (spec §21) — an ACTION, not a
@@ -413,6 +476,15 @@ export function AskCompassChip({ projection }: { projection: WallProjection }) {
 // ── Contextual action chips (optional / additive, spec §7) ───────────────────
 
 export function ContextualActionChips({ projection }: { projection: WallProjection }) {
+  const epoch = useInputAccountEpoch();
+  return <ContextualActionChipsForObject key={`${epoch}:${projection.projectionId}`} projection={projection} />;
+}
+
+function ContextualActionChipsForObject({ projection }: { projection: WallProjection }) {
+  const options = useWallActionOptions();
+  const [pending, setPending] = React.useState<string | null>(null);
+  const [followed, setFollowed] = React.useState(false);
+  const busy = React.useRef(false);
   // `open_object` is the whole-card tap, not a chip. `ask_compass` is surfaced by
   // the dedicated AskCompassChip in PlaceLine (spec §21) — excluding it here keeps
   // Compass to a single quiet affordance rather than a duplicate badge (§35).
@@ -431,12 +503,24 @@ export function ContextualActionChips({ projection }: { projection: WallProjecti
         <Pressable
           key={`${action.type}-${idx}`}
           style={s.chip}
-          onPress={() => runWallAction(action, projection)}
+          disabled={pending !== null || (action.type === 'follow' && followed)}
+          onPress={async () => {
+            if (busy.current || (action.type === 'follow' && followed)) return;
+            busy.current = true; setPending(action.type);
+            try {
+              const ok = await runWallAction(action, projection, options);
+              if (ok && action.type === 'follow' && options.isCurrent?.() !== false) setFollowed(true);
+            } finally {
+              busy.current = false;
+              if (options.isCurrent?.() !== false) setPending(null);
+            }
+          }}
           accessibilityRole="button"
-          accessibilityLabel={action.label}
+          accessibilityLabel={action.type === 'follow' && followed ? 'Following' : action.label}
+          accessibilityState={{ disabled: pending !== null || (action.type === 'follow' && followed), busy: pending === action.type }}
         >
           <Text style={s.chipText} numberOfLines={1}>
-            {action.label}
+            {action.type === 'follow' && followed ? 'Following' : pending === action.type ? 'Please wait…' : action.label}
           </Text>
         </Pressable>
       ))}
@@ -446,15 +530,24 @@ export function ContextualActionChips({ projection }: { projection: WallProjecti
 
 // ── Standard social action row (keeps it enjoyable as social media, §40) ─────
 
-export function SocialActionRow({ projection }: { projection: WallProjection }) {
-  // Server truth, not component state (spec §2/§37: server-side state is
-  // authoritative; never rely on client-only state). The optimistic flip below
-  // is a rendering courtesy that REVERTS when the canonical write fails.
-  const [saved, setSaved] = React.useState(projection.viewerSaved === true);
-  React.useEffect(() => {
-    setSaved(projection.viewerSaved === true);
-  }, [projection.viewerSaved]);
-  const open = () => runWallAction({ type: 'open_object', label: 'Open' }, projection);
+export function SocialActionRow({ projection, onDark = false, onOpenPost }: { projection: WallProjection; onDark?: boolean; onOpenPost?: () => void }) {
+  const epoch = useInputAccountEpoch();
+  return <SocialActionRowForObject key={`${epoch}:${projection.projectionId}`} projection={projection} onDark={onDark} onOpenPost={onOpenPost} />;
+}
+
+function SocialActionRowForObject({ projection, onDark, onOpenPost }: { projection: WallProjection; onDark: boolean; onOpenPost?: () => void }) {
+  const actionTint = onDark ? color.onInk : color.mute;
+  const [shareOpen, setShareOpen] = React.useState(false);
+  const [shareMounted, setShareMounted] = React.useState(false);
+  const postLike = POST_SAVEABLE_TYPES.has(projection.objectType);
+  const canonicalLink = !postLike ? wallShareUrl(projection) : null;
+  const [postOpen, setPostOpen] = React.useState(false);
+  const open = () => {
+    if (postLike) {
+      trackAction(projection, 'tap');
+      if (onOpenPost) onOpenPost(); else setPostOpen(true);
+    } else void runWallAction({ type: 'open_object', label: 'Open' }, projection);
+  };
   // Stamp/comment measure the distinct engagement (spec §32) then open the
   // canonical object where the interaction actually happens (spec §24).
   const stamp = () => {
@@ -465,41 +558,29 @@ export function SocialActionRow({ projection }: { projection: WallProjection }) 
     trackEngagement(projection, 'comment');
     open();
   };
-  const toggleSave = () => {
-    const next = !saved;
-    setSaved(next); // optimistic
-    trackEngagement(projection, 'save');
-    trackAction(projection, 'save');
-    // Write through to the canonical store; revert the optimism if it did not
-    // land, so the icon never claims a save the server does not hold.
-    void persistWallSave(projection, next).then((ok) => {
-      if (!ok) setSaved(!next);
-    });
-  };
   const share = () => {
-    trackEngagement(projection, 'share');
-    trackAction(projection, 'share'); void shareWallObject(projection); // this used to stop at analytics: the Share button opened nothing
+    if (postLike || canonicalLink) { setShareMounted(true); setShareOpen(true); }
+    else Alert.alert('Could not share', 'This item has no shareable link.');
   };
   return (
     <View style={s.actionRow}>
       <Pressable style={s.action} onPress={stamp} accessibilityRole="button" accessibilityLabel="Stamp">
-        <Sparkles size={icon.s20} color={color.mute} />
+        <Sparkles size={icon.s20} color={actionTint} />
       </Pressable>
       <Pressable style={s.action} onPress={comment} accessibilityRole="button" accessibilityLabel="Comment">
-        <MessageCircle size={icon.s20} color={color.mute} />
+        <MessageCircle size={icon.s20} color={actionTint} />
       </Pressable>
       <Pressable style={s.action} onPress={share} accessibilityRole="button" accessibilityLabel="Share">
-        <Share2 size={icon.s20} color={color.mute} />
+        <Share2 size={icon.s20} color={actionTint} />
       </Pressable>
       <View style={{ flex: 1 }} />
-      <Pressable
-        style={s.action}
-        onPress={toggleSave}
-        accessibilityRole="button"
-        accessibilityLabel={saved ? 'Saved' : 'Save'}
-      >
-        <Bookmark size={icon.s20} color={saved ? color.signal : color.mute} />
-      </Pressable>
+      {postLike ? <SaveButton entityType="post" entityId={projection.canonicalObjectId} initialSaved={projection.viewerSaved === true} size={icon.s20} tint={onDark ? color.onInk : undefined} recordRankOutcome={false} onSavedChange={(saved) => {
+        if (saved) { trackEngagement(projection, 'save'); trackAction(projection, 'save'); }
+      }} /> : null}
+      {postOpen && <PostTakeover postId={projection.canonicalObjectId} onClose={() => setPostOpen(false)} />}
+      {shareMounted ? <ShareSheet visible={shareOpen} {...(postLike ? { postId: projection.canonicalObjectId, telegraphObject: { objectType: 'POST' as const, objectId: projection.canonicalObjectId } } : { canonicalLink: { url: canonicalLink!, title: 'Share moment' } })} onClose={() => setShareOpen(false)} onShareSuccess={() => {
+        trackEngagement(projection, 'share'); trackAction(projection, 'share');
+      }} /> : null}
     </View>
   );
 }
@@ -509,7 +590,7 @@ export function SocialActionRow({ projection }: { projection: WallProjection }) 
 /**
  * A quiet per-object "not interested" control. Tapping it records the
  * not-interested signal (analytics, ids only — spec §32), tells the server to
- * stop surfacing the object (fire-and-forget `hide`, ids only), and asks the
+ * stop surfacing the object (`hide`, ids only), and asks the
  * feed to drop it locally via `onHide`. Deliberately understated so it never
  * competes with the post it hangs on (spec §35).
  */
@@ -520,17 +601,23 @@ export function NotInterestedControl({
   projection: WallProjection;
   onHide?: (projectionId: string) => void;
 }) {
-  const onPress = () => {
+  const busy = React.useRef(false);
+  const onPress = async () => {
+    if (busy.current) return;
+    busy.current = true;
+    const owner = currentDiscoveryScope();
     trackNotInterested(projection);
-    void sendAction(
+    onHide?.(projection.projectionId);
+    let saved = false;
+    try { saved = await sendAction(
       {
         objectId: projection.canonicalObjectId,
         objectType: projection.objectType,
         session: projection.ranking?.session,
       },
       'hide',
-    );
-    onHide?.(projection.projectionId);
+    ); } catch {} finally { busy.current = false; }
+    if (!saved && isCurrentDiscoveryScope(owner)) Alert.alert('Hidden from this feed', 'Couldn’t save this preference. It may appear again after you reopen the app.');
   };
   return (
     <Pressable

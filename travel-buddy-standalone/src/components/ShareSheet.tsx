@@ -9,15 +9,13 @@
  *                    target derived from thread type:
  *                      direct → 'dm', trip → 'trip_crew', circle → 'circle'
  *
- * The in-app share is real end-to-end: it fetches the post (getPostById),
- * lets the user pick one of their threads (getMyThreads), and sends a
- * post_card message (sendMessage) that renders as a rich card in the thread
- * (see PostCardMessage). No fake "shared!" confirmations.
+ * Chats carry a reference and the sender's caption. The recipient resolves current
+ * content, media and attribution. Encrypted conversations send an encrypted permalink.
  *
  * The parent (PostEngagementBar) calls recordShare(postId, target) via
  * onShareSuccess so the correct target is always persisted.
  */
-import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -35,6 +33,7 @@ import {
   FlatList,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
+import { router } from 'expo-router';
 import {
   Link,
   MessageCircle,
@@ -44,29 +43,32 @@ import {
   PlusCircle,
   X,
   Search,
+  Bookmark,
+  Star,
 } from 'lucide-react-native';
 import { PortavaShareIcon } from './icons/PortavaShareIcon.tsx';
 import { closeThenNavigate } from '../lib/deferredNavigate.ts';
-import { canonicalUrl } from '../constants/canonicalUrl.ts';
+import { canonicalUrl, canonicalOrigin } from '../constants/canonicalUrl.ts';
 import { color, space, radius, shadow, avatar, icon } from '../theme/tokens.ts';
 import { PortavaSheet } from './ui/PortavaSheet.tsx';
 import { Avatar } from './ui/Avatar.tsx';
 import { SectionHeader } from './ui/SectionHeader.tsx';
 import { getMyThreads, sendMessage, openDirectThread } from '../services/messaging.ts';
 import type { ThreadSummary } from '../services/messaging.ts';
-import { getPostById } from '../services/posts.ts';
+import { fetchConversationProjection } from '../features/telegraph/conversation/conversationProjection.ts';
+import { canonicalMediaLink } from '../features/telegraph/sharing/canonicalMediaLink.ts';
 import { searchUsers } from '../services/follows.ts';
 import type { TravelerSearchResult } from '../services/follows.ts';
 import { useInputAccountEpoch } from '../platform/input-assistance/hooks/useInputAccountEpoch.ts';
 import { createInputRequestScheduler } from '../platform/input-assistance/services/inputRequestScheduler.ts';
 import { currentDiscoveryScope, isCurrentDiscoveryScope } from '../services/discoveryViewerScope.ts';
 import { shareObjectIntoThread } from '../features/telegraph/sharing/shareApi.ts';
+import { PostSaveDestinationPanel } from './PostSaveDestinationPanel.tsx';
 
 export type ShareTarget = 'external' | 'copy_link' | 'dm' | 'group_chat' | 'trip_crew' | 'circle';
 
-interface Props {
+interface CommonProps {
   visible: boolean;
-  postId: string;
   onClose: () => void;
   onShareSuccess?: (target: ShareTarget) => void;
   /**
@@ -76,20 +78,12 @@ interface Props {
    * for each reader at read time, so a later privacy change or deletion is
    * honoured — instead of the post_card snapshot. Unset: unchanged behaviour.
    */
-  telegraphObject?: { objectType: 'POST'; objectId: string } | null;
+  telegraphObject?: { objectType: 'POST' | 'MEDIA'; objectId: string } | null;
 }
-
-interface PostPreview {
-  authorName?: string;
-  authorHandle?: string;
-  authorAvatar?: string | null;
-  snippet?: string;
-  thumbnail?: string | null;
-  city?: string | null;
-  country?: string | null;
-  likeCount?: number;
-  commentCount?: number;
-}
+type Props = CommonProps & (
+  | { postId: string; canonicalLink?: never }
+  | { postId?: never; canonicalLink: { url: string; title: string } }
+);
 
 function postPermalink(postId: string): string {
   return canonicalUrl(`/posts/${postId}`);
@@ -98,17 +92,28 @@ function postPermalink(postId: string): string {
 function targetForThread(threadType: ThreadSummary['threadType']): ShareTarget {
   if (threadType === 'trip') return 'trip_crew';
   if (threadType === 'circle') return 'circle';
+  if (threadType === 'group') return 'group_chat';
   return 'dm';
 }
 
-export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraphObject }: Props) {
-  const [mode, setMode] = useState<'menu' | 'picker'>('menu');
+export function ShareSheet({ visible, postId = '', canonicalLink, onClose, onShareSuccess, telegraphObject }: Props) {
+  const linkOnly = canonicalLink !== undefined;
+  const shareTitle = canonicalLink?.title ?? 'Share Post';
+  const shareUrl = useMemo(() => {
+    if (!canonicalLink) return postPermalink(postId);
+    try {
+      const url = new URL(canonicalLink.url);
+      return url.origin === new URL(canonicalOrigin()).origin && !url.username && !url.password ? url.toString() : null;
+    } catch { return null; }
+  }, [postId, canonicalLink?.url]);
+  const [mode, setMode] = useState<'menu' | 'picker' | 'memory' | 'highlight'>('menu');
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [loadingThreads, setLoadingThreads] = useState(false);
+  const [threadsFailed, setThreadsFailed] = useState(false);
+  const threadLoadVersion = useRef(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [caption, setCaption] = useState('');
   const [sending, setSending] = useState(false);
-  const [preview, setPreview] = useState<PostPreview | null>(null);
 
   // Thread search
   const [threadSearch, setThreadSearch] = useState('');
@@ -116,7 +121,7 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
   const [searchingUsers, setSearchingUsers] = useState(false);
   const [userSearchFailed, setUserSearchFailed] = useState(false);
   const accountEpoch = useInputAccountEpoch();
-  const context = useMemo(() => ({ active: false, scope: currentDiscoveryScope() }), [visible, accountEpoch, postId, telegraphObject?.objectType, telegraphObject?.objectId]);
+  const context = useMemo(() => ({ active: false, scope: currentDiscoveryScope() }), [visible, accountEpoch, postId, canonicalLink?.url, telegraphObject?.objectType, telegraphObject?.objectId]);
   const currentContext = useRef(context);
   const scheduler = useMemo(createInputRequestScheduler, []);
   const pickerVersionRef = useRef(0);
@@ -125,6 +130,9 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
   const actionVersionRef = useRef(0);
   const actionVersion = actionVersionRef.current;
   const sendingRef = useRef(false);
+  const nativeSharePending = useRef<(() => void) | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; nativeSharePending.current = null; }; }, []);
   const isCurrent = () => context.active && currentContext.current === context && isCurrentDiscoveryScope(context.scope);
   const isCurrentPicker = () => isCurrent() && pickerActive.current && pickerVersion === pickerVersionRef.current;
   const isCurrentAction = () => isCurrentPicker() && actionVersion === actionVersionRef.current;
@@ -158,12 +166,11 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
     resetSearch();
     setThreads([]);
     setLoadingThreads(false);
+    setThreadsFailed(false);
     setMode('menu');
   }
 
   useLayoutEffect(() => {
-    let active = true;
-    const isCurrentHydration = () => active && isCurrent();
     currentContext.current = context;
     context.active = visible;
     pickerActive.current = false;
@@ -173,29 +180,9 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
     setCaption('');
     setThreads([]);
     setLoadingThreads(false);
-    setPreview(null);
-    if (visible) {
-      getPostById(postId)
-        .then((res) => {
-          if (isCurrentHydration() && res.ok && res.data) {
-            const post = res.data;
-            setPreview({
-              authorName: post.author?.name,
-              authorHandle: post.author?.handle,
-              authorAvatar: post.author?.avatarUrl ?? null,
-              snippet: (post.content ?? '').slice(0, 220),
-              thumbnail: post.mediaUrls?.[0] ?? post.mediaThumbnailUrl ?? null,
-              city: post.locationCity ?? null,
-              country: post.locationCountry ?? null,
-              likeCount: post.likeCount,
-              commentCount: post.commentCount,
-            });
-          }
-        })
-        .catch(() => {});
-    }
+    setThreadsFailed(false);
+    if (visible) nativeSharePending.current = null;
     return () => {
-      active = false;
       context.active = false;
       scheduler.cancel();
     };
@@ -205,17 +192,28 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
     if (!isCurrent() || pickerActive.current) return;
     pickerActive.current = true;
     const version = ++pickerVersionRef.current;
-    const isCurrentHydration = () => isCurrent() && pickerActive.current && version === pickerVersionRef.current;
     resetSearch();
     setMode('picker');
     setThreads([]);
+    void loadThreads(version);
+  }
+
+  async function loadThreads(version = pickerVersionRef.current) {
+    if (!isCurrent() || !pickerActive.current || version !== pickerVersionRef.current) return;
+    const request = ++threadLoadVersion.current;
+    const isCurrentHydration = () => isCurrent() && pickerActive.current && version === pickerVersionRef.current && request === threadLoadVersion.current;
     setLoadingThreads(true);
-    getMyThreads()
-      .then((res) => {
-        if (isCurrentHydration() && res.ok && res.data) setThreads(res.data.threads.slice(0, 15));
-      })
-      .catch(() => {})
-      .finally(() => { if (isCurrentHydration()) setLoadingThreads(false); });
+    setThreadsFailed(false);
+    try {
+      const res = await getMyThreads();
+      if (!isCurrentHydration()) return;
+      if (res.ok && res.data && Array.isArray(res.data.threads)) setThreads(res.data.threads);
+      else setThreadsFailed(true);
+    } catch {
+      if (isCurrentHydration()) setThreadsFailed(true);
+    } finally {
+      if (isCurrentHydration()) setLoadingThreads(false);
+    }
   }
 
   function handleSearchChange(text: string) {
@@ -253,8 +251,21 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
     setSelectedId(thread.id);
   }
 
+  async function sendToChat(threadId: string, knownEncryption?: boolean) {
+    const encrypted = typeof knownEncryption === 'boolean' ? knownEncryption
+      : (await fetchConversationProjection(threadId))?.conversation?.isE2ee;
+    if (!isCurrentAction() || typeof encrypted !== 'boolean' || !shareUrl) return { ok: false };
+    const note = caption.trim();
+    if (encrypted) return sendMessage(threadId, [note, shareUrl].filter(Boolean).join('\n'), {isE2ee: true});
+    const reference = telegraphObject ?? (linkOnly ? canonicalMediaLink(shareUrl) : null);
+    if (reference) return shareObjectIntoThread(threadId, reference.objectType, reference.objectId, note || null);
+    if (linkOnly) return sendMessage(threadId, [note, shareUrl].filter(Boolean).join('\n'));
+    // Legacy readers understand post_card. Only the reference and sender's note belong in history.
+    return sendMessage(threadId, JSON.stringify({postId, caption: note || undefined}), {msgType: 'system', subtype: 'post_card'});
+  }
+
   async function handleUserResultPress(user: TravelerSearchResult) {
-    if (!isCurrentAction() || sendingRef.current || !userResults.includes(user)) return;
+    if (!isCurrentAction() || sendingRef.current || !userResults.includes(user) || !shareUrl) return;
     sendingRef.current = true;
     setSending(true);
     try {
@@ -265,31 +276,12 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
         return;
       }
       const threadId = threadRes.data.threadId;
-      const payload = {
-        postId,
-        permalink: postPermalink(postId),
-        authorName: preview?.authorName,
-        authorHandle: preview?.authorHandle,
-        authorAvatar: preview?.authorAvatar ?? null,
-        snippet: preview?.snippet,
-        thumbnail: preview?.thumbnail ?? null,
-        city: preview?.city ?? null,
-        country: preview?.country ?? null,
-        likeCount: preview?.likeCount,
-        commentCount: preview?.commentCount,
-        caption: caption.trim() || undefined,
-      };
-      const msgRes = telegraphObject
-        ? await shareObjectIntoThread(threadId, telegraphObject.objectType, telegraphObject.objectId, caption.trim() || null)
-        : await sendMessage(threadId, JSON.stringify(payload), {
-            msgType: 'system',
-            subtype: 'post_card',
-          });
+      const msgRes = await sendToChat(threadId, threads.find(t => t.id === threadId)?.isE2ee);
       if (!isCurrentAction()) return;
       if (msgRes.ok) {
         onShareSuccess?.('dm');
         handleClose();
-        Alert.alert('Sent!', 'Post shared to your chat.');
+        Alert.alert('Sent!', linkOnly ? 'Link shared to your chat.' : 'Post shared to your chat.');
       } else {
         Alert.alert('Could not send', 'Something went wrong. Please try again.');
       }
@@ -304,69 +296,77 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
   }
 
   async function handleNativeShare() {
-    if (!isCurrent()) return;
-    handleClose();
-    try {
-      const result = await Share.share({
-        message: `Check out this post on Portava!\n${postPermalink(postId)}`,
-        ...(Platform.OS === 'ios' ? { url: postPermalink(postId) } : {}),
-      });
-      if (result.action === Share.sharedAction) {
-        onShareSuccess?.('external');
+    if (!isCurrent() || !shareUrl) return;
+    const scope = context.scope;
+    const present = async () => {
+      if (!mounted.current || !isCurrentDiscoveryScope(scope)) return;
+      try {
+        const result = await Share.share({
+          message: linkOnly ? shareUrl : `Check out this post on Portava!\n${shareUrl}`,
+          ...(Platform.OS === 'ios' ? { url: shareUrl } : {}),
+        });
+        if (mounted.current && isCurrentDiscoveryScope(scope) && result.action === Share.sharedAction) onShareSuccess?.('external');
+      } catch {
+        if (mounted.current && isCurrentDiscoveryScope(scope)) Alert.alert('Could not open sharing', 'Please try again, or use Copy Link.');
       }
-    } catch (_) {
-      // User cancelled or share unavailable — silent
-    }
+    };
+    // UIKit cannot present a second controller while this sheet is dismissing.
+    // Use the actual native dismissal event, rather than guessing an animation delay.
+    if (Platform.OS === 'ios') nativeSharePending.current = () => { void present(); };
+    handleClose();
+    if (Platform.OS !== 'ios') void present();
+  }
+
+  function handleDismiss() {
+    const present = nativeSharePending.current;
+    nativeSharePending.current = null;
+    present?.();
+  }
+
+  function openProfileComposer() {
+    if (!isCurrent() || linkOnly) return;
+    const scope = context.scope;
+    const navigate = () => {
+      if (mounted.current && isCurrentDiscoveryScope(scope)) {
+        router.push({ pathname: '/create', params: { sharePostId: postId } });
+      }
+    };
+    if (Platform.OS === 'ios') nativeSharePending.current = navigate;
+    handleClose();
+    if (Platform.OS !== 'ios') navigate();
   }
 
   async function handleCopyLink() {
-    if (!isCurrent()) return;
+    if (!isCurrent() || !shareUrl) return;
+    const scope = context.scope;
     handleClose();
     try {
-      await Clipboard.setStringAsync(postPermalink(postId));
+      await Clipboard.setStringAsync(shareUrl);
+      if (!mounted.current || !isCurrentDiscoveryScope(scope)) return;
       onShareSuccess?.('copy_link');
       if (Platform.OS === 'android') {
         ToastAndroid.show('Link copied', ToastAndroid.SHORT);
       } else {
-        Alert.alert('Copied', 'Post link copied to clipboard.');
+        Alert.alert('Copied', linkOnly ? 'Link copied to clipboard.' : 'Post link copied to clipboard.');
       }
     } catch (_) {
-      Alert.alert('Error', 'Could not copy link. Please try again.');
+      if (mounted.current && isCurrentDiscoveryScope(scope)) Alert.alert('Error', 'Could not copy link. Please try again.');
     }
   }
 
   async function handleSend() {
-    if (!selectedId || !isCurrentAction() || sendingRef.current) return;
+    if (!selectedId || !isCurrentAction() || sendingRef.current || !shareUrl) return;
     const thread = threads.find((t) => t.id === selectedId);
     if (!thread) return;
     sendingRef.current = true;
     setSending(true);
     try {
-      const payload = {
-        postId,
-        permalink: postPermalink(postId),
-        authorName: preview?.authorName,
-        authorHandle: preview?.authorHandle,
-        authorAvatar: preview?.authorAvatar ?? null,
-        snippet: preview?.snippet,
-        thumbnail: preview?.thumbnail ?? null,
-        city: preview?.city ?? null,
-        country: preview?.country ?? null,
-        likeCount: preview?.likeCount,
-        commentCount: preview?.commentCount,
-        caption: caption.trim() || undefined,
-      };
-      const res = telegraphObject
-        ? await shareObjectIntoThread(selectedId, telegraphObject.objectType, telegraphObject.objectId, caption.trim() || null)
-        : await sendMessage(selectedId, JSON.stringify(payload), {
-            msgType: 'system',
-            subtype: 'post_card',
-          });
+      const res = await sendToChat(selectedId, thread.isE2ee);
       if (!isCurrentAction()) return;
       if (res.ok) {
         onShareSuccess?.(targetForThread(thread.threadType));
         handleClose();
-        Alert.alert('Sent!', 'Post shared to your chat.');
+        Alert.alert('Sent!', linkOnly ? 'Link shared to your chat.' : 'Post shared to your chat.');
       } else {
         Alert.alert('Could not send', 'Something went wrong. Please try again.');
       }
@@ -384,14 +384,41 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
     <PortavaSheet
       visible={visible}
       onClose={handleClose}
-      accessibilityLabel="Share post"
+      onDismiss={handleDismiss}
+      avoidKeyboard={mode !== 'menu'}
+      accessibilityLabel={linkOnly ? shareTitle : 'Share post'}
       closeAccessibilityLabel="Close share sheet"
       testID="share-sheet"
     >
-        {mode === 'menu' ? (
+        {(mode === 'memory' || mode === 'highlight') && !linkOnly ? <PostSaveDestinationPanel
+          key={`${context.scope.viewer}:${postId}:${mode}`}
+          postId={postId}
+          destination={mode}
+          active={visible && isCurrent()}
+          onCancel={() => { if (isCurrent()) setMode('menu'); }}
+          onSaved={(result) => {
+            if (!isCurrent()) return;
+            const destination = mode === 'memory' ? 'Memory' : 'Highlight';
+            const scope = context.scope;
+            const confirm = () => {
+              if (!mounted.current || !isCurrentDiscoveryScope(scope)) return;
+              if (result.memoryId) {
+                Alert.alert('Saved', 'Added to your Memory.', [
+                  { text: 'Done', style: 'cancel' },
+                  { text: 'Open Memory', onPress: () => {
+                    if (mounted.current && isCurrentDiscoveryScope(scope)) router.push(`/memory/${result.memoryId}` as never);
+                  } },
+                ]);
+              } else Alert.alert('Saved', `Added to your ${destination}.`);
+            };
+            if (Platform.OS === 'ios') nativeSharePending.current = confirm;
+            handleClose();
+            if (Platform.OS !== 'ios') confirm();
+          }}
+        /> : mode === 'menu' ? (
           <>
             <View style={s.header}>
-              <Text style={s.title}>Share Post</Text>
+              <Text style={s.title}>{shareTitle}</Text>
               <Pressable onPress={handleClose} hitSlop={10}>
                 <X size={20} color={color.ink} />
               </Pressable>
@@ -402,29 +429,52 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
               bounces={false}
               contentContainerStyle={s.scrollContent}
             >
-              <ShareOption
+              {shareUrl === null ? <Text style={s.emptyLabel}>This link is unavailable.</Text> : <ShareOption
                 iconBg="#EEF1FF"
                 icon={<PortavaShareIcon size={20} color="#4A6CF7" />}
-                label="Share Post"
+                label={linkOnly ? 'Share Link' : 'Share Post'}
                 sub="Open share menu"
                 onPress={handleNativeShare}
-              />
+              />}
 
               <ShareOption
                 iconBg="#EDF7EE"
                 icon={<Link size={20} color={color.success} />}
                 label="Copy Link"
-                sub="Share the post URL"
+                sub={linkOnly ? 'Copy the link' : 'Share the post URL'}
                 onPress={handleCopyLink}
               />
 
               <SectionHeader>Share in app</SectionHeader>
 
+              {!linkOnly && <ShareOption
+                iconBg="#EEF1FF"
+                icon={<Globe size={20} color="#4A6CF7" />}
+                label="Share to my profile"
+                sub="Repost with your own note and audience"
+                onPress={openProfileComposer}
+              />}
+
+              {!linkOnly && <ShareOption
+                iconBg="#EDF7EE"
+                icon={<Bookmark size={20} color={color.success} />}
+                label="Add to Memories"
+                sub="Choose a Memory or create one"
+                onPress={() => { if (isCurrent()) setMode('memory'); }}
+              />}
+              {!linkOnly && <ShareOption
+                iconBg="#FFF3EE"
+                icon={<Star size={20} color="#F97316" />}
+                label="Add to Highlights"
+                sub="Choose who can see it"
+                onPress={() => { if (isCurrent()) setMode('highlight'); }}
+              />}
+
               <ShareOption
                 iconBg="#FFF3EE"
                 icon={<MessageCircle size={20} color="#F97316" />}
                 label="Send in a chat"
-                sub="Send this post to a Telegraph chat, trip crew, or circle"
+                sub={linkOnly ? 'Send the link to a Telegraph chat, trip crew, or circle' : 'Send this post to a Telegraph chat, trip crew, or circle'}
                 onPress={openPicker}
               />
             </ScrollView>
@@ -456,6 +506,15 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
             />
 
             <Text style={s.chooseLabel}>CHOOSE A CHAT</Text>
+
+            {threadsFailed && (
+              <View style={s.loadingRow}>
+                <Text style={s.emptyLabel}>Couldn't load your chats.</Text>
+                <Pressable onPress={() => { void loadThreads(); }} accessibilityRole="button" accessibilityLabel="Retry loading chats" hitSlop={8}>
+                  <Text style={s.startChatText}>Try again</Text>
+                </Pressable>
+              </View>
+            )}
 
             {/* Search input */}
             <View style={s.searchRow}>
@@ -519,6 +578,7 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
 
               if (!isSearchActive) {
                 if (filteredThreads.length === 0) {
+                  if (threadsFailed) return null;
                   return (
                     <View style={s.loadingRow}>
                       <MessageCircle size={24} color={color.faint} />
@@ -600,7 +660,7 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
             <Pressable
               style={[s.sendBtn, (!selectedId || sending) && s.sendBtnDisabled]}
               onPress={handleSend}
-              disabled={!selectedId || sending}
+              disabled={!selectedId || sending || !shareUrl}
             >
               {sending ? (
                 <ActivityIndicator size="small" color={color.onInk} />
@@ -632,7 +692,7 @@ function ThreadRow({
   const avatarUrl = isDirect && other ? other.avatarUrl : null;
 
   return (
-    <Pressable style={[s.threadRow, selected && s.threadRowSelected]} onPress={onPress}>
+    <Pressable style={[s.threadRow, selected && s.threadRowSelected]} onPress={onPress} accessibilityRole="button" accessibilityLabel={`Select ${displayName}`} accessibilityState={{ selected }}>
       <Avatar
         uri={avatarUrl}
         name={displayName}
@@ -649,6 +709,10 @@ function ThreadRow({
             ? 'Trip chat'
             : thread.threadType === 'circle'
             ? 'Circle'
+            : thread.threadType === 'group'
+            ? 'Group chat'
+            : thread.threadType === 'rent_buddy_booking'
+            ? 'Travel partner chat'
             : 'Direct message'}
         </Text>
       </View>

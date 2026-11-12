@@ -18,6 +18,7 @@
  * on the path under test is mocked: writeObservation, the real disclosure
  * mapping, and the real toLiveClaimEnvelope are the shipping implementations.
  */
+import { canonicalPlaceFixture } from './helpers/canonicalPlaceFixture.js';
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { writeObservation } from "../services/intel/IntelCaptureService.js";
@@ -43,6 +44,7 @@ function makeDb(flags: Record<string, boolean>, opts: { places?: string[]; conse
   const consent = opts.consent ?? true;
   let seq = 0;
   function from(table: string) {
+    if (table === "places") return canonicalPlaceFixture([...places].map(id => ({ id })));
     let op: "select" | "insert" | "insert_select" = "select";
     let payload: any = null;
     const filters: [string, any, string?][] = [];
@@ -51,10 +53,6 @@ function makeDb(flags: Record<string, boolean>, opts: { places?: string[]; conse
       if (table === "feature_flags") {
         const flag = filters.find(([c]) => c === "flag")?.[1];
         return { data: { enabled: Boolean(flags[flag]) }, error: null };
-      }
-      if (table === "places") {
-        const id = filters.find(([c]) => c === "id")?.[1];
-        return { data: places.has(id) ? { id } : null, error: null };
       }
       if (table === "intel_contribution_consent") {
         return consent ? { data: { enabled: true, withdrawn_at: null }, error: null } : { data: null, error: null };

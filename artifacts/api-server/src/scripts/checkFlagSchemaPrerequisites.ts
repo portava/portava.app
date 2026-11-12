@@ -290,6 +290,11 @@ type Known = {
  * trap, so the fixture now reads whichever entry happens to exist.
  */
 export const KNOWN: Record<string, Known> = {
+  rent_buddy_enabled: {
+    classification: "guarded",
+    objects: ["rent_buddy_earnings_ledger.platform_fee_basis_points"],
+    note: "The November 9 snapshot records the marketplace enabled before 3601. The per-booking estimate resolves the fee schedule and probes both basis-point columns before any earnings entries or summary are written. Remove this entry when production provides 3601.",
+  },
   // ── STRUCK OFF 2026-09-20: COMPASS_ENABLED ─────────────────────────────────
   //
   // The entry's own note said "Strike the 2996 objects when 2996 is applied to

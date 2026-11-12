@@ -4,6 +4,7 @@
  */
 import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import { fetchOwnedApi, type OwnedApiContext } from './ownedApiRequest.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
@@ -116,11 +117,8 @@ export interface CreateRoutePlanPayload {
 
 // ── API calls ──────────────────────────────────────────────────────────────────
 
-export async function createRoutePlan(payload: CreateRoutePlanPayload): Promise<FullRoutePlan> {
-  const res = await authedFetch(`${apiBase()}/api/route-plans`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+export async function createRoutePlan(payload: CreateRoutePlanPayload, context?: OwnedApiContext): Promise<FullRoutePlan> {
+  const res = await fetchOwnedApi('/api/route-plans', { ...context, method: 'POST', body: payload });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error((err as any).message ?? `createRoutePlan ${res.status}`);

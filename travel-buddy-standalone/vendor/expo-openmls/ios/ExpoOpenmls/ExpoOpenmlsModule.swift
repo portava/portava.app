@@ -1,4 +1,5 @@
 import ExpoModulesCore
+import Foundation
 
 // ExpoOpenmlsModule — Expo SDK 53+ native module.
 // Wraps UniFFI-generated Swift bindings from openmls.udl.
@@ -96,9 +97,35 @@ public class ExpoOpenmlsModule: Module {
       ]
     }
 
+    // Match the Android bridge envelope; the MLS payload remains original UTF-8.
+    AsyncFunction("encryptMessageJson") {
+      (groupStateB64: String, plaintextJson: String) throws -> [String: String] in
+      guard let data = plaintextJson.data(using: .utf8),
+            let values = try JSONSerialization.jsonObject(with: data) as? [String],
+            values.count == 1 else {
+        throw NSError(domain: "OpenMLSBridge", code: 1)
+      }
+      let result = try encryptMessage(groupStateB64: groupStateB64, plaintext: values[0])
+      return ["ciphertextB64": result.ciphertextB64, "updatedGroupStateB64": result.updatedGroupStateB64]
+    }
+
+    AsyncFunction("decryptMessageJson") {
+      (groupStateB64: String, ciphertextB64: String) throws -> [String: String] in
+      let result = try decryptMessage(groupStateB64: groupStateB64, ciphertextB64: ciphertextB64)
+      let data = try JSONSerialization.data(withJSONObject: [result.plaintext])
+      guard let text = String(data: data, encoding: .utf8) else {
+        throw NSError(domain: "OpenMLSBridge", code: 1)
+      }
+      return ["plaintextJson": text, "updatedGroupStateB64": result.updatedGroupStateB64]
+    }
+
     // ── Safety number ───────────────────────────────────────────────────────
 
     // Derived from the group's real member keys — see openmls.udl.
+    AsyncFunction("sessionOwnerId") { (groupStateB64: String) throws -> String in
+      try sessionOwnerId(groupStateB64: groupStateB64)
+    }
+
     AsyncFunction("deriveSafetyNumber") {
       (groupStateB64: String) throws -> String in
       return try deriveSafetyNumber(groupStateB64: groupStateB64)

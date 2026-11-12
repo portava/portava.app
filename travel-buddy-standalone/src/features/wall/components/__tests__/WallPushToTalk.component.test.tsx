@@ -12,6 +12,7 @@
  * runs on-device, and that the microphone indicator clears on release.
  */
 import React from 'react';
+import { createOnDeviceSpeech } from '../../../../platform/input-assistance/voice/onDeviceSpeech.ts';
 import { AppState, type AppStateStatus } from 'react-native';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 
@@ -384,4 +385,35 @@ describe('W71 — the Wall never sends a voice off the device, and is dark when 
     await settle();
     expect(ptt().props.accessibilityHint).toMatch(/on this device/);
   });
+});
+
+// The bridge event boundary is the only stand-in: this drives the production
+// native adapter, shared resolver, mounted PTT hook, voice intake and steer field.
+it('the installed native adapter delivers released final speech into Wall without submitting it', async () => {
+  const callbacks = new Map<string, (event: unknown) => void>();
+  let requestId = '';
+  const native = {
+    capabilities: jest.fn(async () => ({ available: true, onDeviceOnly: true as const })),
+    start: jest.fn(async (options: { requestId: string }) => { requestId = options.requestId; }),
+    stop: jest.fn(async () => {
+      callbacks.get('onResult')?.({ requestId, text: 'quiet cafes nearby', isFinal: true, confidence: 0.96 });
+      callbacks.get('onEnd')?.({ requestId });
+    }),
+    addListener: (name: 'onResult' | 'onEnd', callback: (event: unknown) => void) => {
+      callbacks.set(name, callback); return { remove: () => { callbacks.delete(name); } };
+    },
+  };
+  installSpeechRecognizer(createOnDeviceSpeech(native));
+  try {
+    const onSetIntent = jest.fn();
+    const view = await render(<WallHeader onSetIntent={onSetIntent} />); await settle();
+    await act(async () => { await fireEvent(ptt(), 'pressIn'); }); await settle();
+    expect(native.start).toHaveBeenCalledTimes(1);
+    await act(async () => { await fireEvent(ptt(), 'pressOut'); }); await settle();
+    expect(native.stop).toHaveBeenCalledTimes(1);
+    expect(field().props.value).toBe('quiet cafes nearby');
+    expect(onSetIntent).not.toHaveBeenCalled();
+    expect(callbacks.size).toBe(0);
+    await view.unmount();
+  } finally { clearSpeechRecognizer(); }
 });

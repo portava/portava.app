@@ -164,7 +164,7 @@ describe('NOW lens — where the night is moving (census-media MD162)', () => {
     await waitFor(() => expect(screen.getByText(NIGHT_FLOW_HEADING)).toBeTruthy());
     expect(screen.getByText('Beachfront')).toBeTruthy();
     expect(screen.getByText('5 perspectives')).toBeTruthy();
-    expect(screen.queryByText('Nothing changing yet')).toBeNull();
+    expect(screen.queryByText('No recent posts here')).toBeNull();
     expect(mockFetchMapProjection).toHaveBeenCalledWith(expect.objectContaining({ kinds: ['crowd_flow'] }));
     expect(mockFetchMediaMap).toHaveBeenCalledWith(expect.objectContaining({ city: 'Da Nang' }));
   });
@@ -175,7 +175,7 @@ describe('NOW lens — where the night is moving (census-media MD162)', () => {
     await render(<Shell cityName="Da Nang" lat={16.06} lng={108.24} />);
     await waitFor(() => expect(mockFetchMapProjection).toHaveBeenCalled());
     await settle();
-    expect(screen.getByText('Nothing changing yet')).toBeTruthy();
+    expect(screen.getByText('No recent posts here')).toBeTruthy();
     expect(screen.queryByText(NIGHT_FLOW_HEADING)).toBeNull();
     expect(mockFetchMediaMap).not.toHaveBeenCalled();
   });

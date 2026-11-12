@@ -158,7 +158,7 @@ function makeClient(state: FakeState = {}) {
     const b: any = {
       select(cols?: string) { columnError ??= (typeof cols === "string" ? state.selectErrors?.[`${table}|${cols}`] : undefined) ?? null;
         if (typeof cols === "string" && cols !== "*") {
-          const named = cols.split(",").map((c) => c.trim()).filter(Boolean);
+          const named = cols.replace(/user_account_states!user_account_states_user_id_fkey\(state,\s*expires_at\)/, "user_account_states").split(",").map((c) => c.trim()).filter(Boolean);
           if (table === "profiles") profileCols = named;
           const live = LIVE_COLUMNS[table];
           if (live) {
@@ -712,6 +712,31 @@ describe("authorizeMediaAccess — the matrix", () => {
     assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), true);
   });
 
+  for (const normalized of [false, true]) {
+    it(`current private-account and author moderation gates protect ${normalized ? 'normalized' : 'legacy'} public-post bytes`, async () => {
+      const path = `${OWNER}/private-source.jpg`;
+      const author = { id: OWNER, is_private: true, account_status: "active", user_account_states: [] as any[] };
+      const state: FakeState = {
+        profiles: [author], userFollows: [],
+        posts: [{ id: "source", author_id: OWNER, visibility: "public", status: "active", post_status: "published", trip_id: null, media_urls: normalized ? [] : [pub(path)] }],
+        postMedia: normalized ? [{ post_id: "source", storage_bucket: "post-media", storage_path: path, moderation_status: "approved", processing_status: "ready" }] : [],
+      };
+      const sc = makeClient(state);
+      assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), false);
+      state.userFollows!.push({ follower_id: VIEWER, following_id: OWNER });
+      _clearMediaAccessCache();
+      assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), true);
+      state.userFollows!.length = 0; _clearMediaAccessCache();
+      assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), false);
+      author.is_private = false; author.user_account_states = [{ state: "banned", expires_at: null }]; _clearMediaAccessCache();
+      assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), false);
+      author.user_account_states = [{ state: "banned", expires_at: "2000-01-01T00:00:00Z" }]; _clearMediaAccessCache();
+      assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), true);
+      state.posts![0].deleted_at = '2026-11-05T00:00:00Z'; _clearMediaAccessCache();
+      assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), false);
+    });
+  }
+
   it("DELAYED post media denied to non-owner (audit 1e fix)", async () => {
     const path = `${OWNER}/p3.jpg`;
     const sc = makeClient({
@@ -799,7 +824,7 @@ describe("authorizeMediaAccess — the matrix", () => {
     const path = `${OWNER}/post10/m1.jpg`;
     const asset = "d2000000-0000-4000-a000-000000000001";
     const base = {
-      mediaAssets: [{ id: asset, owner_user_id: OWNER, storage_bucket: "post-media", storage_path: path }],
+      mediaAssets: [{ moderation_status: "active", deleted_at: null, id: asset, owner_user_id: OWNER, storage_bucket: "post-media", storage_path: path }],
       postMedia: [{ storage_path: path, post_id: "post10", moderation_status: "approved", processing_status: "ready" }],
       posts: [{ id: "post10", author_id: OWNER, visibility: "public", status: "active", post_status: "published", trip_id: null }],
     };
@@ -826,7 +851,7 @@ describe("authorizeMediaAccess — the matrix", () => {
     const path = `${OWNER}/post11/m1.jpg`;
     const asset = "d2000000-0000-4000-a000-000000000002";
     const mk = (visibility: string, postStatus = "published") => makeClient({
-      mediaAssets: [{ id: asset, owner_user_id: OWNER, storage_bucket: "post-media", storage_path: path }],
+      mediaAssets: [{ moderation_status: "active", deleted_at: null, id: asset, owner_user_id: OWNER, storage_bucket: "post-media", storage_path: path }],
       postMedia: [{ storage_path: path, post_id: "post11", moderation_status: "approved", processing_status: "ready" }],
       posts: [{ id: "post11", author_id: OWNER, visibility, status: "active", post_status: postStatus, trip_id: null }],
     });
@@ -864,7 +889,7 @@ describe("authorizeMediaAccess — the matrix", () => {
         path,
         feed,
         state: {
-          mediaAssets: [{ id: ASSET, owner_user_id: OWNER, storage_bucket: "post-media", storage_path: path }],
+          mediaAssets: [{ moderation_status: "active", deleted_at: null, id: ASSET, owner_user_id: OWNER, storage_bucket: "post-media", storage_path: path }],
           postMedia: [{
             id: "pm77", storage_path: path, post_id: "post77", moderation_status: moderation, processing_status: "ready",
             feed_storage_path: feed, feed_url: `post-media/${feed}`,
@@ -874,6 +899,12 @@ describe("authorizeMediaAccess — the matrix", () => {
         } as FakeState,
       };
     };
+
+    it("terminal canonical removal also denies the owner's recorded derivative", async()=>{
+      const {feed,state}=postcard("public");
+      state.mediaAssets![0].moderation_status="removed";
+      assert.equal(await authorizeMediaAccess(makeClient(state),OWNER,"post-media",feed),false);
+    });
 
     beforeEach(() => _clearMediaAccessCache());
 

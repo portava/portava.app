@@ -51,6 +51,10 @@ export interface PolicySyncDeps {
  * changes nothing; only a payload that survives `PolicyStore.install` — which
  * narrows every context on the way in — replaces what is held.
  */
+const pendingRefreshes = new WeakMap<PolicyStore, {
+  account: string; generation: number; signal?: AbortSignal; promise: Promise<PolicyRefreshOutcome>;
+}>();
+
 export async function refreshPolicies(
   accountId: string | null,
   store: PolicyStore,
@@ -61,13 +65,23 @@ export async function refreshPolicies(
   if (accountId == null) return 'skipped';
   if (!store.needsRefresh(accountId)) return 'skipped';
 
-  const res = await fetchPolicies(signal);
-  if (!res.ok) return 'failed';
-  // `install` re-checks the account and narrows every context. A payload that
-  // does not survive that is a failure, not a partial success — installing
-  // "most of" a policy table would leave the rest silently conservative while
-  // the client believed it was current.
-  return store.install(accountId, res.policyVersion, res.contexts) ? 'installed' : 'failed';
+  const generation = store.getAccountGeneration();
+  const pending = pendingRefreshes.get(store);
+  if (pending && pending.account === accountId && pending.generation === generation && !pending.signal?.aborted) {
+    return pending.promise;
+  }
+  const promise = (async (): Promise<PolicyRefreshOutcome> => {
+    const res = await fetchPolicies(signal);
+    if (signal?.aborted || generation !== store.getAccountGeneration()) return 'skipped';
+    if (!res.ok) return 'failed';
+    return store.install(accountId, res.policyVersion, res.contexts) ? 'installed' : 'failed';
+  })();
+  pendingRefreshes.set(store, { account: accountId, generation, signal, promise });
+  try {
+    return await promise;
+  } finally {
+    if (pendingRefreshes.get(store)?.promise === promise) pendingRefreshes.delete(store);
+  }
 }
 
 /**

@@ -72,7 +72,7 @@ import {
 } from "./capability/schemaCapability.js";
 import { isMissingSchemaError } from "./capability/schemaCapability.js";
 import type { CapabilityVerdict, SchemaReadinessState } from "./capability/schemaRequirement.js";
-import { toAuthorizedTripView } from "./privacy/tripSerializers.js";
+import { toAuthorizedTripViewAt } from "./privacy/tripSerializers.js";
 import type { TripViewLike } from "./mapProjection.js";
 import {
   EXPECTED_PROJECTION_SCHEMA_VERSION,
@@ -199,6 +199,7 @@ export async function loadViewerTripsCanonical(
   sc: any,
   viewerId: string,
   scope?: string[] | null,
+  asOf: Date = new Date(),
 ): Promise<{ trips: TripViewLike[] | null; scoped: number; refusal: TripLayerRefusal | null }> {
   const tripIds = scope === undefined ? await loadViewerTripScope(sc, viewerId) : scope;
   if (tripIds === null) return { trips: null, scoped: 0, refusal: "scope_read_failed" };
@@ -212,7 +213,7 @@ export async function loadViewerTripsCanonical(
   if (tripsErr) return { trips: null, scoped: tripIds.length, refusal: "canonical_read_failed" };
 
   return {
-    trips: ((trips ?? []) as any[]).map(toAuthorizedTripView) as unknown as TripViewLike[],
+    trips: ((trips ?? []) as any[]).map(trip => toAuthorizedTripViewAt(trip, asOf)) as unknown as TripViewLike[],
     scoped: tripIds.length,
     refusal: null,
   };
@@ -320,12 +321,32 @@ async function readFromProjection(
     return { report, trips: null };
   }
 
+  // 2520 did not project timezone. Read the canonical window for dated rows
+  // in one request so a projection written before midnight cannot keep a pin.
+  const datedIds = [...fold.rows.values()].filter(row => typeof row.body?.end_date === "string").map(row => row.trip_id);
+  const windows = new Map<string, { end_date: string | null; timezone: string | null; status: string | null }>();
+  if (datedIds.length) {
+    const result = await sc.from("trips").select("id, end_date, timezone, status").in("id", datedIds);
+    if (result.error || !Array.isArray(result.data)) {
+      report.refusal = "canonical_read_failed";
+      return { report, trips: null };
+    }
+    for (const trip of result.data) windows.set(trip.id, trip);
+  }
   const trips: TripViewLike[] = [];
   for (const row of fold.rows.values()) {
     if (!isProjectionRowMapEligible(row)) continue;
     report.eligible += 1;
     const view = projectionRowToTripView(row);
-    if (view) trips.push(view);
+    if (!view) continue;
+    if (view.endDate) {
+      const window = windows.get(view.id);
+      if (!window) continue;
+      view.endDate = window.end_date;
+      view.timezone = window.timezone;
+      if (window.status && ["cancelled", "archived", "completed"].includes(window.status)) continue;
+    }
+    trips.push(view);
   }
   report.served = trips.length;
   return { report, trips };
@@ -338,7 +359,7 @@ async function readFromProjection(
  * branch that was attempted, because a map layer must not be able to take the
  * whole gateway down.
  */
-export async function readTripStopLayer(sc: any, viewerId: string): Promise<TripLayerRead> {
+export async function readTripStopLayer(sc: any, viewerId: string, asOf: Date = new Date()): Promise<TripLayerRead> {
   let verdict: CapabilityVerdict;
   try {
     verdict = await resolveCapability(sc, MAP_TRIP_PROJECTION_CAPABILITY);
@@ -376,7 +397,7 @@ export async function readTripStopLayer(sc: any, viewerId: string): Promise<Trip
   // ── The not-ready branch: exactly what ran before this file existed. ──────
   const report = emptyReport("canonical", capability);
   try {
-    const legacy = await loadViewerTripsCanonical(sc, viewerId);
+    const legacy = await loadViewerTripsCanonical(sc, viewerId, undefined, asOf);
     report.scoped = legacy.scoped;
     report.refusal = legacy.refusal;
     report.served = legacy.trips?.length ?? 0;

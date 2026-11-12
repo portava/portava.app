@@ -1,3 +1,4 @@
+import { InboxFollowingHighlights } from '../features/telegraph/inbox/InboxFollowingHighlights.tsx';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, FlatList, Image, Pressable, StyleSheet,
@@ -396,6 +397,7 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
   const [filter, setFilter] = useState<FilterKey>('all'); const [unarchived, setUnarchived] = useState<ReadonlyMap<string, string>>(() => new Map()); // owner ruling 2026-10-17: unarchives the server confirmed (features/telegraph/inbox/archivedThreads.ts)
   const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
   const { blockerIds } = useBlockedIds();
+  const highlightExclusions = React.useMemo(() => new Set([...blockedIds, ...blockerIds]), [blockedIds, blockerIds]);
 
   const loadBlockList = useCallback(async () => {
     const res = await getBlockList();
@@ -479,7 +481,11 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
       </View>
 
       {isAuthed && (
-        <><InboxContextBands onOpenThread={(threadId) => router.push(`/messages/${threadId}`)} />
+        <>{userId ? <InboxFollowingHighlights viewerId={userId} excluded={highlightExclusions} /> : null}
+          <InboxContextBands onOpenThread={(threadId) => router.push(`/messages/${threadId}`)} />
+          <Pressable accessibilityRole="button" accessibilityLabel="Nearby and availability" onPress={() => router.push('/messages/nearby' as any)} style={{ marginHorizontal: 20, marginBottom: 12, minHeight: 44, justifyContent: 'center' }}>
+            <Text style={{ color: palette.operational, fontSize: 16, fontWeight: '600' }}>Nearby & availability</Text>
+          </Pressable>
           <View style={s.searchWrap}>
             <Search size={16} color={palette.faint} style={s.searchIcon} />
             <TextInput

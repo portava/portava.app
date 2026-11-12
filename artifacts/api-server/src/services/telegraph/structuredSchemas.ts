@@ -1,3 +1,4 @@
+import { isProviderGifPayload } from './messageKinds.js';
 /**
  * Telegraph §30A.16 — versioned structured-message schemas, and client
  * capability negotiation (census-telegraph T429, T431).
@@ -45,7 +46,7 @@
 import { kindOfMsgType } from "./vocabulary.js";
 import { isEnvelopeKind, parseKindEnvelope } from "./messageKinds.js";
 import { COORDINATION_KINDS, parseCoordinationEnvelope } from "./coordination.js";
-import { parsePortavaObjectBody } from "./shareables.js";
+import { parsePortavaObjectRow } from "./shareables.js";
 import { TELEGRAPH_ACTIONS, type TelegraphAction, type TelegraphObjectType } from "./vocabulary.js";
 
 export const STRUCTURED_SCHEMAS_FLAG = "telegraph_structured_schemas_enabled";
@@ -104,6 +105,7 @@ export const STRUCTURED_SCHEMAS: readonly StructuredSchema[] = [
   // The rest of §6.2's envelope kinds.
   s("media_album", 1, "envelope", "MEDIA_ALBUM", "Shared photos"),
   s("gif", 1, "envelope", "GIF", "Sent a GIF"),
+  s("gif", 2, "envelope", "GIF", "Sent a GIF — update the app to view it"),
   s("voice", 1, "envelope", "VOICE", "Sent a voice message"),
   s("action", 1, "envelope", "ACTION", "Proposed an action"),
   s("announcement", 1, "envelope", "ANNOUNCEMENT", "Posted an announcement"),
@@ -255,6 +257,10 @@ export type StoredSchemaResult =
     };
 
 const COORDINATION_SET = new Set<string>(COORDINATION_KINDS);
+// Existing non-envelope renderers. A new carrier must register a schema before
+// its payload can be exposed; kindOfMsgType's TEXT default is not permission.
+const LEGACY_PLAIN_CARRIERS = new Set(['', 'TEXT', 'SYSTEM', 'MEDIA', 'CARD',
+  'BOOKING_CARD', 'CIRCLE_STATUS_CARD', 'HIGHLIGHT_REPLY', 'AI_RECOMMENDATION']);
 
 function jsonOf(body: unknown): any {
   if (typeof body !== "string" || body.length === 0) return null;
@@ -268,19 +274,19 @@ function jsonOf(body: unknown): any {
 /**
  * Which schema a stored row is, and whether its payload validates.
  *
- * Only the three structured carriers are classified. Legacy `msg_type`s
+ * The three structured carriers are validated. Legacy `msg_type`s
  * (`card`, `booking_card`, `media`, `system`, …) are deliberately NOT treated as
  * "unknown future kinds": they are today's renderers' own, and degrading them
  * would be a regression dressed as a safety feature.
  */
-export function storedSchemaOf(row: { msg_type?: string | null; subtype?: string | null; body?: string | null }): StoredSchemaResult {
+export function storedSchemaOf(row: { content_ref?: unknown; msg_type?: string | null; subtype?: string | null; body?: string | null }): StoredSchemaResult {
   const msgType = typeof row.msg_type === "string" ? row.msg_type : "";
   const upper = msgType.toUpperCase();
 
   if (upper === "PORTAVA_OBJECT") {
     const parsed = jsonOf(row.body);
     const declared = typeof parsed?.schema === "string" ? parsed.schema : null;
-    const ref = parsePortavaObjectBody(row.body);
+    const ref = parsePortavaObjectRow(row);
     const implied = ref ? schemaForObjectType(ref.objectType) : null;
     if (declared && !schemaById(declared)) {
       return { structured: true, schema: null, schemaId: declared, valid: false, requiredAction: null };
@@ -298,7 +304,8 @@ export function storedSchemaOf(row: { msg_type?: string | null; subtype?: string
   if (isEnvelopeKind(kind) && kind === upper) {
     const parsed = jsonOf(row.body);
     const declared = typeof parsed?.schema === "string" ? parsed.schema : null;
-    const registered = schemaForKind(kind);
+    const providerGif = kind === "GIF" && isProviderGifPayload(parsed?.payload);
+    const registered = providerGif ? schemaById("gif.v2") : schemaForKind(kind);
     if (declared && !schemaById(declared)) {
       return { structured: true, schema: null, schemaId: declared, valid: false, requiredAction: null };
     }
@@ -308,7 +315,7 @@ export function storedSchemaOf(row: { msg_type?: string | null; subtype?: string
     }
     const env = parseKindEnvelope(msgType, row.body ?? null);
     const action = kind === "ACTION" && env ? String((env.payload as any)?.action ?? "") : null;
-    return { structured: true, schema, schemaId: schema.id, valid: env !== null, requiredAction: action };
+    return { structured: true, schema, schemaId: schema.id, valid: env !== null && (kind !== "GIF" || (providerGif ? schema.id === "gif.v2" : schema.id === "gif.v1")), requiredAction: action };
   }
 
   if (COORDINATION_SET.has(upper)) {
@@ -327,7 +334,11 @@ export function storedSchemaOf(row: { msg_type?: string | null; subtype?: string
     return { structured: true, schema, schemaId: schema.id, valid: env !== null, requiredAction: action };
   }
 
-  return { structured: false };
+  if (LEGACY_PLAIN_CARRIERS.has(upper)) return { structured: false };
+  const parsed = jsonOf(row.body);
+  return { structured: true, schema: null,
+    schemaId: typeof parsed?.schema === 'string' ? parsed.schema : 'unknown.message',
+    valid: false, requiredAction: null };
 }
 
 export type NegotiatedRender =
@@ -341,7 +352,7 @@ export type NegotiatedRender =
 
 /** Decide, for ONE stored row and ONE client, whether it is served as itself or as the fallback. */
 export function negotiateRender(
-  row: { msg_type?: string | null; subtype?: string | null; body?: string | null; deleted_at?: string | null },
+  row: { content_ref?: unknown; msg_type?: string | null; subtype?: string | null; body?: string | null; deleted_at?: string | null },
   caps: ClientCapabilities,
 ): NegotiatedRender {
   if (row.deleted_at) return { fallback: false, schemaId: null }; // a tombstone carries nothing to degrade
@@ -383,10 +394,10 @@ export type SchemaStampResult =
  * as something else.
  */
 export function schemaToStamp(
-  target: { kind: string; objectType?: string | null },
+  target: { kind: string; objectType?: string | null; payload?: unknown },
   requested: unknown,
 ): SchemaStampResult {
-  const schema =
+  const schema = target.kind === "GIF" && isProviderGifPayload(target.payload) ? schemaById("gif.v2") :
     target.kind === "PORTAVA_OBJECT" && target.objectType
       ? schemaForObjectType(target.objectType)
       : schemaForKind(target.kind);

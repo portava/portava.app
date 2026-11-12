@@ -369,6 +369,8 @@ function fakeDb(tables: Record<string, any[]> = {}, failReads: string[] = []) {
   function from(table: string) {
     const rows = tables[table] ?? (tables[table] = []);
     let op = "select";
+    let countRequested = false;
+    let rowLimit = Infinity;
     let payload: any = null;
     let orFilter: string | null = null;
     const filters: Array<{ col: string; val: any; kind: string }> = [];
@@ -389,11 +391,12 @@ function fakeDb(tables: Record<string, any[]> = {}, failReads: string[] = []) {
       if (op === "insert") { rows.push({ ...payload }); writes.push({ table, op, payload, filters: filters.map((f) => [f.col, f.val]) }); return { data: null, error: null }; }
       if (op === "update") { for (const r of rows) if (match(r)) Object.assign(r, payload); writes.push({ table, op, payload, filters: filters.map((f) => [f.col, f.val]) }); return { data: null, error: null }; }
       if (op === "delete") { for (let i = rows.length - 1; i >= 0; i--) if (match(rows[i])) rows.splice(i, 1); writes.push({ table, op, payload, filters: filters.map((f) => [f.col, f.val]) }); return { data: null, error: null }; }
-      return { data: rows.filter(match), error: null };
+      const matched = rows.filter(match);
+      return { data: matched.slice(0, rowLimit), count: countRequested ? matched.length : null, error: null };
     };
     const first = () => { const r = run(); return { data: Array.isArray(r.data) ? (r.data[0] ?? null) : r.data, error: r.error }; };
     const b: any = {
-      select() { return b; },
+      select(_columns: string, options?: { count?: string }) { countRequested = options?.count === "exact"; return b; },
       insert(row: any) { op = "insert"; payload = row; return b; },
       update(patch: any) { op = "update"; payload = patch; return b; },
       delete() { op = "delete"; return b; },
@@ -402,7 +405,7 @@ function fakeDb(tables: Record<string, any[]> = {}, failReads: string[] = []) {
       is(col: string, val: any) { filters.push({ col, val, kind: "is" }); return b; },
       or(expr: string) { orFilter = expr; return b; },
       order() { return b; },
-      limit() { return b; },
+      limit(value: number) { rowLimit = value; return b; },
       maybeSingle() { return Promise.resolve(first()); },
       single() { return Promise.resolve(first()); },
       then(resolve: (r: any) => any) { return Promise.resolve(run()).then(resolve); },
@@ -619,6 +622,7 @@ function locateDb(opts: { positions?: PositionRow[]; session?: SessionRow; failR
     profiles: [{ id: BOB, display_name: "Bob" }],
     blocks: [],
     protected_zones: [],
+    map_personal_protected_places: [],
   }, opts.failReads ?? []);
 }
 /** What Circle's guard says about Bob in a context, as the ROW it read. */
@@ -766,6 +770,14 @@ describe("E. readSessionForViewer fuses a Circle estimate only through Circle's 
     assert.deepEqual(elsewhere.members, [notSharing(BOB)]);
   });
 
+  test("unreadable personal protection withholds both live positions and fallback Circle estimates", async () => {
+    const { deps, calls } = guard({ [`trip:${TRIP}`]: { [BOB]: bobAtVenue() } });
+    const db = locateDb({ positions: [pos(BOB)], failReads: ["map_personal_protected_places"] });
+    const r = await readSessionForViewer(db as any, SESSION, ALICE, NOW, deps);
+    assert.equal(r.status, "unreadable");
+    assert.deepEqual(r.members, []);
+    assert.deepEqual(calls, []);
+  });
   test("the §24 policy unreadable: no fusion at all — the guard is not asked, nothing is served", async () => {
     const { deps, calls } = guard({ [`trip:${TRIP}`]: { [BOB]: bobAtVenue() } });
     const r = await readSessionForViewer(locateDb({ positions: [pos(BOB)], failReads: ["protected_zones"] }) as any, SESSION, ALICE, NOW, deps);

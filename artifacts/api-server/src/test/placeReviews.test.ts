@@ -53,9 +53,10 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
     let _rangeStart = 0;
     let _rangeEnd = 999;
     let _singleMode = false;
+    let exactCount = false;
 
     const obj: any = {
-      select(_cols: string) { return obj; },
+      select(_cols: string, options?: { count?: string }) { exactCount = options?.count === "exact"; return obj; },
       insert(row: Row | Row[]) { _insert = row; return obj; },
       update(row: Row) { _update = row; return obj; },
       upsert(row: Row | Row[], _opts?: any) { _insert = row; return obj; },
@@ -72,7 +73,7 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
       lte(col: string, val: any) { filters.push((r) => r[col] <= val); return obj; },
       is(col: string, val: any) { filters.push((r) => r[col] === val); return obj; },
       order(_col: string, _opts?: any) { return obj; },
-      limit(_n: number) { return obj; },
+      limit(n: number) { _rangeEnd = n - 1; return obj; },
       range(from: number, to: number) { _rangeStart = from; _rangeEnd = to; return obj; },
       single() { _singleMode = true; return obj; },
       maybeSingle() { _singleMode = true; return obj; },
@@ -96,11 +97,12 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
             return resolve({ data: matched, error: null });
           }
           let matched = table.rows.filter((r) => filters.every((f) => f(r)));
+          const count = exactCount ? matched.length : null;
           matched = matched.slice(_rangeStart, _rangeEnd + 1);
           if (_singleMode) {
             return resolve({ data: matched[0] ?? null, error: null });
           }
-          return resolve({ data: matched, error: null });
+          return resolve({ data: matched, error: null, count });
         } catch (e) {
           return reject ? reject(e) : resolve({ data: null, error: e });
         }
@@ -246,6 +248,7 @@ describe("POST /api/reviews — place entity", () => {
 describe("GET /api/places/:id/reviews", () => {
   it("returns reviews and aggregate for a place with reviews", async () => {
     const { url, close } = await startServer({
+      discovery_places: { rows: [{ id: PLACE_ID, status: "active" }] },
       reviews: {
         rows: [
           {
@@ -279,7 +282,7 @@ describe("GET /api/places/:id/reviews", () => {
   });
 
   it("returns empty list and null avgRating when no reviews exist", async () => {
-    const { url, close } = await startServer({ reviews: { rows: [] } });
+    const { url, close } = await startServer({ discovery_places: { rows: [{ id: PLACE_ID, status: "active" }] }, reviews: { rows: [] } });
     try {
       const res = await fetchGet(url, `/api/places/${PLACE_ID}/reviews`, "valid-token");
       assert.equal(res.status, 200);
@@ -291,6 +294,7 @@ describe("GET /api/places/:id/reviews", () => {
 
   it("anonymises reviewer when visibility=anonymous", async () => {
     const { url, close } = await startServer({
+      discovery_places: { rows: [{ id: PLACE_ID, status: "active" }] },
       reviews: {
         rows: [{
           id: REVIEW_ID, entity_type: "place", entity_id: PLACE_ID, rating: 4,
@@ -308,6 +312,24 @@ describe("GET /api/places/:id/reviews", () => {
     } finally { await close(); }
   });
 
+  it("withholds public reviews and refuses new ones when the same place is held", async () => {
+    const { url, close } = await startServer({
+      discovery_places: { rows: [{ id: PLACE_ID, status: "active" }] },
+      places: { rows: [{ id: PLACE_ID, moderation_status: "withheld", merged_into_place_id: null }] },
+      reviews: { rows: [{ id: REVIEW_ID, entity_type: "place", entity_id: PLACE_ID, state: "published", body: "Private after a hold" }] },
+    });
+    try {
+      const read = await fetchGet(url, `/api/places/${PLACE_ID}/reviews`, "");
+      const write = await fetchPost(url, "/api/reviews", "valid-token", { entityType: "place", entityId: PLACE_ID, rating: 4 });
+      for (const response of [read, write]) {
+        assert.equal(response.status, 404);
+        assert.ok(typeof response.body === "object" && response.body !== null && "error" in response.body);
+        assert.equal(response.body.error, "not_found");
+        assert.equal(JSON.stringify(response.body).includes("Private after a hold"), false);
+      }
+    } finally { await close(); }
+  });
+
   it("returns 400 for invalid UUID", async () => {
     const { url, close } = await startServer();
     try {
@@ -317,7 +339,7 @@ describe("GET /api/places/:id/reviews", () => {
   });
 
   it("allows public read without authentication", async () => {
-    const { url, close } = await startServer({ reviews: { rows: [] } });
+    const { url, close } = await startServer({ discovery_places: { rows: [{ id: PLACE_ID, status: "active" }] }, reviews: { rows: [] } });
     try {
       // GET place reviews is a public endpoint — no token required
       const res = await fetchGet(url, `/api/places/${PLACE_ID}/reviews`, "");

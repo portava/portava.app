@@ -1,3 +1,4 @@
+import { tripSearchType, useTripSearchMinute } from '../../../hooks/useTripSearchMinute.ts';
 /**
  * Global Input Intelligence — the unified assistance hook (spec §33, §39).
  *
@@ -21,11 +22,13 @@
  * This hook does NOT dispatch actions or mutate the field — the SmartInput /
  * overlay own that. It only produces the ranked, deduped, capped suggestion list.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { InputContext } from '../types/inputContext.ts';
 import type { InputFieldPolicy } from '../types/fieldPolicy.ts';
 import type { InputSuggestion, InputSessionContext, WritingDraft, SuggestRefusal } from '../types/inputSuggestion.ts';
-import { resolveFieldPolicy } from '../contexts/fieldRegistry.ts'; import { policyEpoch } from '../services/policyStore.ts';
+import { resolveFieldPolicy } from '../contexts/fieldRegistry.ts';
+import { sharedPolicyStore, policyEpoch } from '../services/policyStore.ts';
+import { refreshPolicyOnUse } from '../services/policyRefreshOnUse.ts';
 import { getContextDescriptor } from '../contexts/inputContexts.ts';
 import { offlineSurfaceAllowed } from '../contexts/policyFallback.ts';
 import {
@@ -97,18 +100,37 @@ export interface UseInputAssistanceResult {
   requestId: string | null; /** census-discovery §80 — the serve's coverage (DV-83); null when it read everything. */ refusal: SuggestRefusal | null; /** §80 round 3 (D-W10-S1-4) — `policy` came from the authority; false while it is the conservative stand-in (never fetched, failed, expired, superseded, another account). */ policyAuthoritative: boolean; /** §80 round 4 (D-W10-S1-4) — the trimmed text whose SERVED answer (network or exact cache) is on screen; null when none is. A local-tier or zero-state list is not an answer. */ answeredText: string | null;
 }
 
+// React compares external-store snapshots by reference. Keep each field's
+// policy stable until its owner, policy table or expiry changes.
+function createPolicySnapshot(fieldId: string, context?: InputContext) {
+  let lastRevision = -1;
+  let lastEpoch = '';
+  let snapshot: InputFieldPolicy | null = null;
+  return () => {
+    const revision = sharedPolicyStore.getRevision();
+    const epoch = policyEpoch();
+    if (revision !== lastRevision || epoch !== lastEpoch) {
+      snapshot = resolveFieldPolicy(fieldId, context);
+      lastRevision = revision;
+      lastEpoch = epoch;
+    }
+    return snapshot;
+  };
+}
+
 export function useInputAssistance(
   opts: UseInputAssistanceOptions,
 ): UseInputAssistanceResult {
   const { fieldId, text, context, sessionContext, aiAssist, city, draft, tz, capabilities, checkDraft, enabled = true, timeAware } = opts; const tzKey = timeAware === true && typeof tz === 'string' ? tz : ''; // G46
   const accountEpoch = useInputAccountEpoch();
 
-  const policy = useMemo(
-    () => resolveFieldPolicy(fieldId, context),
-    [fieldId, context, policyEpoch()], // §80 round 3 (D-W10-S1-4): re-resolved when the policy table lands, ages out or is superseded under a mounted field
-  );
+  const policySnapshot = useMemo(() => createPolicySnapshot(fieldId, context), [fieldId, context]);
+  const policy = useSyncExternalStore(sharedPolicyStore.subscribe, policySnapshot, policySnapshot);
 
   const [suggestions, setSuggestions] = useState<InputSuggestion[]>([]);
+  const observedMinute = useTripSearchMinute(enabled && context === 'global_search' && suggestions.some(row => tripSearchType(row.entityType)));
+  const searchMinute = context === 'global_search' ? observedMinute : 0;
+  const previousMinute = useRef(searchMinute);
   const [loading, setLoading] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
   // §44 ACTION/RESULT LINKAGE (census G355). The suggest response has always
@@ -129,6 +151,10 @@ export function useInputAssistance(
   const schedulerRef = useRef(createInputRequestScheduler());
 
   const trimmed = text.trim();
+  const authoritative = policy != null && getContextDescriptor(policy.context).authoritative;
+  useEffect(() => {
+    if (enabled && policy && !authoritative) void refreshPolicyOnUse();
+  }, [enabled, policy, authoritative, trimmed]);
   const lat = sessionContext?.lat;
   const lng = sessionContext?.lng;
   // Round coords for a stable dependency + cache key (~1km).
@@ -161,7 +187,7 @@ export function useInputAssistance(
     }
 
     // Disabled or no policy → clear + stop.
-    if (!enabled || !policy) {
+    if (!enabled || !policy || !authoritative || policy.mode === 'no_assistance' || policy.maxSuggestions === 0) {
       setSuggestions([]); setRefusal(null); setAnsweredText(null);
       setLoading(false);
       return;
@@ -190,7 +216,10 @@ export function useInputAssistance(
 
     // Below the field's threshold → clear (nothing to assist yet). minChars 0
     // means "assist even at zero characters" (zero-state, §14).
-    if (trimmed.length < policy.minChars && !zeroStateTier) {
+    const dateCheck = policy.context === 'trip_title' && aiAssist !== true
+      && policy.allowedSuggestionTypes.includes('validation')
+      && Boolean(sessionContext?.startDate || sessionContext?.endDate);
+    if (trimmed.length < policy.minChars && !zeroStateTier && !dateCheck) {
       setSuggestions([]); setRefusal(null); setAnsweredText(null);
       setLoading(false);
       setUnavailable(false);
@@ -202,7 +231,11 @@ export function useInputAssistance(
     // field's non-AI cache entry for the same text.
     const scopedFieldId = sessionKey ? `${fieldId}::scope:${sessionKey}` : fieldId;
     const baseFieldId = capKey ? `${scopedFieldId}::cap:${capKey}` : scopedFieldId;
-    const cacheFieldId = (aiAssist === true ? `${baseFieldId}::ai:${aiKey}` : checkKey ? `${baseFieldId}::check:${checkKey}` : baseFieldId) + (tzKey ? `::tz:${tzKey}` : ''); // G149: a verdict is keyed by the pair it judged; G46: a date by the zone it was read in
+    const cacheFieldId = (aiAssist === true ? `${baseFieldId}::ai:${aiKey}` : checkKey ? `${baseFieldId}::check:${checkKey}` : baseFieldId) + (tzKey ? `::tz:${tzKey}` : '') + (searchMinute ? `::trip-minute:${searchMinute}` : ''); // G149: a verdict is keyed by the pair it judged; G46: a date by the zone it was read in
+    if (previousMinute.current !== searchMinute) {
+      previousMinute.current = searchMinute;
+      setSuggestions(previous => previous.filter(row=>!tripSearchType(row.entityType)));
+    }
     const cacheKey = SuggestionCache.key(cacheFieldId, trimmed, latKey, lngKey);
     // §29 — the field's declared privacyClass decides whether its suggestions
     // may live in the process-global cache at all. A `personal` / `sensitive` /
@@ -485,9 +518,9 @@ export function useInputAssistance(
     // for this effect; depending on the object itself would re-fetch on every
     // render that produced an equal declaration.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trimmed, enabled, policy, fieldId, latKey, lngKey, sessionKey, aiKey, capKey, checkKey, tzKey, accountEpoch, resultScope]);
+  }, [trimmed, enabled, authoritative, policy, fieldId, latKey, lngKey, sessionKey, aiKey, capKey, checkKey, tzKey, accountEpoch, resultScope, searchMinute]);
 
-  return { suggestions: scopeCurrent ? suggestions : [], loading, unavailable: scopeCurrent && unavailable, policy, requestId: scopeCurrent ? requestId : null, refusal: scopeCurrent ? refusal : null, policyAuthoritative: policy != null && getContextDescriptor(policy.context).authoritative, answeredText: scopeCurrent ? answeredText : null };
+  return { suggestions: scopeCurrent ? suggestions : [], loading, unavailable: scopeCurrent && unavailable, policy, requestId: scopeCurrent ? requestId : null, refusal: scopeCurrent ? refusal : null, policyAuthoritative: authoritative, answeredText: scopeCurrent ? answeredText : null };
 }
 
 // ── §23 census G149 — the pair a creation form asks the server to judge ──────

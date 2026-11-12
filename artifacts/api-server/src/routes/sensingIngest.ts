@@ -63,9 +63,9 @@
  *      admission policy    lib/sensingContributionPolicy.admitSensingContribution
  *        └ precision ceiling, retention, reduction version, credential epoch
  *      time bounds         2340's CHECK, mirrored before the round trip
- *      write               lib/sensingAnonService.recordAnonSensingContribution
+ *      write + budget      sensing_admit_contribution, one locked transaction
  *      replay              2340's UNIQUE (cohort_key, contributor_token) ⇒ 23505
- *      budget              sensing_session_consume, AFTER a non-duplicate write
+ *      runtime off switch  checked again under a SQL lock before storage
  *
  *    There is no second copy of any threshold, scope list or time bound here.
  *
@@ -104,20 +104,22 @@ import {
 import {
   SENSING_PEPPER_ENV,
   sensingPepperPosture,
-  recordAnonSensingContribution,
 } from "../lib/sensingAnonService.js";
 import {
   SENSING_BUCKET_MAX,
   SENSING_BUCKET_MIN,
   SENSING_MAX_TTL_SECONDS,
   deriveSensingCredentialHash,
+  buildSensingContributionRow,
 } from "../lib/sensingAnonStore.js";
 import {
   SENSING_SESSIONS_TABLE,
   admitWithSensingSession,
-  consumeSensingSessionRpc,
   type SensingContributionSessionRow,
 } from "../lib/sensingContributionSession.js";
+
+import { readFlagState } from "../lib/capability/schemaCapability.js";
+import { recordSensingContributionAtomically } from "../lib/sensingAtomicAdmission.js";
 
 const router = Router();
 
@@ -170,7 +172,7 @@ const acousticFeaturesSchema = z
 
 export const contributionFeaturesSchema = z
   .object({
-    zonePrecision: z.number().int().min(1).max(12),
+    zonePrecision: z.number().int().min(1).max(6),
     placeCandidate: z.string().min(1).max(128).nullable(),
     movementState: z.enum(["stationary", "pedestrian", "vehicular", "unknown"]),
     motionEnergyCenti: z.number().int().min(0).max(100).nullable(),
@@ -240,7 +242,8 @@ async function readSensingSession(
       .eq("credential_hash", deriveSensingCredentialHash(credential))
       .limit(1);
     if (error) return { ok: false, error: error.message ?? "session_read_failed" };
-    const rows = (data ?? []) as SensingContributionSessionRow[];
+    if (!Array.isArray(data)) return { ok: false, error: "session_read_malformed" };
+    const rows = data as SensingContributionSessionRow[];
     return { ok: true, row: rows.length > 0 ? rows[0]! : null };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "session_read_threw" };
@@ -299,9 +302,23 @@ router.post(
       return sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "invalid contribution");
     }
     const body = parsed.data;
+    // A device-chosen tag is not proof that contributors are independent.
+    // Until an attested grouping source is integrated, these readings receive
+    // zero independent-group credit; hashing arbitrary text would not prove it.
+    if (body.groupTag != null) return sendError(res, "invalid_payload", "independence_proof_unavailable");
+    const geohash = /^[0123456789bcdefghjkmnpqrstuvwxyz]+$/i;
+    if ((geohash.test(body.zoneId) && body.zoneId.length > 6)
+      || (body.features && (!geohash.test(body.zoneId) || body.zoneId.length !== body.features.zonePrecision))) {
+      return sendError(res, "invalid_payload", "zone_precision_exceeds_policy");
+    }
 
     const db = getServiceClient();
     if (!db) return sendError(res, "server_not_configured", "service client unavailable");
+
+    res.setHeader("Cache-Control", "no-store");
+    const flag = await readFlagState(db, "sensing_consent_split_enabled");
+    if (flag === "unreadable") return sendError(res, "degraded_unavailable", "sensing availability could not be checked");
+    if (flag !== "on") return sendError(res, "feature_disabled", "sensing contribution is not available");
 
     // ── 5. The session. A read that FAILED is not a session that is missing:
     // §4.3 — "Ingest must fail explicitly on schema/permission/infrastructure
@@ -349,6 +366,8 @@ router.post(
         purposeScopes: body.purposeScopes,
       },
       nowMs,
+      undefined,
+      true, // The locked SQL write admits only an existing replay at zero budget.
     );
 
     if (admission.admitted !== true) {
@@ -365,7 +384,7 @@ router.post(
     // ── 8. The write. The input type has no field an identity could occupy, so
     // there is nothing to strip; the service adds the store-present probe and
     // its own named refusals on top of the store's writer.
-    const written = await recordAnonSensingContribution(
+    const built = buildSensingContributionRow(
       {
         commitment: body.commitment,
         rotationEpoch: body.rotationEpoch,
@@ -381,35 +400,19 @@ router.post(
         // consented scopes ⊆ the policy in force by the ladder above.
         surfacePermitted: (body.purposeScopes ?? session.row?.purpose_scopes ?? []).includes("surface"),
       },
-      { client: db, nowMs },
+      nowMs,
     );
 
+    if (!built.ok) return sendError(res, "invalid_payload", built.error);
+    const written = await recordSensingContributionAtomically(db, credential, built.row, body.purposeScopes ?? session.row!.purpose_scopes);
     if (!written.ok) {
-      if (written.reason === "invalid_input") {
-        return sendError(res, "invalid_payload", written.error ?? "invalid contribution");
-      }
-      logger.warn({ reason: written.reason }, "sensing contribution was not written");
+      if (written.reason === "budget_exhausted") return sendError(res, "rate_limited", "session_budget_exhausted");
+      if (written.reason === "disabled") return sendError(res, "feature_disabled", "sensing contribution is not available");
+      if (CREDENTIAL_REFUSALS.has(`session_${written.reason}`)) return sendError(res, "unauthenticated", `session_${written.reason}`);
+      if (written.reason === "policy_changed") return sendError(res, "unauthenticated", "session_policy_changed");
       return sendError(res, "db_error", "contribution could not be stored");
     }
-
-    // ── 9. Budget, and only now. A duplicate wrote no row (2340's replay key),
-    // so it spends nothing: a replay must not drain the budget of the device
-    // that is replaying, and an honest retry is indistinguishable from one.
-    let budgetConsumed = false;
-    if (!written.duplicate) {
-      const consumed = await consumeSensingSessionRpc(db, credential, new Date(nowMs).toISOString());
-      if (!consumed.ok) {
-        // The contribution IS stored and the row is idempotent, so the honest
-        // answer is that the write succeeded and the budget did not move.
-        // Reporting a failure here would make a client retry a write that
-        // already landed, which the replay key would absorb but which would
-        // teach the client the wrong thing.
-        logger.warn({ error: consumed.error }, "sensing session budget was not consumed after a write");
-      } else {
-        budgetConsumed = consumed.value === "ok";
-        if (!budgetConsumed) logger.info({ reason: consumed.value }, "sensing session budget refused after a write");
-      }
-    }
+    const budgetConsumed = !written.duplicate;
 
     // Nothing about the cohort, the crowd or anybody else is in this response.
     return res.status(202).json({

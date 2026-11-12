@@ -10,7 +10,7 @@
  * Same reason `src/lib/safeNotifications.ts` gives: in Hermes a "Cannot find
  * native module" thrown inside a module factory fires during Metro's evaluation
  * phase, before the caller's try frame is active, so try/catch around
- * `require()` does not intercept it. `NativeModules` is populated synchronously
+ * `require()` does not intercept it. Expo's optional-native-module registry is available
  * at startup, so we ask it first and skip the require entirely when the module
  * is absent. A build without `expo-sensors` therefore gets `null` and a capture
  * loop with no motion source — degraded, named in `sensor_health.degraded`,
@@ -27,7 +27,8 @@
  * buffer, are handed only to `reduceSensingWindow`, and are dropped when the
  * window closes. `contributionPayload.privacy.test.ts` is what holds that line.
  */
-import { NativeModules, Platform } from 'react-native';
+import { Platform } from 'react-native';
+import { requireOptionalNativeModule } from 'expo-modules-core';
 import type {
   LocationSource,
   MotionSource,
@@ -38,8 +39,9 @@ import type {
 export const MOTION_SAMPLE_INTERVAL_MS = 50;
 /** Minimum seconds between position fixes. Deliberately not continuous GPS. */
 export const LOCATION_INTERVAL_MS = 30_000;
-/** Minimum metres of movement before a new fix is delivered. */
-export const LOCATION_DISTANCE_M = 25;
+// A stationary traveler still needs a current area. Throttle fixes by time
+// because an iOS watch may deliver more often than the requested cadence.
+const LOCATION_DISTANCE_M = 0;
 
 type AnyModule = Record<string, any>;
 
@@ -51,9 +53,10 @@ function sensorsModule(): AnyModule | null {
     _sensors = null;
     return null;
   }
-  const nm = NativeModules as Record<string, unknown>;
-  // expo-sensors registers these; absence means an older dev client or Expo Go.
-  if (!nm['ExpoAccelerometer'] && !nm['ExponentAccelerometer'] && !nm['ExpoDeviceMotion']) {
+  // Expo SDK54 registers this on the Expo JSI/bridge registry, which need
+  // not appear in React Native's NativeModules object. Check that registry
+  // without importing a module factory that could throw on older builds.
+  if (!requireOptionalNativeModule('ExponentAccelerometer')) {
     _sensors = null;
     return null;
   }
@@ -88,10 +91,13 @@ export function createDeviceMotionSource(): MotionSource | null {
       } catch {
         // A device that refuses the rate still delivers at its default.
       }
+      let cancelled = false;
       const sub = Accelerometer.addListener((d: { x: number; y: number; z: number }) => {
+        if (cancelled) return;
         onSample({ t: Date.now(), x: d.x, y: d.y, z: d.z });
       });
       return () => {
+        cancelled = true;
         try {
           sub?.remove?.();
         } catch {
@@ -102,6 +108,33 @@ export function createDeviceMotionSource(): MotionSource | null {
   };
 }
 
+// Loading Expo Location inside the protected native paths keeps an absent
+// native module from breaking web, app startup, or the other sensing sources.
+function locationModule(): typeof import('expo-location') {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- the optional native bridge must load lazily.
+  return require('expo-location');
+}
+
+type AreaLocationAccess = 'granted' | 'requestable' | 'settings' | 'unavailable';
+const locationListeners = new Set<() => void>();
+export function onAreaLocationGranted(listener: () => void): () => void {
+  locationListeners.add(listener);
+  return () => { locationListeners.delete(listener); };
+}
+
+/** Ask the OS only when the traveler presses the foreground location row. */
+export async function areaLocationAccess(request = false): Promise<AreaLocationAccess> {
+  if (Platform.OS === 'web') return 'unavailable';
+  try {
+    const location = locationModule();
+    const access = request ? await location.requestForegroundPermissionsAsync() : await location.getForegroundPermissionsAsync();
+    if (access?.granted === true) {
+      if (request) for (const listener of locationListeners) listener();
+      return 'granted';
+    }
+    return access?.canAskAgain === false ? 'settings' : 'requestable';
+  } catch { return 'unavailable'; }
+}
 /**
  * `expo-location`'s watch as a `LocationSource`. Subscription is asynchronous,
  * so the returned unsubscribe cancels a watch that may not have started yet —
@@ -116,11 +149,11 @@ export function createDeviceLocationSource(): LocationSource {
     subscribe(onSample): Unsubscribe {
       let cancelled = false;
       let remove: (() => void) | null = null;
+      let lastFixAt = -Infinity;
 
       void (async () => {
         try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const Location = require('expo-location') as AnyModule;
+          const Location = locationModule();
           const perm = await Location.getForegroundPermissionsAsync();
           if (cancelled || !perm?.granted) return;
           const sub = await Location.watchPositionAsync(
@@ -129,11 +162,15 @@ export function createDeviceLocationSource(): LocationSource {
               timeInterval: LOCATION_INTERVAL_MS,
               distanceInterval: LOCATION_DISTANCE_M,
             },
-            (pos: any) => {
+            (pos) => {
               const c = pos?.coords;
-              if (!c) return;
+              if (cancelled || !c || !Number.isFinite(c.latitude) || !Number.isFinite(c.longitude)) return;
+              const now = Date.now();
+              const timestamp = Number.isFinite(pos.timestamp) ? pos.timestamp : now;
+              if (timestamp > now || now - timestamp > LOCATION_INTERVAL_MS || timestamp - lastFixAt < LOCATION_INTERVAL_MS) return;
+              lastFixAt = timestamp;
               onSample({
-                t: typeof pos.timestamp === 'number' ? pos.timestamp : Date.now(),
+                t: timestamp,
                 lat: c.latitude,
                 lng: c.longitude,
                 accuracyM: typeof c.accuracy === 'number' ? c.accuracy : null,

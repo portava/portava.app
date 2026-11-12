@@ -173,7 +173,7 @@ router.get("/users/:username/posts", async (req, res) => {
 
   let query = sc
     .from("posts")
-    .select("id, content, media_urls, location_city, location_country, trip_id, created_at, post_status")
+    .select("id, content, post_reference_id, media_urls, location_city, location_country, trip_id, created_at, post_status")
     .eq("author_id", target.id)
     .eq("post_status", "published").eq("status", "active").is("deleted_at", null).in("visibility", tiers)
     .order("created_at", { ascending: false })
@@ -202,6 +202,7 @@ router.get("/users/:username/posts", async (req, res) => {
   const items = rows.slice(0, limit).map((r: any) => ({
     id: r.id,
     content: r.content ?? null,
+    postReferenceId: r.post_reference_id ?? null,
     mediaUrls: mediaByPost.get(r.id) ?? r.media_urls ?? [],
     locationCity: r.location_city ?? null,
     locationCountry: r.location_country ?? null,

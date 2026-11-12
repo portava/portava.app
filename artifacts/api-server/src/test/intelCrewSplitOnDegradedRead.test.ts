@@ -61,6 +61,7 @@
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *      node --import tsx/esm --test src/test/intelCrewSplitOnDegradedRead.test.ts
  */
+import { canonicalPlaceFixture } from './helpers/canonicalPlaceFixture.js';
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 
@@ -108,6 +109,7 @@ function makeDb(cfg: { trips?: any[]; members?: any[]; errorTables?: string[] })
   const inserted: any[] = [];
   const bad = new Set(cfg.errorTables ?? []);
   function from(table: string) {
+    if (table === "places") return canonicalPlaceFixture([{ id: PLACE }]);
     let op: "select" | "insert" = "select";
     let payload: any = null;
     const eqs: [string, any][] = [];
@@ -130,7 +132,6 @@ function makeDb(cfg: { trips?: any[]; members?: any[]; errorTables?: string[] })
     const failure = () => ({ data: null, error: { message: `simulated unreadable ${table}` } });
     function run() {
       if (table === "feature_flags") return { data: { enabled: true }, error: null };
-      if (table === "places") return { data: { id: PLACE }, error: null };
       if (table === "intel_contribution_consent") return { data: { enabled: true, withdrawn_at: null }, error: null };
       if (bad.has(table)) return failure();
       if (op === "insert") { const row = { id: "obs-1", schema_version: 1, ...payload }; inserted.push(row); return { data: row, error: null }; }

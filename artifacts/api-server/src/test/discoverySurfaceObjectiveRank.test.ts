@@ -223,21 +223,22 @@ function trendDb(flags: Row[], opts: { failFeatureRead?: boolean; featureReadIsF
     place_momentum: [pm(3, "trending", 3.1, run), pm(2, "trending", 2.0, run), pm(5, "trending", 1.7, run), pm(1, "emerging", null, run)],  // ONE run: every row carries the same computed_at
     discovery_places: [dp(3, 300 * D), dp(2, D), dp(5, 30 * D), dp(1, 2 * D)],
   };
-  let placesReads = 0;
   function from(table: string) {
     const filters: Array<(r: Row) => boolean> = [];
     let orders: Array<{ col: string; asc: boolean }> = [];
     let limitN: number | null = null; let range: [number, number] | null = null;
+    let selected = '';
     const result = () => {
-      if (table === "discovery_places" && ++placesReads === (opts.featureReadIsFirst ? 1 : 2) && opts.failFeatureRead) return { data: null, error: { code: "57014", message: "timeout" } };
+      if (table === 'discovery_places' && selected === 'id, created_at, saved_count, verified, category' && opts.failFeatureRead) return { data: null, error: { code: '57014', message: 'timeout' } };
       let out = (tables[table] ?? []).filter((r) => filters.every((fn) => fn(r)));
+      const count = out.length;
       for (const o of [...orders].reverse()) out = [...out].sort((a, b) => (String(a[o.col] ?? "") < String(b[o.col] ?? "") ? -1 : String(a[o.col] ?? "") > String(b[o.col] ?? "") ? 1 : 0) * (o.asc ? 1 : -1));
       if (range) out = out.slice(range[0], range[1] + 1);
       if (limitN !== null) out = out.slice(0, limitN);
-      return { data: out.map((r) => ({ ...r })), error: null };
+      return { data: out.map((r) => ({ ...r })), error: null, count };
     };
     const b: any = {
-      select() { return b; },
+      select(columns = '') { selected = columns; return b; },
       eq(c: string, v: any) { filters.push((r) => r[c] === v); return b; },
       neq(c: string, v: any) { filters.push((r) => r[c] !== v); return b; },
       in(c: string, v: any[]) { filters.push((r) => v.includes(r[c])); return b; },
@@ -349,7 +350,13 @@ describe("S — Trip Planning: GET /trips/:tripId/nearby-places on the Trip Plan
       const r = await nearby(flags);
       assert.equal(r.status, 200, `${name}: ${JSON.stringify(r.body)}`);
       assert.deepEqual(r.body.places.map((p: any) => p.id), [PA, PB, PC], name);
-      assert.equal(sha(r.body), GOLDEN.trip, `${name}: ${sha(r.body)}`);
+      // The old fake leaked unselected saved_count/status into this response.
+      // Pin the real public shape, independent of ranking and DB-only fields.
+      assert.deepEqual(r.body, { places: [
+        { id: PA, name: 'A', category: 'culture', lat: DEST.lat + 0.27, lng: DEST.lng, city: 'Lisbon', image_url: null, rating: 4.9, cover_url: null, country: 'PT' },
+        { id: PB, name: 'B', category: 'food', lat: DEST.lat + 0.009, lng: DEST.lng, city: 'Lisbon', image_url: null, rating: 4.5, cover_url: null, country: 'PT' },
+        { id: PC, name: 'C', category: 'food', lat: DEST.lat + 0.045, lng: DEST.lng, city: 'Lisbon', image_url: null, rating: 4, cover_url: null, country: 'PT' },
+      ], destination: { city: 'Lisbon', country: 'PT' } }, name);
     }
   });
 

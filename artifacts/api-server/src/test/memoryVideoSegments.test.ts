@@ -26,6 +26,8 @@ function fixture() {
     memory_items: [{ id: ITEM, memory_id: MEMORY, media_url: `post-media/${OWNER}/original.mp4` }],
     media_assets: [{ id: ASSET, owner_user_id: OWNER, storage_bucket: "post-media", storage_path: `${OWNER}/original.mp4`, media_type: "video", version: 3, duration_ms: 4000, deleted_at: null, processing_status: "ready", moderation_status: "active" }],
     profiles: [{ id: OWNER, account_status: "active", user_account_states: [] }, { id: OTHER, account_status: "active", user_account_states: [] }],
+    post_media: [],
+    post_media_moderation_ledger: [],
     stories: [],
   };
   const segments = new Map<string, Row>();
@@ -162,6 +164,8 @@ describe("canonical source and persistence boundary", () => {
       (tables) => { tables.media_assets[0].moderation_status = "rejected"; },
       (tables) => { tables.media_assets[0].moderation_status = "limited"; },
       (tables) => { tables.media_assets = []; },
+      (tables) => { tables.post_media = [{ storage_path: `${OWNER}/original.mp4`, post_id: MEMORY, moderation_status: "rejected", processing_status: "ready" }]; },
+      (tables) => { tables.post_media_moderation_ledger = [{ storage_path: `${OWNER}/original.mp4`, verdict: "rejected" }]; },
       (tables) => { tables.stories = [{ owner_id: OWNER, state: "deleted", media_url: tables.memory_items[0].media_url, deleted_at: "2000-01-01T00:00:00Z", expires_at: "2000-01-01T00:00:00Z" }]; },
     ];
     for (const mutate of mutations) {

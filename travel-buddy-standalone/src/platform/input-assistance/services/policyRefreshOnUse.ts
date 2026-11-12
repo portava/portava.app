@@ -37,6 +37,7 @@ export interface PolicyRefreshOnUseDeps {
 }
 
 let lastAttemptAt = Number.NEGATIVE_INFINITY;
+let lastOwner: { store: PolicyStore; generation: number } | null = null;
 let inFlight: Promise<PolicyRefreshOutcome> | null = null;
 let bound: { store: PolicyStore; fetchPolicies: (signal?: AbortSignal) => Promise<PolicyFetchResult> } | null = null;
 
@@ -59,20 +60,24 @@ export function refreshPolicyOnUse(deps: PolicyRefreshOnUseDeps = {}): Promise<P
   const account = store.activeAccount();
   // Signed out: policy is per viewer, so there is nobody to fetch it for.
   if (account == null || !store.needsRefresh(account)) return Promise.resolve('skipped');
+  const generation = store.getAccountGeneration();
+  if (lastOwner?.store !== store || lastOwner.generation !== generation) {
+    lastAttemptAt = Number.NEGATIVE_INFINITY; inFlight = null; lastOwner = { store, generation };
+  }
   if (inFlight) return inFlight;
   const now = (deps.now ?? Date.now)();
   if (now - lastAttemptAt < POLICY_RETRY_MIN_GAP_MS) return Promise.resolve('skipped');
   lastAttemptAt = now;
   const attempt = refreshPolicies(account, store, fetchPolicies)
     .catch((): PolicyRefreshOutcome => 'failed')
-    .finally(() => { inFlight = null; });
+    .finally(() => { if (inFlight === attempt) inFlight = null; });
   inFlight = attempt;
   return attempt;
 }
 
 /** Forget the binding, the throttle and any in-flight attempt. TESTS ONLY. */
 export function _resetPolicyRefreshOnUseForTests(): void {
-  bound = null;
+  bound = null; lastOwner = null;
   lastAttemptAt = Number.NEGATIVE_INFINITY;
   inFlight = null;
 }

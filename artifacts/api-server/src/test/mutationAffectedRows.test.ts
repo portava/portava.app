@@ -222,7 +222,7 @@ describe("POST /admin/reports/:id/hide-content", () => {
   it("an existing post is hidden and reported as hidden", async () => {
     const db = install({
       reports: [{ id: REPORT_ID, target_type: "post", target_id: POST_ID, status: "open" }],
-      posts: [{ id: POST_ID, author_id: TARGET_ID, post_status: "active" }],
+      posts: [{ id: POST_ID, author_id: TARGET_ID, status: "active", post_status: "published" }],
       moderation_actions: [],
       trust_events: [],
     });
@@ -231,7 +231,8 @@ describe("POST /admin/reports/:id/hide-content", () => {
 
     assert.equal(status, 200, `got ${status} ${JSON.stringify(body)}`);
     assert.equal(body.contentHidden, true);
-    assert.equal(db.tables.posts[0].post_status, "removed");
+    assert.equal(db.tables.posts[0].status, "hidden");
+    assert.equal(db.tables.posts[0].post_status, "published", "moderation does not overwrite the publication lifecycle");
   });
 });
 

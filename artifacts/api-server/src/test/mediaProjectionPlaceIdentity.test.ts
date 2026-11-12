@@ -49,6 +49,7 @@
  *   node --import tsx/esm --test src/test/mediaProjectionPlaceIdentity.test.ts
  */
 
+import { liveColumns } from "./helpers/liveColumns.js";
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 
@@ -71,28 +72,7 @@ import { logger } from "../lib/logger.js";
 //
 // `country` is absent because it has never existed. `country_code` is the
 // real column. That one-word gap is the entire defect.
-const PLACES_COLUMNS: readonly string[] = [
-  "id",
-  "name",
-  "normalized_name",
-  "primary_category",
-  "latitude",
-  "longitude",
-  "address",
-  "city",
-  "neighborhood",
-  "country_code",
-  "canonical_location_id",
-  "status",
-  "merged_into_place_id",
-  "field_freshness",
-  "created_at",
-  "updated_at",
-  "geog",
-  "header_image_generated_id",
-  "image_source_type",
-  "image_accuracy_status",
-];
+const PLACES_COLUMNS = [...liveColumns("places")];
 
 /**
  * Tables whose select list the fake actually validates. Everything else is
@@ -168,8 +148,7 @@ type Dataset = Record<string, any[]>;
 
 interface ScOptions {
   /**
-   * Force this error on every read of the named table, regardless of the
-   * select list. Used to drive the schema-error path while the source is
+   * Fail label hydration only after its visibility is established. This exercises the schema-error path while the source is
    * CORRECT — the point of T2 is the handling, not the column name.
    */
   forceError?: { table: string; error: PostgrestErrorShape };
@@ -199,8 +178,8 @@ function makeSc(data: Dataset, opts: ScOptions = {}): FakeSc {
       return out;
     };
 
-    const resolve = (): { data: any[] | null; error: PostgrestErrorShape | null } => {
-      if (opts.forceError && opts.forceError.table === table) {
+    const resolve = (): { data: any[] | null; error: PostgrestErrorShape | null; count?: number } => {
+      if (opts.forceError?.table === table && splitSelectList(selectList).includes("name")) {
         return { data: null, error: opts.forceError.error };
       }
       const schemaError = rejectUnknownColumns(table, selectList);
@@ -209,7 +188,7 @@ function makeSc(data: Dataset, opts: ScOptions = {}): FakeSc {
       // not catch the defect this file exists for.
       if (schemaError) return { data: null, error: schemaError };
 
-      let rows = (data[table] ?? []).map((r: any) => ({ ...r }));
+      let rows = (data[table] ?? []).map((r: any) => table === "places" ? { moderation_status: "visible", merged_into_place_id: null, ...r } : { ...r });
       for (const f of filters) {
         if (f.op === "eq") rows = rows.filter((r: any) => String(r[f.col]) === String(f.val));
         else if (f.op === "in") rows = rows.filter((r: any) => (f.val as any[]).map(String).includes(String(r[f.col])));
@@ -219,7 +198,7 @@ function makeSc(data: Dataset, opts: ScOptions = {}): FakeSc {
           rows = rows.filter((r: any) => String(r[f.col] ?? "").toLowerCase().includes(needle));
         }
       }
-      return { data: rows.map(project), error: null };
+      return { data: rows.map(project), count: rows.length, error: null };
     };
 
     const b: any = {
@@ -417,7 +396,7 @@ describe("buildPlaceProjection: a real place returns its identity", () => {
     const { sc, selects } = makeSc({ places: [PLACE_ROW], posts: [] });
     await buildPlaceProjection(sc, VIEWER, PLACE_1, Date.now());
 
-    const placesSelect = selects.find((s) => s.table === "places");
+    const placesSelect = selects.find((s) => s.table === "places" && splitSelectList(s.select).includes("name"));
     assert.ok(placesSelect, "buildPlaceProjection must read the places table");
     const cols = splitSelectList(placesSelect.select).map(bareColumn);
     assert.ok(cols.includes("country_code"), `select list must name country_code; got: ${placesSelect.select}`);
@@ -529,17 +508,9 @@ describe("buildPlaceProjection: a schema error surfaces", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("buildPlaceProjection: a missing place row is silent", () => {
-  it("T3: an absent place logs NOTHING and still returns a projection", async () => {
-    // The catch exists FOR this case. A place that simply is not there is
-    // ordinary — pre-launch, most ids resolve to nothing. Warning here would
-    // bury the schema signal within a week.
+  it("T3: an absent place returns not found without logging a schema error", async () => {
     const { sc } = makeSc({ places: [], posts: [] });
-
-    const p = await buildPlaceProjection(sc, VIEWER, ABSENT_PLACE, Date.now());
-
-    assert.equal(p.place.id, ABSENT_PLACE);
-    assert.equal(p.place.name, null);
-    assert.equal(p.place.country, null);
+    await assert.rejects(buildPlaceProjection(sc, VIEWER, ABSENT_PLACE, Date.now()), { status: 404, code: "not_found" });
     assert.deepEqual(
       placeIdentityLogs(),
       [],
@@ -569,7 +540,7 @@ describe("schema error and missing row are observably DIFFERENT", () => {
     // (b) missing row
     captured = [];
     const missingSc = makeSc({ places: [], posts: [] });
-    const missingProjection = await buildPlaceProjection(missingSc.sc, VIEWER, ABSENT_PLACE, Date.now());
+    await assert.rejects(buildPlaceProjection(missingSc.sc, VIEWER, ABSENT_PLACE, Date.now()), { status: 404, code: "not_found" });
     const loggedOnMissingRow = placeIdentityLogs().length > 0;
 
     // ── THE ONE ASSERTION THAT FAILS IF THE TWO PATHS ARE EVER COLLAPSED ──
@@ -589,12 +560,6 @@ describe("schema error and missing row are observably DIFFERENT", () => {
     assert.equal(loggedOnSchemaError, true, "the schema error is the one that gets reported");
     assert.equal(loggedOnMissingRow, false, "the missing row is the one that stays quiet");
 
-    // Both still return a well-formed, best-effort projection — the nulls are
-    // identical, which is exactly why the LOG has to be the thing that differs.
-    assert.deepEqual(
-      { n: schemaProjection.place.name, c: schemaProjection.place.country },
-      { n: missingProjection.place.name, c: missingProjection.place.country },
-      "the payloads are indistinguishable — only the log separates the cases",
-    );
+    assert.equal(schemaProjection.place.name, null);
   });
 });

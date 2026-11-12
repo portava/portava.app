@@ -414,6 +414,20 @@ pub fn decrypt_message(
 /// Reading the keys out of the ratchet tree is what makes verification genuine:
 /// substitute a member and the leaf signature key changes, so the number
 /// changes. Sorted, so both sides derive the same value.
+/// Public account credential of the local group member. Used only to prove
+/// ownership when migrating pre-account-scoped session storage.
+pub fn session_owner_id(group_state_b64: String) -> Result<String, OpenMlsError> {
+    let (_provider, group) = unpack_group_state(&group_state_b64)?;
+    let leaf = group.own_leaf_node().ok_or(OpenMlsError::InvalidInput)?;
+    if leaf.credential().credential_type() != CredentialType::Basic {
+        return Err(OpenMlsError::InvalidInput);
+    }
+    let owner = String::from_utf8(leaf.credential().serialized_content().to_vec())
+        .map_err(|_| OpenMlsError::InvalidInput)?;
+    if owner.is_empty() { return Err(OpenMlsError::InvalidInput); }
+    Ok(owner)
+}
+
 pub fn derive_safety_number(group_state_b64: String) -> Result<String, OpenMlsError> {
     let (_provider, group) = unpack_group_state(&group_state_b64)?;
 
@@ -510,6 +524,14 @@ mod tests {
 
         let b_state = process_welcome(created.welcome_b64, b_kp.pending_state_b64).unwrap();
         (created.group_state_b64, b_state)
+    }
+
+    #[test]
+    fn local_credential_proves_session_owner() {
+        let (alice, bob) = pair();
+        assert_eq!(session_owner_id(alice).unwrap(), "user-alice");
+        assert_eq!(session_owner_id(bob).unwrap(), "user-bob");
+        assert!(session_owner_id("not-a-group".into()).is_err());
     }
 
     #[test]
@@ -670,4 +692,29 @@ mod tests {
         assert!(import_signer("not-base64!!", "also-bad").is_err());
         assert!(import_signer(&B64.encode([0u8; 16]), &B64.encode([0u8; 32])).is_err());
     }
+
+    #[test]
+    fn replay_is_rejected_after_receive_state_is_serialized_and_reloaded() {
+        let (alice, bob) = pair();
+        let first = encrypt_message(alice, "consume this generation once".into()).unwrap();
+        let received = decrypt_message(bob, first.ciphertext_b64.clone()).unwrap();
+        assert!(decrypt_message(received.updated_group_state_b64, first.ciphertext_b64).is_err(),
+            "updated receive state must not retain a consumed message key");
+    }
+
+    #[test]
+    fn old_060_sessions_restore_owners_and_exchange_new_messages() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!("../fixtures/openmls-0.6.0-session.json")).unwrap();
+        let alice = fixture["alice"].as_str().unwrap().to_owned();
+        let bob = fixture["bob"].as_str().unwrap().to_owned();
+        assert_eq!(session_owner_id(alice.clone()).unwrap(), "alice-ios-fixture");
+        assert_eq!(session_owner_id(bob.clone()).unwrap(), "bob-ios-fixture");
+        let next = encrypt_message(alice, "compatible after upgrade".into()).unwrap();
+        let received = decrypt_message(bob, next.ciphertext_b64.clone()).unwrap();
+        assert_eq!(received.plaintext, "compatible after upgrade");
+        assert!(decrypt_message(received.updated_group_state_b64.clone(), next.ciphertext_b64).is_err());
+        let reply = encrypt_message(received.updated_group_state_b64, "reply from upgraded Bob".into()).unwrap();
+        assert_eq!(decrypt_message(next.updated_group_state_b64, reply.ciphertext_b64).unwrap().plaintext, "reply from upgraded Bob");
+    }
+
 }

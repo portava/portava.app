@@ -42,6 +42,6 @@ describe('wiring (source assertions)', () => {
   it('the thread hook notes its cursor; sign-out clears them', () => {
     assert.match(hook, /noteThreadCursor\(threadId, cursorOf\(messages\)\)/);
     assert.match(session, /clearThreadCursors\(\);/);
-    assert.match(session, /onAuthChange\(\(uid\) => \{ const epoch = \+\+authEpoch; const changed = lastUid !== undefined && uid !== lastUid; if \(changed\) clearThreadCursors\(\);/, 'an external sign-out / account switch clears them too, first thing in the auth callback');
+    assert.match(session, /onAuthChange\(\(uid\) => \{\s*const epoch = \+\+authEpoch;\s*const outgoingUserId = lastUid;\s*const changed = outgoingUserId !== undefined && uid !== outgoingUserId;\s*if \(changed\) clearThreadCursors\(\);/, 'an external sign-out / account switch clears them too, before publishing the incoming account');
   });
 });

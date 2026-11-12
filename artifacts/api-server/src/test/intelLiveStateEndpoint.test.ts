@@ -26,6 +26,7 @@ import { _clearPromotedScopeCache, resolvePlaceIntelState } from "../lib/liveCla
 import { PRIVACY_THRESHOLD_V1 } from "../lib/intelContracts.js";
 import { truthOfEnvelope, truthOfEnvelopes } from "../lib/liveEnvelopeTruth.js";
 import { TRUTH_CLASSES } from "../lib/truthClass.js";
+import { makeFakeClient } from "./telegraphCertificationHarness.js";
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const PLACE_ID = "22222222-2222-4222-8222-222222222222";
@@ -43,6 +44,7 @@ interface FixtureOpts {
   patterns?: any[];
   /** places rows, for the merged-place (canonical subject) resolution. */
   places?: any[];
+  placesError?: boolean;
 }
 
 /**
@@ -52,6 +54,12 @@ interface FixtureOpts {
 function makeClient(opts: FixtureOpts) {
   _clearPromotedScopeCache();
   const promoted = opts.promoted ?? ["|crowd.level"];
+  // Use the same counted PostgREST query semantics as the canonical-visibility
+  // tests. An empty catalog is distinct from an unreadable one.
+  const catalog = makeFakeClient(
+    { places: opts.places ?? [{ id: PLACE_ID, moderation_status: "visible", merged_into_place_id: null }] },
+    opts.placesError ? { errors: { places: { message: "Catalog unavailable" } } } : {},
+  );
   return {
     auth: {
       // eslint-disable-next-line @typescript-eslint/require-await
@@ -85,22 +93,7 @@ function makeClient(opts: FixtureOpts) {
         };
         return q;
       }
-      if (table === "places") {
-        // The merged-place resolution the place card does before the reader.
-        // Filters are applied for real so a route that read the wrong id (or
-        // ignored merged_into_place_id) cannot pass by luck.
-        let wanted: unknown = undefined;
-        const q: any = {
-          select: () => q,
-          eq: (k: string, v: unknown) => { if (k === "id") wanted = v; return q; },
-          // eslint-disable-next-line @typescript-eslint/require-await
-          maybeSingle: async () => ({
-            data: (opts.places ?? []).find((p) => p.id === wanted) ?? null,
-            error: null,
-          }),
-        };
-        return q;
-      }
+      if (table === "places") return catalog.from("places");
       if (table === "intel_state_snapshots") {
         // The privacy_eligible and expires_at gates are enforced IN THE QUERY, so
         // the fixture applies them here — otherwise those two cases would prove
@@ -388,20 +381,43 @@ describe("§19 live-state — a merged place id resolves to the survivor, like t
     assert.notEqual(unmerged.body.state_version, viaMerged.body.state_version);
   });
 
-  it("changes nothing for an unmerged place, and falls back to the requested id when there is no place row", async () => {
-    // merged_into_place_id null ⇒ the requested id is the subject.
-    _setTestClient(makeClient({ snapshots: [liveSnapshot], places: [{ id: PLACE_ID, merged_into_place_id: null }] }), true);
-    const unmerged = await req(app, PATH);
-    assert.equal(unmerged.body.state, "live");
-    assert.equal(unmerged.body.subject_id, PLACE_ID);
+  it("serves an unmerged public place, then refuses a vanished subject even with its old ETag", async () => {
+    _setTestClient(makeClient({ snapshots: [liveSnapshot] }), true);
+    const live = await req(app, PATH);
+    assert.equal(live.status, 200);
+    assert.equal(live.body.state, "live");
+    assert.equal(live.body.subject_id, PLACE_ID);
+    assert.ok(live.etag);
 
-    // No row at all (deleted, or an id that was never a place) ⇒ fail-safe: use
-    // the requested id, which can only under-serve. It never invents a subject.
     _setTestClient(makeClient({ snapshots: [liveSnapshot], places: [] }), true);
-    const noRow = await req(app, PATH);
-    assert.equal(noRow.status, 200);
-    assert.equal(noRow.body.subject_id, PLACE_ID);
-    assert.equal(noRow.body.state, "live");
+    const missing = await req(app, PATH, { ifNoneMatch: live.etag });
+    assert.equal(missing.status, 404);
+    assert.equal(missing.body.error, "not_found");
+    assert.equal(missing.body.claims, undefined);
+  });
+
+  it("checks both ends of the merge and catalog availability before revalidating a live answer", async () => {
+    _setTestClient(makeClient({ snapshots: [liveSnapshot], places: mergedPlaces }), true);
+    const visible = await req(app, MERGED_PATH);
+    assert.equal(visible.status, 200);
+    assert.ok(visible.etag);
+    for (const id of [MERGED_ID, PLACE_ID]) {
+      const places = mergedPlaces.map(row => ({
+        ...row, moderation_status: row.id === id ? "withheld" : "visible",
+      }));
+      _setTestClient(makeClient({ snapshots: [liveSnapshot], places }), true);
+      const hidden = await req(app, MERGED_PATH, { ifNoneMatch: visible.etag });
+      assert.equal(hidden.status, 404);
+      assert.equal(hidden.body.error, "not_found");
+      assert.equal(hidden.body.claims, undefined);
+      assert.equal(hidden.body.subject_id, undefined);
+    }
+    _setTestClient(makeClient({ snapshots: [liveSnapshot], places: mergedPlaces, placesError: true }), true);
+    const unreadable = await req(app, MERGED_PATH, { ifNoneMatch: visible.etag });
+    assert.equal(unreadable.status, 503);
+    assert.equal(unreadable.body.error, "degraded_unavailable");
+    assert.equal(unreadable.body.claims, undefined);
+    assert.equal(unreadable.body.subject_id, undefined);
   });
 
   it("does not leak a coordinate or an actor id through the merged path either", async () => {

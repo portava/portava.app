@@ -14,7 +14,8 @@
  * This router covers trips and rent_buddy_bookings only.
  */
 
-import { Router } from "express";
+import { Router, type Response } from "express";
+import { isCanonicalPlaceAdmissionError, readPlaceInteractionVisibility } from "../lib/discoveryPlaceGovernance.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { z } from "zod";
 import { requireUser, optionalUser, sendError } from "../lib/http.js";
@@ -72,6 +73,13 @@ async function maybeInvalidateDiscoveryVoteCacheForPlace(
  *
  * Note: event eligibility is handled by POST /api/events/:id/reviews in events.ts.
  */
+async function requireVisiblePlace(sc: any, id: string, res: Response): Promise<boolean> {
+  const visible = await readPlaceInteractionVisibility(sc, id);
+  if (visible === true) return true;
+  sendError(res, visible === null ? 'degraded_unavailable' : 'not_found', visible === null ? 'Place availability could not be checked' : 'Place not found');
+  return false;
+}
+
 async function checkEligibility(
   sc: any,
   userId: string,
@@ -154,6 +162,7 @@ router.get("/reviews/my-review", asyncHandler(async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  if (entityType === 'place' && !await requireVisiblePlace(sc, entityId, res)) return;
 
   const { data, error } = await sc
     .from("reviews")
@@ -210,6 +219,7 @@ router.post("/reviews", asyncHandler(async (req, res) => {
   const { entityType, entityId, rating, body, tags, anonymous, photos } = parsed.data;
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  if (entityType === 'place' && !await requireVisiblePlace(sc, entityId, res)) return;
 
   const eligible = await checkEligibility(sc, auth.user.id, entityType, entityId);
   if (!eligible) {
@@ -235,7 +245,9 @@ router.post("/reviews", asyncHandler(async (req, res) => {
     .single();
 
   if (error) {
-    if (error.code === "23505") {
+    if (isCanonicalPlaceAdmissionError(error)) {
+      sendError(res, 'not_found', 'Place not found');
+    } else if (error.code === "23505") {
       sendError(res, "duplicate_review", "You have already reviewed this");
     } else {
       req.log.error({ err: error }, "create review");
@@ -359,6 +371,7 @@ router.get("/places/:id/reviews", asyncHandler(async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  if (!await requireVisiblePlace(sc, id, res)) return;
 
   const page  = Math.max(1, parseInt((req.query.page as string) ?? "1"));
   const limit = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
@@ -601,6 +614,8 @@ router.patch("/reviews/:id", asyncHandler(async (req, res) => {
     return;
   }
 
+  if (existing.entity_type === 'place' && !await requireVisiblePlace(sc, existing.entity_id, res)) return;
+
   const { rating, body, tags, anonymous, photos } = parsed.data;
 
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -617,6 +632,7 @@ router.patch("/reviews/:id", asyncHandler(async (req, res) => {
     .select("id, rating, body, tags, photos, visibility, updated_at")
     .single();
 
+  if (isCanonicalPlaceAdmissionError(error)) { sendError(res, 'not_found', 'Place not found'); return; }
   if (error) { req.log.error({ err: error }, "patch review"); sendError(res, "db_error", error.message); return; }
 
   // Invalidate discovery cache so the edited review's avgRating is not served stale.
@@ -708,6 +724,7 @@ router.get("/places/:id/votes", asyncHandler(async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  if (!await requireVisiblePlace(sc, id, res)) return;
 
   const { data: rows, error } = await sc
     .from("place_votes")
@@ -763,6 +780,7 @@ router.post("/places/:id/votes", asyncHandler(async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  if (voteRaw != null && !await requireVisiblePlace(sc, id, res)) return;
 
   // Validate entity exists before writing — prevents orphaned votes for arbitrary IDs.
   // Retract (vote=null) is allowed without the existence check since
@@ -828,6 +846,7 @@ router.post("/places/:id/votes", asyncHandler(async (req, res) => {
         { onConflict: "user_id,entity_type,entity_id" },
       );
     if (error && (error as any).code !== "42P01") {
+      if (isCanonicalPlaceAdmissionError(error)) { sendError(res, 'not_found', 'Place not found'); return; }
       req.log.error({ err: error }, "upsert place vote");
       sendError(res, "db_error", error.message);
       return;
@@ -841,6 +860,11 @@ router.post("/places/:id/votes", asyncHandler(async (req, res) => {
   }
 
   // Re-fetch tallies
+  // Retraction remains available after a hold or a read outage. The response
+  // must not disclose the held entity's aggregate activity after that erase.
+  if (await readPlaceInteractionVisibility(sc, id) !== true) {
+    res.json({ worthItCount: 0, skipItCount: 0, myVote: null }); return;
+  }
   const { data: rows } = await sc
     .from("place_votes")
     .select("vote, user_id")

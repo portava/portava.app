@@ -306,6 +306,18 @@ describe("the write doors (routes/availabilitySignal.ts)", () => {
     assert.deepEqual(list.body.policies.map((p: any) => p.audience), ["crew_only"]);
   });
 
+  it("reads only the caller's current window signal, with an explicit refusal on read failure", async () => {
+    const W = "44444444-4444-4444-8444-444444444444";
+    use({ ...on(), availability_windows: [{ id: W, user_id: VIEWER, proximity_visibility: "HIDDEN", geography_scope: "city", audience_policy_id: null }] });
+    const own = await call(base, "GET", `/me/availability-windows/${W}/signal`, VIEWER);
+    assert.equal(own.status, 200);
+    assert.deepEqual(own.body, { id: W, audiencePolicyId: null, proximityVisibility: "HIDDEN", geographyScope: "city" });
+    assert.equal((await call(base, "GET", `/me/availability-windows/${W}/signal`, ANA)).status, 404);
+    use({ ...on(), availability_windows: [] }, { errors: { availability_windows: { message: "unavailable" } } });
+    const failed = await call(base, "GET", `/me/availability-windows/${W}/signal`, VIEWER);
+    assert.ok(failed.status >= 500);
+  });
+
   it("T23: a window's signal is set only on the caller's window, and only with the caller's own policy", async () => {
     const W = "44444444-4444-4444-8444-444444444444";
     const P_OTHER = "55555555-5555-4555-8555-555555555555";

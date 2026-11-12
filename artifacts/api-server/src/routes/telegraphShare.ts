@@ -1,3 +1,4 @@
+import { encodeObjectReference } from '../services/telegraph/objectReference.js';
 /**
  * Telegraph §5 — Universal Portava Sharing.
  *
@@ -154,6 +155,7 @@ router.post(
         thread_id: threadId,
         sender_id: user.id,
         body: JSON.stringify(body),
+        content_ref: encodeObjectReference({ objectType, objectId }),
         created_at: now,
         // §6.2's PORTAVA_OBJECT kind. `messages.msg_type` carries no CHECK
         // constraint (baseline/20260819_baseline_structure.sql:7565), so this

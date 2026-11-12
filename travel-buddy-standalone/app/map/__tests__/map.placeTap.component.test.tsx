@@ -1,3 +1,5 @@
+// NOTE: this screen fixture is mounted without a navigator; focus is stable here.
+jest.mock('@react-navigation/native', () => ({ ...jest.requireActual('@react-navigation/native'), useIsFocused: () => true }));
 /**
  * FullScreenMapScreen — venue/place pin tap tests.
  *
@@ -52,10 +54,11 @@ jest.mock('react-native-safe-area-context', () => ({
 // ── LocationContext ────────────────────────────────────────────────────────────
 // NOTE: intentional stub — provides resolvedLocation for map init; real context
 // requires device location permissions unavailable under Jest.
+let mockViewerCoords: { lat: number; lng: number } | null = null;
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
     locationState: {
-      coords: null,
+      coords: mockViewerCoords,
       place: null,
       permissionStatus: 'granted',
     },
@@ -134,12 +137,14 @@ const TEST_PLACE = {
 // ── DiscoveryMapView — captures onSelectPlace prop ─────────────────────────────
 // NOTE: intentional stub — MapLibre native modules are unavailable under Jest.
 let capturedOnSelectPlace: ((place: typeof TEST_PLACE) => void) | null = null;
+let capturedViewerLat: number | null = null;
 
 jest.mock('../../../src/components/discovery/DiscoveryMapView', () => {
   const { View } = require('react-native');
   return {
     DiscoveryMapView: (props: any) => {
       capturedOnSelectPlace = props.onSelectPlace;
+      capturedViewerLat = props.userLat;
       return <View testID="map-view" />;
     },
   };
@@ -169,10 +174,22 @@ describe('FullScreenMapScreen — venue/place pin tap', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     capturedOnSelectPlace = null;
+    mockViewerCoords = null;
+    capturedViewerLat = null;
     mockGetDiscoveryPlaces.mockResolvedValue({
       ok: true,
       data: { places: [TEST_PLACE] },
     });
+  });
+
+  it('updates the viewer position without re-requesting the same destination places', async () => {
+    mockViewerCoords = { lat: 13.7, lng: 100.5 };
+    const view = await render(<FullScreenMapScreen />);
+    await waitFor(() => expect(mockGetDiscoveryPlaces).toHaveBeenCalledTimes(1));
+    mockViewerCoords = { lat: 13.701, lng: 100.501 };
+    await view.rerender(<FullScreenMapScreen />);
+    expect(capturedViewerLat).toBe(13.701);
+    expect(mockGetDiscoveryPlaces).toHaveBeenCalledTimes(1);
   });
 
   it('converts discovery places to MapEntity<DiscoveryPlace> in the carousel', async () => {

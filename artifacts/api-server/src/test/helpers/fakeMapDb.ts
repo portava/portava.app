@@ -130,7 +130,9 @@ function pgrst116(n: number) {
 }
 
 function buildQuery(spec: TableSpec, table: string) {
-  let rows = [...(spec.rows ?? [])];
+  let rows = (spec.rows ?? []).map(row => table === "places" ? { moderation_status: "visible", merged_into_place_id: null, ...row } : row);
+  let offset = 0; let size = Infinity;
+  const window = () => rows.slice(offset, Number.isFinite(size) ? offset + size : undefined);
   const err = spec.error ?? null;
   // `null` = do not project (the historical behaviour: the whole seeded row).
   // Narrowing happens on the way OUT only — the real database filters and sorts
@@ -143,7 +145,7 @@ function buildQuery(spec: TableSpec, table: string) {
   const narrowOne = (r: any) => (r && projection ? projectRow(r, projection) : r);
   // `count` mirrors PostgREST's Content-Range: null unless the caller asked.
   const result = () =>
-    err ? { data: null, error: err, count: null } : { data: headOnly ? null : narrow(rows), error: null, count: countMode ? rows.length : null };
+    err ? { data: null, error: err, count: null } : { data: headOnly ? null : narrow(window()), error: null, count: countMode ? rows.length : null };
 
   const refuseWrite = (verb: string) => () => {
     throw new Error(
@@ -166,8 +168,8 @@ function buildQuery(spec: TableSpec, table: string) {
     update: refuseWrite("update"),
     delete: refuseWrite("delete"),
     order() { return q; },
-    range() { return q; },
-    limit(n: number) { rows = rows.slice(0, n); return q; },
+    range(from: number, to: number) { offset = from; size = Math.max(0, to - from + 1); return q; },
+    limit(n: number) { size = n; return q; },
     eq(col: string, val: any) { rows = rows.filter((r) => r[col] === val); return q; },
     neq(col: string, val: any) { rows = rows.filter((r) => r[col] !== val); return q; },
     in(col: string, vals: any[]) { rows = rows.filter((r) => vals.includes(r[col])); return q; },
@@ -225,13 +227,15 @@ function buildQuery(spec: TableSpec, table: string) {
     },
     maybeSingle() {
       if (err) return Promise.resolve({ data: null, error: err });
-      if (rows.length > 1) return Promise.resolve(pgrst116(rows.length));
-      return Promise.resolve({ data: narrowOne(rows[0] ?? null), error: null });
+      const selected = window();
+      if (selected.length > 1) return Promise.resolve(pgrst116(selected.length));
+      return Promise.resolve({ data: narrowOne(selected[0] ?? null), error: null });
     },
     single() {
       if (err) return Promise.resolve({ data: null, error: err });
-      if (rows.length !== 1) return Promise.resolve(pgrst116(rows.length));
-      return Promise.resolve({ data: narrowOne(rows[0]), error: null });
+      const selected = window();
+      if (selected.length !== 1) return Promise.resolve(pgrst116(selected.length));
+      return Promise.resolve({ data: narrowOne(selected[0]), error: null });
     },
     then(resolve: (v: any) => void, reject?: (e: any) => void) {
       return Promise.resolve(result()).then(resolve, reject);

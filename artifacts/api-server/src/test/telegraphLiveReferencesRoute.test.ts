@@ -65,7 +65,7 @@ function snapshot(over: Record<string, unknown> = {}) {
 function world(flags: { flag: string; enabled: boolean }[] = [], over: FakeState = {}): FakeState {
   return {
     feature_flags: [...LIVE_GATES_OPEN, ...flags],
-    places: [{ id: PLACE_ID, name: "Han Market", status: "active", merged_into_place_id: null }],
+    places: [{ id: PLACE_ID, name: "Han Market", status: "active", moderation_status: "visible", merged_into_place_id: null }],
     intel_live_promoted_scopes: [{ scope_key: "|crowd.level" }, { scope_key: "|crowd.trajectory" }, { scope_key: "|vibe.state" }, { scope_key: "|queue.wait" }],
     intel_state_snapshots: [snapshot({ id: "snap-crowd" })],
     intel_state_snapshot_versions: [
@@ -332,7 +332,7 @@ describe("Telegraph live references — the routes", () => {
   });
 
   it("ON: an unknown or inactive place is not_found; a bad kind is invalid_payload", async () => {
-    app = await startRouterApp(telegraphLiveReferencesRouter, world([ON], { places: [{ id: PLACE_ID, name: "Han Market", status: "archived" }] }), {
+    app = await startRouterApp(telegraphLiveReferencesRouter, world([ON], { places: [{ id: PLACE_ID, name: "Han Market", status: "archived", moderation_status: "visible", merged_into_place_id: null }] }), {
       token: TOKEN,
       userId: VIEWER,
     });
@@ -362,6 +362,19 @@ describe("Telegraph live references — the routes", () => {
     assert.equal(g.body.comparison?.changedSinceShare, false);
     assert.equal(g.body.comparison?.claims[0]?.change, "reaffirmed");
     assert.equal(g.body.current?.claims[0]?.claimType, "crowd.level");
+  });
+
+  it("withheld places cannot be shared or read through a previously stored live reference", async () => {
+    app = await startRouterApp(telegraphLiveReferencesRouter, world([ON], {
+      places: [{ id: PLACE_ID, name: "Withdrawn venue", status: "active", moderation_status: "withheld", merged_into_place_id: null }],
+      messages: [storedCard(sharedReference())],
+    }), { token: TOKEN, userId: VIEWER });
+    assert.equal((await post(THREAD, { subjectId: PLACE_ID, kind: "experience_state" })).status, 404);
+    const read = await get(MESSAGE_ID);
+    assert.equal(read.status, 404);
+    assert.equal(read.body.reference, undefined);
+    assert.equal(read.body.current, undefined);
+    assert.equal(JSON.stringify(read.body).includes("Han Market"), false);
   });
 
   it("GET: a changed state resolves with changedSinceShare true", async () => {

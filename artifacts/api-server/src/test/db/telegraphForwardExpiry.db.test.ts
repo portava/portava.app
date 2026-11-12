@@ -117,7 +117,12 @@ describe("3665 — forwarding provenance and EXPIRES_WITH_SOURCE, on a real data
       "3",
     );
     assert.equal(scalar(`SELECT count(*) FROM pg_trigger WHERE tgname = 'telegraph_forward_capability_ratchet';`), "1");
-    assert.equal(scalar(`SELECT count(*) FROM pg_proc WHERE proname = 'telegraph_record_forward';`), "1");
+    for (const args of ["uuid,uuid,uuid,text,text,text,text,text", "uuid,uuid,uuid,text,text,text,text,text,text"]) {
+      assert.equal(scalar(`SELECT to_regprocedure('public.telegraph_record_forward(${args})') IS NOT NULL;`), "t", "the original and content-reference overloads both exist");
+      for (const role of ["anon", "authenticated"]) {
+        assert.equal(scalar(`SELECT has_function_privilege('${role}', 'public.telegraph_record_forward(${args})', 'EXECUTE');`), "f");
+      }
+    }
   });
 
   it("the lineage is service-role only: no client role can read it or write a derivative", () => {

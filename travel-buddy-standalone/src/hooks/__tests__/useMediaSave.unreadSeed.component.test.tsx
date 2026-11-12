@@ -15,6 +15,16 @@
  * Run with: pnpm test:component
  */
 import { renderHook, act } from '@testing-library/react-native';
+import { seedObservedOwnerSession, disposeObservedOwnerSession, emitObservedAuthEvent, observedOwnerSession } from '../../services/__tests__/observedOwnerSessionFixture.ts';
+import { setDiscoveryViewerFromSession } from '../../services/discoveryViewerScope.ts';
+import { saveMedia } from '../../services/mediaInteractions.ts';
+
+jest.mock('../../lib/supabase.ts', () => {
+  const listeners = new Set();
+  return { isSupabaseConfigured: true, supabase: { auth: { listeners, onAuthStateChange: (listener: unknown) => {
+    listeners.add(listener); return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } };
+  } } } };
+});
 
 // NOTE: intentional exhaustive stub — the save API is not under test.
 jest.mock('../../services/mediaInteractions.ts', () => ({
@@ -23,6 +33,45 @@ jest.mock('../../services/mediaInteractions.ts', () => ({
 }));
 
 import { useMediaSave } from '../useMediaSave.ts';
+beforeEach(() => { setDiscoveryViewerFromSession('owner-a'); seedObservedOwnerSession('owner-a', 'session-a'); jest.mocked(saveMedia).mockClear().mockResolvedValue({ ok: true }); });
+afterEach(async () => { await act(async () => { disposeObservedOwnerSession(); setDiscoveryViewerFromSession(null); }); });
+
+it('applies collection status immediately without letting an old feed seed overwrite it', async () => {
+  const { result } = await renderHook(() => useMediaSave());
+  await act(async () => { result.current.seed([{ id: 'a', savedByMe: false }]); result.current.setSaved('a', true); });
+  await act(async () => { result.current.seed([{ id: 'a', savedByMe: false }]); });
+  expect(result.current.isSaved('a')).toBe(true);
+  await act(async () => { result.current.setSaved('a', false); });
+  expect(result.current.isSaved('a')).toBe(false);
+});
+
+it('cannot roll back a confirmed collection save when an older toggle fails', async () => {
+  let finish!: (value: { ok: boolean }) => void;
+  jest.mocked(saveMedia).mockReturnValueOnce(new Promise(done => { finish = done; }));
+  const { result } = await renderHook(() => useMediaSave());
+  await act(async () => { void result.current.toggleSave('a'); void result.current.toggleSave('a'); });
+  expect(saveMedia).toHaveBeenCalledTimes(1);
+  await act(async () => { result.current.setSaved('a', true); finish({ ok: false }); });
+  expect(result.current.isSaved('a')).toBe(true);
+});
+
+for (const replacement of ['different account', 'same account new session']) {
+  it(`discards an old toggle and callbacks on ${replacement}`, async () => {
+    let finish!: (value: { ok: boolean }) => void;
+    jest.mocked(saveMedia).mockReturnValueOnce(new Promise(done => { finish = done; }));
+    const { result } = await renderHook(() => useMediaSave());
+    const old = result.current;
+    await act(async () => { void old.toggleSave('a'); });
+    await act(async () => {
+      const owner = replacement === 'different account' ? 'owner-b' : 'owner-a';
+      setDiscoveryViewerFromSession(owner);
+      emitObservedAuthEvent('SIGNED_IN', observedOwnerSession(owner, 'session-b'));
+    });
+    expect(result.current.savedSet).toEqual({});
+    await act(async () => { result.current.setSaved('a', true); old.setSaved('old', true); old.seed([{ id: 'old-seed', savedByMe: true }]); finish({ ok: false }); });
+    expect(result.current.savedSet).toEqual({ a: true });
+  });
+}
 
 describe('useMediaSave.seed — unread saved state', () => {
   it('an unread state is not stored, so it is not read as "not saved"', async () => {

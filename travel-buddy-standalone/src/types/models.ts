@@ -405,6 +405,8 @@ export type StampVerification = 'decorative' | 'reported' | 'verified';
 export interface PassportStamp {
   id: ID;
   kind: StampKind;
+  /** Definition metadata used by the fallback artwork, independent of travel provenance. */
+  artworkIconKey?: string;
   label: string;        // "CEBU", "SAFE MEETUP", "FIRST HOST"
   sublabel?: string;    // "PH · 2026", "x3"
   earnedAt: ISODate;
@@ -885,6 +887,7 @@ export interface PulseAuthor {
 }
 
 export interface PulseFeedItem {
+  postReferenceId?: string | null;
   id: ID;
   type: PulseItemType;
   city?: string;

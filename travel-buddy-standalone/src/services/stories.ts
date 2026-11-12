@@ -1,3 +1,4 @@
+import { messagingOwnerToken, type MessagingOwnerRequest } from './messagingOwnerRequest.ts';
 /**
  * Stories service — wraps /api/stories and /api/users/me/close-friends endpoints.
  */
@@ -159,9 +160,11 @@ export interface CreateStoryInput {
   hideViewerList?: boolean;
 }
 
-export async function createStory(input: CreateStoryInput): Promise<{ ok: true; story: Story } | { ok: false; message: string }> {
+export async function createStory(input: CreateStoryInput, owner?: MessagingOwnerRequest): Promise<{ ok: true; story: Story } | { ok: false; message: string }> {
   try {
-    const headers = { ...(await authHeader()), 'Content-Type': 'application/json' };
+    const token = owner ? await messagingOwnerToken(owner) : await freshApiToken();
+    if (!token || (owner && !owner.isCurrent())) return { ok: false, message: 'Sign in again before posting your story.' };
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
     const res = await fetch(`${apiBase()}/api/stories`, {
       method: 'POST',
       headers,
@@ -179,7 +182,9 @@ export async function createStory(input: CreateStoryInput): Promise<{ ok: true; 
       const j = await res.json().catch(() => ({}));
       return { ok: false, message: j.message ?? `HTTP ${res.status}` };
     }
-    return { ok: true, story: await res.json() };
+    const story = await res.json();
+    if (owner && !owner.isCurrent()) return { ok: false, message: 'Your signed-in session changed.' };
+    return typeof story?.id === 'string' ? { ok: true, story } : { ok: false, message: 'Publication could not be confirmed.' };
   } catch (e: any) {
     return { ok: false, message: e?.message ?? 'Network error' };
   }

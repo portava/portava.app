@@ -83,6 +83,15 @@ export interface PolicyStoreOptions {
 }
 
 export class PolicyStore {
+  private revision = 0;
+  private accountGeneration = 0;
+  private listeners = new Set<() => void>();
+  getRevision = (): number => this.revision;
+  getAccountGeneration = (): number => this.accountGeneration;
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener); return () => { this.listeners.delete(listener); };
+  };
+  private notify() { this.revision++; this.listeners.forEach(listener => listener()); }
   private snapshot: PolicySnapshot | null = null;
   /**
    * Who the app is signed in as RIGHT NOW, as last reported by the auth
@@ -131,6 +140,7 @@ export class PolicyStore {
     // The table we just installed IS the served version as far as this client
     // knows; anything older it had recorded is no longer evidence of staleness.
     this.servedVersion = policyVersion;
+    this.notify();
     return true;
   }
 
@@ -140,7 +150,7 @@ export class PolicyStore {
    */
   noteServedVersion(policyVersion: string | null | undefined): void {
     if (typeof policyVersion !== 'string' || policyVersion === '') return;
-    this.servedVersion = policyVersion;
+    if (this.servedVersion !== policyVersion) { this.servedVersion = policyVersion; this.notify(); }
   }
 
   /** True when a refetch is warranted: nothing held, expired, or superseded. */
@@ -198,6 +208,7 @@ export class PolicyStore {
   setActiveAccount(accountId: string | null): void {
     if (this.activeAccountId === accountId) return;
     this.activeAccountId = accountId;
+    this.accountGeneration++;
     this.clear();
   }
 
@@ -231,6 +242,7 @@ export class PolicyStore {
   clear(): void {
     this.snapshot = null;
     this.servedVersion = null;
+    this.notify();
   }
 }
 

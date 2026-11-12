@@ -127,6 +127,7 @@ function pulseShape(row: Record<string, any>, viewerIsOwner: boolean): Record<st
     authorId: row.author_id,
     tripId: null,
     content: row.content,
+    postReferenceId: row.post_reference_id ?? null,
     mediaUrls: [],
     visibility: "public",
     createdAt: row.created_at,

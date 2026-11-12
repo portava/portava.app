@@ -23,6 +23,7 @@ import {
 } from "../../lib/mediaContributorReputation.js";
 import { readOwnContributorIdentities } from "../../lib/intelConsent.js";
 import { logger } from "../../lib/logger.js";
+import { readCanonicalPlaceVisibility } from "../../lib/places/placeGovernance.js";
 
 /** Observation moderation states that count as ACCEPTED (useful) contributions. */
 const ACCEPTED_STATES = new Set(["allowed"]);
@@ -168,6 +169,10 @@ export async function readJourneySignals(
 ): Promise<ContributorJourneySignals> {
   const empty: ContributorJourneySignals = { completedTrips: 0, completedTripsInScope: 0, scoped: false };
   try {
+    if (scope.subjectId) {
+      const visibility = await readCanonicalPlaceVisibility(sc, [scope.subjectId]);
+      if (!visibility.ok || !visibility.visibleIds.has(scope.subjectId)) return empty;
+    }
     const [owned, memberships, place] = await Promise.all([
       sc.from("trips").select(JOURNEY_TRIP_COLUMNS).eq("owner_id", scope.contributorId).limit(500),
       sc.from("trip_members").select("trip_id, status, role").eq("user_id", scope.contributorId).limit(500),

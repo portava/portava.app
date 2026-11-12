@@ -95,6 +95,16 @@ function store(opts: { readError?: string; insertError?: string; seed?: SensingP
   return {
     rows,
     state,
+    rpc(name: string, args: any) {
+      assert.equal(name,"sensing_publish_if_current");
+      state.inserts++;
+      if(opts.insertError) return Promise.resolve({data:null,error:{message:opts.insertError}});
+      const row=args.p_publication;
+      const previous=rows.filter(r=>r.cohort_key===row.cohort_key && r.expires_at>row.published_at).sort((a,b)=>b.published_at.localeCompare(a.published_at))[0];
+      if((previous?.id??null)!==args.p_expected_id) return Promise.resolve({data:"conflict",error:null});
+      rows.push({...row,id:`pub-${rows.length+1}`});
+      return Promise.resolve({data:"stored",error:null});
+    },
     from(table: string) {
       state.tables.push(table);
       assert.equal(table, SENSING_PUBLISHED_TABLE);

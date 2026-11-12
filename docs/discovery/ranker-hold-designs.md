@@ -25,7 +25,7 @@ The **HAZARDS** of census-discovery §41.4 on DC-13 and DC-24 are binding on des
 
 **Gaps, at this tree:**
 
-- The exploration governor runs only inside the modifiers stage, `artifacts/api-server/src/lib/discoveryPde.ts:756#if (modifiers.enabled) {`, behind `discovery_ranking_modifiers_enabled` (2289, seeded OFF).
+- The exploration governor runs only inside the modifiers stage, `artifacts/api-server/src/lib/discoveryPde.ts:757#if (modifiers.enabled) {`, behind `discovery_ranking_modifiers_enabled` (2289, seeded OFF).
 - With the modifiers off, portavaRank's epsilon slot fills every 7th position with a pick drawn **at random** from the tail: `artifacts/api-server/src/lib/portavaRank.ts:497#export function injectExploration`. `06` §7 asks for exploration that is *"relevant, not random"*.
 - Census row DV-53 says `allocateFeedSlots` has **no production caller**. That is false. It is called on the Compass `for_you` path, `artifacts/api-server/src/compass/CompassFeedBuilder.ts:714#finalPool = allocateFeedSlots(finalPool, shares, { surface: "discovery"`, behind `DISCOVERY_DIVERSITY_ENABLED`, which is FALSE on production.
 - Compass fair exposure is inert on Discovery rows. `artifacts/api-server/src/compass/CompassDiscoveryAdapter.ts:36#export function discoveryPlaceToCompassItem` maps no `authorId`, so no creator is recognisable to it.
@@ -69,7 +69,7 @@ Each bucket member must clear a **relevance floor**: its portavaRank score must 
 
 **Gaps:**
 
-- `loadPdeViewer` reads interests only from `compass_user_preferences` (`artifacts/api-server/src/lib/discoveryPde.ts:435#.select("interests, category_weights")`). A new user has none there.
+- `loadPdeViewer` reads interests only from `compass_user_preferences` (`artifacts/api-server/src/lib/discoveryPde.ts:436#.select("interests, category_weights")`). A new user has none there.
 - The onboarding answers the product already stores, `profiles.interests` and `profiles.travel_style` (`artifacts/api-server/src/routes/profile.ts:490#interests: z.array(z.string().max(50)).max(20).optional(),`), reach no ranker.
 - New creator is design 1's bucket. New Trail and new place are design 1's emerging-place and new-Trail buckets.
 
@@ -84,7 +84,7 @@ Each bucket member must clear a **relevance floor**: its portavaRank score must 
 **Gaps:**
 
 - The one defence is a **constant** on Discovery. `artifacts/api-server/src/lib/portavaRank.ts:314#const trustFactor = c.authorTrustScore != null` multiplies social proof by 0.6 whenever `authorTrustScore` is unknown.
-- No Discovery candidate sets it: the candidate map at `artifacts/api-server/src/lib/discoveryPde.ts:590#const candidates: PlaceCandidate<T>[] = places.map((p) => ({` has no trust field. So every row carries the same factor and the defence discriminates nothing.
+- No Discovery candidate sets it: the candidate map at `artifacts/api-server/src/lib/discoveryPde.ts:591#const candidates: PlaceCandidate<T>[] = places.map((p) => ({` has no trust field. So every row carries the same factor and the defence discriminates nothing.
 - The detector exists. `services/trust/TrustGamingDetectionService.ts` writes `trust_reviews` of type `gaming_suspected`: check-in cluster farming, mutual upvote rings, and rapid score jumps.
 
 **Module:** `lib/discoveryEngagementIntegrity.ts`. For the candidate rows' submitters and the accounts behind each row's saves, it reads open `gaming_suspected` reviews and the submitter's trust score. It then:
@@ -117,7 +117,7 @@ It is a discount on inflated evidence, never a penalty on a person: `01` §10 fo
 
 **Gaps:**
 
-- A signed-in `for_you` cold request with Compass on is ordered by Compass (`artifacts/api-server/src/routes/discovery.ts:2175#const scored = await rankItemsForDiscovery`) and not by `rankForViewer`.
+- A signed-in `for_you` cold request with Compass on is ordered by Compass (`artifacts/api-server/src/routes/discovery.ts:2166#const scored = await rankItemsForDiscovery`) and not by `rankForViewer`.
 - §41.4: consolidating removes the parallel path that is DV-09's only passing leg. It would also change served `for_you` order **with no flag in front of it**.
 
 **Design:** no new flag. The consolidation rides the existing `DISCOVERY_ENGINE_MODE`. In `pde` mode, for an in-cohort viewer, the Compass branch is skipped and the cold `for_you` page is ranked by `rankForViewer`, so it is gated by Phase F gate 2 like every other pde change. Legacy keeps Compass. Design 5's `discovery` surface objective must exist **first**, so that DV-09's Discovery leg is carried by the consolidated pipeline before Compass leaves it.

@@ -47,6 +47,7 @@ import {
   FLOW_DENSITY_BUCKET_MINUTES,
   MIN_SIGNAL_FAMILIES,
   deriveCrowdFlow,
+  countIndependentFlowFamilies,
 } from "../lib/mapAggregation.js";
 import { PRIVACY_THRESHOLD_V1 } from "../lib/intelContracts.js";
 
@@ -100,13 +101,13 @@ const derive = (signals: readonly MovementSignal[], extra: Record<string, unknow
 // ── §10 source honesty ────────────────────────────────────────────────────────
 
 describe("§10 signal families — what this repository actually feeds", () => {
-  it("TWO observed families are wired, which is exactly MIN_SIGNAL_FAMILIES", () => {
+  it("three sources share exactly two independent collection families", () => {
     // `accepted_plan` was wired on 2026-08-31 by closing all four of the
     // blockers the prior audit recorded against it (lib/routeHopSignal). If a
     // THIRD family is ever added, this test, the module header audit and
     // SIGNAL_FAMILY_INDEPENDENCE must all be updated together.
-    assert.deepEqual([...WIRED_SIGNAL_SOURCES].sort(), ["accepted_plan", "next_stop_contribution"]);
-    assert.equal(WIRED_SIGNAL_SOURCES.length, MIN_SIGNAL_FAMILIES);
+    assert.deepEqual([...WIRED_SIGNAL_SOURCES].sort(), ["accepted_plan", "navigation_start", "next_stop_contribution"]);
+    assert.equal(countIndependentFlowFamilies(WIRED_SIGNAL_SOURCES), MIN_SIGNAL_FAMILIES);
     assert.equal(canProduceFlow(), true);
   });
 
@@ -150,7 +151,6 @@ describe("§10 signal families — what this repository actually feeds", () => {
       "aggregate_presence",
       "arrival",
       "coarse_transition",
-      "navigation_start",
     ]);
     assert.ok(!DECLARED_BUT_UNFED_FAMILIES.includes("accepted_plan" as never));
   });
@@ -207,14 +207,14 @@ describe("§10 unfed families carry a NAMED blocker, not a shrug", () => {
     }
   });
 
-  it("arrival and navigation_start are blocked by MISSING CAPTURE, not a missing producer", () => {
+  it("arrival remains blocked by missing origin capture", () => {
     // The load-bearing claim of the audit. Both sources are destination-only by
     // construction: canonical_events carries ONE subject and its payload
     // allow-list has no origin key. Wiring a producer onto either would not
     // produce a hop — it would produce a destination, and the origin could then
     // only come from the actor's last known position, which is the trajectory
     // reconstruction §10 forbids.
-    for (const family of ["arrival", "navigation_start"] as const) {
+    for (const family of ["arrival"] as const) {
       assert.equal(
         UNFED_FAMILY_BLOCKERS[family]?.blocker,
         "no_declared_origin",
@@ -642,7 +642,7 @@ function fakeClient(opts: {
       is: () => self,
       gte: () => self,
       maybeSingle: async () => ({ data: rows[0] ?? null, error: null }),
-      then: (res: any) => res({ data: rows, error: null }),
+      then: (res: any) => res({ data: rows, error: null, count: rows.length }),
     };
     return self;
   };
@@ -690,7 +690,7 @@ function twoFamilyClient(observations: any[], planActors: string[]) {
       select: () => self, eq: () => self, in: () => self, is: () => self,
       gte: () => self, not: () => self, limit: () => self,
       maybeSingle: async () => ({ data: rows[0] ?? null, error: null }),
-      then: (res: any) => res({ data: rows, error: null }),
+      then: (res: any) => res({ data: rows, error: null, count: rows.length }),
     };
     return self;
   };
@@ -704,6 +704,7 @@ function twoFamilyClient(observations: any[], planActors: string[]) {
       if (table === "route_plans") return chain(plans);
       if (table === "route_stops") return chain(stops);
       if (table === "route_legs") return chain(legs);
+      if (table === "map_personal_protected_places") return chain([]);
       if (table === "route_flow_contribution_consent") {
         return chain(planActors.map((a) => ({ user_id: a })));
       }
@@ -808,7 +809,7 @@ describe("readCrowdFlowSignals — the single I/O seam", () => {
     } as any);
 
     assert.equal(r.refusal, null);
-    assert.deepEqual(r.familyRefusals, { accepted_plan: null, next_stop_contribution: null });
+    assert.deepEqual(r.familyRefusals, { navigation_start: "not_available", accepted_plan: null, next_stop_contribution: null });
     assert.equal(r.signals.length, 20);
     assert.deepEqual(
       [...new Set(r.signals.map((s) => s.family))].sort(),
@@ -1030,4 +1031,10 @@ describe("M279 — Phase 4 cannot be called closed while M65 is open", () => {
       "the three registers must partition §10's families exactly — no overlap, no gap",
     );
   });
+});
+
+it("accepted plans plus navigation starts share one independent evidence family", () => {
+  assert.equal(countIndependentFlowFamilies(["accepted_plan", "navigation_start"]), 1);
+  assert.equal(canProduceFlow(["accepted_plan", "navigation_start"]), false);
+  assert.equal(countIndependentFlowFamilies(["accepted_plan", "navigation_start", "next_stop_contribution"]), 2);
 });

@@ -124,13 +124,14 @@ describe('S29 — the SEPARATE acoustic permission is declared in app.json', () 
     // A permission nothing can turn on is a permission that gates nothing: the
     // extractor would be permanently dead and S29 would be closed on paper.
     const screen = readFileSync(join(APP_ROOT, 'app', 'settings', 'intel-prompts.tsx'), 'utf8');
-    assert.match(screen, /requestAcousticSensingPermission/, 'the screen must be able to grant it');
-    assert.match(screen, /withdrawAcousticSensingPermission/, 'and to withdraw it');
-    assert.match(
-      screen,
-      /Sound level sensing/,
-      'it must be its OWN control, not folded into the calls microphone',
-    );
+    const consent = readFileSync(join(APP_ROOT, 'src/components/intel/SensingConsentSection.tsx'), 'utf8');
+    const acoustic = readFileSync(join(APP_ROOT, 'src/components/intel/AcousticSensingSection.tsx'), 'utf8');
+    assert.match(screen, /<SensingConsentSection\s*\/>/, 'Settings mounts the consent controls');
+    assert.match(consent, /<AcousticSensingSection captureAllowed=\{state\?\.available === true && state\.consents\.capture\.effective\}/,
+      'the acoustic controls respect the current capture grant');
+    assert.match(acoustic, /await requestAcousticSensingPermission\(\)/, 'the switch can grant permission');
+    assert.match(acoustic, /await withdrawAcousticSensingPermission\(\)/, 'the switch can withdraw permission');
+    assert.match(acoustic, /Sound level sensing/, 'sound level has its own control');
   });
 
   test('the motion usage string §4.1 needs is declared too', () => {

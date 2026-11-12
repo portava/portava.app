@@ -26,6 +26,7 @@ import { enableGhostMode, disableGhostMode, updateCrewPreferences } from './trip
 import type { CrewMemberCard as CrewMemberCardType } from './tripCrewLocation.ts';
 import { errorCopy } from '../../../lib/errorCopy.ts';
 import { crewPresenceBuckets } from './presence.ts';
+import { TripNearbyCard } from './TripNearbyCard.tsx';
 
 interface Props {
   tripId: string;
@@ -168,6 +169,7 @@ export function CrewMapSection({ tripId, refreshKey = 0 }: Props) {
     return (
       <View style={s.disabled}>
         <Text style={s.disabledText}>Crew location coordination is not available for this trip.</Text>
+        <TripNearbyCard tripId={tripId} />
       </View>
     );
   }
@@ -199,6 +201,7 @@ export function CrewMapSection({ tripId, refreshKey = 0 }: Props) {
     <View style={s.wrap}>
       {/* Crew voice room — Start / Join affordance (members only) */}
       <CrewCallCard tripId={tripId} />
+      <TripNearbyCard tripId={tripId} hidden={ghostMode} />
 
       {/* Ghost mode + share controls */}
       <View style={s.controlsCard}>

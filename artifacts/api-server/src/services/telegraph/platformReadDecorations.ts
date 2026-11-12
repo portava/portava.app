@@ -1,3 +1,4 @@
+import { parsePortavaObjectRow } from './shareables.js';
 /**
  * The thread read's two platform decorations (census-telegraph T429/T431 and
  * T406/T407), applied by `GET /threads/:threadId/messages` to the page it has
@@ -28,6 +29,7 @@ import { effectiveCapability } from "./forwarding.js";
 import { negotiateRender, parseClientCapabilities, type ClientCapabilities } from "./structuredSchemas.js";
 
 export interface RawThreadRow {
+  content_ref?: unknown;
   id: string;
   msg_type?: string | null;
   subtype?: string | null;
@@ -36,6 +38,26 @@ export interface RawThreadRow {
 }
 
 type Log = { warn?: (...a: any[]) => void } | undefined;
+
+/**
+ * Sibling readers (previews, drawer, search and saved messages) consume stored
+ * rows before building their smaller DTOs. Negotiate once per batch here so a
+ * future envelope cannot bypass the page's fallback through another reader.
+ * This transforms an outgoing copy only; it never changes the stored message.
+ */
+export async function negotiateStoredMessageRows<T extends RawThreadRow>(sc: any, rows: readonly T[], headers?: Record<string, unknown>): Promise<T[]> {
+  if (!rows.length) return [];
+  const schemasOn = await isFlagEnabled(sc, 'telegraph_structured_schemas_enabled');
+  const capabilities = parseClientCapabilities(headers);
+  return rows.map(row => {
+    if (row.deleted_at || (!schemasOn && !requiresNegotiation(row))) return row;
+    const result = negotiateRender(row, capabilities);
+    if (!result.fallback) return row;
+    return { ...row, body: result.label, msg_type: 'text', subtype: null,
+      media_url: null, media_type: null, media_thumbnail_url: null, media_duration_seconds: null,
+      cardIndexText: result.label, card: undefined, structured_fallback: result.label };
+  });
+}
 
 /** Replace a row's content with the fallback sentence. Mutates the outgoing message object. */
 export function applyFallback(
@@ -60,6 +82,9 @@ export function applyFallback(
   if ("tags" in m) m.tags = [];
   if ("hashtagUsages" in m) m.hashtagUsages = [];
   delete m.safetySignals;
+  // The live source projection is also structured content. Keeping it beside
+  // the fallback body would still deliver the unsupported payload to clients.
+  delete m.card;
   m.structured = { schema: neg.schemaId, fallback: true, reason: neg.reason, originalMsgType };
 }
 
@@ -89,10 +114,11 @@ export async function decoratePlatformReads(
     isFlagEnabled(sc, "telegraph_forwarding_enabled"),
   ]);
 
-  if (schemasOn) {
+  if (schemasOn || rows.some(requiresNegotiation) || messages.some(m=>requiresNegotiation({id:'quote',msg_type:'gif',body:m.replyToBody}))) {
     const caps = parseClientCapabilities(headers);
     const byId = new Map(messages.map((m) => [m.id as string, m]));
     for (const row of rows) {
+      if (!schemasOn && !requiresNegotiation(row)) continue;
       const m = byId.get(row.id);
       if (!m) continue;
       const neg = negotiateRender(row, caps);
@@ -100,7 +126,7 @@ export async function decoratePlatformReads(
       else if (neg.schemaId) m.structured = { schema: neg.schemaId, fallback: false };
     }
     for (const m of messages) {
-      if (typeof m.replyToBody === "string") {
+      if (typeof m.replyToBody === 'string' && (schemasOn || requiresNegotiation({id:'quote',msg_type:'gif',body:m.replyToBody}))) {
         const quoted = negotiateQuotedBody(m.replyToBody, caps);
         if (quoted !== null) m.replyToBody = quoted;
       }
@@ -132,4 +158,9 @@ export async function decoratePlatformReads(
       m.contentCapability = effectiveCapability(explicit.get(m.id) ?? null, p?.capability ?? null);
     }
   }
+}
+
+function requiresNegotiation(row: RawThreadRow): boolean {
+  if(row.msg_type?.toUpperCase()==='GIF'){try{const value=JSON.parse(row.body??'');if(value.schema==='gif.v2'||value.payload?.providerId)return true;}catch{/* invalid legacy rows follow the existing switch */}}
+  return row.msg_type?.toUpperCase() === 'PORTAVA_OBJECT' && row.content_ref != null && !parsePortavaObjectRow(row);
 }

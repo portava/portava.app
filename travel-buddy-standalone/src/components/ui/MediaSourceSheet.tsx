@@ -24,6 +24,7 @@
  *   videoMaxDuration — seconds; passed to the picker (default 60)
  *   title            — optional label shown at the top of the sheet
  */
+import { beginCaptureSession, bindCameraRecording } from '../../features/capture-stamps/recordingStamp.ts';
 import React, { useState } from 'react';
 import {
   Alert, Modal, View, Text, Pressable, StyleSheet,
@@ -36,6 +37,7 @@ import { VideoStoryTrimSheet } from './VideoStoryTrimSheet.tsx';
 import { CAPTURE_QUALITY } from '../../constants/mediaLimits.ts'; import { COMPATIBLE_LIBRARY_OPTIONS, normalizeForUpload } from '../../lib/media/normalizeUpload.ts';
 
 export interface MediaSourceSheetProps {
+  recordingStamp?: boolean;
   visible: boolean;
   onClose: () => void;
   onResult: (asset: ImagePicker.ImagePickerAsset) => void;
@@ -64,7 +66,7 @@ export function MediaSourceSheet({
   title = 'Add media',
   allowsEditing = false,
   aspect,
-  storyVideoTrim = false,
+  storyVideoTrim = false, recordingStamp = false,
 }: MediaSourceSheetProps) {
   const [busy, setBusy] = useState<'camera' | 'library' | null>(null);
   const [cameraDenied, setCameraDenied] = useState(false);
@@ -143,6 +145,7 @@ export function MediaSourceSheet({
       const mediaTypes: ImagePicker.MediaType[] = allowsVideo
         ? ['images', 'videos']
         : ['images'];
+      const session = recordingStamp && allowsVideo ? await beginCaptureSession() : null;
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes,
         quality: CAPTURE_QUALITY,
@@ -151,6 +154,7 @@ export function MediaSourceSheet({
         aspect: effectiveAllowsEditing ? aspect : undefined,
       });
       const picked = result.canceled || !result.assets?.[0] ? null : await normalizeForUpload(result.assets[0]); setBusy(null); // re-encoded (HEIC → JPEG, oversize → fitted) while the sheet still shows busy
+      bindCameraRecording(session, result.assets?.[0] ?? null, picked);
       if (!picked) return;
       deliverAsset(picked);
     } catch {

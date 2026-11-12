@@ -50,6 +50,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { visibleMediaPlaceIds } from "../../lib/media/mediaPlaceGovernance.js";
 import {
   loadEligibleCandidatesOrRefuse,
   projectCandidatesProtected,
@@ -739,6 +740,7 @@ async function mapPositions(
 ): Promise<Map<string, { lat: number; lng: number }>> {
   const ids = [...new Set(placeIds.filter((id): id is string => typeof id === "string" && UUID_RE.test(id)))];
   const out = new Map<string, { lat: number; lng: number }>();
+  const visible = await visibleMediaPlaceIds(sc, ids);
   const rows: PlaceRowLike[] = [];
   for (let i = 0; i < ids.length; i += PLACE_ID_CHUNK) {
     let data: unknown;
@@ -746,7 +748,7 @@ async function mapPositions(
     try {
       ({ data, error } = await (sc as any)
         .from("places")
-        .select("id, name, primary_category, city, neighborhood, country_code, latitude, longitude, status, merged_into_place_id") // = mapProjectPlace PLACE_SELECT_COLUMNS, as a literal so check:write-path-columns can verify it; pinned equal by mediaWorldProjection.test.ts
+        .select("id, name, primary_category, city, neighborhood, country_code, latitude, longitude, status, moderation_status, merged_into_place_id") // = mapProjectPlace PLACE_SELECT_COLUMNS, as a literal so check:write-path-columns can verify it; pinned equal by mediaWorldProjection.test.ts
         .in("id", ids.slice(i, i + PLACE_ID_CHUNK)));
     } catch (e) {
       throw new MediaSearchNearUnavailableError("places", e instanceof Error ? e.message : "read threw");
@@ -756,7 +758,7 @@ async function mapPositions(
     }
     rows.push(...(data as PlaceRowLike[]));
   }
-  const objects = rows.map((r) => projectPlace(r)).filter((o): o is MapObject => o !== null);
+  const objects = rows.filter(r => visible.has(r.id)).map((r) => projectPlace(r)).filter((o): o is MapObject => o !== null);
   for (const obj of applyProtection(objects, zones).objects) {
     const id = obj.id.startsWith("place:") ? obj.id.slice("place:".length) : null;
     const at = centroidOf(obj.geometry);

@@ -1,3 +1,6 @@
+// November 2026: navigation_start now has a separate explicit-consent, latest-hop writer.
+// It shares the accepted_plan independence bucket and receives no inferred group credit.
+import { readNavigationContributionSignals } from "./mapNavigationContribution.js";
 /**
  * crowdFlowProducer — the PRODUCER half of Map spec §10 Crowd Flow.
  *
@@ -172,7 +175,7 @@
  *                           accepted. `event_rsvps` remains unusable — it has no
  *                           server writer outside scripts/seed-demo-profile.ts,
  *                           and an RSVP carries no origin.
- *   navigation_start        NO ORIGIN EXISTS, STRUCTURALLY — not merely unwired.
+ *   navigation_start        HISTORICAL AUDIT (superseded by migration 4008):
  *                           `canonical_events` verb 'direction' (2120) is the only
  *                           candidate, and its zero producers are the LESSER
  *                           problem. The row shape carries ONE subject
@@ -241,6 +244,7 @@
  */
 import {
   CROWD_FLOW_SIGNAL_FAMILIES,
+  countIndependentFlowFamilies,
   FLOW_DENSITY_BUCKET_MINUTES,
   MIN_SIGNAL_FAMILIES,
   type CrowdFlowSignalFamily,
@@ -290,6 +294,7 @@ export const CAUSE_ONLY_SIGNAL_FAMILIES: readonly CrowdFlowSignalFamily[] = ["ev
 export const WIRED_SIGNAL_SOURCES: readonly CrowdFlowSignalFamily[] = [
   "next_stop_contribution",
   "accepted_plan",
+  "navigation_start",
 ];
 
 /**
@@ -371,16 +376,6 @@ export const UNFED_FAMILY_BLOCKERS: Readonly<Record<string, UnfedFamilyFinding>>
   // finding is the friction this register is FOR — the test asserts this object
   // tracks DECLARED_BUT_UNFED_FAMILIES exactly, so a family cannot be wired
   // without someone removing its named finding by hand.
-  navigation_start: {
-    blocker: "no_declared_origin",
-    alsoBlockedBy: ["no_producer", "purpose_mismatch"],
-    evidence: [
-      "src/migrations/2120_canonical_events.sql — verb 'direction' carries ONE subject (subject_kind, subject_id); no origin column exists",
-      "lib/canonicalEvents.ts — FORBIDDEN_PAYLOAD_KEYS strips coordinates absolutely; ALLOWED_PAYLOAD_KEYS holds 'destination' and nothing origin-shaped",
-      "lib/locationPurposes.ts — canonical_events is claimed by no purpose and is not REFERENCE_LOCATION_TABLES",
-      "src/migrations/0054_compass_cache.sql:109 — compass_user_navigation_patterns is from_screen/to_screen, not geographic",
-    ],
-  },
   aggregate_presence: {
     blocker: "no_declared_origin",
     alsoBlockedBy: ["party_scoped", "purpose_mismatch"],
@@ -491,12 +486,23 @@ export const NEXT_STOP_CONTRIBUTION_INDEPENDENCE: FamilyIndependenceCase = {
 export const SIGNAL_FAMILY_INDEPENDENCE: Readonly<Record<string, FamilyIndependenceCase>> = {
   next_stop_contribution: NEXT_STOP_CONTRIBUTION_INDEPENDENCE,
   accepted_plan: ACCEPTED_PLAN_INDEPENDENCE,
+  navigation_start: {
+    family: 'navigation_start',
+    sourceTable: ['map_navigation_contributions'],
+    derivationPath: ['Explicit Navigate press with reviewed route consent and an already-permitted fresh foreground fix.', 'Server checks privacy areas and maps both endpoints to coarse zones; only the latest hop remains for 15 minutes.', 'The reader rechecks current versioned consent and expiry, emitting no coordinates or independent group credit.'],
+    actorPopulation: 'Travellers explicitly pressing Navigate while separately opted into reviewed route contribution; no passive app opens or background fixes qualify.',
+    correlationRisk: 'Shares route consent and declared intent with accepted_plan; it is counted as the SAME independent family, never an additional sensor.',
+    failureMode: 'Missing permission, stale origin, missing reviewed disclosure, unknown zones or privacy protection makes it silent.',
+    separatenessArgument: 'Independent of Intel field prompts, but not independent of accepted_plan. countIndependentFlowFamilies groups both together.',
+    residualCorrelation: 'No party identity is inferred. groupKey is null, so these rows add zero independent-group credit and cannot satisfy the privacy group floor themselves.',
+    evidence: ['src/lib/mapNavigationContribution.ts', 'src/migrations/4008_map_private_controls.sql', 'src/lib/mapAggregation.ts'],
+  },
 };
 
 /** True iff enough OBSERVED families are wired for a flow to be publishable at all. */
 export function canProduceFlow(wired: readonly CrowdFlowSignalFamily[] = WIRED_SIGNAL_SOURCES): boolean {
   const observed = new Set(wired.filter((f) => OBSERVED_SIGNAL_FAMILIES.includes(f)));
-  return observed.size >= MIN_SIGNAL_FAMILIES;
+  return countIndependentFlowFamilies([...observed]) >= MIN_SIGNAL_FAMILIES;
 }
 
 // ── Freshness horizon ─────────────────────────────────────────────────────────
@@ -791,7 +797,7 @@ export function deriveZoneTransitions(
       windowMinutes: bucketMinutes,
       observedAt: observedIso,
       expiresAt: new Date(b.latestObservedMs + maxAgeMs).toISOString(),
-      confidence: observedConfidence(families.length),
+      confidence: observedConfidence(countIndependentFlowFamilies(families)),
       privacyClass: "aggregate_only",
       sensitiveSubject: b.sensitive,
       // inferredCause is deliberately ABSENT. Only attachCauseHypotheses sets it.
@@ -980,6 +986,12 @@ export async function readCrowdFlowSignals(
   const resolveZoneId = opts.resolveZoneId ?? (() => null);
 
   const signals: MovementSignal[] = [];
+
+  if (wired.includes('navigation_start')) {
+    const navigation = await readNavigationContributionSignals(sc, nowMs);
+    familyRefusals.navigation_start = navigation.refusal;
+    signals.push(...navigation.signals);
+  }
 
   // ── accepted_plan (lib/routeHopSignal) ──────────────────────────────────────
   if (wired.includes(ACCEPTED_PLAN_FAMILY)) {

@@ -30,7 +30,7 @@ import {
   projectEventLocal,
   projectFriend,
   projectGemLocal,
-  projectTrip,
+  projectTrip as projectTripAt,
   mapProjectionCacheScope,
   isPlaceIntelCacheSafe,
   PLACE_INTEL_CACHEABLE_KINDS,
@@ -71,6 +71,7 @@ const BUDDY = {
 // the fixture supplied the invented field. Same failure, same shape, as
 // `headline` and `displayName` before it; the TRIP guard below is what was
 // missing.
+const projectTrip = (trip: Parameters<typeof projectTripAt>[0]) => projectTripAt(trip, Date.parse('2026-04-12T00:00:00Z'));
 const TRIP = {
   id: 't1',
   title: 'Songkran',

@@ -41,6 +41,7 @@
  * Run:
  *   node --import tsx/esm --test src/test/mediaGemAndPrivacyDisclosure.test.ts
  */
+import { makeFakeClient as makeCatalogClient } from './telegraphCertificationHarness.js';
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
@@ -88,6 +89,7 @@ function makeSc(data: Dataset, errorTables: string[] = []) {
   };
 
   const builder = (table: string): any => {
+    if (table === "places") return makeCatalogClient({ places: data.places ?? [] }, errorTables.includes(table) ? {errors: {places: {message: "catalog unavailable"}}} : {}).from(table);
     const filters: any[] = [];
     const failed = errorTables.includes(table);
     const result = () =>
@@ -190,6 +192,7 @@ function makePost(o: Record<string, any> = {}): any {
 
 function baseData(extra: Dataset = {}): Dataset {
   return {
+    places: [{ id: PLACE_1 }],
     profiles: [{ id: VIEWER, location_country: "VN", date_of_birth: "1990-01-01", account_status: "active" }],
     blocks: [],
     user_mutes: [],

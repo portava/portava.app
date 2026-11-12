@@ -117,7 +117,7 @@ function planRows(extra: Record<string, any[]> = {}) {
     trip_members: [],
     feature_flags: [],
     meetups: [{ id: MEETUP, title: "Sunset at Miradouro", starts_at: null, location_name: "Graça", trip_id: null }],
-    discovery_places: [{ id: PLACE, name: "Time Out Market", category: "food", city: "Lisbon" }],
+    discovery_places: [{ id: PLACE, status: "active", name: "Time Out Market", category: "food", city: "Lisbon" }],
     trip_plan_items: [],
     ...extra,
   };

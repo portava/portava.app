@@ -1,3 +1,5 @@
+import { sealRecordingUpload } from '../services/stamps/recordingCapture.js';
+import { filterCurrentPostAuthors } from '../lib/postAuthorAudience.js';
 import { Router } from "express";
 import { z } from "zod";
 import { logger as rootLogger } from "../lib/logger";
@@ -220,13 +222,24 @@ export async function storeVerifiedMediaUpload(req: any, res: any, sc: any, user
       uploadBuf = scrub.buffer;
     }
 
-    const basePath = `${user.id}/${Date.now()}`;
-    const path = `${basePath}.${uploadExt}`;
+    const captureToken = req.headers?.['x-portava-capture-token'];
+    let basePath = `${user.id}/${Date.now()}`;
+    let path = `${basePath}.${uploadExt}`;
+    if (captureToken !== undefined) {
+      if (sniffed.kind !== 'video' || !videoProbe?.durationMs || !videoProbe.width || !videoProbe.height) {
+        sendError(res,'invalid_payload','A recording stamp requires a readable camera video.'); return;
+      }
+      try { path = await sealRecordingUpload(sc,user.id,captureToken,uploadBuf,uploadExt); }
+      catch { sendError(res,'conflict','This capture session cannot accept this recording.'); return; }
+      basePath = path.slice(0,-uploadExt.length-1);
+    }
 
     const { error } = await sc.storage
       .from(STORAGE_BUCKET)
       .upload(path, uploadBuf, { contentType: uploadMime, upsert: false });
-    if (error) {
+    // A retried token can only name this immutable path and its exact stored digest.
+    const duplicateCapture = captureToken !== undefined && (error?.statusCode === '409' || error?.statusCode === 409 || error?.error === 'Duplicate');
+    if (error && !duplicateCapture) {
       req.log.error({ err: error, path }, "Storage upload failed");
       sendError(res, "db_error", `Upload failed: ${error.message}`);
       return;
@@ -295,14 +308,14 @@ export async function storeVerifiedMediaUpload(req: any, res: any, sc: any, user
     // client must treat null as "use `url`". It must never construct a variant
     // path itself: for every pre-existing post that URL would 404.
     res.status(201).json({
-      url: mediaRelayUrl, path, thumbnailUrl, feedUrl, width, height, processed, phash, durationSeconds: probedDurationSeconds(videoProbe),
+      url: mediaRelayUrl, path, thumbnailUrl, feedUrl, width, height, processed, phash, durationSeconds: probedDurationSeconds(videoProbe), ...(captureToken !== undefined ? {captureAccepted:true} : {}),
     });
 }
 
 // Columns returned to clients. NEVER include original_lat/original_lng or
 // user_gps_lat/user_gps_lng — those are stored privately and must not leak.
 const POST_COLUMNS =
-  "id, author_id, trip_id, content, media_urls, visibility, status, created_at, updated_at, " +
+  "id, author_id, trip_id, content, post_reference_id, media_urls, visibility, status, created_at, updated_at, " +
   "location_name, location_city, location_country, " +
   "location_privacy_mode, post_status, " +
   "public_lat, public_lng, public_location_label, geofence_radius_meters, " +
@@ -1077,9 +1090,6 @@ router.post("/posts", async (req, res) => {
   })();
 });
 
-// Safe public location labels (no GPS coordinates). Same privacy contract as POST_COLUMNS.
-const FOLLOWING_POST_COLUMNS = POST_COLUMNS;
-
 // ── Delayed geotag helpers ────────────────────────────────────────────────────
 
 /** Append an event to the delayed_post_location_events table. Non-fatal. */
@@ -1266,7 +1276,7 @@ router.get("/posts", async (req, res) => {
     // Step 2: public standalone active published posts from followed users only.
     let q = sc
       .from("posts")
-      .select(FOLLOWING_POST_COLUMNS)
+      .select(POST_COLUMNS)
       .in("author_id", followingIds)
       .is("trip_id", null)
       .eq("visibility", "public")
@@ -1885,7 +1895,7 @@ router.get("/posts/:postId", async (req, res) => {
 
   const { data, error } = await sc
     .from("posts")
-    .select(POST_COLUMNS)
+    .select(POST_COLUMNS + ", deleted_at")
     .eq("id", postId)
     .eq("status", "active")
     .maybeSingle();
@@ -1894,6 +1904,9 @@ router.get("/posts/:postId", async (req, res) => {
   if (!data) { sendError(res, "not_found", "Post not found"); return; }
 
   const post = data as any;
+  if (post.deleted_at != null || !(await filterCurrentPostAuthors(sc, user.id, [post])).length) {
+    sendError(res, "not_found", "Post not found"); return;
+  }
   const isAuthor = post.author_id === user.id;
   const isPublished = !post.post_status || post.post_status === "published";
 
@@ -2701,7 +2714,7 @@ router.get("/posts/:postId/comments", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Verify post exists and caller has read access
-  const { data: post, error: postReadErr } = await sc.from("posts").select("id, author_id, visibility, trip_id, post_status").eq("id", postId).eq("status", "active").maybeSingle();
+  const { data: post, error: postReadErr } = await sc.from("posts").select("id, author_id, visibility, trip_id, post_status, deleted_at").eq("id", postId).eq("status", "active").maybeSingle();
   if (postReadErr) { sendError(res, "db_error", postReadErr.message); return; } if (!post) { sendError(res, "not_found", "Post not found"); return; }
   if (post.author_id !== user.id && isExcluded(await readPairExclusion(sc, user.id, post.author_id), post.author_id)) { sendError(res, "not_found", "Post not found"); return; } if (!(await checkPostCommentsReadPermission(res, post as any, user.id, client))) return;
   const isPostAuthor = (post as any).author_id === user.id;
@@ -3719,10 +3732,15 @@ import { decidePerspectiveVantageWrite } from "../lib/media/perspectiveVantage.j
 
 async function checkPostCommentsReadPermission(
   res: import("express").Response,
-  post: { author_id: string; visibility: string; trip_id: string | null; post_status?: string | null },
+  post: { author_id: string; visibility: string; trip_id: string | null; post_status?: string | null; deleted_at?: string | null },
   userId: string,
   userClient: SupabaseClient,
 ): Promise<boolean> {
+  const sc = getServiceClient();
+  if (!sc || post.deleted_at != null || !(await filterCurrentPostAuthors(sc, userId, [post])).length) {
+    sendError(res, "not_found", "Post not found");
+    return false;
+  }
   if (post.author_id === userId) {
     return checkEngagePermission(res, post, userId, userClient);
   }

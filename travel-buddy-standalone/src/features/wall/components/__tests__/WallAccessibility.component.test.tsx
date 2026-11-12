@@ -40,6 +40,7 @@
  */
 
 import React from 'react';
+import { StyleSheet } from 'react-native';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { render, screen } from '@testing-library/react-native';
@@ -58,6 +59,7 @@ jest.mock('../../services/wallApi.ts', () => ({
   revalidateCachedObjects: jest.fn(async () => ({ ok: false, error: 'Network error' })),
 }));
 
+
 import { color, type as t } from '../../../../theme/tokens.ts';
 import { LiveForYouStrip } from '../LiveForYouStrip.tsx';
 import { FeedModeSwitcher } from '../FeedModeSwitcher.tsx';
@@ -65,6 +67,9 @@ import { ContextThreadView } from '../ContextThreadView.tsx';
 import { SocialActionRow, NotInterestedControl } from '../objects/wallItemShared.tsx';
 import type { LiveForYouItem } from '../../types/liveForYou.ts';
 import type { WallProjection } from '../../types/wallProjection.ts';
+import { VideoWallItem } from '../objects/VideoWallItem.tsx';
+import { CERT_CASES } from '../../certification/wallCertFixtures.ts';
+import type { VideoProjection } from '../../types/wallProjection.ts';
 
 // ── WCAG 2.x contrast, computed over the real tokens ─────────────────────────
 
@@ -94,6 +99,16 @@ const AA_NORMAL_TEXT = 4.5;
 const AA_NON_TEXT = 3.0;
 
 describe('§38 accessibility — contrast (arithmetic over the real palette)', () => {
+  it('the actual video card keeps its place and all actions legible on its dark body', async () => {
+    const video = CERT_CASES.find((entry) => entry.id === 'video-ceiling')!.projection as VideoProjection;
+    await render(<VideoWallItem projection={video} />);
+    const background = StyleSheet.flatten(screen.getByTestId('wall-item-video').props.style).backgroundColor;
+    const foreground = StyleSheet.flatten(screen.getByText('Bánh Mì Phượng · Hội An').props.style).color;
+    expect(contrast(foreground, background)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    for (const iconName of ['Sparkles', 'MessageCircle', 'Share2', 'MapPin', 'Bookmark']) {
+      expect(contrast(screen.getByTestId(`icon-${iconName}`).props.color, background)).toBeGreaterThanOrEqual(AA_NON_TEXT);
+    }
+  });
   it('the sanity check works: a known-failing pair is detected as failing', () => {
     // `faint` on paper is 2.73:1. If this ever passes, the formula is broken and
     // every assertion below is worthless.
@@ -306,14 +321,14 @@ describe('§36/§38 accessibility — the mode switch', () => {
 describe('§36 — every feed action has an accessible label', () => {
   it('the social action row labels all four controls', async () => {
     await render(<SocialActionRow projection={projection()} />);
-    for (const label of ['Stamp', 'Comment', 'Share', 'Save']) {
+    for (const label of ['Stamp', 'Comment', 'Share', 'Save to collection']) {
       expect(screen.getByLabelText(label)).toBeTruthy();
     }
   });
 
   it('the save control announces the SERVER-resolved state, not a local guess', async () => {
     await render(<SocialActionRow projection={{ ...projection(), viewerSaved: true }} />);
-    expect(screen.getByLabelText('Saved')).toBeTruthy();
+    expect(screen.getByLabelText('Manage saved collections')).toBeTruthy();
   });
 
   it('the not-interested control is labelled even though it is icon-only', async () => {

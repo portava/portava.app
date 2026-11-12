@@ -198,7 +198,7 @@ function viewerOf(nFollowed: number): WallViewerContext {
 }
 
 function spineClient(posts: Record<string, any>[]) {
-  return withDbMaxRows(makeFailClosedClient({ rows: { posts, profiles: [], places: [], hidden_gems: [] } }));
+  return withDbMaxRows(makeFailClosedClient({ rows: { posts, profiles: [...new Set(posts.map((p) => p.author_id))].map((id) => ({ id, account_status: "active" })), places: [], hidden_gems: [] } }));
 }
 
 const ids = (loaded: { candidates: { canonicalObjectId: string }[] }) =>
@@ -254,7 +254,7 @@ describe("census-wall §19 — the Following spine reads every followed author",
         : null;
     };
     const sc = withDbMaxRows(
-      makeFailClosedClient({ rows: { posts, profiles: [], places: [], hidden_gems: [] }, failOn: failSecondChunk }),
+      makeFailClosedClient({ rows: { posts, profiles: [...new Set(posts.map((p) => p.author_id))].map((id) => ({ id, account_status: "active" })), places: [], hidden_gems: [] }, failOn: failSecondChunk }),
     );
     const loaded = await loadCandidates(sc, "following", viewerOf(700), { discoveryEnabled: false });
     assert.equal(loaded.spineFailed, true, "a partial spine is a failed spine");

@@ -43,6 +43,7 @@
  * `trip_saved_places` directly would be the duplication A10 forbids. When that
  * projection exists, "on your itinerary" becomes a second, stronger fit.
  */
+import { tripHasEnded } from '../domain/trips/invariants/tripStatus.js';
 import { readTripStopLayer } from "./mapProjectionTripRead.js";
 import type { TripViewLike } from "./mapProjection.js";
 import { normaliseGeoLabel } from "./portavaRank.js";
@@ -67,10 +68,7 @@ function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): nu
 export function tripTiming(t: TripViewLike, nowMs: number): number {
   if (t.status && CLOSED.has(String(t.status).toLowerCase())) return 0;
   const start = t.startDate ? Date.parse(String(t.startDate)) : NaN;
-  const endRaw = t.endDate ? Date.parse(String(t.endDate)) : NaN;
-  // An end DATE names the last day of the trip, so it ends at the close of that day.
-  const end = Number.isFinite(endRaw) ? endRaw + DAY : NaN;
-  if (Number.isFinite(end) && end < nowMs) return 0;
+  if (tripHasEnded({ end_date: t.endDate, timezone: t.timezone }, new Date(nowMs))) return 0;
   if (!Number.isFinite(start)) return 0;                       // no dates: not a trip "context" yet
   if (start <= nowMs) return 1;                                 // under way
   const ahead = (start - nowMs) / DAY;
@@ -118,7 +116,7 @@ export async function loadTripMatch(
 ): Promise<TripMatchRead> {
   if (!sc || !viewerId || places.length === 0) return { tripMatch: null, degraded: !sc && !!viewerId, trips: 0 };
   try {
-    const read = await readTripStopLayer(sc, viewerId);
+    const read = await readTripStopLayer(sc, viewerId, new Date(nowMs));
     if (read.trips === null) return { tripMatch: null, degraded: true, trips: 0 };
     const counted = read.trips.filter((t) => tripTiming(t, nowMs) > 0);
     if (counted.length === 0) return { tripMatch: null, degraded: false, trips: 0 };

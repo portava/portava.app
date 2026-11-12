@@ -82,6 +82,7 @@ jest.mock('../../../services/telegraphRealtimeService.ts', () => ({
 // ── The API and the badge broadcast ───────────────────────────────────────────
 const mockFetchReceipts = jest.fn();
 const mockMarkSeen = jest.fn();
+const mockMarkDelivered = jest.fn(async (..._args: unknown[]) => ({ok:true,data:{advanced:true}}));
 const mockBroadcast = jest.fn();
 // NOTE: intentional stub — lifecycleApi reaches lib/supabase, which builds a
 // client at import time and fails outside an Expo runtime.
@@ -91,6 +92,7 @@ jest.mock('../lifecycle/lifecycleApi.ts', () => ({
   ...jest.requireActual('../lifecycle/lifecycleApi.ts'),
   fetchReceipts: (...a: unknown[]) => mockFetchReceipts(...a),
   markSeen: (...a: unknown[]) => mockMarkSeen(...a),
+  markDelivered: (...a: unknown[]) => mockMarkDelivered(...a),
 }));
 // NOTE: intentionally exhaustive — the hook only broadcasts a badge refresh.
 jest.mock('../../../hooks/useMessaging.ts', () => ({

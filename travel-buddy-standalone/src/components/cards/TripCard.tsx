@@ -21,6 +21,7 @@ export interface TripCardProps {
   destinationCountry?: string | null;
   startDate?: string | null;
   endDate?: string | null;
+  timezone?: string | null;
   status: string;
   coverUrl?: string | null;
   memberCount?: number | null;
@@ -29,10 +30,10 @@ export interface TripCardProps {
 
 export function TripCard({
   title, destinationCity, destinationCountry, startDate, endDate,
-  status, coverUrl, memberCount, onPress,
+  status, timezone, coverUrl, memberCount, onPress,
 }: TripCardProps) {
   const [imgFailed, setImgFailed] = useState(false);
-  const displayStatus = deriveTripDisplayStatus(status, endDate);
+  const displayStatus = deriveTripDisplayStatus(status, endDate, timezone);
   const statusColor = tripStatusColor(displayStatus);
   const statusLabel = tripStatusLabel(displayStatus);
   const destination = destinationCountry

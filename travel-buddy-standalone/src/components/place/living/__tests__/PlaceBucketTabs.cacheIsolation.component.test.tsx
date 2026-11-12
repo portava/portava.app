@@ -161,7 +161,7 @@ describe('PlaceBucketTabs — weekTimelineCache isolation', () => {
 
     // Wait until place-A posts appear — confirming the cache entry was written
     await waitFor(() => expect(getA('Sunrise at Place A')).toBeTruthy());
-    expect(mockGetTimeline).toHaveBeenCalledWith('place-A', 'week');
+    expect(mockGetTimeline).toHaveBeenCalledWith('place-A', 'week', expect.objectContaining({ signal: expect.any(AbortSignal), isCurrent: expect.any(Function) }));
 
     unmountA();
 
@@ -182,7 +182,7 @@ describe('PlaceBucketTabs — weekTimelineCache isolation', () => {
 
     // getPlaceTimeline must be called exactly once for place-B — not skipped
     await waitFor(() =>
-      expect(mockGetTimeline).toHaveBeenCalledWith('place-B', 'week'),
+      expect(mockGetTimeline).toHaveBeenCalledWith('place-B', 'week', expect.objectContaining({ signal: expect.any(AbortSignal), isCurrent: expect.any(Function) })),
     );
     expect(mockGetTimeline).toHaveBeenCalledTimes(1);
 

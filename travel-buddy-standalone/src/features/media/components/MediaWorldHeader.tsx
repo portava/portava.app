@@ -33,7 +33,7 @@ export function MediaWorldHeader({
   return (
     <View style={styles.wrap}>
       <View style={styles.textCol}>
-        <Text style={styles.wordmark}>MEDIA</Text>
+        <Text style={styles.wordmark}>Explore World</Text>
         <Text style={styles.subtitle} numberOfLines={1}>
           {cityName ? `${cityName} · ${contextLabel}` : contextLabel}
         </Text>

@@ -1443,6 +1443,19 @@ export async function executeAccountDeletion(
     return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
   }
 
+  // 4008 points at profiles, but account deletion retains a tombstone, so its
+  // ON DELETE CASCADE never runs. Erase both private map records explicitly.
+  // A returned error keeps deletion pending rather than retaining a home/work
+  // protection or recent navigation intent behind a completed deletion.
+  const mapPrivacyOk = await step(steps, "erase_private_map_controls", async () => {
+    must(await sc.from("map_navigation_contributions").delete().eq("user_id", userId), "delete map navigation contributions");
+    must(await sc.from("map_personal_protected_places").delete().eq("owner_user_id", userId), "delete map personal protected places");
+  });
+  if (!mapPrivacyOk) {
+    warnings.push("private map controls may remain — deletion aborted before profile anonymisation; retry is safe");
+    return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
+  }
+
   const mediaEmpty = await step(steps, "confirm_account_media_empty", () => assertAccountMediaEmpty(sc, userId));
   if (!mediaEmpty) {
     warnings.push("Media cleanup changed or unreadable — account deletion remains pending; retry is safe");

@@ -47,7 +47,7 @@ import { useFocusEffect } from 'expo-router';
 
 import { telegraphRealtime, type TelegraphEvent } from '../../../services/telegraphRealtimeService.ts';
 import { broadcastUnreadCounts } from '../../../hooks/useMessaging.ts';
-import { deriveReceiptState, fetchReceipts, markSeen, type MessageReceipt } from './lifecycleApi.ts'; import { publishReaderFaces } from './readerFaces.ts'; // T295: the chips' faces come with the receipt
+import { deriveReceiptState, fetchReceipts, markSeen, markDelivered, type MessageReceipt } from './lifecycleApi.ts'; import { publishReaderFaces } from './readerFaces.ts'; // T295: the chips' faces come with the receipt
 import {
   applyReadToReceipts,
   deliveryFromPayload,
@@ -71,6 +71,8 @@ export interface ReadStateMessage {
   id: string;
   senderId: string;
   createdAt: string;
+  sequence?: number | null;
+  deliveryAcknowledgementRequired?: boolean;
   deleted?: boolean;
   deliveryStatus?: 'sending' | 'sent' | 'failed' | null;
 }
@@ -112,12 +114,24 @@ export function useThreadReadState(args: {
   }, []);
   const looking = focused && foreground;
 
+  // Delivery is acknowledged after receipt of a concrete sequenced message.
+  // Visibility still controls SEEN separately. Older servers expose no sequence.
+  const deliveryThreshold = useMemo(() => seenThreshold(messages.filter(m => m.deliveryAcknowledgementRequired === true && Number.isSafeInteger(m.sequence))), [messages]);
+  useEffect(() => {
+    if (!threadId || !viewerId || !deliveryThreshold) return;
+    void markDelivered(threadId, deliveryThreshold);
+  }, [threadId, viewerId, deliveryThreshold]);
+
   // ── SEEN ──────────────────────────────────────────────────────────────────
   const threshold = useMemo(() => seenThreshold(messages), [messages]);
+  const identity = `${viewerId ?? ""}:${threadId ?? ""}`;
+  const currentIdentity = useRef(identity); currentIdentity.current = identity;
   const marked = useRef<{ threadId: string; id: string } | null>(null);
   const failed = useRef<{ threadId: string; id: string } | null>(null);
   const marking = useRef(false);
   const [markTick, setMarkTick] = useState(0);
+
+  useEffect(() => { marked.current = null; failed.current = null; }, [identity]);
 
   // Coming back into view is a fresh chance for a mark that failed.
   useEffect(() => { if (looking) failed.current = null; }, [looking]);
@@ -128,8 +142,10 @@ export function useThreadReadState(args: {
     if (same(marked.current) || same(failed.current)) return;
     marking.current = true;
     const target = { threadId, id: threshold };
+    const requestIdentity = currentIdentity.current;
     void markSeen(threadId, threshold).then((r) => {
       marking.current = false;
+      if (requestIdentity !== currentIdentity.current) { setMarkTick(n => n + 1); return; }
       if (r.ok) {
         marked.current = target;
         // The badge reads unread counts from the server; ask it again now that
@@ -141,7 +157,7 @@ export function useThreadReadState(args: {
       // A newer message may have been rendered while this was in flight.
       setMarkTick((n) => n + 1);
     });
-  }, [threadId, threshold, looking, markTick]);
+  }, [threadId, viewerId, threshold, looking, markTick]);
 
   // ── RECEIPTS ──────────────────────────────────────────────────────────────
   const ownIds = useMemo(() => {
@@ -171,7 +187,7 @@ export function useThreadReadState(args: {
     setReceipts(new Map());
     setDeliveries(new Map());
     setReceiptsState('idle');
-  }, [threadId]);
+  }, [threadId, viewerId]);
 
   const refreshReceipts = useCallback(() => {
     const { threadId: tid, ownIds: ids } = latest.current;

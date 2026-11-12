@@ -433,13 +433,13 @@ after(() => {
 beforeEach(() => invalidateFlagsCache());
 afterEach(() => _setTestOpenAI(null));
 
-async function post(path: string, body: Record<string, unknown>) {
+async function post<T = Record<string, unknown>>(path: string, body: Record<string, unknown>) {
   const r = await fetch(`http://127.0.0.1:${port}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" },
     body: JSON.stringify(body),
   });
-  return { status: r.status, body: (await r.json()) as Record<string, unknown> };
+  return { status: r.status, body: (await r.json()) as T };
 }
 
 /** OpenAI mock: classifier low-confidence; main LLM does one search_places tool round then answers from the candidates. */
@@ -692,6 +692,7 @@ describe("G2. /compass/ask SSE streaming with tool rounds", () => {
 
     // done event contract unchanged.
     assert.ok(done, "done event required");
+    assert.equal(done.message, "Try Lantaw Cafe in Busay.", "the terminal event alone renders the same final reply as history");
     assert.ok(typeof done.conversationId === "string");
     assert.ok(Array.isArray(done.pendingProposals), "pendingProposals present on done");
     assert.ok(Array.isArray(done.quickActions));
@@ -1105,5 +1106,185 @@ describe("D-65 — the confirm route's duplicate guard is not an oracle for anot
     const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
     assert.equal(r.status, 503, JSON.stringify(r.body));
     assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], []);
+  });
+});
+
+interface AuditedItineraryResponse {
+  message: string;
+  payload: { destination?: string; days: { highlights: string[] }[] } | null;
+  meta: { toolsUsed: string[] };
+}
+
+describe("Compass venue prices, hours and itineraries on the published path", () => {
+  const prompt = "Give the verified closing time and price at Lantern Vault in Da Nang";
+  const raw = JSON.stringify({
+    message: "Take time to explore. Lantern Vault closes at 9:37 pm and admission is $14.61.",
+    payload: { type: "itinerary", destination: "Da Nang", days: [{ label: "Day 1", highlights: ["A flexible afternoon", "Confirmed 9:37 pm closing and $14.61 admission."] }] },
+    quickActions: [],
+  });
+  for (const stream of [false, true]) it(`withholds unsupported venue terms in prose, itinerary, storage and wire (stream=${stream})`, async () => {
+    const db = makeDb();
+    _setTestClient(makeClient(db), true);
+    _setTestOpenAI({ chat: { completions: { async create(opts: any) {
+      if (opts.max_completion_tokens === 256) return { choices: [{ message: { content: '{"intent":"question","confidence":0.99}' } }] };
+      if (!opts.stream) return { choices: [{ message: { role: "assistant", content: raw } }] };
+      return { async *[Symbol.asyncIterator]() {
+        for (const s of raw.match(/.{1,15}/gs)!) yield { choices: [{ delta: { content: s } }] };
+      } };
+    } } } } as any);
+    const response = await fetch(`http://127.0.0.1:${port}/api/compass/ask`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" }, body: JSON.stringify({ prompt, stream }) });
+    const wire = await response.text();
+    assert.equal(response.status, 200);
+    assert.doesNotMatch(wire, /9:37|14\.61/);
+    const events = stream ? wire.trim().split("\n\n").map(line => JSON.parse(line.slice(6))) : [];
+    const answer = stream ? events.find(event => event.done) : JSON.parse(wire);
+    assert.ok(answer);
+    if (stream) {
+      const preview = JSON.parse(events.filter(event => typeof event.delta === "string").map(event => event.delta).join(""));
+      assert.equal(preview.message, answer.message);
+      assert.deepEqual(preview.payload, answer.payload);
+    }
+    assert.match(answer.message, /Take time to explore/);
+    assert.deepEqual(answer.meta.groundingViolations.sort(), ["unverified_admission_price","unverified_venue_hours"]);
+    assert.equal(answer.payload.days[0].highlights[0], "A flexible afternoon");
+    const assistantRows = db.compass_conversation_messages.filter(row => row.role === "assistant");
+    assert.ok(assistantRows.length > 0);
+    assert.doesNotMatch(JSON.stringify(assistantRows), /9:37|14\.61/);
+  });
+
+  it("uses only the named event’s listed free admission and preserves budgets, visit times and live open-now evidence", async () => {
+    const { groundVenueTerms } = await import("../compass/CompassVenueTerms.js");
+    const log = [{ name: "search_events", result: { candidates: [
+      { title: "<portava:ugc>River Fair</portava:ugc>", priceType: "free" },
+      { title: "<portava:ugc>Lantern Vault</portava:ugc>", priceType: null },
+    ] } }, { name: "get_place_details", result: { place: { name: "Lantern Vault", liveStatus: { available: true, openNow: true } } } }];
+    const message = "River Fair has free admission. Lantern Vault admission is free. Visit at 3 pm. Your budget is $20. Lantern Vault is open now.";
+    const answer = groundVenueTerms(message, null, log);
+    assert.match(answer.message, /River Fair is listed with free admission/);
+    assert.doesNotMatch(answer.message, /Lantern Vault admission is free/);
+    assert.match(answer.message, /Visit at 3 pm. Your budget is \$20. Lantern Vault is open now/);
+    assert.deepEqual(answer.violations, ["unverified_admission_price"]);
+    assert.match(groundVenueTerms("Lantern Vault closes at 9 pm.", null, log).message, /couldn’t verify/);
+    assert.match(groundVenueTerms("Lantern Vault is free, unlike River Fair.", null, log).message, /^River Fair is listed with free admission\.$/);
+  });
+
+  it("uses the named trip city ahead of device location, asks for a missing duration, and delegates unfamiliar constraints and languages", async () => {
+    const { requestedItineraryCity, itineraryOutline, itineraryPromptForTurn } = await import("../compass/CompassItineraryOutline.js");
+    const named = "Plan two days in Hội An. Keep day two indoors.";
+    const city = requestedItineraryCity(named, "Da Nang", "Da Nang");
+    assert.equal(city, "Hội An");
+    assert.equal(itineraryOutline(named, city)?.payload?.destination, "Hội An");
+    assert.match(itineraryOutline("Plan a trip to Kyoto.", "Kyoto")!.message, /How many days/);
+    const retry = itineraryPromptForTurn("Please try again.", [{ role: "user", content: "Help me plan a visit to Da Nang." }]);
+    assert.equal(requestedItineraryCity(retry, undefined, "Kyoto"), "Da Nang");
+    assert.match(itineraryOutline(retry, "Da Nang")!.message, /How many days/);
+    assert.equal(itineraryOutline("Plan a month in Kyoto.", "Kyoto"), null);
+    assert.equal(itineraryOutline("Plan two days in Kyoto with wheelchair access.", "Kyoto"), null);
+    assert.equal(itineraryOutline("Plan dos días en Da Nang.", "Da Nang"), null);
+    assert.equal(requestedItineraryCity("Plan two days.", "Da Nang", "Da Nang"), undefined);
+    assert.equal(requestedItineraryCity("Plan two days near me.", undefined, "Da Nang"), "Da Nang");
+  });
+
+  it("builds the requested indoor second day with a budget after a city-wide empty search", async () => {
+    _setTestClient(makeClient(makeDb()), true);
+    let mainCalls = 0;
+    _setTestOpenAI({ chat: { completions: { async create(opts: any) {
+      if (opts.max_completion_tokens === 256) return { choices: [{ message: { content: '{"intent":"itinerary","confidence":0.99}' } }] };
+      mainCalls++;
+      return { choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "test", type: "function", function: { name: "search_places", arguments: '{"city":"Da Nang","query":"indoor"}' } }] } }] };
+    } } } } as any);
+    const { status, body } = await post<AuditedItineraryResponse>("/api/compass/ask", { prompt: "Plan two days in Da Nang. Keep day two indoors. I have a $20 limit.", city: "Da Nang" });
+    assert.equal(status, 200);
+    assert.equal(mainCalls, 0);
+    assert.ok(body.payload);
+    assert.equal(body.payload.destination, "Da Nang");
+    assert.equal(body.payload.days.length, 2);
+    assert.match(body.payload.days[1].highlights.join(" "), /indoor/i);
+    assert.match(body.message, /\$20 budget/);
+    assert.match(body.message, /couldn’t verify specific venues/);
+    assert.deepEqual(body.meta.toolsUsed, ["search_places"]);
+  });
+  for (const scenario of [
+    { prompt: "Plan two days in Hội An. Keep day two indoors.", destination: "Hội An", delegated: false },
+    { prompt: "Plan a trip to Kyoto.", question: /How many days.*Kyoto/, delegated: false },
+    { prompt: "Prepare um roteiro de vários dias em Lisboa para uma cadeira de rodas.", question: /quantos dias/i, delegated: true },
+  ]) it(`keeps the traveler's requested destination, duration and language for “${scenario.prompt}”`, async () => {
+    _setTestClient(makeClient(makeDb()), true);
+    let mainCalls = 0;
+    _setTestOpenAI({ chat: { completions: { async create(opts: any) {
+      if (opts.max_completion_tokens === 256) return { choices: [{ message: { content: '{"intent":"itinerary","confidence":0.99}' } }] };
+      mainCalls++;
+      if (opts.tools) return { choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "wrong-city", type: "function", function: { name: "search_places", arguments: '{"city":"Da Nang"}' } }] } }] };
+      assert.match(opts.messages.at(-1).content, /traveler’s language/);
+      return { choices: [{ message: { role: "assistant", content: JSON.stringify({ message: "Quantos dias pretende passar em Lisboa? Vou considerar a acessibilidade.", payload: null, quickActions: [] }) } }] };
+    } } } } as any);
+    const { body } = await post<AuditedItineraryResponse>("/api/compass/ask", { prompt: scenario.prompt, city: "Da Nang" });
+    assert.equal(mainCalls, scenario.delegated ? 2 : 0);
+    if (scenario.destination) { assert.ok(body.payload); assert.equal(body.payload.destination, scenario.destination); }
+    if (scenario.question) { assert.equal(body.payload, null); assert.match(body.message, scenario.question); }
+  });
+
+});
+
+describe("Compass trip authorization and request latency", () => {
+  const prompt = "Add an indoor visit to trip " + TRIP_ID + ". Do not say it was saved until I confirm.";
+  for (const [outage, stream] of [[false, false], [true, true]] as const) {
+    it(`returns a permission result with zero provider calls (outage=${outage}, stream=${stream})`, async () => {
+      const { makeFakeClient } = await import("./telegraphCertificationHarness.js");
+      const client = makeFakeClient(makeDb(), outage ? { errors: { trip_members: { message: "test read unavailable" } } } : {});
+      _setTestClient(client, true);
+      let providerCalls = 0;
+      _setTestOpenAI({ chat: { completions: { create: async () => { providerCalls++; throw Error("unexpected provider call"); } } } } as any);
+      const res = await fetch(`http://127.0.0.1:${port}/api/compass/ask`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${ALICE_ID}` }, body: JSON.stringify({ prompt, stream }) });
+      const wire = await res.text();
+      const answer = JSON.parse(stream ? wire.trim().slice(6) : wire);
+      assert.equal(res.status, 200);
+      assert.equal(providerCalls, 0);
+      assert.equal(answer.meta.actionOutcome, outage ? "trip_access_unavailable" : "trip_edit_access_required");
+      assert.deepEqual(answer.pendingProposals, []);
+      assert.equal(Boolean(answer.fallback), outage);
+      assert.equal(client._observed.inserts.some(row => row.table === "trip_plan_items"), false);
+      assert.ok(client._store.compass_conversation_messages.some(row => row.role === "assistant" && row.content === answer.message));
+    });
+  }
+  it("an explicit action on an editable trip still reaches the provider and proposes before any write", async () => {
+    const db = makeDb({
+      trips: [{ id: TRIP_ID, owner_id: ALICE_ID, name: "Test trip" }],
+      trip_members: [{ trip_id: TRIP_ID, user_id: ALICE_ID, role: "owner", status: "accepted" }],
+      discovery_places: [{ id: PLACE_ID, name: "Lantaw Cafe", city: "Cebu", category: "cafe" }],
+    });
+    _setTestClient(makeClient(db), true);
+    let main = 0;
+    _setTestOpenAI({ chat: { completions: { async create(opts: any) {
+      if (opts.max_completion_tokens === 256) return { choices: [{ message: { content: '{"intent":"action","confidence":0.99}' } }] };
+      if (!main++) return { choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "add", type: "function", function: { name: "add_to_trip", arguments: JSON.stringify({ tripId: TRIP_ID, placeId: PLACE_ID, title: "Lantaw Cafe" }) } }] } }] };
+      return { choices: [{ message: { role: "assistant", content: JSON.stringify({ message: "Please confirm the proposal." }) } }] };
+    } } } } as any);
+    const { body } = await post<{ pendingProposals: unknown[] }>("/api/compass/ask", { prompt });
+    assert.equal(main, 2);
+    assert.equal(body.pendingProposals.length, 1);
+    assert.equal(db.trip_plan_items.length, 0);
+  });
+  it("loads local context while provider classification is still in flight", async () => {
+    const { makeFakeClient } = await import("./telegraphCertificationHarness.js");
+    let release: (() => void) | undefined;
+    let overlap = false;
+    const client = makeFakeClient(makeDb(), { onRead(table) {
+      if (table === "user_hashtag_follows" && release) { overlap = true; release(); }
+    } });
+    _setTestClient(client, true);
+    _setTestOpenAI({ chat: { completions: { async create(opts: any) {
+      if (opts.max_completion_tokens === 256) {
+        await new Promise<void>(resolve => {
+          const timer = setTimeout(() => { release = undefined; resolve(); }, 1200);
+          release = () => { clearTimeout(timer); release = undefined; resolve(); };
+        });
+        return { choices: [{ message: { content: '{"intent":"question","confidence":0.9}' } }] };
+      }
+      return { choices: [{ message: { content: '{"message":"Use one neighborhood as a starting point."}' } }] };
+    } } } } as any);
+    const { status } = await post("/api/compass/ask", { prompt: "How can I plan a walk?" });
+    assert.equal(status, 200);
+    assert.equal(overlap, true);
   });
 });

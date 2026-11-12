@@ -114,7 +114,7 @@ function install(client: any): void {
 
 interface Reply { status: number; body: any }
 
-function request(base: string, method: string, path: string, body?: unknown): Promise<Reply> {
+function request(base: string, method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Reply> {
   return new Promise((resolve, reject) => {
     const url = new URL(path, base);
     const payload = body === undefined ? null : JSON.stringify(body);
@@ -127,6 +127,7 @@ function request(base: string, method: string, path: string, body?: unknown): Pr
         headers: {
           "content-type": "application/json",
           authorization: `Bearer ${TOKEN}`,
+          ...headers,
           ...(payload ? { "content-length": Buffer.byteLength(payload) } : {}),
         },
       },
@@ -347,27 +348,43 @@ describe("B: circle admin routes go through the shared guard", () => {
 // ── C: placesCanonical.ts — POST /api/admin/places/:id/unmerge ────────────────
 
 describe("C: placesCanonical admin routes go through the shared guard", () => {
+  const operationId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const auditId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+  const command = { action: "unmerge", reason: "Restore this incorrectly merged place", contextToken: "a".repeat(64) };
+  const unmerge = () => request(placesBase, "POST", `/api/admin/places/${PLACE_ID}/unmerge`, command, { "Idempotency-Key": operationId });
   const mergedPlace = { id: PLACE_ID, merged_into_place_id: SURVIVOR };
 
   it("C1 refuses role 'user' with the shared 403 (valid id — not an input-validation 400)", async () => {
     install(clientFor({ role: "user", rows: { places: [mergedPlace] } }));
     assertSharedForbidden(
-      await request(placesBase, "POST", `/api/admin/places/${PLACE_ID}/unmerge`, {}),
+      await unmerge(),
       "C1",
     );
   });
 
   it("C2 admits role 'admin' and performs the unmerge", async () => {
-    install(clientFor({ role: "admin", rows: { places: [mergedPlace] } }));
-    const r = await request(placesBase, "POST", `/api/admin/places/${PLACE_ID}/unmerge`, {});
+    const client = clientFor({ role: "admin", rows: { places: [mergedPlace] } });
+    const receipt = { ok: true, contractVersion: 1, action: "unmerge", placeId: PLACE_ID, intoId: null,
+      reportId: null, operationId, auditId, replayed: false, committedAt: "2026-11-09T12:00:00Z" };
+    const writes: unknown[] = [];
+    client.rpc = (name: string, args: Record<string, unknown>) => {
+      writes.push([name, args]);
+      return { abortSignal: () => Promise.resolve({ data: receipt, error: null }) };
+    };
+    install(client);
+    const r = await unmerge();
     assert.equal(r.status, 200, `C2: ${JSON.stringify(r.body)}`);
-    assert.deepEqual(r.body, { ok: true, restoredId: PLACE_ID });
+    assert.deepEqual(r.body, receipt);
+    assert.deepEqual(writes, [["apply_place_governance_action", {
+      p_admin_id: CALLER, p_id: PLACE_ID, p_action: "unmerge", p_report_id: null,
+      p_into_id: null, p_operation_id: operationId, p_reason: command.reason, p_expected_context_token: command.contextToken,
+    }]]);
   });
 
   it("C3 fails CLOSED when the role read resolves as an error", async () => {
     install(clientFor({ role: "admin", rows: { places: [mergedPlace] }, failOn: failRoleRead() }));
     assertSharedUnavailable(
-      await request(placesBase, "POST", `/api/admin/places/${PLACE_ID}/unmerge`, {}),
+      await unmerge(),
       "C3",
     );
   });

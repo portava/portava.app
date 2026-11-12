@@ -7,6 +7,7 @@
  * DELETE /api/admin/tags/:id          — admin: remove a tag row
  */
 import { Router } from 'express';
+import { governDiscoveryPlaces } from '../lib/discoveryPlaceGovernance.js';
 import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http.js';
 import { getServiceClient } from '../lib/supabase.js';
@@ -393,9 +394,11 @@ router.get('/tags/suggestions', async (req, res) => {
         .from('discovery_places')
         .select('id, name, city, place_type')
         .ilike('name', `%${qLike}%`)
-        .eq('status', 'approved')
+        .eq('status', 'active')
         .limit(10);
-      for (const p of (placeRows ?? []) as any[]) {
+      const governedPlaces = await governDiscoveryPlaces(sc, placeRows ?? [], (place: any) => place.id);
+      if (!governedPlaces.readable) throw new Error('Place visibility could not be checked');
+      for (const p of governedPlaces.rows as any[]) {
         entitySuggestions.push({
           id: p.id, type: 'place',
           name: p.name, city: p.city ?? null, placeType: p.place_type ?? null,

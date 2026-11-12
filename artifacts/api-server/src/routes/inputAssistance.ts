@@ -416,7 +416,7 @@ router.post(
 
     // recordSelection enforces the explicit-only + owner-scoped gate: it records
     // only for personalization-enabled contexts and only entity types the policy
-    // allows, and is fail-soft (a write failure never surfaces to the client).
+    // allows. A policy refusal is a successful no-op. A failed writer is retryable.
     const result = await recordSelection(
       sc,
       policy,
@@ -431,6 +431,10 @@ router.post(
       logger,
     );
 
+    if (result.reason === 'db_error') {
+      sendError(res, 'degraded_unavailable', 'Your selection could not be recorded.');
+      return;
+    }
     res.status(200).json({ ok: true, recorded: result.recorded, policyVersion: POLICY_VERSION });
   }),
 );

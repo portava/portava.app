@@ -76,6 +76,7 @@
  * of whatever nested object the fixture was written with. Without the option,
  * embeds behave as before: the seeded row is returned whole.
  */
+import { readFileSync } from "node:fs";
 import { liveColumns } from "./liveColumns.ts";
 import { assertSelectEmbedsBacked, resolveSelectEmbeds, type ResolvedEmbed } from "./migrationForeignKeys.js";
 import { projectionKeys, projectRow } from "./selectProjection.js";
@@ -103,6 +104,8 @@ export interface SchemaStrictOptions {
    * SUPABASE_CONFORMANCE=1.
    */
   syntheticColumns?: Record<string, string[]>;
+  /** Exercise an existing migration fallback against a captured production table. */
+  historicalTable?: { table: string; snapshot: "20260922-production-schema.json" };
   /**
    * Materialise embeds from the seed along the relationship the guard resolves
    * (see the header). A select whose embed this cannot materialise (a spread,
@@ -258,6 +261,14 @@ export function makeSchemaStrictClient(
 ): SchemaStrictClient {
   const unchecked = new Set(opts.unchecked ?? []);
   const synthetic = opts.syntheticColumns;
+  const historical = opts.historicalTable;
+  let historicalColumns: Set<string> | undefined;
+  if (historical) {
+    const source = new URL(`../../lib/capability/snapshots/${historical.snapshot}`, import.meta.url);
+    const columns = JSON.parse(readFileSync(source, "utf8")).tables[historical.table];
+    if (!Array.isArray(columns)) throw new Error(`Missing ${historical.table} in ${historical.snapshot}`);
+    historicalColumns = new Set(columns as string[]);
+  }
   if (synthetic && process.env.SUPABASE_CONFORMANCE !== "1") {
     throw new Error(
       "makeSchemaStrictClient: `syntheticColumns` replaces the LIVE schema snapshot, which is the only " +
@@ -271,7 +282,9 @@ export function makeSchemaStrictClient(
   function checkColumns(table: string, columns: string[], where: string): boolean {
     if (unchecked.has(table)) return true;
     // `liveColumns` throws loudly if the table itself is unknown.
-    const live = synthetic?.[table] ? new Set(synthetic[table]) : liveColumns(table);
+    const live = historical?.table === table && historicalColumns
+      ? historicalColumns
+      : synthetic?.[table] ? new Set(synthetic[table]) : liveColumns(table);
     let ok = true;
     for (const col of columns) {
       if (!live.has(col)) {

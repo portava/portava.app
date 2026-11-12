@@ -23,10 +23,11 @@ export interface ComposerPlusMenuProps {
   onUnavailable?: (entry: ComposerEntry) => void;
   /** §15.2: the conversation's safety mode is raised — entertainment entries are put away (composerEntriesFor). */
   deprioritizeEntertainment?: boolean;
+  gifsAvailable?: boolean;
   portavaTrips?: { available: boolean; onSelect: () => void };
 }
 
-export function ComposerPlusMenu({ visible, onClose, onSelect, onUnavailable, deprioritizeEntertainment = false, portavaTrips }: ComposerPlusMenuProps) {
+export function ComposerPlusMenu({ visible, onClose, onSelect, onUnavailable, deprioritizeEntertainment = false, portavaTrips, gifsAvailable=false }: ComposerPlusMenuProps) {
   const palette = useTelegraphPalette();
   const styles = useMemo(() => makeStyles(palette), [palette]);
 
@@ -36,7 +37,7 @@ export function ComposerPlusMenu({ visible, onClose, onSelect, onUnavailable, de
         <View style={styles.sheet} testID="telegraph-composer-plus-menu">
           <Text style={styles.heading}>Add to this message</Text>
           <View style={styles.grid}>
-            {composerEntriesFor({ deprioritizeEntertainment, portavaTripsAvailable: portavaTrips?.available === true && typeof portavaTrips.onSelect === 'function' }).map((entry) => (
+            {composerEntriesFor({ deprioritizeEntertainment, gifsAvailable, portavaTripsAvailable: portavaTrips?.available === true && typeof portavaTrips.onSelect === 'function' }).map((entry) => (
               <Pressable
                 key={entry.id}
                 testID={`telegraph-composer-entry-${entry.id}`}

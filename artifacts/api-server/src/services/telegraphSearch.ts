@@ -46,6 +46,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"; import { withheldLocationIds } from "./telegraph/locationAcrossBlocks.js"; import { applySharedCardTruth } from "./telegraph/sharedCardTruth.js"; // PR-TREL-5; census-telegraph T448/T359 (lane w-tg-cardtruth)
 
 import { logger as rootLogger } from "../lib/logger.js";
+import { negotiateStoredMessageRows } from './telegraph/platformReadDecorations.js';
 import { applyHistoryWindow, historyBoundEnabled, membershipSelect, visibleFromOf, withinWindow } from "./groupChatHistoryBound.js";
 // §21's unsent exclusion, which needs migration 2810's column and must not name
 // it on a database that has not run it.
@@ -75,9 +76,11 @@ const PER_QUERY_LIMIT = 60;
 const SNIPPET_MAX = 160;
 
 const SELECT_COLUMNS =
-  "id, thread_id, sender_id, body, created_at, deleted_at, msg_type, subtype, media_url";
+  "id, thread_id, sender_id, body, content_ref, created_at, deleted_at, msg_type, subtype, media_url";
 
 export interface SearchOptions {
+  /** The requesting surface's structured-message capability declaration. */
+  clientHeaders?: Record<string, unknown>;
   /** Restrict to one conversation. Must still be one the caller is a member of. */
   conversationId?: string | null;
   /** Cap on returned hits across all buckets. */
@@ -241,7 +244,7 @@ export async function searchConversations(
   const needle = term.toLowerCase(); const cards = await applySharedCardTruth(sc, viewerId, rows); rows.splice(0, rows.length, ...cards.rows.filter((r) => { const t = cards.truth.get(String(r.id)); return !t || t.state === "live"; })); // census-telegraph T448/T359: one batch for every slice — a shared card is matched on its source as it is NOW for this viewer (its projection + the sender's caption); a card that is not live is not a hit, and a snapshot is never the haystack
 
   const hits: TelegraphSearchHit[] = [];
-  for (const row of rows) {
+  for (const row of await negotiateStoredMessageRows(sc, rows, opts.clientHeaders)) {
     const subtype = (row.subtype ?? null) as string | null;
     const { text, objectTitle } = indexableText(row.body, subtype);
     // A card whose SAFE fields do not contain the term is not a hit even though
@@ -299,10 +302,12 @@ export async function askConversation(
   viewerId: string,
   conversationId: string,
   rawQuery: string,
+  clientHeaders?: Record<string, unknown>,
 ): Promise<{ structured: TelegraphSearchHit[]; prose: TelegraphSearchHit[]; result: TelegraphSearchResult }> {
   const result = await searchConversations(sc, viewerId, rawQuery, {
     conversationId,
     preferStructured: true,
+    clientHeaders,
     limit: 40,
   });
   const structured = result.hits.filter((h) => h.subtype !== null && STRUCTURED_SUBTYPES.has(h.subtype));

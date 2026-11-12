@@ -36,7 +36,7 @@
  *   P3  POST /trips/:tripId/memory: the crew tagged and TRIP typed by the kernel's transaction
  *   P4  PATCH /memories/:id memoryType: the type written by UPDATE_MEMORY itself; other events keep 2711's refs shape
  *   P5  POST /me/memory-drafts, kernel ON: CREATE_MEMORY, no direct insert
- *   P6  POST /me/memory-drafts, kernel OFF: the legacy insert, and no event claimed
+ *   P6  POST /me/memory-drafts, kernel OFF: refusal, no draft, source, or save
  *   P7  POST /memories/:id/items/from-post: the source link in the kernel's own INSERT
  *   P8  a source post that is not the owner's: 3999's guard refuses inside the kernel and NOTHING is written
  *   P9  a malformed participant list is refused by name before any write
@@ -71,7 +71,6 @@ import memoryGraphRouter from "../../routes/memoryGraph.js";
 import { MEMORY_EVENT_TABLE as EVENTS, MEMORY_OUTBOX_TABLE as OUTBOX } from "../../lib/memoryOutbox.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const MIGRATION_3911 = resolve(HERE, "../../migrations/3911_memory_kernel_create_participants_and_canonical_fields.sql");
 const ROLLBACK_3911 = resolve(HERE, "../../../../../db/rollback/2026-10-23-3911-memory-kernel-create-participants-rollback.sql");
 
 /** Production's values for every flag these routes read (feature_flags, 2026-10-23). */
@@ -141,6 +140,23 @@ function applyFile(path: string): void {
 /** memory_kernel_execute as production and portava-ci run it today (2711), read-only 2026-10-23. */
 const PRODUCTION_2711_MD5 = "542cc3a256e7452a5629cc5d87e7a45f";
 const kernelDefMd5 = (): string | null => scalar(`SELECT md5(pg_get_functiondef('public.memory_kernel_execute(jsonb)'::regprocedure))`);
+
+// The installed definition includes later reviewed migrations. Put the exact
+// function and comment back after exercising the pre-3911 compatibility path.
+function captureKernel() {
+  const result = psql(`SELECT pg_get_functiondef('public.memory_kernel_execute(jsonb)'::regprocedure) || ';' ||
+    format('COMMENT ON FUNCTION public.memory_kernel_execute(jsonb) IS %L;', obj_description('public.memory_kernel_execute(jsonb)'::regprocedure, 'pg_proc'));`);
+  assert.equal(result.status, 0, result.stderr);
+  const definition = kernelDefMd5();
+  const comment = () => scalar(`SELECT md5(obj_description('public.memory_kernel_execute(jsonb)'::regprocedure, 'pg_proc'))`);
+  const commentBefore = comment();
+  return () => {
+    const restored = psql(result.stdout);
+    assert.equal(restored.status, 0, restored.stderr);
+    assert.equal(kernelDefMd5(), definition, "restore the installed Memory kernel exactly");
+    assert.equal(comment(), commentBefore, "restore the installed kernel comment");
+  };
+}
 
 describe("§17: a Memory's participants, type, occurrence text and source post are written by the kernel's own transaction (3911)", { skip: !HAVE_DB }, () => {
   before(async () => {
@@ -305,21 +321,21 @@ describe("§17: a Memory's participants, type, occurrence text and source post a
     assert.equal(xminOf("memories", `id = '${id}'`), xminOf(EVENTS, `memory_id = '${id}'`));
     assert.equal(scalar(`SELECT count(*) FROM public.memory_command_receipts WHERE memory_id = '${id}' AND command_type = 'CREATE_MEMORY'`), "1");
     assert.equal(scalar(`SELECT count(*) FROM public.${OUTBOX} o JOIN public.${EVENTS} e ON e.event_id = o.event_id WHERE e.memory_id = '${id}'`), "1");
-    assertOnlyTheKernelWroteTheMemory("P5");
+    assertOnlyTheKernelWroteTheMemory("P5", /^SELECT json_build_array\(public\.telegraph_memory_draft_execute\(/);
+    assert.equal(xminOf("telegraph_memory_sources", `memory_id = '${id}' AND message_id = '${msg}'`), xminOf("memories", `id = '${id}'`), "the verified source and draft commit in the same transaction");
     assert.equal(scalar(`SELECT count(*) FROM public.saved_messages WHERE user_id = '${owner}' AND message_id = '${msg}'`), "1", "the save is still recorded");
   });
 
-  test("P6 POST /me/memory-drafts with the kernel OFF: the legacy insert runs, and no event is claimed for it", async () => {
+  test("P6 a message-sourced draft refuses when its atomic kernel is offline, leaving no source, save or draft", async () => {
     flags = { ...PROD_FLAGS, memory_kernel_enabled: false }; install();
-    const msg = seedMessage(`${TAG} legacy draft`);
+    const msg = seedMessage(`${TAG} unavailable draft`);
     const res = await call("POST", "/api/me/memory-drafts", { messageId: msg });
-    assert.equal(res.status, 201, JSON.stringify(res.body));
-    const id = String(res.body.draft.id);
-    assert.equal(scalar(`SELECT state || '/' || visibility FROM public.memories WHERE id = '${id}'`), "draft/only_me");
-    assert.equal(scalar(`SELECT count(*) FROM public.${EVENTS} WHERE memory_id = '${id}'`), "0");
-    const w = writes();
-    assert.equal(w.filter((s) => KERNEL_RPC.test(s)).length, 0, "no kernel call with the kernel off");
-    assert.equal(w.filter((s) => /^WITH w AS \(INSERT INTO public\.memories /.test(s)).length, 1, "the original direct insert, once");
+    assert.equal(res.status, 503, JSON.stringify(res.body));
+    assert.equal(res.body.error, "degraded_unavailable");
+    assert.equal(res.body.retryable, true);
+    assert.deepEqual(writes().filter(s => CANONICAL_WRITE.test(s) || /public\.(memory_kernel_execute|telegraph_memory_draft_execute)\(/.test(s)), []);
+    assert.equal(scalar(`SELECT count(*) FROM public.telegraph_memory_sources WHERE message_id = '${msg}'`), "0");
+    assert.equal(scalar(`SELECT count(*) FROM public.saved_messages WHERE user_id = '${owner}' AND message_id = '${msg}'`), "0");
   });
 
   test("P12 a refusal on the kernel path keeps its own answer: an over-long Idempotency-Key is 400 and writes nothing", async () => {
@@ -407,6 +423,7 @@ describe("§17: a Memory's participants, type, occurrence text and source post a
 
   test("P11 against 2711 (the definition before 3911) the routes still tag and type through their compat arms; 3911 is then restored byte for byte", async () => {
     const with3911 = kernelDefMd5();
+    const restoreKernel = captureKernel();
     applyFile(ROLLBACK_3911);
     try {
       assert.notEqual(kernelDefMd5(), with3911, "2711 is installed");
@@ -422,16 +439,22 @@ describe("§17: a Memory's participants, type, occurrence text and source post a
       assert.equal(w.filter((s) => /^WITH w AS \(INSERT INTO public\.memory_tags /.test(s)).length, 1, "the route's own tag insert ran (2711 tagged nobody)");
       assert.equal(w.filter((s) => /^WITH w AS \(UPDATE public\.memories SET memory_type = /.test(s)).length, 1, "the reconcile wrote the type (2711's INSERT took the DEFAULT)");
     } finally {
-      applyFile(MIGRATION_3911);
+      restoreKernel();
     }
-    assert.equal(kernelDefMd5(), with3911, "3911 restored exactly");
+    assert.equal(kernelDefMd5(), with3911, "the chain end is restored");
   });
   // ── Q: every other §17 Memory command, through its own route, on 3911 ──────
   // Run TWICE: on production's kernel today (2711, installed from the rollback file) and on 3911.
   for (const kernel of ["2711", "3911"] as const) describe(`Q (${kernel}) — CONFIRM, CHANGE_VISIBILITY, CHANGE_PLACE, ADD_MEDIA, REMOVE_MEDIA, ADD_PERSON, REMOVE_PERSON, ARCHIVE, MERGE and SPLIT each cross a kernel with their event`, () => {
-    let with3911: string | null = null;
-    before(() => { with3911 = kernelDefMd5(); if (kernel === "2711") { applyFile(ROLLBACK_3911); assert.equal(kernelDefMd5(), PRODUCTION_2711_MD5, "production's definition is installed"); } });
-    after(() => { if (kernel === "2711") { applyFile(MIGRATION_3911); assert.equal(kernelDefMd5(), with3911, "3911 restored exactly"); } });
+    let restoreKernel: (() => void) | undefined;
+    before(() => {
+      if (kernel === "2711") {
+        restoreKernel = captureKernel();
+        applyFile(ROLLBACK_3911);
+        assert.equal(kernelDefMd5(), PRODUCTION_2711_MD5, "the historical 2711 definition is installed");
+      }
+    });
+    after(() => { restoreKernel?.(); });
     let m = "";
     let item = "";
     const evAt = (memoryId: string, seq: number) => rows<{ type: string; command_type: string; xmin: string }>(
@@ -586,19 +609,15 @@ describe("§17: a Memory's participants, type, occurrence text and source post a
   // The independent verifier's three survivors (#784): mutants the route-level cases
   // above could not see, because the routes never send these commands this way.
   for (const kernel of ["2711", "tree"] as const) describe(`K (${kernel}) — the kernel, called directly`, () => {
-    // Saved and put back EXACTLY (raw psql output), so this group leaves whatever kernel it found.
-    const rawDef = (): string => { const r = psql(`SELECT pg_get_functiondef('public.memory_kernel_execute(jsonb)'::regprocedure);`); assert.equal(r.status, 0, r.stderr); return r.stdout.replace(/\n$/, ""); };
-    const commentMd5 = () => scalar(`SELECT md5(obj_description('public.memory_kernel_execute(jsonb)'::regprocedure, 'pg_proc'))`);
-    let saved = ""; let savedMd5: string | null = null; let savedComment = ""; let savedCommentMd5: string | null = null;
-    before(() => { savedMd5 = kernelDefMd5(); saved = rawDef(); savedCommentMd5 = commentMd5(); const c = psql(`SELECT obj_description('public.memory_kernel_execute(jsonb)'::regprocedure, 'pg_proc');`); savedComment = c.stdout.replace(/\n$/, ""); if (kernel === "2711") { applyFile(ROLLBACK_3911); assert.equal(kernelDefMd5(), PRODUCTION_2711_MD5, "production's definition is installed"); } });
-    after(() => {
+    let restoreKernel: (() => void) | undefined;
+    before(() => {
       if (kernel === "2711") {
-        const r = psql(`${saved};\nCOMMENT ON FUNCTION public.memory_kernel_execute(jsonb) IS $kc$${savedComment}$kc$;\nREVOKE ALL ON FUNCTION public.memory_kernel_execute(jsonb) FROM PUBLIC, anon, authenticated;\nGRANT EXECUTE ON FUNCTION public.memory_kernel_execute(jsonb) TO service_role;`);
-        assert.equal(r.status, 0, r.stderr);
-        assert.equal(kernelDefMd5(), savedMd5, "the tree's kernel restored exactly");
-        assert.equal(commentMd5(), savedCommentMd5, "and its comment");
+        restoreKernel = captureKernel();
+        applyFile(ROLLBACK_3911);
+        assert.equal(kernelDefMd5(), PRODUCTION_2711_MD5, "the historical 2711 definition is installed");
       }
     });
+    after(() => { restoreKernel?.(); });
     const direct = (type: string, memoryId: string | null, actor: string, payload: Record<string, unknown>) => dispatchMemoryCommand<any>({
       sc: memoryBridge({ flags: PROD_FLAGS }), commandType: type as any, memoryId, actorUserId: actor, idempotencyKey: randomUUID(), payload,
       legacy: async () => { throw new Error("legacy must not run"); },

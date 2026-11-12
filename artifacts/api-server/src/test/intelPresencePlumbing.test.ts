@@ -32,6 +32,7 @@
  * Run:
  *   node --import tsx/esm --test src/test/intelPresencePlumbing.test.ts
  */
+import { canonicalPlaceFixture } from './helpers/canonicalPlaceFixture.js';
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -78,6 +79,10 @@ function makeDb(flags: Record<string, boolean>, seed: Record<string, Row[]> = {}
   let seq = 0;
 
   function from(table: string) {
+    if (table === "places") {
+      reads[table] = (reads[table] ?? 0) + 1;
+      return canonicalPlaceFixture(tables.places);
+    }
     let op: "select" | "insert" | "update" = "select";
     let payload: any = null;
     let wantRows = false;

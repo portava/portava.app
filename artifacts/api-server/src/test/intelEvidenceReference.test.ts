@@ -30,6 +30,7 @@
  *
  * Run: node --import tsx/esm --test src/test/intelEvidenceReference.test.ts
  */
+import { canonicalPlaceFixture } from './helpers/canonicalPlaceFixture.js';
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -200,6 +201,7 @@ function captureDb(accounts: string[], consentVersion: string = PHOTO_TEST_VERSI
   };
   let seq = 0;
   function from(table: string) {
+    if (table === "places") return canonicalPlaceFixture(tables.places);
     let op: "select" | "insert" | "insert_select" = "select";
     let payload: any = null;
     const filters: Array<[string, any, string]> = [];

@@ -84,17 +84,26 @@ function makeFakeClient(state: FakeState, tableErrors: Set<string> = new Set()) 
     from: (table: string) => {
       if (tableErrors.has(table)) return errorBuilder;
 
-      const sourceRows: any[] = [...(state[table] ?? [])];
+      let sourceRows: any[] = [...(state[table] ?? [])];
+      let exactCount = false;
+      let joinedTableFailed = false;
       const filters: Array<(r: any) => boolean> = [];
       let _rangeStart = 0;
       let _rangeEnd = Infinity;
       let _limitN = Infinity;
 
       const builder: any = {
-        select() { return builder; },
+        select(columns?: string, options?: { count: string }) {
+          exactCount = options?.count === 'exact';
+          if (table === 'trip_members' && columns?.includes('trips!inner(')) {
+            joinedTableFailed = tableErrors.has('trips');
+            sourceRows = sourceRows.flatMap(row => (state.trips ?? []).filter(t => t.id === row.trip_id).map(trips => ({ ...row, trips })));
+          }
+          return builder;
+        },
         eq(col: string, val: any) { filters.push((r) => r[col] === val); return builder; },
         neq(col: string, val: any) { filters.push((r) => r[col] !== val); return builder; },
-        in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return builder; },
+        in(col: string, vals: any[]) { filters.push((r) => vals.includes(col === 'trips.status' ? r.trips?.status : r[col])); return builder; },
         not(col: string, op: string, val: any) {
           if (op === "is") { filters.push((r) => r[col] !== val && r[col] != null); return builder; }
           if (op === "in") {
@@ -115,6 +124,7 @@ function makeFakeClient(state: FakeState, tableErrors: Set<string> = new Set()) 
           return builder;
         },
         or(expr: string) {
+          if (expr === 'status.is.null,status.eq.accepted') { filters.push(row => row.status == null || row.status === 'accepted'); return builder; }
           const parts = expr.split(",").map((p) => {
             const m = p.trim().match(/^(\w+)\.([\w]+)\.(.+)$/);
             if (!m) return null;
@@ -143,10 +153,10 @@ function makeFakeClient(state: FakeState, tableErrors: Set<string> = new Set()) 
           return Promise.resolve({ data: matched[0] ?? null, error: null });
         },
         then(onF: any, onR: any) {
-          const matched = sourceRows
-            .filter((r) => filters.every((f) => f(r)))
-            .slice(_rangeStart, _rangeEnd < Infinity ? _rangeEnd + 1 : _limitN < Infinity ? _limitN : undefined);
-          return Promise.resolve({ data: matched, error: null }).then(onF, onR);
+          if (joinedTableFailed) return Promise.resolve({ data: null, error: { message: 'trips read failed' } }).then(onF, onR);
+          const filtered = sourceRows.filter((r) => filters.every((f) => f(r)));
+          const matched = filtered.slice(_rangeStart, _rangeEnd < Infinity ? _rangeEnd + 1 : _limitN < Infinity ? _limitN : undefined);
+          return Promise.resolve({ data: matched, count: exactCount ? filtered.length : null, error: null }).then(onF, onR);
         },
       };
       return builder;
@@ -265,14 +275,14 @@ describe("findDuplicateGems (§20/§55)", () => {
 describe("findDuplicatePlaces (§23 canonical-Place-first)", () => {
   it("surfaces an existing place at the same coordinates (reuses isSamePlace)", async () => {
     const sc = makeFakeClient(baseTables({
-      places: [{ id: "p1", name: "Sky Bar", city: "Da Nang", country: "Vietnam",
+      places: [{ id: "aaaa0000-0000-4000-8000-0000000000a1", moderation_status: "visible", merged_into_place_id: null, name: "Sky Bar", city: "Da Nang", country: "Vietnam",
         primary_category: "bar", latitude: 16.0678, longitude: 108.221 }],
     }));
     const matches = await findDuplicatePlaces(sc as any, {
       name: "Sky Bar", city: "Da Nang", category: "bar", lat: 16.06781, lng: 108.22101,
     });
     assert.equal(matches.length, 1);
-    assert.equal(matches[0]!.entity.id, "p1");
+    assert.equal(matches[0]!.entity.id, "aaaa0000-0000-4000-8000-0000000000a1");
   });
 });
 

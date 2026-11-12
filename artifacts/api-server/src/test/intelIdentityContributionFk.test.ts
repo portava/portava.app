@@ -44,6 +44,7 @@
  *            never falls back to matching on `idempotency_key` alone, which a
  *            derived key makes shared between contributors.
  */
+import { canonicalPlaceFixture } from './helpers/canonicalPlaceFixture.js';
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -332,6 +333,7 @@ function makePost3002Db(opts: { rpc?: boolean } = {}) {
   let seq = 0;
 
   function from(table: string) {
+    if (table === "places") return canonicalPlaceFixture(tables.places);
     let op: "select" | "insert" | "insert_select" = "select";
     let payload: any = null;
     const filters: Array<{ col: string; val: any }> = [];
