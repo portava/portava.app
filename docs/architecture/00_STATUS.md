@@ -91,7 +91,7 @@ merged **after** `cf43e560f` on the same day, so D3's pass could not have seen t
 
 1. **`/discovery/feed` has callers** (#382). Serve point 7 was implemented, instrumented and
    **called by nothing in the repository**, so it could never contribute a row. It now has two
-   callers (`components/discovery/DiscoveryEventPostsRail.tsx`, `ForYouTab.tsx:434`). `01`'s
+   callers (`components/discovery/DiscoveryEventPostsRail.tsx`, `ForYouTab.tsx:514#<DiscoveryEventPostsRail`). `01`'s
    serve-point table said "no caller in the repo" and has been corrected.
 2. **The serve-point report's corpus predicate** (#387) — `event_type IS NULL`, not
    `outcome='impression'`; see the `04` entry above. **Consequence for anyone re-reading an old

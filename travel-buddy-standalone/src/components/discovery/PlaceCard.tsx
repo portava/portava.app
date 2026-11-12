@@ -9,7 +9,6 @@ import { useFsqPhoto } from '../../hooks/useFsqPhoto.ts';
 import { isFoursquarePhotoUrl } from '../../services/fsqPhotoLookup.ts';
 import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
 import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
-import { fallbackUriFor } from '../../lib/visuals/fallbackAssets.ts';
 import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
 import { ImageSourceBadge } from '../visuals/ImageSourceBadge.tsx';
 import { usePlaceImage } from '../../hooks/usePlaceImage.ts';
@@ -129,7 +128,8 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
   const resolved = resolveHeaderImage(_resolverCandidates, {
     entityType: 'place',
     category: place.category,
-    fallbackUrlFor: fallbackUriFor,
+    // No generic photograph masquerading as this particular place.
+    // DisplayMediaImage renders the neutral category panel when no image matches.
   });
 
   // Live open-now pill — viewport-gated: FlatList only mounts near-viewport

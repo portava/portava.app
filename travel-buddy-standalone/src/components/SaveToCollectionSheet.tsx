@@ -59,6 +59,7 @@ export function SaveToCollectionSheet({
   const [createLoading, setCreateLoading] = useState(false);
   const [error, setError]               = useState<string | null>(null);
   const [loadFailed, setLoadFailed]     = useState(false);
+  const [statusFailed, setStatusFailed] = useState(false);
   const [savedCollectionIds, setSavedCollectionIds] = useState<string[]>([]);
   const [confirmation, setConfirmation] = useState<string | null>(null);
   const [savedForLater, setSavedForLater] = useState(false);
@@ -73,6 +74,7 @@ export function SaveToCollectionSheet({
     const request = ++generation.current;
     owner.current = captureMessagingOwnerRequest();
     setLoading(true);
+    setStatusFailed(false);
     try {
       const [read, savedState] = await Promise.all([
         readCollections(), savedPlace ? Promise.resolve({ok:true, saved:true, collectionIds:savedPlace.collectionIds}) : checkSaved(entityType, entityId),
@@ -82,7 +84,8 @@ export function SaveToCollectionSheet({
       setCollections(read.data);
       setSavedCollectionIds(savedState.collectionIds);
       setSavedForLater(savedState.ok !== false && savedState.saved);
-      setLoadFailed(!read.ok || savedState.ok === false);
+      setLoadFailed(!read.ok);
+      setStatusFailed(savedState.ok === false);
       if (savedState.ok !== false) statusCallback.current?.(savedState.saved);
     } catch {
       if (request === generation.current) setLoadFailed(true);
@@ -242,7 +245,10 @@ export function SaveToCollectionSheet({
                 <Text style={s.errorText}>Your collections could not be loaded. Tap to try again.</Text>
               </Pressable>
             ) : null}
-            {!savedAnywhere && !loadFailed ? (
+            {statusFailed && !loadFailed ? <Pressable disabled={pending} onPress={() => void load()} accessibilityRole="button" accessibilityLabel="Try checking saved status again">
+              <Text style={s.errorText}>Your collections loaded, but we could not check where this item is saved. Tap to try again.</Text>
+            </Pressable> : null}
+            {!savedAnywhere && !loadFailed && !statusFailed ? (
               <Pressable style={s.row} onPress={() => handlePick(null)} disabled={pending} accessibilityRole="button" accessibilityLabel="Save for later">
                 <View style={s.rowIcon}><Bookmark size={16} color={color.signal} /></View>
                 <View style={s.rowBody}>
@@ -257,10 +263,10 @@ export function SaveToCollectionSheet({
                 key={col.id}
                 style={({ pressed }) => [s.row, pressed && { opacity: 0.7 }]}
                 onPress={() => handlePick(col)}
-                disabled={pending || loadFailed || savedCollectionIds.includes(col.id)}
+                disabled={pending || loadFailed || statusFailed || savedCollectionIds.includes(col.id)}
                 accessibilityRole="button"
                 accessibilityLabel={`${savedCollectionIds.includes(col.id) ? 'Saved to' : 'Save to'} ${col.name}`}
-                accessibilityState={{ selected: savedCollectionIds.includes(col.id), disabled: pending || loadFailed || savedCollectionIds.includes(col.id) }}
+                accessibilityState={{ selected: savedCollectionIds.includes(col.id), disabled: pending || loadFailed || statusFailed || savedCollectionIds.includes(col.id) }}
               >
                 <View style={s.rowIcon}>
                   <Bookmark size={16} color={color.signal} />

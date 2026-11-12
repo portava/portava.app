@@ -17,7 +17,7 @@ import { reverseGeocode } from "../services/geocodingService";
 import { searchFoursquare } from "../lib/foursquarePlaces";
 import { getFoursquareApiKey } from "../lib/foursquareApiKey";
 import {
-  getLiveVenueStatus, liveVenueAnchorOf, type LiveVenueAnchor,
+  getLiveVenueStatus, liveVenueAnchorOf, isSameVenue, type LiveVenueAnchor,
   makeConfidence,
   CANT_VERIFY_NOTE,
 } from "../lib/liveIntelligence";
@@ -33,6 +33,8 @@ import {
   photoProxyUrl,
 } from "../lib/discoveryPlacePhotoStore.js";
 import { namespaceGooglePlaceId, denamespaceGooglePlaceId } from "../lib/googlePlaceId";
+
+import { verifiedPlacePhotoKey, foursquarePhotoUrl } from "../lib/placePhotoIdentity.js";
 
 const router = Router();
 const logger = rootLogger.child({ route: "places" });
@@ -774,7 +776,9 @@ router.get("/places/photo", async (req, res) => {
   const name = String(req.query.name ?? "").trim();
   const lat = req.query.lat != null ? Number(req.query.lat) : null;
   const lng = req.query.lng != null ? Number(req.query.lng) : null;
-  const placeKey = normalisePlaceKey(req.query.placeKey as string | undefined);
+  const canonicalKey = normalisePlaceKey(req.query.placeKey as string | undefined);
+  const anchor = liveVenueAnchorOf(lat, lng);
+  const placeKey = canonicalKey && anchor ? verifiedPlacePhotoKey(canonicalKey, name, anchor) : null;
 
   if (!name || name.length > 200) {
     res.status(400).json({ error: "invalid_payload", message: "name is required (max 200 chars)" });
@@ -820,6 +824,7 @@ router.get("/places/photo", async (req, res) => {
     return;
   }
   const key = rawKey as string;
+  if (!anchor) return void res.json({ photoUrl: null, reason: "unverified_place_identity" });
 
   try {
     const body: Record<string, unknown> = { textQuery: name };
@@ -832,7 +837,7 @@ router.get("/places/photo", async (req, res) => {
       headers: {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": key,
-        "X-Goog-FieldMask": "places.id,places.photos",
+        "X-Goog-FieldMask": "places.id,places.displayName,places.location,places.photos",
       },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(4000),
@@ -855,7 +860,13 @@ router.get("/places/photo", async (req, res) => {
     }
 
     const gBody = (await gRes.json()) as any;
-    const photoName = gBody?.places?.[0]?.photos?.[0]?.name as string | undefined;
+    // A text-search result is only a candidate. Location bias alone does not
+    // bind it to this branch (and an unrelated first result used to win).
+    const photoName = (Array.isArray(gBody?.places) ? gBody.places : [])
+      .filter((candidate: any) => isSameVenue(name, anchor, { name: candidate.displayName?.text, latitude: candidate.location?.latitude, longitude: candidate.location?.longitude }))
+      .flatMap((candidate: any) => (Array.isArray(candidate.photos) ? candidate.photos : [])
+        .map((photo: any) => photo?.name)
+        .filter((ref: unknown) => typeof ref === "string" && PHOTO_REF_RE.test(ref) && ref.startsWith(`places/${candidate.id}/photos/`)))[0] as string | undefined;
     if (!photoName) {
       res.json({ photoUrl: null, reason: "no_photo_found" });
       return;
@@ -930,16 +941,6 @@ interface FsqPhotoLookupResult {
 const fsqPhotoCache = new Map<string, FsqPhotoCacheEntry>();
 const fsqPhotoInFlight = new Map<string, Promise<FsqPhotoLookupResult>>();
 
-/** Normalise a place name + coords into a stable cache key. */
-function fsqPhotoCacheKey(
-  name: string,
-  lat: number | null,
-  lng: number | null,
-): string {
-  const n = name.toLowerCase().trim().replace(/\s+/g, " ");
-  return `${n}|${lat != null && Number.isFinite(lat) ? lat.toFixed(3) : "_"}|${lng != null && Number.isFinite(lng) ? lng.toFixed(3) : "_"}`;
-}
-
 function getFsqPhotoCached(key: string): FsqPhotoCacheEntry | undefined {
   const entry = fsqPhotoCache.get(key);
   if (!entry) return undefined;
@@ -993,7 +994,9 @@ router.get("/places/fsq-photo", async (req, res) => {
   const name = String(req.query.name ?? "").trim();
   const lat = req.query.lat != null ? Number(req.query.lat) : null;
   const lng = req.query.lng != null ? Number(req.query.lng) : null;
-  const placeKey = normalisePlaceKey(req.query.placeKey as string | undefined);
+  const canonicalKey = normalisePlaceKey(req.query.placeKey as string | undefined);
+  const anchor = liveVenueAnchorOf(lat, lng);
+  const placeKey = canonicalKey && anchor ? verifiedPlacePhotoKey(canonicalKey, name, anchor) : null;
 
   if (!name || name.length > 200) {
     res.status(400).json({ error: "invalid_payload", message: "name is required (max 200 chars)" });
@@ -1034,8 +1037,9 @@ router.get("/places/fsq-photo", async (req, res) => {
     return;
   }
   const key = rawKey as string;
+  if (!anchor) return void res.json({ photoUrl: null, reason: "unverified_place_identity" });
 
-  const cKey = fsqPhotoCacheKey(name, lat, lng);
+  const cKey = verifiedPlacePhotoKey(canonicalKey ?? "unkeyed", name, anchor);
 
   // Serve from cache when available.
   const cachedEntry = getFsqPhotoCached(cKey);
@@ -1058,8 +1062,8 @@ router.get("/places/fsq-photo", async (req, res) => {
     try {
       const params = new URLSearchParams({
         query:  name,
-        limit:  "1",
-        fields: "photos",
+        limit:  "5",
+        fields: "name,latitude,longitude,photos",
       });
       if (lat != null && lng != null && Number.isFinite(lat) && Number.isFinite(lng)) {
         params.set("ll", `${lat},${lng}`);
@@ -1109,22 +1113,19 @@ router.get("/places/fsq-photo", async (req, res) => {
       }
 
       const body = (await fsqRes.json()) as {
-        results?: Array<{ photos?: Array<{ prefix?: string; suffix?: string }> }>;
+        results?: Array<{ name?: string; latitude?: number; longitude?: number; photos?: Array<{ prefix?: string; suffix?: string }> }>;
       };
-      const photos = body?.results?.[0]?.photos ?? [];
+      const photos = (Array.isArray(body.results) ? body.results : [])
+        .filter(candidate => isSameVenue(name, anchor, candidate))
+        .flatMap(candidate => Array.isArray(candidate.photos) ? candidate.photos : []);
       if (!photos.length) {
         // FSQ has no photo record for this place — cache (24 h) so subsequent
         // requests for the same OSM place are served without hitting FSQ.
         return { photoUrl: null, reason: "no_photo_found", cacheable: true };
       }
 
-      const p = photos[0];
-      if (typeof p?.prefix !== "string" || typeof p?.suffix !== "string") {
-        // Malformed photo entry — treat same as "no photo" and cache.
-        return { photoUrl: null, reason: "no_photo_found", cacheable: true };
-      }
-
-      const photoUrl = `${p.prefix}original${p.suffix}`;
+      const photoUrl = photos.map(photo => foursquarePhotoUrl(photo?.prefix, photo?.suffix)).find(Boolean);
+      if (!photoUrl) return { photoUrl: null, reason: "no_photo_found", cacheable: true };
 
       // Foursquare's search index can return a photo reference whose CDN file
       // has since been removed (404) — the client has no way to detect this

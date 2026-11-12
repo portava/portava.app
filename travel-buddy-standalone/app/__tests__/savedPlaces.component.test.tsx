@@ -31,7 +31,7 @@ it('labels a successful empty library, and shows Retry instead of empty when the
 it('keeps cached rows on an offline read and opens their actual place with both coordinates', async () => {
  jest.mocked(loadSavedPlaces).mockResolvedValue({ state: 'offline', places: [cafe], unavailableSources: ['community'] });
  await render(<SavedPlacesScreen />);
- expect(await screen.findByText('Offline. Showing places saved on this device.')).toBeTruthy();
+ expect(await screen.findByText('Could not connect. Showing places saved on this device.')).toBeTruthy();
  expect(screen.getByText('Cebu, Philippines')).toBeTruthy();
  expect(screen.getByText('Waiting to sync')).toBeTruthy();
  await fireEvent.press(screen.getByLabelText('Open Harbor Café'));
@@ -50,4 +50,13 @@ it('uses the real collection picker to file a saved place into a newly created c
  await fireEvent.press(screen.getByLabelText('Create and save'));
  await waitFor(() => expect(fileSavedPlace).toHaveBeenCalledWith(cafe.placeId, 'new'));
  expect(loadSavedPlaces).toHaveBeenCalledTimes(2);
+});
+
+it('keeps local places visible on a service failure without calling the phone offline', async () => {
+ jest.mocked(loadSavedPlaces).mockResolvedValue({ state: 'unavailable', places: [cafe], unavailableSources: ['wishlist', 'community', 'collections'] });
+ await render(<SavedPlacesScreen />);
+ await screen.findByText('Saved places could not be refreshed. Showing places saved on this device.');
+ expect(screen.getByText('Harbor Café')).toBeTruthy();
+ expect(screen.queryByText(/Offline/)).toBeNull();
+ expect(screen.getByLabelText('Retry')).toBeTruthy();
 });

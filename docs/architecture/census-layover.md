@@ -5984,7 +5984,7 @@ the exact opposite of 'not symmetric'."* What the census had NOT recorded is
 where that doubling is now reached from. It is no longer only the safety
 engine's per-card rating: since the Layover snapshot contract was published,
 it is the gate another architecture calls on six serve paths
-(`artifacts/api-server/src/routes/discovery.ts:4000#layoverGatedPlaces`).
+(`artifacts/api-server/src/routes/discovery.ts:4003#layoverGatedPlaces`).
 
 **The geometry half of this tree had already stopped assuming symmetry.**
 `bandCandidate` asks the port for the ride back TWICE — once at the departure
@@ -10492,7 +10492,7 @@ Lead ruling L164 (2026-10-07): *"stays N — the import-graph guard's exceptions
 
 - **A read-only half of the location context.** `src/context/locationContextValue.ts` holds `ResolvedLocation`, a context whose value is that object and nothing else (`travel-buddy-standalone/src/context/locationContextValue.ts:54#export const ResolvedLocationContext = createContext`), and `useResolvedLocation()` (`travel-buddy-standalone/src/context/locationContextValue.ts:63#export function useResolvedLocation(): ResolvedLocation {`). The module imports `react` and types only.
   - The root provider supplies it with the same object `useLocationContext().resolvedLocation` returns (`travel-buddy-standalone/src/context/LocationContext.tsx:167#<ResolvedLocationContext.Provider value={resolvedLocation}>`).
-  - `PlaceDetailSheet` reads it (`travel-buddy-standalone/src/components/discovery/PlaceDetailSheet.tsx:85#const resolvedLocation = useResolvedLocation();`).
+  - `PlaceDetailSheet` reads it (`travel-buddy-standalone/src/components/discovery/PlaceDetailSheet.tsx:84#const resolvedLocation = useResolvedLocation();`).
   - The full context and every other screen are unchanged.
   - Three plain types moved, line for line, into `src/hooks/activeLocation.types.ts` (`travel-buddy-standalone/src/hooks/activeLocation.types.ts:22#export type LocationSource =`). The hook re-exports them, so the read-only module names them without importing the hook. The line numbers cited below them in `useActiveLocation.ts` do not move.
 - **One door.** `src/lib/location/locationRequestDoor.ts` takes a request that must name a press and a known purpose. Today that purpose is `map_context` only. Anything else is refused before the OS is touched, with the result shape a denied permission gets (`travel-buddy-standalone/src/lib/location/locationRequestDoor.ts:78#if (!isUserLocationRequest(request)) return { ...NO_USER_ACTION_RESULT };`). An accepted request is exactly `getCurrentGps()`.
@@ -10537,7 +10537,7 @@ Lead ruling L164 (2026-10-07): *"stays N — the import-graph guard's exceptions
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| L164 | N | C | §55.12's reason is gone. The guard covers the whole import closure of the layover surface, type imports included, with no file excepted by name. Every location-capable file on it is pinned to a condition that makes its request user-initiated or impossible, and the app-root provider and hook are off the graph. Planted violations fail it and it runs in the mobile node:test tier CI's standalone `check:all` runs (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:404#test('L164: every location request the layover surface reaches goes through ONE door`). `C ⌀` (verifier V-712, 2026-10-14): the graph's one request path, the picker's press-gated "Use my current location" (map context), is on it ONLY through a type import (`travel-buddy-standalone/src/components/discovery/PlaceCard.tsx:20#import type { RouteStopDraft }`). The value-only closure, what Metro bundles, holds neither the picker, the door nor `services/location.ts`, so at runtime no layover screen reaches a location request: the guard is real and the path it guards is empty (§1), the same footing as L168. |
+| L164 | N | C | §55.12's reason is gone. The guard covers the whole import closure of the layover surface, type imports included, with no file excepted by name. Every location-capable file on it is pinned to a condition that makes its request user-initiated or impossible, and the app-root provider and hook are off the graph. Planted violations fail it and it runs in the mobile node:test tier CI's standalone `check:all` runs (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:404#test('L164: every location request the layover surface reaches goes through ONE door`). `C ⌀` (verifier V-712, 2026-10-14): the graph's one request path, the picker's press-gated "Use my current location" (map context), is on it ONLY through a type import (`travel-buddy-standalone/src/components/discovery/PlaceCard.tsx:19#import type { RouteStopDraft }`). The value-only closure, what Metro bundles, holds neither the picker, the door nor `services/location.ts`, so at runtime no layover screen reaches a location request: the guard is real and the path it guards is empty (§1), the same footing as L168. |
 | L168 | C | C | `C ⌀` restated, unmoved. Same file and same whole-closure walk (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:420#nothing the layover surface reaches asks for photos or contacts`). The closure lost the root location stack, and no file on it touches photos or contacts. |
 
 ### §70.5 Recorded, not moved

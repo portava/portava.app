@@ -147,6 +147,16 @@ afterEach(async () => {
 });
 
 describe.each<Kind>(['ShareSheet', 'DiscoveryShareSheet'])('%s mounted lifecycle fences', kind => {
+  it('searches the people service for a two-character recipient without creating or sending a chat', async () => {
+    await open(kind); await search('ru');
+    expect(searches).toHaveLength(1);
+    expect(searches[0].query).toBe('ru');
+    await act(async () => { searches[0].resolve(response([user('Ruby')])); });
+    expect(ui.getByText('Ruby')).toBeTruthy();
+    expect(mockOpenThread).not.toHaveBeenCalled();
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
   it('keeps the latest valid query when two edits arrive before a render commits', async () => {
     await open(kind);
     const change = [...mockTextInput.mock.calls].reverse().find(([props]) => props.placeholder === placeholder)?.[0].onChangeText;

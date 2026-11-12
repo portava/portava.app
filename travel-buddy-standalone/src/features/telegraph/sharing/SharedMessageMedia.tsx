@@ -52,7 +52,7 @@ export function SharedMessageMedia({projection, messageId}: {projection: Telegra
   </View>;
 }
 const s = StyleSheet.create({
-  preview: {width: 244, maxWidth: '100%', height: 152, backgroundColor: '#171717', borderRadius: 8, overflow: 'hidden'},
+  preview: {width: '100%', height: 152, backgroundColor: '#171717', borderRadius: 8, overflow: 'hidden'},
   indicator: {...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center'},
   pause: {position: 'absolute', bottom: 4, right: 4, height: 44, width: 44, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.65)', borderRadius: 22},
   count: {position: 'absolute', right: 8, top: 8, backgroundColor: 'rgba(0,0,0,0.65)', color: 'white', paddingHorizontal: 6, borderRadius: 4},

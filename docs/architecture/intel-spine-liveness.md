@@ -201,7 +201,7 @@ Each row answers: is there a writer, and can a registered route/scheduler actual
 | `intel_observations` | `services/intel/IntelCaptureService.ts:569` (`insert`) | `POST /v1/intel/observations` — `routes/intel.ts:189`, router mounted `routes/index.ts:293`; **client caller** `travel-buddy-standalone/src/services/intelCapture.ts:100`, reached from `app/intel/quick-signal.tsx:254` (`PromptBlock`), which is navigated to from `src/components/place/living/LivingDestinationPage.tsx:316,428` and deep-link `src/navigation/portavaRoutes.ts:2083#path: 'intel/quick-signal',`. Second caller: `POST /api/map/observations` (`routes/mapObservations.ts:111`, mounted `routes/index.ts:267`). | `intel_capture_quick_signal` (`IntelCaptureService.ts:325`) **then** D4 consent row (`:332`) | **YES — full UI-to-table path** |
 | `intel_contribution_consent` | `lib/intelConsent.ts:117` (`upsert`) | `PUT /v1/intel/consent` — `routes/intel.ts:176`; **client** `travel-buddy-standalone/src/services/intelConsent.ts:14`, called from `app/settings/intel-prompts.tsx:72#setIntelConsent(` and `src/components/intel/IntelConsentGate.tsx:15`; entered from `app/settings/index.tsx:279` and `app/profile/edit/index.tsx:96` | **NONE — no feature flag.** Auth only. | **YES — ungated. The one intel table any logged-in user can write today.** |
 | `intel_claims` | (a) `IntelCaptureService.ts:530` (`insert`, propose); (b) `IntelCaptureService.ts:555` (`update` → active, approve); (c) RPC `system_promote_admissible_intel_claims` `2174_intel_system_claim_promotion.sql:85` | (a)/(b): `POST …/claims/propose` and `…/claims/approve`, `routes/intel.ts:299-300`; client `app/intel/moment.tsx:26`. (c): `lib/intelPromotionScheduler.ts:55` (`db.rpc`), started `index.ts:136` | (a)/(b) `intel_capture_quick_signal`; (c) `intel_claim_projection_crowd` | **YES** (two independent paths) |
-| `intel_confirmations` | `IntelCaptureService.ts:745` (`insert`) | `POST /v1/intel/claims/:id/confirm`, `routes/intel.ts:309`; client `app/intel/moment.tsx:26` | `captureSystemEnabled` (either capture flag, `IntelCaptureService.ts:101-106`) + consent | **YES** |
+| `intel_confirmations` | `IntelCaptureService.ts:745` (`insert`) | `POST /v1/intel/claims/:id/confirm`, `routes/intel.ts:330#router.post("/v1/intel/claims/:id/confirm"`; client `app/intel/moment.tsx:26` | `captureSystemEnabled` (either capture flag, `IntelCaptureService.ts:101-106`) + consent | **YES** |
 | `intel_state_snapshots` | `lib/intelProjection.ts:410` (`upsert`); `lib/intelProjectionScheduler.ts:167` (`update`, go-dark) | `lib/intelProjectionScheduler.ts:97` → `projectAndStore`, started `index.ts:137` | `intel_claim_projection_crowd` | **YES — scheduler runs; input starved** |
 | `intel_reward_ledger` | `services/intel/RewardService.ts:72` (`insert`) | `lib/intelRewardScheduler.ts:240` → `recordEarnedReward`, started `index.ts:158` | `intel_rewards` — **TRUE in production** | **YES — and the gate is OPEN. Starved only by empty `intel_state_snapshots` (`intelRewardScheduler.ts:143`).** |
 | `intel_coverage_snapshots` | `lib/intelCoverageScheduler.ts:198` (`insert`), `:112` (`delete` prune) | started `index.ts:145` | `intel_coverage` | **YES — scheduler runs; gate closed** |
@@ -314,14 +314,14 @@ CREATE TABLE IF NOT EXISTS public.intel_observations (
 ```
 
 `NOT NULL`, FK to `public.profiles(id)`, `ON DELETE CASCADE`.
-
+**Historical scope:** the finding below predates `3002_intel_contribution_identity.sql`. Current signed-in Moment proposals resolve the caller's live contributor epochs through `lib/intelConsent.ts:489#export async function readOwnContributorIdentities` before an actor-filtered read (`routes/intel.ts:267#.eq("id", req.params.id).in("actor_id", identities.identities)`); tokenization does not permit proposing another account's observation. The original finding is retained as history, not a statement that current observation actors are permanent account IDs.
 **What it implies for anonymous contribution: there is none, and there cannot be one without a
 migration.**
 
 - Every observation is permanently attributed to a real profile row. No pseudonymous actor, no
   null actor, no synthetic "anonymous" principal — a NULL is rejected by the column and an
   invented UUID is rejected by the FK.
-- The route enforces the same thing independently: `routes/intel.ts:190` calls `requireUser`
+- The route enforces the same thing independently: `routes/intel.ts:194#const auth = await requireUser(req, res);` calls `requireUser`
   before anything else, and `writeObservation(sc, auth.user.id, …)` passes the authenticated id
   (`:238`). There is no service-role or internal-secret capture path that could supply a
   different actor.

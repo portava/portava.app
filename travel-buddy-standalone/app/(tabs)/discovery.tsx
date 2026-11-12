@@ -101,6 +101,7 @@ const DEST_DEBOUNCE_MS = 400;
 function DiscoveryHubScreen() {
   const insets = useSafeAreaInsets();
   const bottomInset = useLayoverAwareBottomInset();
+  const [layoverEntryHeight, setLayoverEntryHeight] = useState(44);
   const { isAuthed } = useSession();
   const { open: openPlanPicker } = usePlanPicker();
   const { locationState, requestLocation, showCityPicker, openCityPicker, closeCityPicker, setManualCity } = useLocationContext();
@@ -810,6 +811,7 @@ function DiscoveryHubScreen() {
               sortBy={activeFilters.sortBy ?? null}
               listTopInset={tabRowHeight}
               bottomInset={bottomInset}
+              mapBottomInset={bottomInset + (detailVisible ? 0 : layoverEntryHeight)}
             />
           </SectionErrorBoundary>
         ) : (
@@ -836,6 +838,7 @@ function DiscoveryHubScreen() {
               fallbackZoom={destinationZoom}
               listTopInset={tabRowHeight}
               bottomInset={bottomInset}
+              mapBottomInset={bottomInset + (detailVisible ? 0 : layoverEntryHeight)}
             />
           </SectionErrorBoundary>
         )}
@@ -1102,7 +1105,9 @@ function DiscoveryHubScreen() {
 
       {/* Layover Mode floating entry — hidden while the place detail sheet is open */}
       {!detailVisible && (
-        <Pressable style={styles.layoverFab} onPress={() => setLayoverOpen(true)}>
+        <Pressable testID="discovery-layover-entry" style={[styles.layoverFab, { bottom: bottomInset }]}
+          onLayout={(event) => setLayoverEntryHeight(event.nativeEvent.layout.height)}
+          onPress={() => setLayoverOpen(true)}>
           <Plane size={16} color="#fff" />
           <Text style={styles.layoverFabText}>Layover Mode</Text>
         </Pressable>
@@ -1434,7 +1439,6 @@ const styles = StyleSheet.create({
   },
   layoverFab: {
     position: 'absolute',
-    bottom: 24,
     right: 20,
     flexDirection: 'row',
     alignItems: 'center',

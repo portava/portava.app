@@ -10750,7 +10750,7 @@ elements, and says so only in `remark` (`runtime error: Query timed out …`). T
   returns what is stored (no POIs, or the refresh's catch).
 
 **One rule.** Since #679 merged, GET /discovery's `overpassAnswerFailed` delegates to the same helper
-(`artifacts/api-server/src/routes/discovery.ts:4640#function overpassAnswerFailed(data: unknown): boolean {`), so all
+(`artifacts/api-server/src/routes/discovery.ts:4643#function overpassAnswerFailed(data: unknown): boolean {`), so all
 four Overpass clients read a body one way. Its behaviour is unchanged: `discoveryOverpassFailedSource` passes as before.
 
 **Stated limit.** GET /cities/neighborhoods and POST /trips/:tripId/neighborhood-match still answer `{ areas: [], reason: 'no_data' }` alike for "Overpass

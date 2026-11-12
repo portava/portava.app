@@ -22,7 +22,7 @@
 >    nothing about the run below; it changes what the next one means.
 > 3. **Serve point 7 now has callers (PR #382).** §"Why there is no data" item 2
 >    said `GET /discovery/feed` had none. It has two —
->    `components/discovery/DiscoveryEventPostsRail.tsx` and `ForYouTab.tsx:434`.
+>    `components/discovery/DiscoveryEventPostsRail.tsx` and `ForYouTab.tsx:514#<DiscoveryEventPostsRail`.
 >    The claim was true when written and is not true now.
 >
 > The section that matters and is **unchanged**: the verdict is *exit 3, D5 cannot

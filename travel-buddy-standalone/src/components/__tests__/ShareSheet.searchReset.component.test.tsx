@@ -218,8 +218,8 @@ describe('ShareSheet — search resets on reopen (picker mode)', () => {
       // Re-enter picker — search must be clean.
       const freshInput = await openPicker();
       expect(freshInput.props.value).toBe('');
-      // No stale "No results for" banner.
-      expect(screen.queryByText(`No results for "${q}".`)).toBeNull();
+      // No stale "No people or chats found for" banner.
+      expect(screen.queryByText(`No people or chats found for "${q}".`)).toBeNull();
       // Sheet is now in picker mode — loop continues directly.
     }
   });

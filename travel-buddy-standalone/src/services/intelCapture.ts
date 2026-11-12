@@ -160,7 +160,7 @@ export interface ProposeResult {
 export async function proposeClaim(observationId: string): Promise<ProposeResult> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
   try {
-    const res = await authedFetch(`${INTEL_BASE}/observations/${observationId}/claims:propose`, { method: 'POST' });
+    const res = await authedFetch(`${INTEL_BASE}/observations/${encodeURIComponent(observationId)}/claims/propose`, { method: 'POST' });
     if (!res.ok) return { ok: false, ...(await readError(res)) };
     const data = await res.json();
     return { ok: true, claim: data?.claim, canApprove: data?.canApprove === true };
@@ -173,7 +173,7 @@ export async function proposeClaim(observationId: string): Promise<ProposeResult
 export async function approveClaim(observationId: string, claimId: string): Promise<{ ok: boolean; code?: string; error?: string }> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
   try {
-    const res = await authedFetch(`${INTEL_BASE}/observations/${observationId}/claims:approve`, {
+    const res = await authedFetch(`${INTEL_BASE}/observations/${encodeURIComponent(observationId)}/claims/approve`, {
       method: 'POST',
       body: JSON.stringify({ claimId }),
     });

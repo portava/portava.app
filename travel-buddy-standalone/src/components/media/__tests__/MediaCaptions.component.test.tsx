@@ -122,6 +122,10 @@ it('reader errors and inactive cells clear text rather than preserving a stale t
 it('offers recovery after source resolution fails and prevents duplicate retries while loading', async () => {
   jest.mocked(captions.resolveCaptionSource).mockRejectedValueOnce(new Error('offline'));
   await render(<MediaCaptionControls source="video" status={null} />);
+  await screen.findByLabelText('Captions unavailable. Show details');
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.queryByLabelText('Retry captions')).toBeNull();
+  await fireEvent.press(screen.getByLabelText('Captions unavailable. Show details'));
   await screen.findByText('Captions unavailable. Try again.');
   let finish!: (value: typeof source) => void;
   jest.mocked(captions.resolveCaptionSource).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
@@ -164,6 +168,7 @@ it('keeps draft review intent when recovering a failed draft read', async () => 
 it('aborts a pending caption retry on account replacement and ignores its late failure', async () => {
   jest.mocked(captions.resolveCaptionSource).mockRejectedValueOnce(new Error('offline'));
   const mounted = await render(<MediaCaptionControls source="video" status={null} />);
+  await fireEvent.press(await screen.findByLabelText('Captions unavailable. Show details'));
   let refuse!: (error: Error) => void;
   jest.mocked(captions.resolveCaptionSource).mockImplementationOnce(() => new Promise((_resolve, reject) => { refuse = reject; }));
   await fireEvent.press(await screen.findByLabelText('Retry captions'));
@@ -322,4 +327,15 @@ it('cancels a pending editor write on dismissal and ignores a late receipt', asy
   expect(signal?.aborted).toBe(true);
   await act(async () => finish(result));
   expect(onSaved).not.toHaveBeenCalled();
+});
+
+it('reveals a safe caption failure reason only on request and lets the viewer dismiss it', async () => {
+ jest.mocked(captions.resolveCaptionSource).mockRejectedValueOnce(new captions.CaptionRequestError('Captions are not available for this video.'));
+ await render(<MediaCaptionControls source="video" status={null} />);
+ await fireEvent.press(await screen.findByLabelText('Captions unavailable. Show details'));
+ expect(screen.getByRole('alert').props.children).toBe('Captions are not available for this video.');
+ await fireEvent.press(screen.getByLabelText('Dismiss caption error'));
+ expect(screen.queryByRole('alert')).toBeNull();
+ expect(screen.queryByLabelText('Retry captions')).toBeNull();
+ expect(screen.getByLabelText('Captions unavailable. Show details')).toBeTruthy();
 });

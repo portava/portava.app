@@ -29,6 +29,7 @@
  * reference only (`features/telegraph/sharing/legacyCardView.ts`).
  */
 import React from 'react';
+import { useSharedCardWidth } from '../features/telegraph/sharing/useSharedCardWidth.ts';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { MapPin, MessageCircle, ExternalLink } from 'lucide-react-native';
@@ -88,6 +89,7 @@ interface Props {
 }
 export function PostCardMessage({ body, mine, threadId = null, messageId = null, serverCard = null }: Props) {
   const { palette, styles: card } = useTelegraphTheme(makeCardStyles);
+  const width = useSharedCardWidth();
   const payload = parsePayload(body);
   const revocation = useShareRevocation(
     threadId,
@@ -97,7 +99,7 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
 
   if (revocation.state === 'unavailable') {
     return (
-      <View style={[card.wrap, card.wrapRevoked, mine && card.wrapMine]} testID="post-card-revoked">
+      <View style={[card.wrap, { width }, card.wrapRevoked, mine && card.wrapMine]} testID="post-card-revoked">
         <Text style={[card.fallback, mine && { color: palette.sentText + 'AA' }]}>
           {revokedLabel(revocation.reason)}
         </Text>
@@ -107,7 +109,7 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
 
   if (!payload) {
     return (
-      <View style={[card.wrap, mine && card.wrapMine]}>
+      <View style={[card.wrap, { width }, mine && card.wrapMine]}>
         <Text style={[card.fallback, mine && { color: palette.sentText + 'AA' }]}>Shared post</Text>
       </View>
     );
@@ -115,7 +117,7 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
 
   if (mode === 'loading') {
     return (
-      <View style={[card.wrap, mine && card.wrapMine]} testID="post-card-loading">
+      <View style={[card.wrap, { width }, mine && card.wrapMine]} testID="post-card-loading">
         <Text style={[card.fallback, mine && { color: palette.sentText + 'AA' }]}>Loading…</Text>
       </View>
     );
@@ -125,7 +127,7 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
 
   if (mode === 'reference') {
     return (
-      <View style={[card.wrap, mine && card.wrapMine]} testID="post-card-reference">
+      <View style={[card.wrap, { width }, mine && card.wrapMine]} testID="post-card-reference">
         <Text style={[card.brandLabel, mine && { color: palette.sentText + 'BB' }]}>POST</Text>
         {payload.caption ? (
           <Text style={[card.caption, mine && card.captionMine]} numberOfLines={2}>"{payload.caption}"</Text>
@@ -146,7 +148,7 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
     const p = live.projection;
     const handle = p.subtitle && p.subtitle.startsWith('@') ? p.subtitle.slice(1) : null;
     return (
-      <View style={[card.wrap, mine && card.wrapMine]} testID="post-card-live">
+      <View style={[card.wrap, { width }, mine && card.wrapMine]} testID="post-card-live">
         <View style={card.header}>
           <View style={card.brandBadge}>
             <ExternalLink size={11} color={palette.operationalOn} />
@@ -186,7 +188,7 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null,
     router.push(`/post/${encodeURIComponent(payload.postId)}` as any);
 
   return (
-    <View style={[card.wrap, mine && card.wrapMine]}>
+    <View style={[card.wrap, { width }, mine && card.wrapMine]}>
       {/* Header — brand + author */}
       <View style={card.header}>
         <View style={card.brandBadge}>

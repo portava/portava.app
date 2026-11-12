@@ -314,6 +314,10 @@ export async function evictStoredPlacePhoto(rawPlaceKey: string): Promise<void> 
     const sc = getServiceClient();
     if (!sc) return;
     await sc.from("discovery_place_photos").delete().eq("place_key", placeKey);
+    // The scoped v2 entries were verified against a particular name/anchor.
+    // An explicit image correction evicts those variants too. The normalised
+    // key contains no LIKE metacharacters; this never matches another place.
+    await sc.from("discovery_place_photos").delete().like("place_key", `${placeKey}:photo-v2:%`);
   } catch (err) {
     logger.debug({ err, placeKey }, "discovery place photo eviction failed");
   }

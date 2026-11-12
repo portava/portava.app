@@ -4411,7 +4411,7 @@ Buddy and group-proposal clauses (§37.2, §38.1 item 5). On `9e60178be`:
   Under `messaging`: attaching or suggesting Trail content, submitting or contributing to a gem, and submitting a
   community place
   (`artifacts/api-server/src/routes/hiddenGems.ts:271#if (await refuseIfTrustRestricted(res, getServiceClient(), auth.user.id, "messaging")) return;`,
-  `artifacts/api-server/src/routes/discovery.ts:3196#if (await refuseIfTrustRestricted(res, getServiceClient(), auth.user.id, "messaging")) return;`).
+  `artifacts/api-server/src/routes/discovery.ts:3199#if (await refuseIfTrustRestricted(res, getServiceClient(), auth.user.id, "messaging")) return;`).
 - **Social.** Starting a conversation is refused under `messaging`. The Telegraph send gate refuses a send that
   initiates contact (`artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:133#if (facts.initiatesContact) {`),
   and the legacy message request is refused through the permission engine

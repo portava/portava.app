@@ -122,6 +122,20 @@ describe('DiscoveryMapView — empty-state rendering', () => {
     expect(screen.queryByText('Pick a city to see it on the map.')).toBeNull();
   });
 
+  it('positions status and recenter controls above the supplied navigation and measured Layover clearance', async () => {
+    const ui = await render(<DiscoveryMapView places={[]} onSelectPlace={noop}
+      fallbackLat={48.8566} fallbackLng={2.3522} userLat={48.8566} userLng={2.3522}
+      bottomInset={174} placesPartial />);
+    expect(ui.getByTestId('discovery-map-status')).toHaveStyle({bottom: 194});
+    expect(ui.getByText('0 places · Some unavailable')).toBeTruthy();
+    expect(ui.getByTestId('discovery-map-recenter')).toHaveStyle({bottom: 188});
+    await ui.rerender(<DiscoveryMapView places={[]} onSelectPlace={noop}
+      fallbackLat={48.8566} fallbackLng={2.3522} userLat={48.8566} userLng={2.3522}
+      bottomInset={194} />);
+    expect(ui.getByTestId('discovery-map-status')).toHaveStyle({bottom: 214});
+    expect(ui.getByTestId('discovery-map-recenter')).toHaveStyle({bottom: 208});
+  });
+
   it('(a-extra) empty-state also shows when places have no finite coordinates and no fallback', async () => {
     const badPlaces: DiscoveryPlace[] = [
       // lat/lng are null — these are not mappable

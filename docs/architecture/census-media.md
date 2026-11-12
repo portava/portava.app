@@ -3853,7 +3853,7 @@ renders only ids it knows and silently hid every other one (see §21.6):
 `travel-buddy-standalone/src/features/media/services/mediaActions.ts:673#export async function openDirectionsForPlace(` opens directions and calls back ONLY after the maps app opened, where the
 rail records Directions started and Media → Route `travel-buddy-standalone/src/features/media/components/MediaActionRail.tsx:243#void openRailDirections(exec.placeId, () => {`; the tap-time
 emission skips it `travel-buddy-standalone/src/features/media/components/MediaActionRail.tsx:159#if (emitsNorthStarOnTap(action.id)) emitMediaNorthStar(record, action.id, northStarCtx);`; `travel-buddy-standalone/src/features/media/telemetry/mediaTelemetry.ts:251#export const NORTH_STAR_ON_COMPLETION`. The Telegraph share goes through
-the existing share sheet as an object REFERENCE `travel-buddy-standalone/src/features/media/components/MediaActionRail.tsx:442#<TelegraphObjectShareSheet mediaId={mediaId} object={shareObject}`, `travel-buddy-standalone/src/components/ShareSheet.tsx:261#return shareObjectIntoThread(threadId, reference.objectType`. Do This
+the existing share sheet as an object REFERENCE `travel-buddy-standalone/src/features/media/components/MediaActionRail.tsx:442#<TelegraphObjectShareSheet mediaId={mediaId} object={shareObject}`, `travel-buddy-standalone/src/components/ShareSheet.tsx:262#return shareObjectIntoThread(threadId, reference.objectType`. Do This
 Experience shows the compiled plan and writes TENTATIVE items into one trip the
 user picks, only a trip the server named `travel-buddy-standalone/src/features/media/components/MediaActionPanels.tsx:142#export function TripChoicePanel(props:`, `travel-buddy-standalone/src/features/media/services/mediaActions.ts:774#export function planItemsFromCompiledPlan(`, `travel-buddy-standalone/src/features/media/services/mediaActions.ts:797#export async function applyCompiledPlan(`.
 Save Route completes each coordinate-free stop through the canonical place record,
@@ -13031,7 +13031,7 @@ withhold the venue for everything else, an unknown mode included.
     The venue reached the screen.
 - **Discovery "Live from events"** (`lib/eventPostsDiscovery.ts`). Its one
   caller is GET /discovery/feed, for a signed-in viewer only
-  (`artifacts/api-server/src/routes/discovery.ts:2686#? fetchEventPostsForDiscovery({`),
+  (`artifacts/api-server/src/routes/discovery.ts:2689#? fetchEventPostsForDiscovery({`),
   and the result is the envelope's `posts`. It is cached per (city, radius), not
   per viewer. Two paths:
   - Path A, a post the author linked to an event, used the post's own venue
@@ -15500,7 +15500,7 @@ Each is the same class of disclosure, recorded with the reason.
    - They carry sample media ids, in the living payload
      (`artifacts/api-server/src/routes/placeLiving.ts:421#dedupGroups:  dedupGroupsOut,`)
      and at GET /places/:id/dedup-groups
-     (`artifacts/api-server/src/routes/places.ts:1627#.from("media_dedup_groups")`).
+     (`artifacts/api-server/src/routes/places.ts:1628#.from("media_dedup_groups")`).
    - A withheld post's media can be in a group.
    - Why not fixed: the groups are written by Media's dedup worker keyed on
      media, not posts. The fix belongs in that writer.

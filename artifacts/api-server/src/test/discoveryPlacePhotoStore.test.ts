@@ -78,6 +78,7 @@ function fakeClient(rows: FakeRow[], log: { upserts: any[]; deletes: string[]; u
         },
         delete() {
           return {
+            like(_col: string, pattern: string) { log.deletes.push(pattern); return Promise.resolve({ error: null }); },
             eq(_col: string, key: string) {
               log.deletes.push(key);
               return Promise.resolve({ error: null });
@@ -383,7 +384,7 @@ describe("Explicit eviction — an operator is never overruled by a cached photo
 
   it("deletes the row for a normalised key", async () => {
     await evictStoredPlacePhoto("db/3f0a1b2c-4d5e-6f70-8192-a3b4c5d6e7f8");
-    assert.deepEqual(log.deletes, ["db:3f0a1b2c-4d5e-6f70-8192-a3b4c5d6e7f8"]);
+    assert.deepEqual(log.deletes, ["db:3f0a1b2c-4d5e-6f70-8192-a3b4c5d6e7f8", "db:3f0a1b2c-4d5e-6f70-8192-a3b4c5d6e7f8:photo-v2:%"]);
   });
 
   it("does nothing for an unkeyable place, rather than deleting something else", async () => {

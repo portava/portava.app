@@ -27,6 +27,7 @@ import express from "express";
 import pino from "pino";
 import placesRouter from "../routes/places.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
+import { verifiedPlacePhotoKey } from "../lib/placePhotoIdentity.js";
 import { PHOTO_TTL_MS } from "../lib/discoveryPlacePhotoStore.js";
 import { FOURSQUARE_KEY_VARS, snapshotKeyEnv, restoreKeyEnv, setKeyEnv } from "./helpers/apiKeyEnv.js";
 
@@ -37,7 +38,7 @@ const originalFetch = globalThis.fetch;
 interface StubResponse { ok: boolean; status: number; json: () => Promise<unknown> }
 
 let googleResponder: (() => Promise<StubResponse>) | null = null;
-let fsqResponder: (() => Promise<StubResponse>) | null = null;
+let fsqResponder: ((url: string) => Promise<StubResponse>) | null = null;
 let headResponder: (() => Promise<{ ok: boolean; status: number }>) | null = null;
 
 /** Counts prove the short-circuit: a stored photo must mean ZERO upstream calls. */
@@ -61,13 +62,18 @@ before(async () => {
         : { ok: true, status: 200 }) as any;
     }
     if (u.includes("places.googleapis.com/v1/places:searchText")) {
+      assert.equal(init?.headers?.["X-Goog-FieldMask"], "places.id,places.displayName,places.location,places.photos");
       googleCalls++;
       if (googleResponder) return (await googleResponder()) as any;
       return { ok: true, status: 200, json: async () => ({ places: [] }) } as any;
     }
     if (u.includes("places-api.foursquare.com") || u.includes("api.foursquare.com")) {
+      // Real v2025-06-17 response schema: flat entrance coordinates, not the
+      // retired v3 geocodes.main object. docs.foursquare.com/fsq-developers-places/reference/response-fields
+      assert.equal(init?.headers?.["X-Places-Api-Version"], "2025-06-17");
+      assert.equal(new URL(u).searchParams.get("fields"), "name,latitude,longitude,photos");
       fsqCalls++;
-      if (fsqResponder) return (await fsqResponder()) as any;
+      if (fsqResponder) return (await fsqResponder(u)) as any;
       return { ok: true, status: 200, json: async () => ({ results: [] }) } as any;
     }
     return originalFetch(url as RequestInfo, init);
@@ -154,7 +160,9 @@ beforeEach(() => {
 afterEach(() => { _setTestServiceClient(null); });
 
 async function get(path: string) {
-  const res = await originalFetch(`http://127.0.0.1:${port}${path}`);
+  const uri = new URL(`http://127.0.0.1:${port}${path}`);
+  if (!uri.searchParams.has("lat")) { uri.searchParams.set("lat", "10.311"); uri.searchParams.set("lng", "123.891"); }
+  const res = await originalFetch(uri);
   return { status: res.status, body: (await res.json()) as any };
 }
 
@@ -167,7 +175,7 @@ function googleFindsPhoto() {
   googleResponder = async () => ({
     ok: true,
     status: 200,
-    json: async () => ({ places: [{ id: "ChIJabc123", photos: [{ name: GOOGLE_PHOTO_NAME }] }] }),
+    json: async () => ({ places: [{ id: "ChIJabc123", displayName: { text: "Cebu Zoo" }, location: { latitude: 10.311, longitude: 123.891 }, photos: [{ name: GOOGLE_PHOTO_NAME }] }] }),
   });
 }
 
@@ -195,7 +203,7 @@ describe("Google route — persists the reference, never the credential", () => 
 
     assert.equal(store.upserts.length, 1, "the resolved photo should be persisted once");
     const row = store.upserts[0];
-    assert.equal(row.place_key, "osm:node/123");
+    assert.equal(row.place_key, verifiedPlacePhotoKey("osm:node/123", "Cebu Zoo", { lat: 10.311, lng: 123.891 }));
     assert.equal(row.source, "google");
     assert.equal(row.photo_ref, GOOGLE_PHOTO_NAME);
     assert.equal(row.photo_url, null);
@@ -237,7 +245,7 @@ describe("Google route — persists the reference, never the credential", () => 
 describe("A stored photo actually stops the provider being called", () => {
   it("serves the stored Google photo without calling Google at all", async () => {
     installStore([{
-      place_key: "osm:node/123",
+      place_key: verifiedPlacePhotoKey("osm:node/123", "Cebu Zoo", { lat: 10.311, lng: 123.891 }),
       source: "google",
       photo_url: null,
       photo_ref: GOOGLE_PHOTO_NAME,
@@ -265,7 +273,7 @@ describe("A stored photo actually stops the provider being called", () => {
     // The fsq-photo route is what the client hits first. A hit there means the
     // whole chain is skipped, which is where the repeated work disappears.
     installStore([{
-      place_key: "osm:node/123",
+      place_key: verifiedPlacePhotoKey("osm:node/123", "Cebu Zoo", { lat: 10.311, lng: 123.891 }),
       source: "google",
       photo_url: null,
       photo_ref: GOOGLE_PHOTO_NAME,
@@ -284,7 +292,7 @@ describe("A stored photo actually stops the provider being called", () => {
 
   it("does NOT serve an expired row — it falls through and re-resolves", async () => {
     installStore([{
-      place_key: "osm:node/123",
+      place_key: verifiedPlacePhotoKey("osm:node/123", "Cebu Zoo", { lat: 10.311, lng: 123.891 }),
       source: "google",
       photo_url: null,
       photo_ref: "places/OLD/photos/OLD",
@@ -306,7 +314,7 @@ describe("A stored photo actually stops the provider being called", () => {
     // current credentials — but a Google row still needs a key to mint a URL,
     // so this is proven with a Foursquare row, which needs none.
     installStore([{
-      place_key: "osm:node/123",
+      place_key: verifiedPlacePhotoKey("osm:node/123", "Cebu Zoo", { lat: 10.311, lng: 123.891 }),
       source: "foursquare",
       photo_url: "https://fastly.4sqi.net/img/general/original/a.jpg",
       photo_ref: null,
@@ -328,11 +336,11 @@ describe("Foursquare route — only a VERIFIED photo is persisted", () => {
   // makes later cases read the first case's cached answer and assert against a
   // result the route never computed for them.
   function fsqFindsPhoto() {
-    fsqResponder = async () => ({
+    fsqResponder = async (url) => ({
       ok: true,
       status: 200,
       json: async () => ({
-        results: [{ photos: [{ prefix: "https://fastly.4sqi.net/img/general/", suffix: "/abc.jpg" }] }],
+        results: [{ name: new URL(url).searchParams.get("query"), latitude: 10.311, longitude: 123.891, photos: [{ prefix: "https://fastly.4sqi.net/img/general/", suffix: "/abc.jpg" }] }],
       }),
     });
   }
@@ -347,7 +355,7 @@ describe("Foursquare route — only a VERIFIED photo is persisted", () => {
     assert.equal(body.photoUrl, "https://fastly.4sqi.net/img/general/original/abc.jpg");
     assert.equal(body.source, "foursquare");
     assert.equal(store.upserts.length, 1);
-    assert.equal(store.upserts[0].place_key, "osm:node/55");
+    assert.equal(store.upserts[0].place_key, verifiedPlacePhotoKey("osm:node/55", "CafeVerified", { lat: 10.311, lng: 123.891 }));
     assert.equal(store.upserts[0].photo_url, "https://fastly.4sqi.net/img/general/original/abc.jpg");
   });
 
@@ -386,6 +394,79 @@ describe("Foursquare route — only a VERIFIED photo is persisted", () => {
     await settle();
 
     assert.equal(body.photoUrl, null);
+    assert.equal(store.upserts.length, 0);
+  });
+});
+
+describe("Place photos must belong to the requested venue", () => {
+  const place = "VPBank - Hải Châu";
+  const anchor = { latitude: 16.0738, longitude: 108.2183 };
+  const query = `name=${encodeURIComponent(place)}&lat=${anchor.latitude}&lng=${anchor.longitude}&placeKey=node%2F2704`;
+  const photo = { prefix: "https://fastly.4sqi.net/img/general/", suffix: "/bank.jpg" };
+
+  it("does not reuse a legacy photo cache row with no identity evidence", async () => {
+    installStore([{ place_key: "osm:node/2704", source: "foursquare", photo_url: "https://unrelated.example/football-logo.jpg", photo_ref: null, expires_at: new Date(Date.now() + PHOTO_TTL_MS).toISOString(), invalid_at: null }]);
+    const response = await get(`/places/photo?${query}`);
+    assert.equal(response.body.photoUrl, null);
+    assert.equal(googleCalls, 1);
+    assert.equal(store.rows.length, 1, "legacy cache is bypassed without deleting existing rows");
+  });
+
+  for (const [label, candidate] of [
+    ["unrelated name", { name: "XerezCD.com", ...anchor }],
+    ["same name in another city", { name: place, latitude: 40, longitude: -3 }],
+    ["missing provider coordinates", { name: place }],
+  ] as const) {
+    it(`rejects ${label} from both photo providers`, async () => {
+      fsqResponder = async () => ({ ok: true, status: 200, json: async () => ({ results: [{ ...candidate, photos: [photo] }] }) });
+      googleResponder = async () => ({ ok: true, status: 200, json: async () => ({ places: [{ id: "ChIJabc123", displayName: { text: candidate.name }, location: candidate, photos: [{ name: GOOGLE_PHOTO_NAME }] }] }) });
+      // Unique anchors bypass in-process negative caching between cases.
+      const unique = query.replace("node%2F2704", `node%2F${label.length}`);
+      const fsq = await get(`/places/fsq-photo?${unique}`);
+      const google = await get(`/places/photo?${unique}`);
+      assert.equal(fsq.body.photoUrl, null);
+      assert.equal(google.body.photoUrl, null);
+      assert.equal(store.upserts.length, 0, "mismatches never enter the durable store");
+    });
+  }
+
+  it("chooses the matching branch after an unrelated first result", async () => {
+    fsqResponder = async () => ({ ok: true, status: 200, json: async () => ({ results: [
+      { name: "XerezCD.com", ...anchor, photos: [{ ...photo, suffix: "/football.jpg" }] },
+      { name: place, ...anchor, photos: [photo] },
+    ] }) });
+    const response = await get(`/places/fsq-photo?${query.replace("node%2F2704", "node%2F2706")}`);
+    assert.equal(response.body.photoUrl, "https://fastly.4sqi.net/img/general/original/bank.jpg");
+    assert.equal(store.upserts.length, 1);
+    assert.match(store.upserts[0].place_key, /:photo-v2:/);
+  });
+
+  it("Google skips a matching record without photos and uses a later verified match", async () => {
+    googleResponder = async () => ({ ok: true, status: 200, json: async () => ({ places: [
+      { id: "no_photo", displayName: { text: place }, location: anchor },
+      { id: "ChIJabc123", displayName: { text: place }, location: anchor, photos: [{ name: GOOGLE_PHOTO_NAME }] },
+    ] }) });
+    const response = await get(`/places/photo?${query}`);
+    assert.match(response.body.photoUrl, /AUGGfXnDef/);
+    assert.equal(store.upserts.length, 1);
+  });
+
+  it("never uses a name-only request to guess a branch", async () => {
+    for (const route of ["fsq-photo", "photo"]) {
+      const response = await originalFetch(`http://127.0.0.1:${port}/places/${route}?name=VPBank`);
+      const body = await response.json() as { photoUrl: unknown };
+      assert.equal(body.photoUrl, null);
+    }
+    assert.equal(googleCalls + fsqCalls, 0);
+  });
+
+  it("isolates nearby branch anchors and rejects non-provider URLs", async () => {
+    const a = verifiedPlacePhotoKey("osm:node/1", place, { lat: 16.07381, lng: 108.2183 });
+    const b = verifiedPlacePhotoKey("osm:node/1", place, { lat: 16.07382, lng: 108.2183 });
+    assert.notEqual(a, b);
+    fsqResponder = async () => ({ ok: true, status: 200, json: async () => ({ results: [{ name: place, ...anchor, photos: [{ prefix: "https://football.example/", suffix: "/logo.jpg" }] }] }) });
+    const response = await get(`/places/fsq-photo?${query.replace("node%2F2704", "node%2F2707")}`);
+    assert.equal(response.body.photoUrl, null);
     assert.equal(store.upserts.length, 0);
   });
 });

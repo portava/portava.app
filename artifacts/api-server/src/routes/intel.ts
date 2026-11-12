@@ -32,7 +32,7 @@ import {
   writeObservation, proposeClaim, approveClaim, confirmClaim, correctClaim, CAPTURE_SURFACES,
   type CaptureResult, type CaptureInput,
 } from "../services/intel/IntelCaptureService.js";
-import { getIntelConsentState, setIntelConsent } from "../lib/intelConsent.js";
+import { getIntelConsentState, setIntelConsent, readOwnContributorIdentities } from "../lib/intelConsent.js";
 import { readTrailMovement } from "../lib/trailServe.js";
 
 const router = Router();
@@ -248,6 +248,11 @@ const handleProposeClaim = asyncHandler(async (req: Request, res: Response) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const sc = getServiceClient()!;
+  // 3002 stores a rotating contributor token, not the account id. Resolve all
+  // live epochs before reading an observation so an identity outage cannot
+  // become an existence oracle (or falsely disown last week's contribution).
+  const identities = await readOwnContributorIdentities(sc, auth.user.id);
+  if (!identities.ok) return sendError(res, "db_error", "could not verify observation ownership");
   // OBSERVE THE READ. supabase-js RESOLVES on a database error, so an unchecked
   // `.error` here came back as `data: null` — indistinguishable from "no such
   // row". This lookup is already narrowed to `actor_id = the caller`, so the
@@ -259,7 +264,7 @@ const handleProposeClaim = asyncHandler(async (req: Request, res: Response) => {
   // returned nothing is a not_found.
   const { data: obs, error: obsErr } = await sc
     .from("intel_observations").select("*")
-    .eq("id", req.params.id).eq("actor_id", auth.user.id).maybeSingle();
+    .eq("id", req.params.id).in("actor_id", identities.identities).maybeSingle();
   if (obsErr) return sendError(res, "db_error", "could not read the observation");
   if (!obs) return sendError(res, "not_found", "observation not found");
   const out = await proposeClaim(sc, obs);

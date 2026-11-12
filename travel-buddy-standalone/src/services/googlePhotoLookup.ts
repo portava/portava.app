@@ -27,9 +27,10 @@ const photoCache = new Map<string, CacheEntry>();
  */
 const inFlightPhotos = new Map<string, Promise<string | null>>();
 
-function cacheKey(name: string, lat: number | null, lng: number | null): string {
+function cacheKey(name: string, lat: number | null, lng: number | null, placeKey?: string | null): string {
   const n = name.toLowerCase().trim().replace(/\s+/g, ' ');
-  return `${n}|${lat != null ? lat.toFixed(3) : '_'}|${lng != null ? lng.toFixed(3) : '_'}`;
+  // Exact anchors and source identities keep adjacent same-name branches separate.
+  return JSON.stringify([n, lat, lng, placeKey ?? null]);
 }
 
 /**
@@ -48,7 +49,7 @@ export async function lookupGooglePhoto(
 
   const resolvedLat = lat ?? null;
   const resolvedLng = lng ?? null;
-  const cKey = cacheKey(name, resolvedLat, resolvedLng);
+  const cKey = cacheKey(name, resolvedLat, resolvedLng, placeKey);
 
   const cached = photoCache.get(cKey);
   if (cached && Date.now() - cached.ts < TTL_MS) return cached.url;
