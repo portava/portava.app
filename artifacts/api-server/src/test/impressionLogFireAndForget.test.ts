@@ -22,7 +22,7 @@
  * Run: node --import tsx/esm --test src/test/impressionLogFireAndForget.test.ts
  */
 
-import { describe, it, beforeEach, afterEach } from "node:test";
+import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
@@ -36,6 +36,28 @@ import { logCompassImpression } from "../lib/rankLog.js";
 
 const USER_ID  = "aaaaaaaa-aaaa-aaaa-aaaa-000000000001";
 const EVENT_ID = "eeeeeeee-eeee-eeee-eeee-000000000001";
+const PLACE_ID = "node/123456789";
+
+// These tests isolate impression writes, so a live geocoder or Overpass outage
+// must not turn the measured response into an unrelated provider refusal.
+const originalFetch = globalThis.fetch;
+before(() => {
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (url.hostname === "127.0.0.1") return originalFetch(input, init);
+    if (url.hostname === "nominatim.openstreetmap.org") {
+      return Response.json([{ lat: "10", lon: "10", display_name: "Test City" }]);
+    }
+    if (url.hostname === "overpass-api.de") {
+      return Response.json({ elements: [{ type: "node", id: 123456789, lat: 10, lon: 10,
+        tags: { name: "Impression Fixture Cafe", amenity: "cafe" } }] });
+    }
+    throw new Error(`Unstubbed provider in impression isolation test: ${url.hostname}`);
+  };
+});
+after(() => { globalThis.fetch = originalFetch; });
+
+interface RankInsertObservation { rows: any[]; settled: boolean }
 
 // How long the stub holds rank_events.insert pending.  The feed response must
 // arrive well before this deadline — proving the route does not await it.
@@ -84,21 +106,25 @@ const SEED_EVENT = {
  *   "pending" — insert returns a promise that never resolves within the test
  *               window (tests E–G timing proof)
  */
-function makeClient(rankEventsInsertBehavior: "throw" | "pending") {
+function makeClient(rankEventsInsertBehavior: "throw" | "pending", inserts: RankInsertObservation[] = []) {
   function chain(table: string, rows: any[] = []) {
     let filtered = [...rows];
+    let counted = false;
 
     const obj: any = {
-      select()               { return obj; },
+      select(_columns?: string, options?: { count?: string }) { counted = options?.count === "exact"; return obj; },
       insert(_data: any) {
         if (table === "rank_events") {
+          const observation = { rows: Array.isArray(_data) ? _data : [_data], settled: false };
+          inserts.push(observation);
           if (rankEventsInsertBehavior === "throw") {
+            observation.settled = true;
             return Promise.reject(new Error("rank_events: simulated insert failure"));
           }
           // "pending": resolve only after RANK_INSERT_DELAY_MS — if the route
           // awaits this, the feed response will be delayed by that much.
-          return new Promise<void>((resolve) =>
-            setTimeout(resolve, RANK_INSERT_DELAY_MS),
+          return new Promise((resolve) =>
+            setTimeout(() => { observation.settled = true; resolve({ data: null, error: null }); }, RANK_INSERT_DELAY_MS),
           );
         }
         return obj;
@@ -124,6 +150,11 @@ function makeClient(rankEventsInsertBehavior: "throw" | "pending") {
       lt()                   { return obj; },
       lte()                  { return obj; },
       ilike()                { return obj; },
+      like(col: string, pattern: string) {
+        const prefix = pattern.replace(/%$/, "");
+        filtered = filtered.filter((r: any) => String(r[col] ?? "").startsWith(prefix));
+        return obj;
+      },
       or()                   { return obj; },
       contains()             { return obj; },
       overlaps()             { return obj; },
@@ -143,7 +174,7 @@ function makeClient(rankEventsInsertBehavior: "throw" | "pending") {
         return Promise.resolve({ data: filtered[0] ?? null, error: null });
       },
       then(onF: any, onR: any) {
-        return Promise.resolve({ data: [...filtered], error: null }).then(onF, onR);
+        return Promise.resolve({ data: [...filtered], error: null, ...(counted ? { count: filtered.length } : {}) }).then(onF, onR);
       },
     };
     return obj;
@@ -169,6 +200,7 @@ function makeClient(rankEventsInsertBehavior: "throw" | "pending") {
       { flag: "events_enabled",             enabled: true  },
       { flag: "events_trust_gates_enabled", enabled: false },
       { flag: "discovery_enabled",          enabled: true  },
+      { flag: "discovery_serve_log_enabled", enabled: true },
       { flag: "pulse_enabled",              enabled: true  },
       { flag: "rent_buddy_enabled",         enabled: false },
       { flag: "hidden_gems_enabled",        enabled: false },
@@ -375,6 +407,9 @@ describe("Impression logging — rank_events immediate-reject: no error propagat
   it("D: GET /api/discovery returns 200 even when rank_events insert throws", async () => {
     const { status, body } = await timedGet(url, "/api/discovery?destination=testcity");
     assert.equal(status, 200, `Expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    assert.ok(body.places?.some((place: any) => place.id === PLACE_ID),
+      `Expected the provider fixture despite the rejected impression: ${JSON.stringify(body)}`);
+    assert.equal(body.refusal, undefined, "a provider refusal is not a successful Discovery page");
   });
 
   it("H: GET /api/compass/recommendations returns 200 even when rank_events insert throws", async () => {
@@ -393,11 +428,13 @@ describe("Impression logging — rank_events immediate-reject: no error propagat
 describe("Impression logging — rank_events delayed stub: response arrives before insert settles", () => {
   let server: Server;
   let url: string;
+  let inserts: RankInsertObservation[];
 
   beforeEach(async () => {
     clearCompassProfileCache();
     invalidateFlagsCache();
-    _setTestClient(makeClient("pending"), true);
+    inserts = [];
+    _setTestClient(makeClient("pending", inserts), true);
     ({ server, url } = await startServer());
   });
 
@@ -427,8 +464,16 @@ describe("Impression logging — rank_events delayed stub: response arrives befo
   });
 
   it("G: GET /api/discovery responds well before the 2-second rank_events insert settles", async () => {
-    const { status, body, elapsedMs } = await timedGet(url, "/api/discovery?destination=testcity");
+    // A distinct destination exercises the cold serve, where logging precedes
+    // res.json. Awaiting the insert here would exceed the unchanged 1s budget.
+    const { status, body, elapsedMs } = await timedGet(url, "/api/discovery?destination=testcity-pending");
     assert.equal(status, 200, `Expected 200 but got ${status}: ${JSON.stringify(body)}`);
+    assert.ok(body.places?.some((place: any) => place.id === PLACE_ID),
+      `Expected the provider fixture in the actual Discovery page: ${JSON.stringify(body)}`);
+    assert.equal(body.refusal, undefined, "a provider refusal is not a successful Discovery page");
+    const impression = inserts.find(insert => insert.rows.some(row => row.surface === "discovery" && row.item_id === PLACE_ID));
+    assert.ok(impression, "the served fixture must actually reach rank_events.insert");
+    assert.equal(impression.settled, false, "the HTTP response must precede impression-write settlement");
     assert.ok(
       elapsedMs < RESPONSE_MUST_ARRIVE_WITHIN_MS,
       `Feed response took ${elapsedMs}ms — expected < ${RESPONSE_MUST_ARRIVE_WITHIN_MS}ms. ` +
