@@ -14253,7 +14253,7 @@ header on every device.
 - `threadHooks.compactPlayback.component.test.ts` (jest) 14/14 — **8/9 of the first-round cases red against main's two
   hooks** (the ninth pins that a catch-up with nothing changed still returns the same array, true on main by design);
   the three fix-round cases (DM poll and reload refused, group member removed) are **red against `57552b4ef`'s
-  hooks**. The group case that needed the merge fix is `travel-buddy-standalone/src/hooks/__tests__/threadHooks.compactPlayback.component.test.ts:219#a catch-up that brings the message back deleted`.
+  hooks**. The group case that needed the merge fix is `travel-buddy-standalone/src/hooks/__tests__/threadHooks.compactPlayback.component.test.ts:224#a catch-up that brings the message back deleted`.
 - **48/48 mutants killed** (32 first-round, re-patterned to this head, plus 16 for fix round 1 — listed in 90.8), each
   alone and restored. First round: binding (deleted not checked, a not-live source binds, unbound
   open allowed, same video restarts), stale-key stop, route stop off, account stop off, anonymous stamp allowed,
@@ -14288,7 +14288,7 @@ realtime service's own fallback). Four fixes, each with a test red on `57552b4ef
   (`travel-buddy-standalone/src/hooks/useMessaging.ts:355#if (isAccessLoss(res)) setAccessLost(true); return; }`;
   the rule is `travel-buddy-standalone/src/features/telegraph/media/useCompactPlaybackSource.ts:39#export function isAccessLoss(`),
   mirroring the group hook's `forbidden → no_access`; a network or database failure is not an access loss. Pinned by
-  `travel-buddy-standalone/src/hooks/__tests__/threadHooks.compactPlayback.component.test.ts:161#a poll the server refuses (no longer a member) stops playback`.
+  `travel-buddy-standalone/src/hooks/__tests__/threadHooks.compactPlayback.component.test.ts:166#a poll the server refuses (no longer a member) stops playback`.
   **Not covered by this path, stated:** a BLOCK does not make a thread read refuse (blocks leave membership in place),
   so the DM poll cannot see a block; B does.
 - **B — the server is asked, not a cache.** The client keeps a signed URL for up to 55 minutes, so the first round's
@@ -14306,13 +14306,13 @@ realtime service's own fallback). Four fixes, each with a test red on `57552b4ef
   and the host's refusal-at-open, interval, foreground and reconnect cases (the host test's hydration stand-in now
   signs once and never learns of a revocation, as the real hook does, so these cases can only pass through the
   fresh re-check).
-- **C — a REMOVED group member.** Removal sends that member no event and the group hook has no poll. While a session is
+- **C — a REMOVED group member (historical fix).** Removal sends that member no event and the group hook then had no poll. While a session is
   bound to a group thread — and only then — the hook re-reads the thread every `SOURCE_RECHECK_MS` = 30 s
   (`travel-buddy-standalone/src/features/telegraph/media/useCompactPlaybackSource.ts:76#setInterval(() => recheckRef.current?.(), SOURCE_RECHECK_MS)`);
   the read answers `forbidden`, the hook goes `no_access`, the source stops being live. B covers the same case
   independently (the sign endpoint requires active membership). Pinned by
-  `travel-buddy-standalone/src/hooks/__tests__/threadHooks.compactPlayback.component.test.ts:256#a member REMOVED while watching`;
-  with no session the chat is not re-read (:276). No server event was added: a removal event is a Telegraph event
+  `travel-buddy-standalone/src/hooks/__tests__/threadHooks.compactPlayback.component.test.ts:261#a member removed while the stream is healthy loses playback within the independent source recheck bound`;
+  with a healthy stream and no session there is no playback-only periodic read (:282). The current disconnected-stream fallback is separate from this historical playback recheck. No server event was added: a removal event is a Telegraph event
   contract change (inventory, every consumer) for a case the bounded re-read already closes.
 - **D — the wrapper's `box-none` is pinned** (it was unpinned: removing it left the docked overlay swallowing every
   touch with all tests green), with the docked frame's 176×99 size
@@ -15082,7 +15082,7 @@ Reconnect callbacks must still own both their generation and timer slot
 The public subscription/status API, endpoint/headers, current parser behavior,
 control-event delivery before reconnect, backoff and polling fallback remain.
 The existing reconnect consumer is exercised rather than replaced with a fake
-(`travel-buddy-standalone/src/features/telegraph/__tests__/telegraphRealtimeReconnectConsumer.component.test.tsx:60#it('an obsolete XHR must not trigger the mounted actual reconnect catch-up hook', async () => {`).
+(`travel-buddy-standalone/src/features/telegraph/__tests__/telegraphRealtimeReconnectConsumer.component.test.tsx:67#it('an obsolete XHR must not trigger the mounted actual reconnect catch-up hook', async () => {`).
 Permanent service cases use the actual token helper
 (`travel-buddy-standalone/src/services/__tests__/telegraphRealtimeLifetime.component.test.ts:110#describe('Telegraph realtime attempt lifetime with the real token helper', () => {`).
 

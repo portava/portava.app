@@ -22,7 +22,9 @@
  *     7. Losing access (removed while away → no_access) stops playback.
  *     8. A member REMOVED while watching (no event reaches them, nothing
  *        re-reads) loses the video within SOURCE_RECHECK_MS: while a session
- *        is bound, and only then, the chat is re-read on that bound.
+ *        is bound, and only then, playback independently rechecks on that bound.
+ *     9. A disconnected chat also refreshes every five seconds without playback,
+ *        stops that fallback in the background and revokes removed-member playback.
  *
  * NOTE: named `.component.test.ts` so the jest `test:component` pattern runs it.
  */
@@ -69,6 +71,7 @@ jest.mock('../../services/messaging.ts', () => ({
 
 const realtimeListeners: Array<(e: unknown) => void> = [];
 const statusListeners: Array<(s: string) => void> = [];
+let mockRealtimeStatus: 'connecting' | 'open' = 'connecting';
 // NOTE: intentionally exhaustive — the realtime service opens a stream on use.
 jest.mock('../../services/telegraphRealtimeService.ts', () => ({
   telegraphRealtime: {
@@ -78,13 +81,13 @@ jest.mock('../../services/telegraphRealtimeService.ts', () => ({
     },
     onStatus: (l: (s: string) => void) => {
       statusListeners.push(l);
-      l('connecting');
+      l(mockRealtimeStatus);
       return () => {
         const i = statusListeners.indexOf(l);
         if (i >= 0) statusListeners.splice(i, 1);
       };
     },
-    getStatus: () => 'connecting',
+    getStatus: () => mockRealtimeStatus,
   },
 }));
 
@@ -108,6 +111,8 @@ beforeEach(() => {
   realtimeListeners.length = 0;
   statusListeners.length = 0;
   appListeners.length = 0;
+  mockRealtimeStatus = 'connecting';
+  Object.defineProperty(AppState, 'currentState', { value: 'active', configurable: true });
   jest.spyOn(AppState, 'addEventListener').mockImplementation(((_t: string, l: (s: AppStateStatus) => void) => {
     appListeners.push(l);
     return { remove: () => { const i = appListeners.indexOf(l); if (i >= 0) appListeners.splice(i, 1); } };
@@ -116,7 +121,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   await act(async () => {});
-  cleanup();
+  await cleanup();
   jest.useRealTimers();
   jest.restoreAllMocks();
 });
@@ -134,13 +139,13 @@ describe('useThreadMessages as a message source', () => {
   it('a video the thread holds opens; with no thread mounted it does not', async () => {
     expect(openMessageVideo({ mediaRef: REF })).toBe(false);
     await openThread();
-    expect(openMessageVideo({ mediaRef: REF })).toBe(true);
+    await act(async () => { expect(openMessageVideo({ mediaRef: REF })).toBe(true); });
     expect(getCompactPlayback()?.bindings[0]).toMatchObject({ threadId: 't-1', messageIds: ['m-1'] });
   });
 
   it('a poll that brings the message back deleted stops playback', async () => {
     const { result } = await openThread();
-    expect(openMessageVideo({ mediaRef: REF })).toBe(true);
+    await act(async () => { expect(openMessageVideo({ mediaRef: REF })).toBe(true); });
     mockGetThreadMessages.mockResolvedValueOnce({ ok: true, data: { threadId: 't-1', messages: [TOMBSTONE('m-1'), TEXT('m-0')] } });
     await act(async () => {
       for (const l of realtimeListeners) l({ type: 'message.updated', threadId: 't-1', ts: 'x' });
@@ -152,7 +157,7 @@ describe('useThreadMessages as a message source', () => {
 
   it('the screen unmounting stops playback', async () => {
     const { unmount } = await openThread();
-    expect(openMessageVideo({ mediaRef: REF })).toBe(true);
+    await act(async () => { expect(openMessageVideo({ mediaRef: REF })).toBe(true); });
     await act(async () => { unmount(); });
     expect(getCompactPlayback()).toBeNull();
     expect(lastPlaybackStopReason()).toBe('source_closed');
@@ -160,7 +165,7 @@ describe('useThreadMessages as a message source', () => {
 
   it('a poll the server refuses (no longer a member) stops playback', async () => {
     await openThread();
-    expect(openMessageVideo({ mediaRef: REF })).toBe(true);
+    await act(async () => { expect(openMessageVideo({ mediaRef: REF })).toBe(true); });
     mockGetThreadMessages.mockResolvedValueOnce({ ok: false, data: null, errorKind: 'forbidden' });
     await act(async () => {
       for (const l of realtimeListeners) l({ type: 'message.updated', threadId: 't-1', ts: 'x' });
@@ -171,7 +176,7 @@ describe('useThreadMessages as a message source', () => {
 
   it('a reload the server refuses as not_found stops playback', async () => {
     const { result } = await openThread();
-    expect(openMessageVideo({ mediaRef: REF })).toBe(true);
+    await act(async () => { expect(openMessageVideo({ mediaRef: REF })).toBe(true); });
     mockGetThreadMessages.mockResolvedValueOnce({ ok: false, data: null, errorKind: 'not_found' });
     await act(async () => { await result.current.reload(); });
     expect(getCompactPlayback()).toBeNull();
@@ -180,7 +185,7 @@ describe('useThreadMessages as a message source', () => {
 
   it('a transient failure (network, db) is not an access loss', async () => {
     await openThread();
-    expect(openMessageVideo({ mediaRef: REF })).toBe(true);
+    await act(async () => { expect(openMessageVideo({ mediaRef: REF })).toBe(true); });
     mockGetThreadMessages.mockResolvedValueOnce({ ok: false, data: null, errorKind: 'network_unreachable' });
     await act(async () => {
       for (const l of realtimeListeners) l({ type: 'message.updated', threadId: 't-1', ts: 'x' });
@@ -212,13 +217,13 @@ describe('useGroupChat as a message source', () => {
 
   it('a video the chat holds opens', async () => {
     await openChat();
-    expect(openMessageVideo({ mediaRef: REF })).toBe(true);
+    await act(async () => { expect(openMessageVideo({ mediaRef: REF })).toBe(true); });
     expect(getCompactPlayback()?.bindings[0]).toMatchObject({ threadId: 't-1', messageIds: ['m-1'] });
   });
 
   it('a catch-up that brings the message back deleted — nothing new — reaches the chat and stops playback', async () => {
     const { result } = await openChat();
-    expect(openMessageVideo({ mediaRef: REF })).toBe(true);
+    await act(async () => { expect(openMessageVideo({ mediaRef: REF })).toBe(true); });
     mockGetThreadMessages.mockResolvedValueOnce({ ok: true, data: { threadId: 't-1', messages: [TOMBSTONE('m-1'), TEXT('m-0')] } });
     await foregroundReturn();
     await waitFor(() => expect(result.current.messages.find((m) => m.id === 'm-1')?.deleted).toBe(true));
@@ -246,17 +251,18 @@ describe('useGroupChat as a message source', () => {
 
   it('the viewer\'s own delete stops playback', async () => {
     const { result } = await openChat();
-    expect(openMessageVideo({ mediaRef: REF })).toBe(true);
+    await act(async () => { expect(openMessageVideo({ mediaRef: REF })).toBe(true); });
     mockDeleteMessage.mockResolvedValueOnce({ ok: true, data: { id: 'm-1', deleted: true } });
     await act(async () => { await result.current.remove('m-1'); });
     expect(getCompactPlayback()).toBeNull();
     expect(lastPlaybackStopReason()).toBe('message_gone');
   });
 
-  it('a member REMOVED while watching — no event, nothing re-reads — loses the video within the bound', async () => {
+  it('a member removed while the stream is healthy loses playback within the independent source recheck bound', async () => {
     jest.useFakeTimers();
+    mockRealtimeStatus = 'open';
     const { result } = await openChat();
-    expect(openMessageVideo({ mediaRef: REF })).toBe(true);
+    await act(async () => { expect(openMessageVideo({ mediaRef: REF })).toBe(true); });
     const reads = mockGetThreadMessages.mock.calls.length;
     mockGetThreadMessages.mockResolvedValue({ ok: false, data: null, errorKind: 'forbidden' });
     await act(async () => { jest.advanceTimersByTime(SOURCE_RECHECK_MS - 1); });
@@ -273,17 +279,52 @@ describe('useGroupChat as a message source', () => {
     expect(mockGetThreadMessages.mock.calls.length).toBe(reads + 1);
   });
 
-  it('with no video playing, the chat is NOT re-read on that bound (the re-check exists only for a session)', async () => {
+  it('with a healthy stream and no video playing, there is no playback-only periodic read', async () => {
     jest.useFakeTimers();
+    mockRealtimeStatus = 'open';
     await openChat();
     const reads = mockGetThreadMessages.mock.calls.length;
     await act(async () => { jest.advanceTimersByTime(SOURCE_RECHECK_MS * 3); });
     expect(mockGetThreadMessages.mock.calls.length).toBe(reads);
   });
 
+  it('a disconnected stream discovers removal at the five-second fallback and stops playback and further reads', async () => {
+    jest.useFakeTimers();
+    const { result } = await openChat();
+    await act(async () => { expect(openMessageVideo({ mediaRef: REF })).toBe(true); });
+    const reads = mockGetThreadMessages.mock.calls.length;
+    mockGetThreadMessages.mockResolvedValue({ ok: false, data: null, errorKind: 'forbidden' });
+    await act(async () => { await jest.advanceTimersByTimeAsync(4_999); });
+    expect(mockGetThreadMessages).toHaveBeenCalledTimes(reads);
+    expect(getCompactPlayback()).not.toBeNull();
+    await act(async () => { await jest.advanceTimersByTimeAsync(1); });
+    expect(mockGetThreadMessages).toHaveBeenCalledTimes(reads + 1);
+    expect(result.current.state).toBe('no_access');
+    expect(getCompactPlayback()).toBeNull();
+    expect(lastPlaybackStopReason()).toBe('source_closed');
+    await act(async () => { await jest.advanceTimersByTimeAsync(SOURCE_RECHECK_MS * 3); });
+    expect(mockGetThreadMessages).toHaveBeenCalledTimes(reads + 1);
+  });
+
+  it('keeps a disconnected chat fresh without video, while pausing fallback reads in the background', async () => {
+    jest.useFakeTimers();
+    const { result } = await openChat();
+    const reads = mockGetThreadMessages.mock.calls.length;
+    mockGetThreadMessages.mockResolvedValue({ok: true, data: {threadId: 't-1', messages: [TEXT('m-new', '2026-10-14T10:02:00Z'), VIDEO('m-1'), TEXT('m-0')]}});
+    await act(async () => { await jest.advanceTimersByTimeAsync(4_999); });
+    expect(mockGetThreadMessages).toHaveBeenCalledTimes(reads);
+    await act(async () => { await jest.advanceTimersByTimeAsync(1); });
+    expect(mockGetThreadMessages).toHaveBeenCalledTimes(reads + 1);
+    expect(result.current.messages.map(message => message.id)).toContain('m-new');
+    expect(getCompactPlayback()).toBeNull();
+    Object.defineProperty(AppState, 'currentState', { value: 'background', configurable: true });
+    await act(async () => { await jest.advanceTimersByTimeAsync(15_000); });
+    expect(mockGetThreadMessages).toHaveBeenCalledTimes(reads + 1);
+  });
+
   it('losing access (removed while away) stops playback', async () => {
     const { result } = await openChat();
-    expect(openMessageVideo({ mediaRef: REF })).toBe(true);
+    await act(async () => { expect(openMessageVideo({ mediaRef: REF })).toBe(true); });
     mockGetThreadMessages.mockResolvedValueOnce({ ok: false, data: null, errorKind: 'forbidden' });
     await foregroundReturn();
     await waitFor(() => expect(result.current.state).toBe('no_access'));
