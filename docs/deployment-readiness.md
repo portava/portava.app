@@ -478,8 +478,8 @@ Base URL `https://portava.replit.app`. All unauthenticated.
 **`discovery_live_rank_enabled` — response-visible. This is the strongest
 runtime proof available for any flag in §2.2.** `GET /discovery` emits a
 `meta.liveRank` object **only** when the pass applied
-(`artifacts/api-server/src/routes/discovery.ts:1892#liveRank`, and the cold path
-at `artifacts/api-server/src/routes/discovery.ts:2328#liveRank`), carrying
+(`artifacts/api-server/src/routes/discovery.ts:1895#liveRank`, and the cold path
+at `artifacts/api-server/src/routes/discovery.ts:2331#liveRank`), carrying
 `mode`, `readable`, `windowSize` and `demoted`.
 
 - Before enabling: `meta.liveRank` **absent**.

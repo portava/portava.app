@@ -60,6 +60,8 @@ interface ForYouTabProps {
   /** Height of the Discover screen's floating chrome (tab bar + filters + banner) so the list starts below it. */
   listTopInset?: number;
   bottomInset?: number;
+  /** Bottom chrome clearance for map controls, including the Layover entry. */
+  mapBottomInset?: number;
   /** Called when the user pulls to refresh, after the re-fetch is initiated. */
   onRefresh?: () => void;
 }
@@ -88,7 +90,7 @@ function compassItemToPlace(item: import('../../services/compass.ts').CompassFee
   };
 }
 
-export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, intentMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list', sortBy, listTopInset, bottomInset, onRefresh }: ForYouTabProps) {
+export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, intentMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list', sortBy, listTopInset, bottomInset, mapBottomInset, onRefresh }: ForYouTabProps) {
   const { isAuthed }            = useSession(); const forYouPde = useFeatureFlags().isEnabled('discovery_for_you_pde_enabled') && isAuthed;  // census-discovery §79 (C32/A05), migration 3455 seeded FALSE: ON ⇒ GET /discovery's for_you page IS the one-pipeline page (Compass's gates, PDE's order, the chosen intent mode), so the Compass feed must not replace it with a second ordering that carries no mode. Unknown ⇒ off (fail-soft) = today's tab.
   // SWR: seed from in-memory client cache so second opens paint instantly.
   const [items, setItems]       = useState<ForYouItem[]>(() => {
@@ -349,6 +351,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
           fallbackLng={lng}
           userLat={userLat}
           userLng={userLng}
+          bottomInset={mapBottomInset ?? bottomInset ?? 0}
           fallbackZoom={fallbackZoom} topInset={listTopInset ?? 0} /* the map's filter row, legend and travelers buttons start below Discover's floating tab row instead of under it */
         />
         <PlaceDetailSheet

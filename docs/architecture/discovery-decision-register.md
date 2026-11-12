@@ -391,9 +391,9 @@ Each request is stated in full in `docs/ops/discovery-owner-approval-request.md`
 - **Where it is implemented.**
   - `artifacts/api-server/src/lib/discoveryOnePipeline.ts`
   - `artifacts/api-server/src/compass/CompassFeedBuilder.ts:938#export async function compassEligibleForDiscovery(`
-  - `artifacts/api-server/src/routes/discovery.ts:2097#const forYouM = await forYouCandidatesForServe(`
-  - `artifacts/api-server/src/routes/discovery.ts:2267#if (callerUserId) { const places = forYouM.places;`
-  - `artifacts/api-server/src/routes/discovery.ts:1829#const forYouA = await forYouCandidatesForServe(`
+  - `artifacts/api-server/src/routes/discovery.ts:2100#const forYouM = await forYouCandidatesForServe(`
+  - `artifacts/api-server/src/routes/discovery.ts:2270#if (callerUserId) { const places = forYouM.places;`
+  - `artifacts/api-server/src/routes/discovery.ts:1832#const forYouA = await forYouCandidatesForServe(`
   - migration 3455
   - Tests: `artifacts/api-server/src/test/discoveryOnePipeline.test.ts` P1–P4 and Z0.
 
@@ -417,7 +417,7 @@ Each request is stated in full in `docs/ops/discovery-owner-approval-request.md`
      - Read `discovery_shadow_serves` for serve points 1, 4 and 5: `overlap_count`, `top_changed` and `pde_stages->'phase9'`.
   3. **Gate 2**, after 14 days of shadow rows and the owner's reading of them:
      - `UPDATE public.feature_flags SET enabled = true WHERE flag IN ('discovery_for_you_pde_enabled','discovery_cache_a_ranked_enabled');`
-     - Then set `DISCOVERY_ENGINE_MODE` back to `{"mode":"legacy"}` or leave it in `shadow`. With both flags on, the shadow skips pages that PDE already served (`routes/discovery.ts:1951#shadowCohort`).
+     - Then set `DISCOVERY_ENGINE_MODE` back to `{"mode":"legacy"}` or leave it in `shadow`. With both flags on, the shadow skips pages that PDE already served (`routes/discovery.ts:1954#shadowCohort`).
 - **Consequence of approving.**
   - Signed-in `for_you` pages and every signed-in Cache A hit are ordered by the PDE pipeline.
   - `rank_events` gains a real impression row per served item on serve points 1, 2 and 3 (they wrote serve-log rows before).
@@ -469,7 +469,7 @@ Each request is stated in full in `docs/ops/discovery-owner-approval-request.md`
   - A ranker failure still serves the cached order, as the `pde` branch always has. It is recorded as a `cache_bypass` obligation by `recordRankObligation`, and the page is marked `rankedBy: "none"`.
 - **Reversibility.** Set the flag FALSE; it takes effect within 30 s.
 - **Where it is implemented.**
-  - `artifacts/api-server/src/routes/discovery.ts:1845#const cacheARanked = await cacheARankedEnabled(`
+  - `artifacts/api-server/src/routes/discovery.ts:1848#const cacheARanked = await cacheARankedEnabled(`
   - migration 3456
   - Tests: V1 and V2 (and Z0).
 
@@ -484,7 +484,7 @@ Each request is stated in full in `docs/ops/discovery-owner-approval-request.md`
   - With 3455 OFF the tab is exactly as before (O1c, O3).
 - **Reversibility.** It follows 3455.
 - **Where it is implemented.**
-  - `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:232#if (forYouPde || !compass.data`
+  - `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:234#if (forYouPde || !compass.data`
   - Test: `travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.onePipeline.component.test.tsx`
 
 ### D-W10R4-6 — DC-14: the shadow covers the consolidated pipeline
@@ -498,8 +498,8 @@ Each request is stated in full in `docs/ops/discovery-owner-approval-request.md`
 - **Grounds.** `06` §10: *"compute old ranking, compute PDE ranking, compare overlap … Feature flag must keep old user-visible output unchanged."*
 - **Reversibility.** The shadow runs only in `shadow` mode for a cohort, and production is `legacy`.
 - **Where it is implemented.**
-  - `artifacts/api-server/src/routes/discovery.ts:4464#async function observeForYouShadow(`
-  - `artifacts/api-server/src/routes/discovery.ts:1962#const shadowCands =`
+  - `artifacts/api-server/src/routes/discovery.ts:4467#async function observeForYouShadow(`
+  - `artifacts/api-server/src/routes/discovery.ts:1965#const shadowCands =`
   - Tests: S1–S3.
 
 ### D-W10R4-7 — retiring the old `for_you` path — **APPROVAL REQUIRED**

@@ -42,6 +42,6 @@ describe('wiring (source assertions)', () => {
   it('the thread hook notes its cursor; sign-out clears them', () => {
     assert.match(hook, /noteThreadCursor\(threadId, cursorOf\(messages\)\)/);
     assert.match(session, /clearThreadCursors\(\);/);
-    assert.match(session, /onAuthChange\(\(uid\) => \{\s*const epoch = \+\+authEpoch;\s*const outgoingUserId = lastUid;\s*const changed = outgoingUserId !== undefined && uid !== outgoingUserId;\s*if \(changed\) clearThreadCursors\(\);/, 'an external sign-out / account switch clears them too, before publishing the incoming account');
+    assert.match(session, /onAuthChange\(\(uid\) => \{\s*const epoch = \+\+authEpoch;\s*const outgoingUserId = lastUid;\s*const changed = outgoingUserId !== undefined && uid !== outgoingUserId;\s*if \(changed\) \{\s*telegraphRealtime\.setViewer\(null\);\s*clearThreadCursors\(\);\s*\}\s*lastUid = uid;\s*setDiscoveryViewerFromSession\(uid\);/, 'an external sign-out / account switch retires the stream, then clears cursors before publishing the incoming account');
   });
 });

@@ -31,6 +31,7 @@
  * "Not interested" gate and the Layover gate — run over generated rows exactly
  * as over the pool, because they run over `outcome.ranked`.
  */
+import { canonicalDisplayType, readSpecificPlaceTypes } from "../discoveryPlaceType.js";
 import { toCanonicalCategory } from "../placeCategories.js";
 import { fetchBlockedSet, submitterIsVisible } from "../blocks.js";
 import { inactiveSubmitterIds, submitterInGoodStanding } from "../discoveryCacheEligibility.js";
@@ -127,7 +128,7 @@ export function mapDiscoveryPlacesRow(row: any, center: { lat: number; lng: numb
 }
 
 /** `queryCanonicalPlaces`' row mapping (center unknown ⇒ distance null). */
-export function mapCanonicalPlacesRow(row: any, center: { lat: number; lng: number } | null = null): MaterialisedPlace {
+export function mapCanonicalPlacesRow(row: any, center: { lat: number; lng: number } | null = null, specificType?: string): MaterialisedPlace {
   const lat = row.latitude != null ? parseFloat(String(row.latitude)) : null;
   const lng = row.longitude != null ? parseFloat(String(row.longitude)) : null;
   return {
@@ -135,12 +136,12 @@ export function mapCanonicalPlacesRow(row: any, center: { lat: number; lng: numb
     canonicalPlaceId: row.id as string,
     name: row.name as string,
     category: toCanonicalCategory(row.primary_category as string, null),
-    type: (row.primary_category ?? null) as string | null,
+    type: canonicalDisplayType(row.primary_category, specificType),
     description: null,
     distanceKm: servedDistanceKm(center, lat, lng),
     lat,
     lng,
-    tags: [row.primary_category].filter(Boolean) as string[],
+    tags: [canonicalDisplayType(row.primary_category, specificType)].filter(Boolean) as string[],
     address: (row.neighborhood ?? row.address ?? null) as string | null, neighborhood: (row.neighborhood ?? null) as string | null,
     website: null,
     phone: null,
@@ -232,8 +233,10 @@ export async function materialiseCandidates(
       .is("merged_into_place_id", null)
       .order("id", { ascending: true });
     if (error) { out.failedReads.push("places"); return out; }
-    for (const row of (Array.isArray(data) ? data : [])) {
-      const mapped = mapCanonicalPlacesRow(row, ctx.center ?? null);
+    const rows = Array.isArray(data) ? data : [];
+    const specificTypes = await readSpecificPlaceTypes(sc, rows);
+    for (const row of rows) {
+      const mapped = mapCanonicalPlacesRow(row, ctx.center ?? null, specificTypes.get(row.id));
       if (ctx.admitted && !ctx.admitted.has(mapped.category)) { out.refused.category++; continue; }
       out.rows.set(mapped.id, mapped);
     }

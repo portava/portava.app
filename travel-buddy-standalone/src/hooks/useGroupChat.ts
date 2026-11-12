@@ -1,3 +1,4 @@
+import { useConversationTyping } from '../features/telegraph/lifecycle/useConversationTyping.ts';
 /**
  * useGroupChat — fetch and send messages in trip or circle group threads.
  *
@@ -8,7 +9,7 @@
  * otherwise shows original_body. No-op until Task #7 populates translation rows.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert } from 'react-native';
+import { Alert, AppState } from 'react-native';
 import { useThreadOutbox } from '../features/telegraph/outbox/useThreadOutbox.ts';
 import { mergePendingMessages } from '../features/telegraph/outbox/pendingMessages.ts';
 import {
@@ -18,7 +19,6 @@ import {
   editThreadMessage,
   deleteMessage,
   getThreadMessages,
-  sendTyping,
   type MsgResult,
   type GroupChatResult,
   type GroupThread,
@@ -36,7 +36,7 @@ function makeClientId(): string {
   return `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-const TYPING_TTL_MS = 4_000;
+
 
 export type GroupChatState =
   | 'loading'
@@ -73,26 +73,30 @@ export function useGroupChat(
   const [messages, setMessages] = useState<Message[]>([]);
   const [sending, setSending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [typingUserIds, setTypingUserIds] = useState<string[]>([]);
+  const { typingUserIds, notifyTyping } = useConversationTyping(state === 'active' ? thread?.id ?? null : null, userId);
   const threadIdRef = useRef<string | null>(null);
   threadIdRef.current = thread?.id ?? null;
-  const typingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const lastTypingSentRef = useRef(0);
   const sendingRef = useRef(false);
   const identity = `${type}:${id ?? ''}:${userId ?? ''}`;
   const identityRef = useRef(identity); identityRef.current = identity;
   useEffect(() => { setMessages([]); setThread(null); setState('loading'); setSending(false); sendingRef.current = false; }, [identity]);
+
+  const readScope = useRef({ key: identity, epoch: 0, issued: 0, applied: 0 });
+  if (readScope.current.key !== identity) readScope.current = { key: identity, epoch: readScope.current.epoch + 1, issued: 0, applied: 0 };
+  useEffect(() => () => { readScope.current.epoch += 1; }, []);
 
   const load = useCallback(async () => {
     if (!id) return;
     setState('loading');
     setErrorMessage(null);
 
+    const scope = readScope.current; const request = ++scope.issued; const epoch = scope.epoch;
     const res = type === 'trip'
       ? await getTripChat(id)
       : await getCircleChat(id);
 
-    if (identityRef.current !== identity) return;
+    if (identityRef.current !== identity || readScope.current !== scope || scope.epoch !== epoch || request < scope.applied) return;
+    scope.applied = request;
     if (!res.ok) {
       if (res.errorKind === 'forbidden') {
         const errMsg = (res as any).message ?? '';
@@ -140,7 +144,8 @@ export function useGroupChat(
         memberAccess: 'active',
       };
       const msgRes = await getThreadMessages(d.threadId, undefined, 'group_chat'); // census-telegraph T431: GroupChatScreen draws only shared cards as themselves
-      if (identityRef.current !== identity) return;
+      if (identityRef.current !== identity || readScope.current !== scope || scope.epoch !== epoch || request < scope.applied) return;
+      scope.applied = request;
       // DV-83: a first page that could not be read is NOT an empty chat. It
       // used to open as 'active' with no messages, which told a member their
       // trip chat was silent when the read had simply failed.
@@ -170,9 +175,12 @@ export function useGroupChat(
   // Silent refetch — merges new/updated messages without flipping to 'loading'.
   const silentRefresh = useCallback(async () => {
     const tid = threadIdRef.current;
-    if (!tid) return;
+    if (!tid || AppState.currentState !== 'active') return;
     const key = identityRef.current;
+    const scope = readScope.current; const request = ++scope.issued; const epoch = scope.epoch;
     const res = await getThreadMessages(tid, undefined, 'group_chat');
+    if (readScope.current !== scope || scope.epoch !== epoch || request < scope.applied) return;
+    scope.applied = request;
     if (identityRef.current !== key || threadIdRef.current !== tid) return;
     // The server re-authorizes every read. A member removed while this screen
     // was open (or while the device was away) is told so, rather than left
@@ -191,7 +199,7 @@ export function useGroupChat(
       }
       let changed = false;
       for (const m of incoming) {
-        const had = byId.get(m.id); if (!had || had.deleted !== m.deleted || had.editedAt !== m.editedAt || had.mediaUrl !== m.mediaUrl) changed = true; // §6.3 T62: a row that CHANGED (deleted, edited, media) is news too — it used to be dropped when nothing new arrived
+        const had = byId.get(m.id); if (!had || had.deleted !== m.deleted || had.editedAt !== m.editedAt || had.mediaUrl !== m.mediaUrl || had.displayBody !== m.displayBody || had.translationStatus !== m.translationStatus) changed = true; // §6.3 T62: a row that CHANGED (deleted, edited, media) is news too — it used to be dropped when nothing new arrived
         byId.set(m.id, m);
       }
       if (!changed && byId.size === prev.length) return prev;
@@ -208,17 +216,11 @@ export function useGroupChat(
   // `/chat/sync` repair endpoint.
   useReconnectCatchUp(() => { void silentRefresh(); }, !!id);
   useCompactPlaybackSource(thread?.id ?? null, messages, state === 'active' || state === 'loading', silentRefresh); // §6.3 T62: no access / pending / error stops compact playback; while a video plays, the chat is re-read on a bound (a REMOVED member gets no event)
-  // Helper: clear a user from typing list
-  const clearTyping = useCallback((uid: string) => {
-    typingTimers.current.delete(uid);
-    setTypingUserIds((prev) => prev.filter((u) => u !== uid));
-  }, []);
-
   // Realtime: refresh on message events; handle typing events
   useEffect(() => {
     const unsub = telegraphRealtime.subscribe((evt: TelegraphEvent) => {
       const tid = threadIdRef.current;
-      if (!tid || (evt.threadId && evt.threadId !== tid)) return;
+      if (!tid || evt.threadId !== tid) return;
 
       if (
         evt.type === 'message.created' ||
@@ -229,26 +231,18 @@ export function useGroupChat(
         return;
       }
 
-      const uid = evt.payload?.userId as string | undefined;
-      if (!uid) return;
-
-      if (evt.type === 'typing.started') {
-        setTypingUserIds((prev) => prev.includes(uid) ? prev : [...prev, uid]);
-        const existing = typingTimers.current.get(uid);
-        if (existing) clearTimeout(existing);
-        typingTimers.current.set(uid, setTimeout(() => clearTyping(uid), TYPING_TTL_MS));
-      } else if (evt.type === 'typing.stopped') {
-        const t = typingTimers.current.get(uid);
-        if (t) { clearTimeout(t); typingTimers.current.delete(uid); }
-        setTypingUserIds((prev) => prev.filter((u) => u !== uid));
-      }
     });
-    return () => {
-      unsub();
-      for (const t of typingTimers.current.values()) clearTimeout(t);
-      typingTimers.current.clear();
-    };
-  }, [silentRefresh, clearTyping]);
+    return unsub;
+  }, [silentRefresh]);
+
+  // Reconnect notifications cannot arrive while the stream remains down.
+  useEffect(() => {
+    if (state !== 'active') return;
+    const timer = setInterval(() => {
+      if (AppState.currentState === 'active' && telegraphRealtime.getStatus() !== 'open') void silentRefresh();
+    }, 5_000);
+    return () => clearInterval(timer);
+  }, [state, silentRefresh]);
 
   const send = useCallback(async (body: string, replyToId?: string): Promise<{ ok: boolean }> => {
     if (!thread || !body.trim() || sendingRef.current) return { ok: false };
@@ -339,32 +333,21 @@ export function useGroupChat(
     }
   }, [messages, thread]);
 
-  const notifyTyping = useCallback((isTyping: boolean) => {
-    const tid = threadIdRef.current;
-    if (!tid) return;
-    if (!isTyping) {
-      lastTypingSentRef.current = 0;
-      void sendTyping(tid, false);
-      return;
-    }
-    const now = Date.now();
-    if (now - lastTypingSentRef.current < 2_000) return;
-    lastTypingSentRef.current = now;
-    void sendTyping(tid, true);
-  }, []);
-
   const edit = useCallback(async (messageId: string, body: string) => {
     const tid = threadIdRef.current;
     if (!tid) return { ok: false, message: editErrorCopy(undefined, 'This conversation is not open yet.') };
     // The canonical edit route: it keeps the previous body as a version and
     // refuses on an end-to-end encrypted thread (WP-08, TM-TEL-D2).
+    const key = identityRef.current; const scope = readScope.current; const epoch = scope.epoch;
     const res = await editThreadMessage(tid, messageId, body);
+    if (identityRef.current !== key || threadIdRef.current !== tid || readScope.current !== scope || scope.epoch !== epoch) return { ok: false };
     if (res.ok && res.data) {
-      const updated = res.data as any;
+      scope.applied = ++scope.issued; // A confirmed edit supersedes any older in-flight page.
+      const updated = res.data;
       setMessages((prev) =>
         prev.map((m) =>
           m.id === messageId
-            ? { ...m, body: updated.body, editedAt: updated.editedAt }
+            ? { ...m, ...updated, originalBody: updated.body, displayBody: updated.body, translated: false, translationStatus: 'pending' as const, translationLabel: null, canShowOriginal: false }
             : m,
         ),
       );
@@ -376,7 +359,9 @@ export function useGroupChat(
   }, []);
 
   const remove = useCallback(async (messageId: string) => {
+    const scope = readScope.current; const epoch = scope.epoch;
     const res = await deleteMessage(messageId);
+    if (readScope.current !== scope || scope.epoch !== epoch) return;
     if (res.ok) {
       setMessages((prev) =>
         prev.map((m) => (m.id === messageId ? { ...m, deleted: true, body: null } : m)),
@@ -395,8 +380,10 @@ export function useGroupChat(
     if (loadingOlderRef.current) return;
     loadingOlderRef.current = true;
     try {
+      const scope = readScope.current; const epoch = scope.epoch;
       const oldest = messages[0];
       const res = await getThreadMessages(thread.id, oldest.createdAt, 'group_chat', oldest.sequence);
+      if (readScope.current !== scope || scope.epoch !== epoch) return;
       if (res.ok && res.data) {
         const older = [...(res.data.messages ?? [])].reverse();
         setMessages((prev) => {

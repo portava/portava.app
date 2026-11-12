@@ -223,7 +223,7 @@ test('NOT VACUOUS: the same field and the same cache, with `cached_local`, DO re
   // stopped retaining anything — the other way to be wrong, and one that would
   // silently delete §33's stale-while-revalidate behaviour for every field.
   _seedPolicy(_SEED_CONTEXTS, { trip_destination: { offlinePolicy: 'cached_local' } });
-  const { rerender } = await primeCacheForBan();
+  const { rerender, unmount } = await primeCacheForBan();
 
   mockRequest.mockResolvedValueOnce({ ok: false, aborted: false, unavailable: true, error: 'endpoint unavailable' });
   rerender(<Probe fieldId={FIELD} text="bangk" />);
@@ -237,6 +237,8 @@ test('NOT VACUOUS: the same field and the same cache, with `cached_local`, DO re
   expect(labels[0]).toBe('Bangkok');
   expect(String(screen.getByTestId('sources').props.children).split('|')[0]).toBe('canonical');
 
-  // Restore the blanket seed so ordering between files cannot matter.
+  // Policy installation notifies mounted hooks. Close this probe before
+  // restoring the shared seed so teardown cannot schedule an unmocked request.
+  unmount();
   _seedPolicy(_SEED_CONTEXTS, { telegraph_recipient: { privacyClass: 'viewer_scoped' } });
 });

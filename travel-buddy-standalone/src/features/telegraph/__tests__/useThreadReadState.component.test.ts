@@ -114,18 +114,20 @@ const receipt = (n: number, over: Record<string, unknown> = {}) => ({
 
 const appListeners: Array<(s: AppStateStatus) => void> = [];
 function emitApp(s: AppStateStatus) {
+  Object.defineProperty(AppState, 'currentState', { configurable: true, value: s, writable: true });
   for (const l of [...appListeners]) l(s);
 }
 
 async function mount(initial: { threadId?: string; messages: any[] }) {
   const hook = await renderHook(
-    (p: { threadId: string; messages: any[] }) => useThreadReadState({ threadId: p.threadId, messages: p.messages, viewerId: ME }),
+    (p: { threadId: string; messages: any[] }) => useThreadReadState({ threadId: p.threadId, messages: p.messages, viewerId: ME, visibleMessageIds: p.messages.map(message => message.id) }),
     { initialProps: { threadId: initial.threadId ?? T, messages: initial.messages } },
   );
   return hook;
 }
 
 beforeEach(() => {
+  Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'active', writable: true });
   jest.resetAllMocks();
   mockFocusBus.focused = true;
   mockFocusBus.subs.clear();
@@ -343,14 +345,14 @@ describe('receipts — read from the server, re-read when a read lands', () => {
     await waitFor(() => expect(hook.result.current.statusFor(mine)?.kind).toBe('seen'));
   });
 
-  it("a direct chat's read event shows Seen at once, before the refetch answers", async () => {
+  it("a direct chat's read event waits for authoritative eligibility before showing Seen", async () => {
     mockFetchReceipts.mockResolvedValueOnce({ ok: true, data: { threadId: T, receipts: [receipt(1)] } });
     const mine = msg(1, ME, '2026-10-01T10:00:00Z');
     const hook = await mount({ messages: [mine] });
     await waitFor(() => expect(hook.result.current.statusFor(mine)?.kind).toBe('sent'));
     mockFetchReceipts.mockReturnValue(new Promise(() => {})); // the refetch never answers
     await act(async () => { emit({ type: 'read.updated', threadId: T, payload: { userId: THEM, lastReadAt: '2026-10-01T10:05:00Z' } }); });
-    expect(hook.result.current.statusFor(mine)).toEqual({ kind: 'seen', seenBy: 1, recipientCount: 1 });
+    expect(hook.result.current.statusFor(mine)?.kind).toBe('sent');
   });
 
   it('a read event that has not reached the message changes nothing', async () => {
@@ -478,4 +480,35 @@ describe('T295 — reader faces are the server\'s answer, not a profiles read', 
     const chips = await renderHook(() => useReaderAvatars([THEM]));
     expect(chips.result.current(THEM)).toBeNull();
   });
+});
+
+
+describe('actual viewport seen evidence', () => {
+  it('does not mark a loaded or offscreen message seen; advances only to a visible row', async () => {
+    const messages = [msg(1, THEM, '2026-10-01T00:00:00Z'), msg(2, THEM, '2026-10-01T00:01:00Z')];
+    const hook = await renderHook(({ visible }: { visible: string[] }) => useThreadReadState({threadId: T, viewerId: ME, messages, visibleMessageIds: visible}), { initialProps: { visible: [] } });
+    expect(mockMarkSeen).not.toHaveBeenCalled();
+    await hook.rerender({visible: [id(1)]});
+    await waitFor(() => expect(mockMarkSeen).toHaveBeenLastCalledWith(T, id(1)));
+    expect(mockMarkSeen).not.toHaveBeenCalledWith(T, id(2));
+    await hook.rerender({visible: [id(2)]});
+    await waitFor(() => expect(mockMarkSeen).toHaveBeenLastCalledWith(T, id(2)));
+  });
+  it('a consumer with no viewport proof or no viewer cannot send seen', async () => {
+    const messages = [msg(1, THEM, '2026-10-01T00:00:00Z')];
+    await renderHook(() => useThreadReadState({threadId:T, viewerId:ME, messages}));
+    await renderHook(() => useThreadReadState({threadId:T, viewerId:null, messages, visibleMessageIds:[id(1)]}));
+    expect(mockMarkSeen).not.toHaveBeenCalled();
+  });
+});
+
+it('self and zero-recipient read events cannot fabricate Seen', async () => {
+  mockFetchReceipts.mockResolvedValueOnce({ok:true,data:{threadId:T,receipts:[receipt(1,{recipientCount:0})]}});
+  const mine=msg(1,ME,'2026-10-01T10:00:00Z');
+  const hook=await mount({messages:[mine]});
+  await waitFor(()=>expect(hook.result.current.receiptsState).toBe('ready'));
+  mockFetchReceipts.mockReturnValue(new Promise(()=>{}));
+  await act(async()=>{ emit({type:'read.updated',threadId:T,payload:{userId:ME,lastReadAt:'2026-10-01T12:00:00Z'}}); emit({type:'read.updated',threadId:T,payload:{userId:THEM,lastReadAt:'2026-10-01T12:00:00Z'}}); });
+  expect(hook.result.current.statusFor(mine)?.kind).not.toBe('seen');
+  expect(hook.result.current.readersFor(mine)).toEqual([]);
 });

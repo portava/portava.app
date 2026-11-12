@@ -779,6 +779,16 @@ const EXEMPT = [
       'production request path. Unguarded.',
   },
   {
+    file: 'src/lib/commentTyping.ts',
+    reason:
+      'Application runtime relay initialized by the production API server. Reads SUPABASE_URL and ' +
+      'SUPABASE_SERVICE_ROLE_KEY to derive a domain-separated HMAC key, and uses getServiceClient() ' +
+      'for a private Realtime channel carrying expiring typing booleans. It constructs no independent ' +
+      'client and persists no draft or row. Like telegraphBroadcast.ts, it must reach the configured ' +
+      'production project; the CI-only guard would prevent production startup. This exact runtime ' +
+      'file is deliberately unguarded by the CI target allowlist, not exempt from endpoint access checks.',
+  },
+  {
     file: 'src/routes/mediaFeed.ts',
     reason:
       'Route module; references SUPABASE_URL to build media URLs for responses. Registered on the production ' +

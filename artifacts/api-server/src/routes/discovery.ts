@@ -1175,6 +1175,8 @@ function sanitizeCityFilter(city: string): string {
   return city.replace(/[(),*]/g, "").trim();
 }
 
+import { canonicalDisplayType, readSpecificPlaceTypes } from "../lib/discoveryPlaceType.js";
+
 async function queryCanonicalPlaces(
   destination: string,
   category: string,
@@ -1217,13 +1219,14 @@ async function queryCanonicalPlaces(
     }
     if (!data) return [];
 
-    return (data as any[])
+    const rows = (data as any[])
       .filter((row: any) => {
         if (category === "for_you") return true;
         return toCanonicalCategory(row.primary_category as string, null) === category;
       })
-      .slice(0, 60)
-      .map((row: any): DiscoveryPlace => {
+      .slice(0, 60);
+    const specificTypes = await readSpecificPlaceTypes(sc, rows);
+    return rows.map((row: any): DiscoveryPlace => {
         const lat = row.latitude != null ? parseFloat(String(row.latitude)) : null;
         const lng = row.longitude != null ? parseFloat(String(row.longitude)) : null;
         return {
@@ -1231,7 +1234,7 @@ async function queryCanonicalPlaces(
           canonicalPlaceId: row.id as string,
           name: row.name as string,
           category: toCanonicalCategory(row.primary_category as string, null),
-          type: (row.primary_category ?? null) as string | null,
+          type: canonicalDisplayType(row.primary_category, specificTypes.get(row.id)),
           description: null,
           distanceKm:
             centerLat != null && centerLng != null && lat != null && lng != null
@@ -1239,7 +1242,7 @@ async function queryCanonicalPlaces(
               : null,
           lat,
           lng,
-          tags: [row.primary_category].filter(Boolean) as string[],
+          tags: [canonicalDisplayType(row.primary_category, specificTypes.get(row.id))].filter(Boolean) as string[],
           address: (row.neighborhood ?? row.address ?? null) as string | null, neighborhood: (row.neighborhood ?? null) as string | null, // DV-54, same as queryDbPlaces: the geography key is the `neighborhood` column, never the street `address` fallback.
           website: null,
           phone: null,

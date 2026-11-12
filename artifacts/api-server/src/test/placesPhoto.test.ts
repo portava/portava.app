@@ -93,7 +93,9 @@ afterEach(() => {
 });
 
 async function get(path: string) {
-  const res = await originalFetch(`http://127.0.0.1:${port}${path}`);
+  const uri = new URL(`http://127.0.0.1:${port}${path}`);
+  if (!uri.searchParams.has("lat")) { uri.searchParams.set("lat", "10.311"); uri.searchParams.set("lng", "123.891"); }
+  const res = await originalFetch(uri);
   return { status: res.status, body: (await res.json()) as any };
 }
 
@@ -106,7 +108,7 @@ describe("GET /api/places/photo", () => {
       ok: true,
       status: 200,
       json: async () => ({
-        places: [{ id: "ChIJabc123", photos: [{ name: photoName }] }],
+        places: [{ id: "ChIJabc123", displayName: { text: "Cebu Zoo" }, location: { latitude: 10.311, longitude: 123.891 }, photos: [{ name: photoName }] }],
       }),
     }));
 

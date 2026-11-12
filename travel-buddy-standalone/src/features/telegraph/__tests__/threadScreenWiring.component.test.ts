@@ -105,3 +105,23 @@ describe('T320 — the open booking thread re-reads the booking when its transit
     expect(dm).toContain("<SharedContextRail threadId={id} key={bookingTransitionKey ?? 'rail'} scrolled={railCollapsed}");
   });
 });
+
+describe('visible chat activity wiring', () => {
+  it.each([['thread',dm],['group',group]])('%s sends seen from actual viewability and keeps history readers in place', (_name,src) => {
+    expect(src).toContain('visibleMessageIds: viewport.visibleMessageIds');
+    expect(src).toContain('onViewableItemsChanged=');
+    expect(src).toContain('viewport.onViewableItemsChanged');
+    expect(src).toContain('viewport.onContentSizeChange');
+    expect(src).toContain('testID="chat-new-messages"');
+    expect(src).not.toMatch(/scrollToEnd[\s\S]{0,80}\[messages.length\]/);
+    expect(src).toContain("dataSaver.mayLoad('typing')");
+    expect(src).toContain('useFocusEffect(useCallback(() => () => notifyTyping(false)');
+  });
+  it('shared post and media early returns include metadata outside the media component', () => {
+    expect(dm.slice(dm.indexOf('const metadata ='),dm.indexOf('let bodyToShow:'))).toContain('{metadata}</Pressable>');
+    for (const source of [dm,group]) {
+      expect(source).toMatch(/<MessageMediaBubble[\s\S]{0,1500}<MessageMetadata/);
+    }
+    expect(group).toMatch(/<PortavaObjectMessage[\s\S]{0,400}<MessageMetadata/);
+  });
+});

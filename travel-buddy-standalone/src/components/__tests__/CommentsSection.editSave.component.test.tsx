@@ -19,13 +19,24 @@
  */
 
 import React from 'react';
-import { render, fireEvent, waitFor } from '@testing-library/react-native';
-import { CommentsSection } from '../CommentsSheet.tsx';
+import { act, render, fireEvent, waitFor } from '@testing-library/react-native';
+import { CommentsSection, CommentsSheet } from '../CommentsSheet.tsx';
 import {
   listComments,
   editComment,
   listReplies,
 } from '../../services/postEngagement.ts';
+
+
+const mockReadComments = jest.fn();
+const mockReadReplies = jest.fn();
+let mockTypingCount = 0;
+let mockOwnerCurrent = true;
+const mockOwner = { ownerId: 'user-owner', sessionId: 'session', isCurrent: () => mockOwnerCurrent, invalidate: () => {} };
+jest.mock('../../services/messagingOwnerRequest.ts', () => ({ ...jest.requireActual('../../services/messagingOwnerRequest.ts'), captureMessagingOwnerRequest: () => mockOwner }));
+jest.mock('../../platform/input-assistance/hooks/useInputAccountEpoch.ts', () => ({ ...jest.requireActual('../../platform/input-assistance/hooks/useInputAccountEpoch.ts'), useInputAccountEpoch: () => 0 }));
+jest.mock('../../hooks/useCommentTyping.ts', () => ({ ...jest.requireActual('../../hooks/useCommentTyping.ts'), useCommentTyping: (_post: string, active: boolean) => active ? mockTypingCount : 0 }));
+jest.mock('../../services/commentActivity.ts', () => ({ ...jest.requireActual('../../services/commentActivity.ts'), readLiveComments: (...args: unknown[]) => mockReadComments(...args), readLiveReplies: (...args: unknown[]) => mockReadReplies(...args) }));
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
 
@@ -151,6 +162,21 @@ async function renderSection(onCountChange = jest.fn()) {
     <CommentsSection postId={POST_ID} onCountChange={onCountChange} />,
   );
 }
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockOwnerCurrent = true; mockTypingCount = 0;
+  mockReadComments.mockReset().mockImplementation(async () => {
+    const comments = await mockListComments();
+    const edits = await Promise.all(mockEditComment.mock.results.map(result => result.type === 'return' ? result.value as ReturnType<typeof editComment> : null));
+    return { ok: true, comments: comments.map((row: ReturnType<typeof makeComment>) => ({ ...row, ...edits.filter(edit => edit?.id === row.id).at(-1) })) };
+  });
+  mockReadReplies.mockReset().mockImplementation(async () => {
+    const replies = await mockListReplies();
+    const edits = await Promise.all(mockEditComment.mock.results.map(result => result.type === 'return' ? result.value as ReturnType<typeof editComment> : null));
+    return { ok: true, replies: replies.map((row: ReturnType<typeof makeReply>) => ({ ...row, ...edits.filter(edit => edit?.id === row.id).at(-1) })) };
+  });
+});
 
 // ── Tests: comment edit ───────────────────────────────────────────────────────
 
@@ -383,4 +409,66 @@ describe('CommentsSection — reply edit-save flow', () => {
     expect(queryByTestId(`reply-edit-input-${REPLY_ID}`)).not.toBeNull();
     expect(mockEditComment).not.toHaveBeenCalled();
   });
+});
+
+it('renders the live typing notice and keeps checked-read failures distinct from an empty thread', async () => {
+  mockTypingCount = 2;
+  mockReadComments.mockResolvedValue({ ok: false, denied: false });
+  const view = await renderSection();
+  expect(await view.findByText('Comments are unavailable right now.')).toBeTruthy();
+  expect(view.queryByText('No comments yet. Start the conversation.')).toBeNull();
+  expect(view.getByText('2 people are typing…').props.accessibilityLiveRegion).toBe('polite');
+  mockReadComments.mockResolvedValue({ ok: true, comments: [makeComment()] });
+  await fireEvent.press(view.getByLabelText('Retry comments'));
+  expect(await view.findByTestId(`comment-edit-btn-${COMMENT_ID}`)).toBeTruthy();
+});
+
+it('does not report an edited old post into a replacement post', async () => {
+  let finish!: (value: { id: string; body: string; updatedAt: string }) => void;
+  mockListComments.mockResolvedValue([makeComment()]);
+  mockEditComment.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  const count = jest.fn();
+  const view = await renderSection(count);
+  await view.findByTestId(`comment-edit-btn-${COMMENT_ID}`);
+  await fireEvent.press(view.getByTestId(`comment-edit-btn-${COMMENT_ID}`));
+  await fireEvent.changeText(view.getByTestId(`comment-edit-input-${COMMENT_ID}`), 'late edit');
+  const saving = fireEvent.press(view.getByTestId(`comment-save-btn-${COMMENT_ID}`));
+  await waitFor(() => expect(mockEditComment).toHaveBeenCalled());
+  mockReadComments.mockResolvedValue({ ok: true, comments: [] });
+  await view.rerender(<CommentsSection postId="replacement-post" onCountChange={count} />);
+  await act(async () => { finish({ id: COMMENT_ID, body: 'late edit', updatedAt: '2024-01-01T11:00:00Z' }); });
+  await saving;
+  expect(view.queryByText('late edit')).toBeNull();
+  expect(view.getByText('No comments yet. Start the conversation.')).toBeTruthy();
+});
+
+it('keeps reply failures readable and offers a retry without pretending the thread is empty', async () => {
+  mockReadComments.mockResolvedValue({ok: true, comments: [makeComment()]});
+  mockReadReplies.mockResolvedValueOnce({ok: false, denied: false}).mockResolvedValueOnce({ok: true, replies: [makeReply()]});
+  const view = await renderSection();
+  await view.findByText('View replies'); await fireEvent.press(view.getByText('View replies'));
+  expect(view.getByLabelText('Retry replies')).toBeTruthy(); expect(view.queryByText('No replies yet.')).toBeNull();
+  await fireEvent.press(view.getByLabelText('Retry replies'));
+  expect(await view.findByTestId(`reply-edit-btn-${REPLY_ID}`)).toBeTruthy(); expect(view.queryByLabelText('Retry replies')).toBeNull();
+});
+
+it('shows live typing in the modal and refuses a late comment read after it closes', async () => {
+  let finish!: (value: {ok: true; comments: ReturnType<typeof makeComment>[]}) => void;
+  mockReadComments.mockReturnValueOnce(new Promise(resolve => { finish = resolve; })); mockTypingCount = 1;
+  const close = jest.fn(); const onCountChange = jest.fn();
+  const view = await render(<CommentsSheet postId={POST_ID} visible onClose={close} onCountChange={onCountChange} />);
+  expect(await view.findByText('Someone is typing…')).toBeTruthy();
+  await view.rerender(<CommentsSheet postId={POST_ID} visible={false} onClose={close} onCountChange={onCountChange} />);
+  await act(async () => { finish({ok: true, comments: [makeComment({body: 'late modal private content'})]}); });
+  expect(mockReadComments.mock.calls[0]?.[1].signal.aborted).toBe(true);
+  expect(view.queryByText('late modal private content')).toBeNull(); expect(view.queryByText('Someone is typing…')).toBeNull(); expect(onCountChange).not.toHaveBeenCalled();
+});
+
+it('keeps an empty reply thread available after collapse', async () => {
+  mockReadComments.mockResolvedValue({ok: true, comments: [makeComment()]});
+  mockReadReplies.mockResolvedValue({ok: true, replies: []});
+  const view = await renderSection();
+  await view.findByText('View replies'); await fireEvent.press(view.getByText('View replies'));
+  expect(view.getByText('No replies yet.')).toBeTruthy(); await fireEvent.press(view.getByText('Hide replies'));
+  expect(view.getByText('View replies')).toBeTruthy();
 });

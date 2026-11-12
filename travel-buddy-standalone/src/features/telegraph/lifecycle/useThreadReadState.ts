@@ -47,9 +47,8 @@ import { useFocusEffect } from 'expo-router';
 
 import { telegraphRealtime, type TelegraphEvent } from '../../../services/telegraphRealtimeService.ts';
 import { broadcastUnreadCounts } from '../../../hooks/useMessaging.ts';
-import { deriveReceiptState, fetchReceipts, markSeen, markDelivered, type MessageReceipt } from './lifecycleApi.ts'; import { publishReaderFaces } from './readerFaces.ts'; // T295: the chips' faces come with the receipt
+import { fetchReceipts, markSeen, markDelivered, type MessageReceipt } from './lifecycleApi.ts'; import { publishReaderFaces } from './readerFaces.ts'; // T295: the chips' faces come with the receipt
 import {
-  applyReadToReceipts,
   deliveryFromPayload,
   isServerMessageId,
   ownMessageStatus,
@@ -89,15 +88,17 @@ export interface ThreadReadState {
 }
 
 function isForeground(s: AppStateStatus | null | undefined): boolean {
-  return s !== 'background' && s !== 'inactive';
+  return s === 'active';
 }
 
 export function useThreadReadState(args: {
   threadId: string | null | undefined;
   messages: readonly ReadStateMessage[];
   viewerId: string | null | undefined;
+  /** Only IDs reported viewable by the list; absence is not evidence of seeing. */
+  visibleMessageIds?: readonly string[];
 }): ThreadReadState {
-  const { threadId, messages, viewerId } = args;
+  const { threadId, messages, viewerId, visibleMessageIds = [] } = args;
 
   // ── Is the person looking? ────────────────────────────────────────────────
   const [focused, setFocused] = useState(false);
@@ -123,29 +124,33 @@ export function useThreadReadState(args: {
   }, [threadId, viewerId, deliveryThreshold]);
 
   // ── SEEN ──────────────────────────────────────────────────────────────────
-  const threshold = useMemo(() => seenThreshold(messages), [messages]);
+  const threshold = useMemo(() => { const visible = new Set(visibleMessageIds); return seenThreshold(messages.filter(message => visible.has(message.id))); }, [messages, visibleMessageIds]);
   const identity = `${viewerId ?? ""}:${threadId ?? ""}`;
   const currentIdentity = useRef(identity); currentIdentity.current = identity;
+  const scope = useRef({ identity, active: true });
+  if (scope.current.identity !== identity) scope.current = { identity, active: true };
+  useEffect(() => { scope.current.active = true; return () => { scope.current.active = false; }; }, []);
   const marked = useRef<{ threadId: string; id: string } | null>(null);
   const failed = useRef<{ threadId: string; id: string } | null>(null);
-  const marking = useRef(false);
+  const marking = useRef<symbol | null>(null);
   const [markTick, setMarkTick] = useState(0);
 
-  useEffect(() => { marked.current = null; failed.current = null; }, [identity]);
+  useEffect(() => { marked.current = null; failed.current = null; marking.current = null; }, [identity]);
 
   // Coming back into view is a fresh chance for a mark that failed.
   useEffect(() => { if (looking) failed.current = null; }, [looking]);
 
   useEffect(() => {
-    if (!threadId || !threshold || !looking || marking.current) return;
+    if (!threadId || !viewerId || !threshold || !looking || marking.current) return;
     const same = (r: { threadId: string; id: string } | null) => r?.threadId === threadId && r.id === threshold;
     if (same(marked.current) || same(failed.current)) return;
-    marking.current = true;
+    const mark = Symbol(); marking.current = mark;
+    const requestScope = scope.current;
     const target = { threadId, id: threshold };
     const requestIdentity = currentIdentity.current;
     void markSeen(threadId, threshold).then((r) => {
-      marking.current = false;
-      if (requestIdentity !== currentIdentity.current) { setMarkTick(n => n + 1); return; }
+      if (requestScope !== scope.current || !requestScope.active || requestIdentity !== currentIdentity.current) return;
+      if (marking.current === mark) marking.current = null;
       if (r.ok) {
         marked.current = target;
         // The badge reads unread counts from the server; ask it again now that
@@ -175,6 +180,7 @@ export function useThreadReadState(args: {
 
   const [receipts, setReceipts] = useState<Map<string, MessageReceipt>>(() => new Map());
   const [receiptsState, setReceiptsState] = useState<ReceiptsState>('idle');
+  const [receiptOwner, setReceiptOwner] = useState(identity);
   const [deliveries, setDeliveries] = useState<Map<string, DeliveryObservation>>(() => new Map());
   const generation = useRef(0);
   const latest = useRef({ threadId, ownIds, messages });
@@ -184,6 +190,7 @@ export function useThreadReadState(args: {
   // the previous one is fenced off.
   useEffect(() => {
     generation.current += 1;
+    setReceiptOwner(identity);
     setReceipts(new Map());
     setDeliveries(new Map());
     setReceiptsState('idle');
@@ -193,9 +200,11 @@ export function useThreadReadState(args: {
     const { threadId: tid, ownIds: ids } = latest.current;
     if (!tid || ids.length === 0) return;
     const gen = ++generation.current;
+    const requestIdentity = currentIdentity.current;
+    const requestScope = scope.current;
     setReceiptsState((s) => (s === 'idle' ? 'loading' : s));
     void fetchReceipts(tid, ids).then((r) => {
-      if (gen !== generation.current) return; // superseded, or the thread changed
+      if (gen !== generation.current || requestIdentity !== currentIdentity.current || requestScope !== scope.current || !requestScope.active) return; // superseded, or the thread changed
       if (r.ok) {
         setReceipts(new Map((r.data.receipts ?? []).map((x) => [x.messageId, x]))); publishReaderFaces(r.data.readerFaces);
         setReceiptsState('ready');
@@ -212,7 +221,7 @@ export function useThreadReadState(args: {
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => { timer.current = null; refreshReceipts(); }, delay);
   }, [refreshReceipts]);
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  useEffect(() => () => { generation.current += 1; if (timer.current) clearTimeout(timer.current); }, []);
 
   // A new message of the caller's accepted (or the first load): read again.
   useEffect(() => {
@@ -227,33 +236,25 @@ export function useThreadReadState(args: {
 
   // The server says a read or a delivery happened in THIS thread.
   useEffect(() => {
-    if (!threadId) return;
+    if (!threadId || !viewerId) return;
+    const requestScope = scope.current;
     const unsub = telegraphRealtime.subscribe((evt: TelegraphEvent) => {
-      if (evt.threadId !== threadId) return;
+      if (evt.threadId !== threadId || requestScope !== scope.current || !requestScope.active) return;
       if (evt.type === 'message.delivered') {
         const d = deliveryFromPayload(evt.payload ?? null);
         if (d) setDeliveries((prev) => new Map(prev).set(d.messageId, d.observation));
         return;
       }
       if (evt.type === 'read.updated') {
-        const readerId = evt.payload?.userId;
-        const lastReadAt = evt.payload?.lastReadAt;
-        if (typeof readerId === 'string' && typeof lastReadAt === 'string') {
-          // A DIRECT conversation has one recipient, so the server's own read
-          // event is the whole receipt: show it now. A group waits for the
-          // refetch, which applies each member's §14.3 eligibility.
-          const createdAt = new Map(latest.current.messages.map((m) => [m.id, m.createdAt]));
-          setReceipts((prev) => applyReadToReceipts(prev, readerId, (r) =>
-            r.recipientCount <= 1 && createdAt.has(r.messageId)
-              && deriveReceiptState({ createdAt: createdAt.get(r.messageId)!, otherLastReadAt: lastReadAt }) === 'read'));
-        }
+        // A timestamp alone cannot prove this reader was eligible for a given
+        // message (membership window, blocks, and zero-recipient threads).
         scheduleRefresh();
         return;
       }
       if (evt.type === 'message.seen') scheduleRefresh();
     });
     return unsub;
-  }, [threadId, scheduleRefresh]);
+  }, [threadId, viewerId, scheduleRefresh]);
 
   // The safety net: with no open stream nobody will say a read happened.
   useEffect(() => {
@@ -266,7 +267,7 @@ export function useThreadReadState(args: {
 
   // ── Answers ───────────────────────────────────────────────────────────────
   const statusFor = useCallback((m: ReadStateMessage): OwnMessageStatus | null => {
-    if (!viewerId || m.senderId !== viewerId) return null;
+    if (!viewerId || m.senderId !== viewerId || receiptOwner !== identity) return null;
     if (m.deliveryStatus === 'sending' || m.deliveryStatus === 'failed') {
       return ownMessageStatus({ deliveryStatus: m.deliveryStatus, receiptsState });
     }
@@ -279,16 +280,16 @@ export function useThreadReadState(args: {
     // than a "Sent" that would read as "unread" — unless the read failed.
     if (receiptsState === 'unavailable' && ownIdSet.has(m.id)) return { kind: 'receipt_unavailable' };
     return null;
-  }, [viewerId, receipts, deliveries, receiptsState, ownIdSet]);
+  }, [viewerId, receipts, deliveries, receiptsState, ownIdSet, receiptOwner, identity]);
 
   const receiptFor = useCallback((m: ReadStateMessage): MessageReceipt | null => {
-    if (!viewerId || m.senderId !== viewerId) return null;
+    if (!viewerId || m.senderId !== viewerId || receiptOwner !== identity) return null;
     const r = receipts.get(m.id) ?? null;
     if (!r) return null;
     // A failed refresh leaves only SEEN trustworthy; a SENT copy may be stale.
     if (receiptsState === 'unavailable' && r.status !== 'SEEN') return null;
     return r;
-  }, [viewerId, receipts, receiptsState]);
+  }, [viewerId, receipts, receiptsState, receiptOwner, identity]);
 
   const readersFor = useCallback((m: ReadStateMessage): string[] => {
     const r = receiptFor(m);

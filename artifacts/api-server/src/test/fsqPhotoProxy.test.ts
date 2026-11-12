@@ -67,11 +67,19 @@ async function getPhoto(
   baseUrl: string,
   params: { name: string; lat?: number; lng?: number },
 ): Promise<{ status: number; body: any }> {
+  // Existing provider/liveness cases all describe a known physical venue.
+  params = { lat: 10, lng: 20, ...params };
   const qs = new URLSearchParams({ name: params.name });
   if (params.lat != null) qs.set("lat", String(params.lat));
   if (params.lng != null) qs.set("lng", String(params.lng));
   const res = await fetch(`${baseUrl}/api/places/fsq-photo?${qs}`);
   return { status: res.status, body: await res.json() };
+}
+
+function requestedIdentity(url: string) {
+  const q = new URL(url).searchParams;
+  const [latitude, longitude] = (q.get("ll") ?? "").split(",").map(Number);
+  return { name: q.get("query"), latitude, longitude };
 }
 
 // ── Saved originals ───────────────────────────────────────────────────────────
@@ -107,6 +115,7 @@ describe("GET /api/places/fsq-photo — happy path (photo returned)", () => {
           json: async () => ({
             results: [
               {
+                ...requestedIdentity(reqUrl),
                 photos: [
                   { prefix: "https://fastly.4sqi.net/img/general/", suffix: "/photo.jpg" },
                 ],
@@ -424,6 +433,7 @@ describe("GET /api/places/fsq-photo — photo entry has prefix: null", () => {
           json: async () => ({
             results: [
               {
+                ...requestedIdentity(reqUrl),
                 photos: [
                   { prefix: null, suffix: "/photo.jpg" },
                 ],
@@ -483,6 +493,7 @@ describe("GET /api/places/fsq-photo — photo entry has suffix: null", () => {
           json: async () => ({
             results: [
               {
+                ...requestedIdentity(reqUrl),
                 photos: [
                   { prefix: "https://fastly.4sqi.net/img/general/", suffix: null },
                 ],
@@ -542,6 +553,7 @@ describe("GET /api/places/fsq-photo — photo entry has both prefix and suffix a
           json: async () => ({
             results: [
               {
+                ...requestedIdentity(reqUrl),
                 photos: [{}],
               },
             ],
@@ -608,7 +620,7 @@ describe("GET /api/places/fsq-photo — HEAD check throws; result must NOT be ca
           status: 200,
           json: async () => ({
             results: [
-              { photos: [{ prefix: "https://fastly.4sqi.net/img/general/", suffix: "/cdnthrow.jpg" }] },
+              { ...requestedIdentity(reqUrl), photos: [{ prefix: "https://fastly.4sqi.net/img/general/", suffix: "/cdnthrow.jpg" }] },
             ],
           }),
         } as Response;
@@ -835,6 +847,7 @@ describe("GET /api/places/fsq-photo — dead CDN link: photoUrl null + result NO
           json: async () => ({
             results: [
               {
+                ...requestedIdentity(reqUrl),
                 photos: [
                   { prefix: "https://fastly.4sqi.net/img/general/", suffix: "/dead404.jpg" },
                 ],

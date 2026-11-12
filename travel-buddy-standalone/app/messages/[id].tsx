@@ -1,3 +1,4 @@
+import { useConversationViewport } from '../../src/features/telegraph/lifecycle/useConversationViewport.ts';
 import { gifProviderKey } from '../../src/features/telegraph/gifs/giphyApi.ts';
 import { GifPickerSheet } from '../../src/features/telegraph/gifs/GifPickerSheet.tsx';
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
@@ -77,7 +78,7 @@ import {
   type MessageReceipt,
 } from '../../src/features/telegraph/lifecycle/lifecycleApi.ts';
 import { useThreadReadState } from '../../src/features/telegraph/lifecycle/useThreadReadState.ts';
-import { OwnMessageStatusRow } from '../../src/features/telegraph/lifecycle/OwnMessageStatusRow.tsx';
+import { OwnMessageStatusRow, MessageMetadata } from '../../src/features/telegraph/lifecycle/OwnMessageStatusRow.tsx';
 import { useReaderAvatars } from '../../src/features/telegraph/lifecycle/useReaderAvatars.ts'; import { failedSendCopy, type OwnMessageStatus, type SendFailure } from '../../src/features/telegraph/lifecycle/readState.ts'; import { TelegraphConnectionBanner } from '../../src/features/telegraph/connection/TelegraphConnectionBanner.tsx';
 import { headerSubtitle } from '../../src/features/telegraph/header/headerAxes.ts';
 import { useConversationHeader } from '../../src/features/telegraph/header/useConversationHeader.ts';
@@ -848,13 +849,15 @@ function MessageBubble({
     );
   }
 
+  const metadata = <MessageMetadata createdAt={item.createdAt} editedAt={item.editedAt} status={mine ? receiptState : null} isGroup={isGroupThread} />;
+
   // A canonical link pasted into plaintext chat uses the same revocable source as a typed share.
   // Never send a decrypted URL or an optimistic encrypted send to a projection endpoint.
   const linked = !item.e2eeFailed && item.msgType === 'text'
     ? canonicalMediaLink(item.body) : null;
   if (linked) return <Pressable onLongPress={onLongPress} delayLongPress={300}>
     <LinkedMessageMedia key={`${threadId}:${item.id}:${linked.objectId}`} refInfo={linked} encrypted={!plainThread || Boolean(item.ciphertext || item.pendingIsE2ee)} mine={mine} threadId={threadId ?? null} messageId={item.id} />
-  </Pressable>;
+  {metadata}</Pressable>;
 
   // Meetup card — special rendering (long-press wrapper added)
   const meetupPayload = parseMeetupCard(item.body ?? '', item);
@@ -862,7 +865,7 @@ function MessageBubble({
     return (
       <Pressable onLongPress={onLongPress} delayLongPress={300}>
         <MeetupCard payload={meetupPayload} mine={mine} />
-      </Pressable>
+      {metadata}</Pressable>
     );
   }
 
@@ -884,7 +887,7 @@ function MessageBubble({
             announcementNeedsAck && threadId ? () => void announcementAck.acknowledge() : undefined
           }
         />
-      </Pressable>
+      {metadata}</Pressable>
     );
   }
 
@@ -899,7 +902,7 @@ function MessageBubble({
           threadId={threadId ?? null}
           messageId={item.id}
         />
-      </Pressable>
+      {metadata}</Pressable>
     );
   }
 
@@ -908,7 +911,7 @@ function MessageBubble({
     return (
       <Pressable onLongPress={onLongPress} delayLongPress={300}>
         <DiscoveryCardMessage body={item.body ?? ''} mine={mine} threadId={threadId ?? null} messageId={item.id} serverCard={item.card ?? null} />
-      </Pressable>
+      {metadata}</Pressable>
     );
   }
 
@@ -917,7 +920,7 @@ function MessageBubble({
     return (
       <Pressable onLongPress={onLongPress} delayLongPress={300}>
         <PostCardMessage body={item.body ?? ''} mine={mine} threadId={threadId ?? null} messageId={item.id} serverCard={item.card ?? null} />
-      </Pressable>
+      {metadata}</Pressable>
     );
   }
 
@@ -926,7 +929,7 @@ function MessageBubble({
     return (
       <Pressable onLongPress={onLongPress} delayLongPress={300}>
         <CompassCardMessage body={item.body ?? ''} mine={mine} threadId={threadId ?? null} messageId={item.id} serverCard={item.card ?? null} />
-      </Pressable>
+      {metadata}</Pressable>
     );
   }
 
@@ -944,7 +947,7 @@ function MessageBubble({
           isCircleMember={isCircleMember}
           onPress={onCircleCardPress}
         />
-      </Pressable>
+      {metadata}</Pressable>
     );
   }
 
@@ -979,7 +982,7 @@ function MessageBubble({
               onDismissAiCard?.(item.id);
             }}
           />
-          </Pressable>
+          {metadata}</Pressable>
           <TripWishlistPicker
             place={pickerPayload}
             visible={pickerPayload !== null}
@@ -1283,6 +1286,8 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
   // Member count for trip/circle threads — measured by the server, or null (never a guess).
   const memberCount = memberCountOf(conversationProjection);
   const listRef = useRef<FlatList>(null);
+  const viewport = useConversationViewport(id ?? null, userId, messages, listRef);
+  useFocusEffect(useCallback(() => () => notifyTyping(false), [notifyTyping]));
   const shouldAnimateMessage = useMessageEntranceGate();
   const mediaPicker = useMessageMediaPicker();
   // Telegraph §16.2 / §17.4 — the degradation ladder. Consulted here for
@@ -1423,7 +1428,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
   // This replaced a direct `message_thread_members` read of the other party's last_read_at taken
   // once on open (never refreshed, and "Sent" whenever it failed) and a mount-time markThreadRead
   // (so a message that arrived while you watched stayed unread, and its sender saw "Sent").
-  const readState = useThreadReadState({ threadId: id ?? null, messages, viewerId: userId });
+  const readState = useThreadReadState({ threadId: id ?? null, messages, viewerId: userId, visibleMessageIds: viewport.visibleMessageIds });
   // Faces for the reader chips. Decorative: a failed profile read draws no chips and never
   // changes what the receipt says.
   const readerAvatarUrl = useReaderAvatars(
@@ -1518,11 +1523,6 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
     });
   }, [id, otherUserId, callState.phase, callActions, callContextType, dmProfile?.name, dmProfile?.handle, dmProfile?.avatarUrl, headerTitle]);
 
-  useEffect(() => {
-    if (messages.length > 0) {
-      listRef.current?.scrollToEnd({ animated: true });
-    }
-  }, [messages.length]);
 
   // Build list items with day separators interspersed. Consecutive messages
   // from the same sender (within the same day) are visually grouped:
@@ -1552,7 +1552,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
   }, [messages, layeredIds]);
 
   // Scroll-to-bottom FAB — shown when the user has scrolled away from newest
-  const [showJumpFab, setShowJumpFab] = useState(false);
+  const showJumpFab = viewport.away || viewport.newMessageCount > 0;
   // Telegraph §11.2 row 4: "User scrolls down → Rail collapses/sticks
   // minimally; messages get priority."
   const [railCollapsed, setRailCollapsed] = useState(false);
@@ -2115,7 +2115,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
       <ThreadSharePlaybackContext.Provider value={sharedPlayback.playback}>
       <FlatList
         viewabilityConfig={SHARED_MEDIA_VIEWABILITY}
-        onViewableItemsChanged={sharedPlayback.onViewableItemsChanged}
+        onViewableItemsChanged={(info) => { sharedPlayback.onViewableItemsChanged(info); viewport.onViewableItemsChanged(info); }}
         windowSize={9}
         initialNumToRender={18}
         maxToRenderPerBatch={12}
@@ -2130,9 +2130,8 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
           </View>
         }
         onScroll={(e) => {
-          const { contentSize, layoutMeasurement, contentOffset } = e.nativeEvent;
-          const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
-          setShowJumpFab(distanceFromBottom > 320);
+          const { contentOffset } = e.nativeEvent;
+          viewport.onScroll(e);
           setRailCollapsed(shouldCollapseOnScroll(contentOffset.y));
         }}
         scrollEventThrottle={120}
@@ -2182,6 +2181,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
                   the only thing that shields, so an older server that does not
                   send the field behaves exactly as before.
                 */}
+                <View style={{ flexShrink: 1 }}>
                 <StrangerMediaShield
                   messageId={m.id}
                   mediaKind={(m.mediaType as 'image' | 'video') ?? 'image'}
@@ -2206,6 +2206,8 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
                     onRetry={m.uploadState === 'failed' ? () => mediaPicker.retry() : undefined}
                   />
                 </StrangerMediaShield>
+                <MessageMetadata createdAt={m.createdAt} editedAt={m.editedAt} status={mine ? readState.statusFor(m) : null} isGroup={isGroupThread} />
+                </View>
               </MessageEntrance>
             );
           }
@@ -2269,7 +2271,7 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
             </MessageEntrance>
           );
         }}
-        onLayout={() => listRef.current?.scrollToEnd({ animated: false })}
+        onContentSizeChange={viewport.onContentSizeChange}
       />
       </ThreadSharePlaybackContext.Provider>
 
@@ -2277,16 +2279,20 @@ export default function TelegraphThread() { const { palette, styles } = useTeleg
       {showJumpFab && (
         <Pressable
           style={styles.jumpFab}
-          onPress={() => listRef.current?.scrollToEnd({ animated: true })}
+          onPress={viewport.jumpToLatest}
+          accessibilityRole="button"
+          accessibilityLabel={viewport.newMessageCount ? `${viewport.newMessageCount} new messages. Jump to latest` : 'Jump to latest message'}
+          testID="chat-new-messages"
           hitSlop={8}
         >
           <ChevronDown size={18} color={palette.recvText} />
+          {viewport.newMessageCount > 0 ? <Text style={{ color: palette.recvText }}>{viewport.newMessageCount} new</Text> : null}
         </Pressable>
       )}
 
       {/* Typing indicator */}
       {typingUserIds.length > 0 && dataSaver.mayLoad('typing') && (
-        <View style={styles.typingRow}>
+        <View style={styles.typingRow} testID="chat-typing" accessibilityLiveRegion="polite">
           <Text style={styles.typingText}>
             {typingUserIds.length === 1 && dmProfile?.name
               ? `${dmProfile.name} is typing…`
@@ -2770,7 +2776,7 @@ const makeStyles = (p: TelegraphPalette) => StyleSheet.create({
     position: 'absolute',
     right: space.lg,
     bottom: 130,
-    width: avatar.s40, height: avatar.s40,
+    minWidth: avatar.s40, height: avatar.s40, paddingHorizontal: space.sm, flexDirection: 'row', gap: 4,
     borderRadius: avatar.s40 / 2,
     backgroundColor: p.surfaceRaised,
     borderWidth: 1,

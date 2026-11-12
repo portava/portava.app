@@ -127,7 +127,7 @@ vocabulary admits three of `09` §3's eight states and can never produce `payabl
 | `lib/creatorLedgerRows.ts` | the one model→row mapping | reachable |
 | `lib/creatorShareCanonical.ts` | pure fold over the canonical relation | reachable |
 | `lib/creatorRuleEvaluation.ts` | refuses `{}` rule params rather than defaulting (`artifacts/api-server/src/lib/creatorRuleEvaluation.ts:68#p))`) | reachable |
-| `lib/creatorAttributionScheduler.ts` | hourly tick, started at `artifacts/api-server/src/index.ts:299#startPlaceCooccurrenceRebuildScheduler();` | reachable, **inert**: one flag read per tick |
+| `lib/creatorAttributionScheduler.ts` | hourly tick, started at `artifacts/api-server/src/index.ts:300#startPlaceCooccurrenceRebuildScheduler();` | reachable, **inert**: one flag read per tick |
 | `lib/rentBuddyEarningsLedger.ts` | writes the legacy estimate summary row | reachable |
 | `lib/rentBuddyFeeSchedule.ts` | the single fee resolver (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:85#FEE_SCHEDULE_TABLE`, `:292#resolveFeeSchedule(`) | reachable |
 | `lib/rentBuddyKycGate.ts` | hard-blocks booking creation (§1.4) | **reachable and closed** |

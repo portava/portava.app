@@ -159,7 +159,8 @@ it('does not replace unknown status with an unsaved bookmark or offer Save for l
   jest.mocked(collections.checkSaved).mockResolvedValue({ ok: false, saved: false, collectionIds: [] });
   await open(true);
   expect(screen.queryByLabelText('Save for later')).toBeNull();
-  expect(screen.getByTestId('save-to-collection-load-error')).toBeTruthy();
+  expect(screen.getByLabelText('Try checking saved status again')).toBeTruthy();
+  expect(screen.queryByTestId('save-to-collection-load-error')).toBeNull();
   expect(screen.getByLabelText('Save to Food').props.accessibilityState.disabled).toBe(true);
   expect(getSaved('user-abc', 'post-1')).toBeUndefined();
 });

@@ -55,13 +55,18 @@ export async function loadSavedPlaces(): Promise<SavedPlaceRead> {
   const key = cacheKey(owner.ownerId);
   const scope = currentDiscoveryScope();
   const stillCurrent = () => owner.isCurrent();
+  let receivedResponse = false;
   try {
     await retryPendingPlaces(owner.ownerId).catch(()=>{});
     const observed = await pendingPlaceChanges(owner.ownerId);
     const response = await fetchOwnedApi('/api/users/me/saved-places',{owner});
+    receivedResponse = true;
+    // An access refusal is authoritative; cached private rows must not replace it.
+    if (response.status === 401 || response.status === 403) return unavailable();
+    if (!response.ok) throw new Error('Saved places service unavailable.');
     const body = await response.json();
     if (!stillCurrent()) return unavailable();
-    if (!response.ok || !['ready','partial'].includes(body?.state) || !Array.isArray(body.places) || !body.places.every(validPlace) || !Array.isArray(body.unavailableSources)) return unavailable();
+    if (!['ready','partial'].includes(body?.state) || !Array.isArray(body.places) || !body.places.every(validPlace) || !Array.isArray(body.unavailableSources)) throw new Error('Invalid saved places response.');
     const changes = body.unavailableSources.includes('wishlist') ? await pendingPlaceChanges(owner.ownerId)
       : await reconcileSavedPlaceRead(owner.ownerId,observed,body.places);
     if (!stillCurrent()) return unavailable();
@@ -69,10 +74,10 @@ export async function loadSavedPlaces(): Promise<SavedPlaceRead> {
     const places = mergePendingPlaces(body.places,changes.filter(c=>!c.sent || body.places.some((p:SavedPlaceSummary)=>p.placeId===c.place.id)));
     await AsyncStorage.setItem(key,JSON.stringify(body.places)).catch(()=>{});
     return stillCurrent() ? {state:body.state,places,unavailableSources:body.unavailableSources} : unavailable();
-  } catch {
+  } catch (error) {
     const scopeMatches = () => {
       const current = captureMessagingOwnerRequest();
-      return isCurrentDiscoveryScope(scope) && current?.ownerId === owner.ownerId && current.sessionId === owner.sessionId;
+      return isCurrentDiscoveryScope(scope) && current?.isCurrent() && current.ownerId === owner.ownerId && current.sessionId === owner.sessionId;
     };
     if (!scopeMatches()) return unavailable();
     const cached=await AsyncStorage.getItem(key).catch(()=>null);
@@ -81,7 +86,10 @@ export async function loadSavedPlaces(): Promise<SavedPlaceRead> {
     try {
       const rows = cached ? JSON.parse(cached) : [];
       if (!Array.isArray(rows) || !rows.every(validPlace)) return unavailable();
-      return {state:'offline',places:mergePendingPlaces(rows,changes),unavailableSources:[...sources]};
+      // A responding server (including HTML from an older deployment) is not
+      // evidence that the phone is offline. Retain local saves without saying so.
+      const state = !receivedResponse && error instanceof TypeError ? 'offline' : 'unavailable';
+      return {state,places:mergePendingPlaces(rows,changes),unavailableSources:[...sources]};
     } catch { return unavailable(); }
   }
 }

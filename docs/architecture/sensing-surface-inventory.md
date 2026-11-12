@@ -299,15 +299,15 @@ handler tests stayed green with the mount commented out (`:1-18`).
 
 | Method + path | File:line | Notes |
 |---|---|---|
-| `GET /v1/intel/consent` | `routes/intel.ts:169` | user consent read |
-| `PUT /v1/intel/consent` | `routes/intel.ts:176` | the only user-facing writer of `intel_contribution_consent` |
-| `POST /v1/intel/observations` | `routes/intel.ts:189` | capture entry point |
-| `POST /v1/intel/observations/:id/claims/propose` | `routes/intel.ts:299` | |
-| `POST /v1/intel/observations/:id/claims/approve` | `routes/intel.ts:300` | |
-| `POST /v1/intel/observations/:id/claims:action` | `routes/intel.ts:302` | |
-| `POST /v1/intel/claims/:id/confirm` | `routes/intel.ts:309` | |
-| `POST /v1/intel/claims/:id/correct` | `routes/intel.ts:319` | |
-| `GET /v1/internal/intel/trail/movement` | `routes/intel.ts:358` | publication gated by the unseeded `intel_movement_prediction` (`:349`) |
+| `GET /v1/intel/consent` | `routes/intel.ts:169#router.get` | user consent read |
+| `PUT /v1/intel/consent` | `routes/intel.ts:180#router.put` | the only user-facing writer of `intel_contribution_consent` |
+| `POST /v1/intel/observations` | `routes/intel.ts:193#router.post` | capture entry point |
+| `POST /v1/intel/observations/:id/claims/propose` | `routes/intel.ts:320#router.post` | |
+| `POST /v1/intel/observations/:id/claims/approve` | `routes/intel.ts:321#router.post` | |
+| `POST /v1/intel/observations/:id/claims:action` | `routes/intel.ts:323#router.post` | |
+| `POST /v1/intel/claims/:id/confirm` | `routes/intel.ts:330#router.post` | |
+| `POST /v1/intel/claims/:id/correct` | `routes/intel.ts:340#router.post` | |
+| `GET /v1/internal/intel/trail/movement` | `routes/intel.ts:379#router.get` | publication gated by the unseeded `intel_movement_prediction` (`:349`) |
 | `GET /v1/internal/intel/redistributable/:subjectId` | `routes/intelApi.ts:27` | admin; returns `[]` when the kill switch is engaged (`:36-39`) |
 | `POST /v1/internal/intel/coverage` | `routes/intelCoverage.ts:60` | |
 | `GET /v1/internal/intel/coverage` | `routes/intelCoverage.ts:71` | reads `intel_coverage_snapshots` (`:77`) |

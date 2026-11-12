@@ -3,7 +3,7 @@ import { AppState, View, Text, Pressable, StyleSheet } from 'react-native';
 import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx';
 import { useSession } from '../../context/SessionContext.tsx';
 import { useLanguagePreference } from '../../context/LanguagePreferenceContext.tsx';
-import { resolveCaptionSource, readCaptionTrack, readCaptionDraft, type CaptionSource, type CaptionTrackResult } from '../../services/media/captions.ts';
+import { resolveCaptionSource, readCaptionTrack, readCaptionDraft, CaptionRequestError, type CaptionSource, type CaptionTrackResult } from '../../services/media/captions.ts';
 import { TimedCaptionOverlay, type CaptionPlaybackStatus } from './TimedCaptionOverlay.tsx';
 import { CaptionAuthoringSheet } from './CaptionAuthoringSheet.tsx';
 import { CaptionAsrSheet } from './CaptionAsrSheet.tsx';
@@ -26,6 +26,8 @@ function CaptionSession({ source, status, onSourceChanged }: { source: string; s
   const [descriptor, setDescriptor] = useState<CaptionSource | null>(null);
   const [sourceAttempt, setSourceAttempt] = useState(0);
   const [sourceFailed, setSourceFailed] = useState(false);
+  const [sourceErrorOpen, setSourceErrorOpen] = useState(false);
+  const [sourceMessage, setSourceMessage] = useState('Captions unavailable. Try again.');
   const [resolving, setResolving] = useState(false);
   const [track, setTrack] = useState<CaptionTrackResult | null>(null);
   const [trackFailed, setTrackFailed] = useState(false);
@@ -48,8 +50,11 @@ function CaptionSession({ source, status, onSourceChanged }: { source: string; s
     setResolving(true);
     resolveCaptionSource(source, abort.signal).then((value) => {
       if (!abort.signal.aborted) { setDescriptor(value); setSourceFailed(false); }
-    }).catch(() => {
-      if (!abort.signal.aborted) setSourceFailed(true);
+    }).catch((error) => {
+      if (!abort.signal.aborted) {
+        setSourceFailed(true);
+        setSourceMessage(error instanceof CaptionRequestError ? error.message : 'Captions unavailable. Try again.');
+      }
     }).finally(() => { if (!abort.signal.aborted) setResolving(false); });
     return () => abort.abort();
   }, [source, sourceAttempt]);
@@ -67,8 +72,8 @@ function CaptionSession({ source, status, onSourceChanged }: { source: string; s
       setTrack(value);
       setExpiresAt(Date.now() + 10_000);
       setMessage(value.cues.length ? '' : 'No timed captions yet.');
-    }).catch(() => {
-      if (!abort.signal.aborted) { setTrack(null); setTrackFailed(true); setMessage('Captions unavailable. Try again.'); }
+    }).catch((error) => {
+      if (!abort.signal.aborted) { setTrack(null); setTrackFailed(true); setMessage(error instanceof CaptionRequestError ? error.message : 'Captions unavailable. Try again.'); }
     }).finally(() => { if (!abort.signal.aborted) setBusy(false); });
     return () => abort.abort();
   }, [descriptor, shown, editing, refresh, language, reviewingDraft]);
@@ -85,12 +90,16 @@ function CaptionSession({ source, status, onSourceChanged }: { source: string; s
     setTrack(null);
     setDescriptor(null);
     setSourceFailed(true);
+    setSourceErrorOpen(true);
     setResolving(true);
     setSourceAttempt((value) => value + 1);
   };
   if (!descriptor) return sourceFailed ? <View style={styles.controls}>
-    <Text accessibilityRole="alert" style={styles.message}>{resolving ? 'Loading captions…' : 'Captions unavailable. Try again.'}</Text>
+    {!sourceErrorOpen ? <Pressable accessibilityRole="button" accessibilityLabel="Captions unavailable. Show details" onPress={() => setSourceErrorOpen(true)} style={styles.button}><Text style={styles.text}>CC unavailable</Text></Pressable> : <>
+    <Text accessibilityRole="alert" style={styles.message}>{resolving ? 'Loading captions…' : sourceMessage}</Text>
     <Pressable accessibilityRole="button" accessibilityLabel="Retry captions" accessibilityState={{ disabled: resolving, busy: resolving }} disabled={resolving} onPress={retry} style={styles.button}><Text style={styles.text}>Retry captions</Text></Pressable>
+    <Pressable accessibilityRole="button" accessibilityLabel="Dismiss caption error" onPress={() => setSourceErrorOpen(false)} style={styles.button}><Text style={styles.text}>Dismiss</Text></Pressable>
+    </>}
   </View> : null;
   return <>
     {shown && track && Date.now() < expiresAt ? <TimedCaptionOverlay cues={track.cues} status={status} /> : null}

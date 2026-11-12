@@ -168,6 +168,15 @@ describe('ForYouTab — map view top inset', () => {
     expect(mockMapProps.at(-1)?.topInset).toBe(120);
   });
 
+  it('forwards measured bottom chrome clearance to the map and updates it without remounting', async () => {
+    const ui = await render(<ForYouTab destination="Lisbon" onAddToPlan={jest.fn()} viewMode="map" bottomInset={130} mapBottomInset={174} />);
+    expect(mockMapProps.at(-1)?.bottomInset).toBe(174);
+    await ui.rerender(<ForYouTab destination="Lisbon" onAddToPlan={jest.fn()} viewMode="map" bottomInset={130} mapBottomInset={194} />);
+    expect(mockMapProps.at(-1)?.bottomInset).toBe(194);
+    expect(mockMapMount).toHaveBeenCalledTimes(1);
+    expect(mockMapUnmount).not.toHaveBeenCalled();
+  });
+
   it('with no inset given, the map keeps its own default (0)', async () => {
     mockMapProps.length = 0;
     await render(<ForYouTab destination="Lisbon" onAddToPlan={jest.fn()} viewMode="map" />);

@@ -8,6 +8,7 @@
  * between a share and a copy.
  */
 import React from 'react';
+import { useSharedCardWidth } from './useSharedCardWidth.ts';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { DisplayMediaImage } from '../../../components/ui/DisplayMediaImage.tsx'; import { messageTreeMediaOrNull } from '../media/messageTreeMedia.ts';
@@ -15,7 +16,7 @@ import { space, radius, type as t } from '../../../theme/tokens.ts';
 import { useTelegraphPalette, type TelegraphPalette } from '../theme/telegraphTheme.ts';
 import { parsePortavaObjectBody } from './shareApi.ts';
 import { useShareRevocation, revokedLabel } from './useShareRevocation.ts';
-import { SharedMessageMedia } from './SharedMessageMedia.tsx';
+import { hasSharedMessageMedia, SharedMessageMedia, SharedPostMediaMessage } from './SharedMessageMedia.tsx';
 import { PlaceLiveInformation } from './PlaceLiveInformation.tsx';
 
 const CARD_MAX_WIDTH = 280;
@@ -28,6 +29,7 @@ export interface PortavaObjectMessageProps {
 }
 
 export function PortavaObjectMessage({ body, mine, threadId, messageId }: PortavaObjectMessageProps) {
+  const width = useSharedCardWidth();
   const palette = useTelegraphPalette();
   const styles = React.useMemo(() => makeStyles(palette), [palette]);
   const parsed = parsePortavaObjectBody(body);
@@ -39,7 +41,7 @@ export function PortavaObjectMessage({ body, mine, threadId, messageId }: Portav
 
   if (!parsed) {
     return (
-      <View style={styles.wrap} testID="telegraph-portava-object-unreadable">
+      <View style={[styles.wrap, { width }]} testID="telegraph-portava-object-unreadable">
         <Text style={styles.notice}>Shared item</Text>
       </View>
     );
@@ -47,7 +49,7 @@ export function PortavaObjectMessage({ body, mine, threadId, messageId }: Portav
 
   if (revocation.state === 'loading') {
     return (
-      <View style={styles.wrap} testID="telegraph-portava-object-loading">
+      <View style={[styles.wrap, { width }]} testID="telegraph-portava-object-loading">
         <Text style={styles.meta}>Loading…</Text>
       </View>
     );
@@ -55,7 +57,7 @@ export function PortavaObjectMessage({ body, mine, threadId, messageId }: Portav
 
   if (revocation.state === 'unavailable') {
     return (
-      <View style={styles.wrapRevoked} testID="telegraph-portava-object-revoked">
+      <View style={[styles.wrapRevoked, { width }]} testID="telegraph-portava-object-revoked">
         <Text style={styles.revokedText}>{revokedLabel(revocation.reason)}</Text>
         {parsed.caption ? <Text style={styles.captionMuted}>“{parsed.caption}”</Text> : null}
       </View>
@@ -69,8 +71,12 @@ export function PortavaObjectMessage({ body, mine, threadId, messageId }: Portav
   const subtitle = projection?.subtitle ?? null;
   const deepLink = projection?.deepLink ?? null;
 
+  if (projection && parsed.objectType === 'POST' && hasSharedMessageMedia(projection)) {
+    return <SharedPostMediaMessage projection={projection} messageId={messageId} caption={parsed.caption}
+      width={width} testID="telegraph-portava-object-card" />;
+  }
   const hasMediaCard = projection && (parsed.objectType === 'POST' || parsed.objectType === 'MEDIA');
-  if (hasMediaCard) return <View style={[styles.wrap, mine && styles.wrapMine]} testID="telegraph-portava-object-card">
+  if (hasMediaCard) return <View style={[styles.wrap, { width }, mine && styles.wrapMine]} testID="telegraph-portava-object-card">
     <Text style={styles.kind}>{prettyType(parsed.objectType).toUpperCase()}</Text>
     {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
     <SharedMessageMedia key={projection.objectId} projection={projection} messageId={messageId} />
@@ -79,7 +85,7 @@ export function PortavaObjectMessage({ body, mine, threadId, messageId }: Portav
   </View>;
   return (
     <Pressable
-      style={[styles.wrap, mine ? styles.wrapMine : null]}
+      style={[styles.wrap, { width }, mine ? styles.wrapMine : null]}
       testID="telegraph-portava-object-card"
       accessibilityRole="button"
       accessibilityLabel={`${prettyType(parsed.objectType)}: ${title}`}

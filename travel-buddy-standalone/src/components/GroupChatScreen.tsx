@@ -1,3 +1,4 @@
+import { useConversationViewport, CONVERSATION_VIEWABILITY } from '../features/telegraph/lifecycle/useConversationViewport.ts';
 /**
  * GroupChatScreen — reusable group chat UI for trip and circle contexts.
  *
@@ -31,7 +32,7 @@ import { MentionSuggestionList } from './MentionSuggestionList.tsx';
 import type { AnyMentionSuggestion } from '../services/tagging.ts';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import {
   ArrowLeft, Send, Users, Globe, Info, VolumeX, Languages, Paperclip,
   Compass, Bot, Copy, Trash2, Flag, Reply, Search, BookmarkPlus, X,
@@ -56,7 +57,7 @@ import * as Clipboard from 'expo-clipboard';
 import { MessageEntrance, useMessageEntranceGate } from './MessageEntrance.tsx';
 import { SharedContextRail } from '../features/telegraph/index.ts'; import { OriginalAlongside } from '../features/telegraph/translation/OriginalAlongside.tsx';
 import { PortavaObjectMessage } from '../features/telegraph/sharing/PortavaObjectMessage.tsx';
-import { TelegraphConnectionBanner } from '../features/telegraph/connection/TelegraphConnectionBanner.tsx'; import { OwnMessageStatusRow } from '../features/telegraph/lifecycle/OwnMessageStatusRow.tsx'; import { useReaderAvatars } from '../features/telegraph/lifecycle/useReaderAvatars.ts'; import { failedSendCopy, type OwnMessageStatus, type SendFailure } from '../features/telegraph/lifecycle/readState.ts'; import { SafetyModeBar } from '../features/telegraph/safety/SafetyModeBar.tsx'; import { senderLabelFor } from '../features/telegraph/layers/SemanticLayersStrip.tsx'; // §15.2 on the group surface too
+import { TelegraphConnectionBanner } from '../features/telegraph/connection/TelegraphConnectionBanner.tsx'; import { OwnMessageStatusRow, MessageMetadata } from '../features/telegraph/lifecycle/OwnMessageStatusRow.tsx'; import { useReaderAvatars } from '../features/telegraph/lifecycle/useReaderAvatars.ts'; import { failedSendCopy, type OwnMessageStatus, type SendFailure } from '../features/telegraph/lifecycle/readState.ts'; import { SafetyModeBar } from '../features/telegraph/safety/SafetyModeBar.tsx'; import { senderLabelFor } from '../features/telegraph/layers/SemanticLayersStrip.tsx'; // §15.2 on the group surface too
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { localDateKey, localTodayKey } from '../utils/localDate.ts';
 
@@ -480,16 +481,13 @@ export function GroupChatScreen({ type, id, title, memberLabel, banner }: Props)
   const [memberPreview, setMemberPreview] = useState<FriendUser[]>([]);
   const [memberCount, setMemberCount] = useState<number | null>(null);
   const listRef = useRef<FlatList>(null);
+  const viewport = useConversationViewport(thread?.id ?? null, userId, messages, listRef);
+  useFocusEffect(useCallback(() => () => notifyTyping(false), [notifyTyping]));
   const shouldAnimateMessage = useMessageEntranceGate();
 
   const displayTitle = thread?.title ?? title ?? (type === 'trip' ? 'Trip Chat' : 'Circle Chat');
   const isNoAccess = state === 'no_access' || thread?.memberAccess === 'removed';
 
-  useEffect(() => {
-    if (messages.length > 0) {
-      listRef.current?.scrollToEnd({ animated: true });
-    }
-  }, [messages.length]);
 
   // Load per-thread translation prefs from AsyncStorage
   useEffect(() => {
@@ -549,7 +547,7 @@ export function GroupChatScreen({ type, id, title, memberLabel, banner }: Props)
   // replaced a direct `message_thread_members` read taken ONCE per thread: it
   // never refreshed, it read as "Sent" when it failed, and this screen never
   // marked the thread read at all, so a trip chat opened here stayed unread.
-  const readState = useThreadReadState({ threadId: thread?.id ?? null, messages, viewerId: userId });
+  const readState = useThreadReadState({ threadId: thread?.id ?? null, messages, viewerId: userId, visibleMessageIds: viewport.visibleMessageIds });
   const readerAvatarUrl = useReaderAvatars(messages.flatMap((m) => readState.readersFor(m)));
   const readerAvatarsForMsg = useCallback((msg: Message): string[] =>
     readState.readersFor(msg).slice(0, 3).map((id) => readerAvatarUrl(id)).filter((u): u is string => !!u),
@@ -746,6 +744,10 @@ export function GroupChatScreen({ type, id, title, memberLabel, banner }: Props)
       {thread?.id ? <SafetyModeBar threadId={thread.id} refreshKey={messages[messages.length - 1]?.id ?? null} senderLabel={(uid) => senderLabelFor(messages, uid, userId ?? null)} onModeChange={(m) => setSafetyQuiet(m.deprioritizeEntertainment)} /> : null}{thread?.id ? <SharedContextRail threadId={thread.id} /> : null}<TelegraphConnectionBanner />{/* §30A.15 */}
 
       <FlatList
+        viewabilityConfig={CONVERSATION_VIEWABILITY}
+        onViewableItemsChanged={viewport.onViewableItemsChanged}
+        onScroll={viewport.onScroll}
+        scrollEventThrottle={120}
         ref={listRef}
         data={listItems}
         keyExtractor={(item) => item._t === 'day' ? item.key : item.data.id}
@@ -775,12 +777,15 @@ export function GroupChatScreen({ type, id, title, memberLabel, banner }: Props)
                 animate={shouldAnimateMessage(m.clientId ?? m.id, m.createdAt)}
                 style={[styles.bubbleRow, mine && styles.bubbleRowMine]}
               >
+                <View style={{ flexShrink: 1 }}>
                 <PortavaObjectMessage
                   body={m.body ?? null}
                   mine={mine}
                   threadId={thread?.id ?? null}
                   messageId={m.id}
                 />
+                <MessageMetadata createdAt={m.createdAt} editedAt={m.editedAt} status={mine ? readState.statusFor(m) : null} isGroup />
+                </View>
               </MessageEntrance>
             );
           }
@@ -799,6 +804,7 @@ export function GroupChatScreen({ type, id, title, memberLabel, banner }: Props)
                 animate={shouldAnimateMessage(m.clientId ?? m.id, m.createdAt)}
                 style={[styles.bubbleRow, mine && styles.bubbleRowMine]}
               >
+                <View style={{ flexShrink: 1 }}>
                 <MessageMediaBubble
                   mediaType={(m.mediaType as 'image' | 'video') ?? 'image'}
                   mediaUrl={m.mediaUrl}
@@ -812,6 +818,8 @@ export function GroupChatScreen({ type, id, title, memberLabel, banner }: Props)
                   onCancel={m.uploadState === 'uploading' ? () => mediaPicker.cancel() : undefined}
                   onRetry={m.uploadState === 'failed' ? () => mediaPicker.retry() : undefined}
                 />
+                <MessageMetadata createdAt={m.createdAt} editedAt={m.editedAt} status={mine ? readState.statusFor(m) : null} isGroup />
+                </View>
               </MessageEntrance>
             );
           }
@@ -854,13 +862,17 @@ export function GroupChatScreen({ type, id, title, memberLabel, banner }: Props)
             </MessageEntrance>
           );
         }}
-        onLayout={() => listRef.current?.scrollToEnd({ animated: false })}
+        onContentSizeChange={viewport.onContentSizeChange}
         ItemSeparatorComponent={() => <View style={{ height: space.sm }} />}
       />
 
+      {viewport.away || viewport.newMessageCount > 0 ? <Pressable testID="chat-new-messages" accessibilityRole="button" onPress={viewport.jumpToLatest} style={styles.typingRow}>
+        <Text style={styles.typingText}>{viewport.newMessageCount > 0 ? `${viewport.newMessageCount} new message${viewport.newMessageCount === 1 ? '' : 's'} ↓` : 'Jump to latest ↓'}</Text>
+      </Pressable> : null}
+
       {/* Typing indicator */}
-      {typingUserIds.length > 0 && (
-        <View style={styles.typingRow}>
+      {typingUserIds.length > 0 && dataSaver.mayLoad('typing') && (
+        <View style={styles.typingRow} testID="chat-typing" accessibilityLiveRegion="polite">
           <Text style={styles.typingText}>
             {typingUserIds.length === 1
               ? 'Someone is typing…'
@@ -986,7 +998,7 @@ export function GroupChatScreen({ type, id, title, memberLabel, banner }: Props)
               placeholder="Write a Telegraph…"
               placeholderTextColor={palette.faint}
               value={input}
-              onChangeText={(text) => { setInput(text); notifyTyping(text.trim().length > 0); }}
+              onChangeText={(text) => { setInput(text); notifyTyping(text.trim().length > 0 && dataSaver.mayLoad('typing')); }}
               onBlur={() => notifyTyping(false)}
               onSubmitEditing={handleSend}
               returnKeyType="send"

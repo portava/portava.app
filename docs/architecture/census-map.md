@@ -2919,7 +2919,7 @@ do. Read against the whole path, three links:
    **This link had no test.** It has one now:
    `travel-buddy-standalone/src/components/map/__tests__/userPositionWiring.test.ts:88#test('both coordinates are passed to the canvas element itself'`.
 2. **The canvas mounts the marker unconditionally**
-   (`travel-buddy-standalone/src/components/discovery/DiscoveryMapView.tsx:683#<UserPositionMarker lat={userLat} lng={userLng} />`),
+   (`travel-buddy-standalone/src/components/discovery/DiscoveryMapView.tsx:686#<UserPositionMarker lat={userLat} lng={userLng} />`),
    outside every entity and place branch.
 3. **The marker draws, and fails closed** on a missing or degenerate position
    (`travel-buddy-standalone/src/components/map/UserPositionMarker.tsx:138#export function UserPositionMarker`).
@@ -3222,7 +3222,7 @@ acceptance.**
 
 | ID | Was | Now | Evidence |
 | --- | --- | --- | --- |
-| M122 | **N** | **C** | **D-36a: the Transport layer is base-map styling.** It adds no `MapObjectKind`, so §18's thirteen stay closed and `kindsForLayer('transport')` stays `[]`. The toggle drives the style. This is the first of the two forms this row's own settlement names, and it lands in the one file the row names (`travel-buddy-standalone/src/constants/mapStyle.ts`). **The source** is the base map's own OpenMapTiles `transportation` and `poi` layers (`travel-buddy-standalone/src/constants/mapStyle.ts:534#export const TRANSPORT_STYLE_LAYERS: LayerSpecification[] = [`): transit and rail of every service, ferries, and station dots. There is no text, so §4's label budget is unchanged. **The whole path:** `travel-buddy-standalone/src/constants/mapStyle.ts:589#export function portavaBaseMapStyle(opts: { transport: boolean }): StyleSpecification {` returns the base style itself when off. `travel-buddy-standalone/src/components/discovery/DiscoveryMapView.tsx:553#mapStyle={mapStyle === PORTAVA_DARK_MAP_STYLE ? portavaBaseMapStyle(` renders through it. `travel-buddy-standalone/app/map/index.tsx:2629#transportLayerOn={resolveLayers(effectiveLayerPrefs, layerContext).transport.visible}` feeds it the same §16 resolution every layer uses. **TESTED:** `travel-buddy-standalone/src/constants/mapTransportStyle.test.ts:44#it('draws them below every label'` (6), `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryMapView.transportLayer.component.test.tsx:70#it('on: the same base map with the transit lines and stations drawn'` and `travel-buddy-standalone/app/map/__tests__/layerFilteredMarkers.component.test.tsx:350#switched on in the Layers sheet`. Four mutations are each red. **Not device-verified:** the station classes come from the OpenMapTiles schema, not from a rendered tile. |
+| M122 | **N** | **C** | **D-36a: the Transport layer is base-map styling.** It adds no `MapObjectKind`, so §18's thirteen stay closed and `kindsForLayer('transport')` stays `[]`. The toggle drives the style. This is the first of the two forms this row's own settlement names, and it lands in the one file the row names (`travel-buddy-standalone/src/constants/mapStyle.ts`). **The source** is the base map's own OpenMapTiles `transportation` and `poi` layers (`travel-buddy-standalone/src/constants/mapStyle.ts:534#export const TRANSPORT_STYLE_LAYERS: LayerSpecification[] = [`): transit and rail of every service, ferries, and station dots. There is no text, so §4's label budget is unchanged. **The whole path:** `travel-buddy-standalone/src/constants/mapStyle.ts:589#export function portavaBaseMapStyle(opts: { transport: boolean }): StyleSpecification {` returns the base style itself when off. `travel-buddy-standalone/src/components/discovery/DiscoveryMapView.tsx:556#mapStyle={mapStyle === PORTAVA_DARK_MAP_STYLE ? portavaBaseMapStyle(` renders through it. `travel-buddy-standalone/app/map/index.tsx:2629#transportLayerOn={resolveLayers(effectiveLayerPrefs, layerContext).transport.visible}` feeds it the same §16 resolution every layer uses. **TESTED:** `travel-buddy-standalone/src/constants/mapTransportStyle.test.ts:44#it('draws them below every label'` (6), `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryMapView.transportLayer.component.test.tsx:70#it('on: the same base map with the transit lines and stations drawn'` and `travel-buddy-standalone/app/map/__tests__/layerFilteredMarkers.component.test.tsx:350#switched on in the Layers sheet`. Four mutations are each red. **Not device-verified:** the station classes come from the OpenMapTiles schema, not from a rendered tile. |
 
 ### 52.2 Restated, not moved
 
@@ -3594,15 +3594,15 @@ from movement history. Suppress precise location and route contributions inside 
 - Map projects `public.places` (`artifacts/api-server/src/lib/mapProjectPlace.ts:307#.from("places")`).
 - Discovery serves canonical places as `db/<places.id>`, but materialises a `db/<uuid>` from `discovery_places` FIRST.
   Every `discovery_places` row with that id is marked found before the eligibility checks run
-  (`artifacts/api-server/src/lib/discoveryCandidates/materialize.ts:211#found.add(String(row.id));`). Only the ids not
+  (`artifacts/api-server/src/lib/discoveryCandidates/materialize.ts:212#found.add(String(row.id));`). Only the ids not
   found are then read from `public.places`
-  (`artifacts/api-server/src/lib/discoveryCandidates/materialize.ts:223#const rest = uuids.filter((u) => !found.has(u) && allowed.has(u.toLowerCase()));`).
+  (`artifacts/api-server/src/lib/discoveryCandidates/materialize.ts:224#const rest = uuids.filter((u) => !found.has(u) && allowed.has(u.toLowerCase()));`).
 - **Consequence 1:** a same-uuid `discovery_places` row replaces the canonical place's name, coordinates and category, and
   attaches a submitter.
 - **Consequence 2:** if that row is then refused (demo source, blocked or suspended submitter, wrong tab), the canonical
   place is not served either.
 - Separately, the feed merge drops a canonical place whose normalised name matches a curated row's
-  (`artifacts/api-server/src/routes/discovery.ts:1294#places: [...curatedRows, ...canonicalRows.filter(`).
+  (`artifacts/api-server/src/routes/discovery.ts:1297#places: [...curatedRows, ...canonicalRows.filter(`).
 - PR #790's 3920 copies the materialiser's precedence for the trend context.
 
 **Production, read 2026-10-24.**

@@ -108,11 +108,11 @@ jest.mock('../../visuals/ImageSourceBadge.tsx', () => ({
 }));
 
 // NOTE: intentionally exhaustive — fallbackUriFor calls require() on bundled
-// assets that are not available in jest; returning null means no
-// category_fallback candidate is injected, isolating the test to the
-// provider URL path.
+// assets that are not available in jest. A resolvable generic photo is supplied
+// deliberately: the place sheet must still show its neutral category panel
+// when there is no venue-specific image.
 jest.mock('../../../lib/visuals/fallbackAssets', () => ({
-  fallbackUriFor: jest.fn().mockReturnValue(null),
+  fallbackUriFor: jest.fn().mockReturnValue("https://example.org/unrelated-generic-place.jpg"),
 }));
 
 // NOTE: intentionally exhaustive — getPlaceCategoryFallback reads a static

@@ -1,6 +1,6 @@
 import { sealRecordingUpload } from '../services/stamps/recordingCapture.js';
 import { filterCurrentPostAuthors } from '../lib/postAuthorAudience.js';
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { logger as rootLogger } from "../lib/logger";
 import { enrichSpans } from "../lib/enrichSpans";
@@ -3774,3 +3774,84 @@ async function checkPostCommentsReadPermission(
   return true;
 }
 import { planPostMediaUploads, moderatedUploadKeys, uploadSummary, insertUploadRows, mediaUrlsFallback, projectedMedia } from "../lib/media/storageBackedPostMedia.js"; const EDIT_CANNOT_ADD_UPLOADS_MESSAGE = "Photos and videos are added when a post is created."; // 2026-10-24 video playback: the one authority for uploads named by media_urls
+
+
+import { commentTypingStore, publishCommentTyping } from '../lib/commentTyping.js';
+import { readBlockExclusions } from '../lib/exclusionSet.js';
+/** Typing hints share the post's current audience and expire without a stored activity history. */
+const handleCommentTyping = async (req: Request, res: Response) => {
+  // Order by arrival, not by completion of asynchronous authorization reads.
+  const arrivedAt = Date.now();
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const postId = String(req.params.postId);
+  if (!isValidUuid(postId)) return sendError(res, 'invalid_payload', 'Invalid post id');
+  const sc = getServiceClient();
+  if (!sc) return sendError(res, 'server_not_configured', 'Service unavailable');
+  const { data: post, error } = await sc.from('posts').select('id, author_id, visibility, trip_id, post_status, deleted_at, comments_setting').eq('id', postId).eq('status', 'active').maybeSingle();
+  if (error) return sendError(res, 'degraded_unavailable', 'Comment activity is unavailable');
+  if (!post) return sendError(res, 'not_found', 'Post not found');
+  if (post.author_id !== auth.user.id && isExcluded(await readPairExclusion(sc, auth.user.id, post.author_id), post.author_id)) return sendError(res, 'not_found', 'Post not found');
+  if (!(await checkPostCommentsReadPermission(res, post, auth.user.id, auth.client))) return;
+  res.setHeader('Cache-Control', 'no-store');
+  if (req.method === 'POST') {
+    if (typeof req.body?.typing !== 'boolean') return sendError(res, 'invalid_payload', 'typing must be a boolean');
+    if (!checkRateLimit('comment_typing', auth.user.id, 60, 60_000).allowed) return sendError(res, 'rate_limited', 'Please try again shortly');
+    const { data: privacy, error: privacyError } = await sc.from('user_privacy_settings').select('show_online_status').eq('user_id', auth.user.id).maybeSingle();
+    if (privacyError) return sendError(res, 'degraded_unavailable', 'Comment activity is unavailable');
+    if (req.body.typing) {
+      const eligible = await commentTypingEligible(sc, post, auth.user.id);
+      if (eligible === null) return sendError(res, 'degraded_unavailable', 'Comment activity is unavailable');
+      if (!eligible) {
+        publishCommentTyping(postId, auth.user.id, false, arrivedAt);
+        return sendError(res, 'comments_limited', 'You cannot comment on this post');
+      }
+    }
+    // An explicit online-status opt-out is honored; an absent row uses the schema default (true).
+    publishCommentTyping(postId, auth.user.id, req.body.typing && privacy?.show_online_status !== false, arrivedAt);
+    return void res.status(200).json({ ok: true });
+  }
+  const actors = commentTypingStore.actors(postId).filter(id => id !== auth.user.id);
+  if (!actors.length) return void res.json({ ok: true, typingCount: 0 });
+  const [blocks, privacy, outgoing, incoming] = await Promise.all([
+    readBlockExclusions(sc, auth.user.id, { among: actors }),
+    sc.from('user_privacy_settings').select('user_id, show_online_status').in('user_id', actors),
+    sc.from('user_restrictions').select('restricted_id').eq('restrictor_id', auth.user.id).in('restricted_id', actors),
+    sc.from('user_restrictions').select('restrictor_id').eq('restricted_id', auth.user.id).in('restrictor_id', actors),
+  ]);
+  if (!blocks.ok || privacy.error || outgoing.error || incoming.error || !Array.isArray(privacy.data) || !Array.isArray(outgoing.data) || !Array.isArray(incoming.data)) return sendError(res, 'degraded_unavailable', 'Comment activity is unavailable');
+  const hidden = new Set([...blocks.ids, ...outgoing.data.map(row => row.restricted_id), ...incoming.data.map(row => row.restrictor_id)]);
+  for (const row of privacy.data) if (row.show_online_status === false) hidden.add(row.user_id);
+  const eligibility = await Promise.all(actors.map(id => commentTypingEligible(sc, post, id)));
+  if (eligibility.some(value => value === null)) return sendError(res, 'degraded_unavailable', 'Comment activity is unavailable');
+  actors.forEach((id, index) => { if (!eligibility[index]) hidden.add(id); });
+  return void res.json({ ok: true, typingCount: actors.filter(id => !hidden.has(id)).length });
+};
+router.get('/posts/:postId/comments/typing', handleCommentTyping);
+router.post('/posts/:postId/comments/typing', handleCommentTyping);
+
+/** Matches top-level comment/reply eligibility; unreadable membership is not permission. */
+async function commentTypingEligible(sc: SupabaseClient, post: { author_id: string; comments_setting?: string | null; trip_id: string | null }, userId: string): Promise<boolean | null> {
+  if (userId === post.author_id) return true;
+  const setting = post.comments_setting ?? 'everyone';
+  if (setting === 'everyone') return true;
+  if (setting === 'disabled') return false;
+  if (setting === 'friends') {
+    const { data, error } = await sc.from('friend_requests').select('id').eq('status', 'accepted')
+      .or(`and(requester_id.eq.${userId},recipient_id.eq.${post.author_id}),and(requester_id.eq.${post.author_id},recipient_id.eq.${userId})`).limit(1);
+    return error || !Array.isArray(data) ? null : data.length > 0;
+  }
+  if (setting === 'circle') {
+    const { data, error } = await sc.from('circle_memberships').select('other_id').eq('user_id', post.author_id).eq('other_id', userId).maybeSingle();
+    return error ? null : Boolean(data);
+  }
+  if (setting === 'trip_crew') {
+    if (!post.trip_id) return false;
+    try { return await isAcceptedTripMember(sc, post.trip_id, userId); } catch { return null; }
+  }
+  if (setting === 'verified') {
+    const { data, error } = await sc.from('profiles').select('verified').eq('id', userId).maybeSingle();
+    return error ? null : data?.verified === true;
+  }
+  return false;
+}

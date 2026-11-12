@@ -15,7 +15,7 @@
  */
 
 import React from 'react';
-import { render, act } from '@testing-library/react-native';
+import { render, act, fireEvent } from '@testing-library/react-native';
 
 // ── Reanimated ────────────────────────────────────────────────────────────────
 // NOTE: intentional stub — discovery.tsx imports Animated and useCollapsingHeader
@@ -170,10 +170,12 @@ jest.mock('../../../src/services/apiToken', () => ({
 //   <ForYouTab bottomInset={bottomInset} ... />
 // Capturing the value confirms the prop is correctly forwarded and >= 120.
 let capturedForYouBottomInset: number | undefined;
+let capturedMapBottomInset: number | undefined;
 // NOTE: intentional stub — only bottomInset forwarding is under test.
 jest.mock('../../../src/components/discovery/ForYouTab', () => ({
-  ForYouTab: ({ bottomInset, listHeaderComponent }: { bottomInset?: number; listHeaderComponent?: React.ReactNode }) => {
+  ForYouTab: ({ bottomInset, mapBottomInset }: { bottomInset?: number; mapBottomInset?: number }) => {
     capturedForYouBottomInset = bottomInset;
+    capturedMapBottomInset = mapBottomInset;
     return null;
   },
 }));
@@ -247,6 +249,18 @@ describe('Discovery tab — bottomInset forwarded to tab component when layover 
     await act(async () => { await Promise.resolve(); });
 
     expect(capturedForYouBottomInset).toBe(168);
+  });
+
+  it('keeps the measured Layover entry and map controls above the iPhone floating navigation', async () => {
+    mockBottomInset = 130; // safe area 34 + floating bar 64 + offset 12 + breathing room 20
+    const ui = await render(<DiscoveryHub />);
+    const entry = ui.getByTestId('discovery-layover-entry');
+    expect(entry).toHaveStyle({bottom: 130});
+    expect(capturedMapBottomInset).toBeGreaterThanOrEqual(130 + 44);
+    // A larger-font entry must push the map controls too, not just its own label.
+    await fireEvent(entry, 'layout', {nativeEvent: {layout: {height: 64, width: 180, x: 0, y: 0}}});
+    expect(capturedMapBottomInset).toBe(194);
+    expect(capturedMapBottomInset! - 64).toBeGreaterThan(34 + 64 + 12);
   });
 
   it('bottomInset contract satisfied: iPhone bottom (34) + pill offset (74) + pill height (44) + gap (16) = 168 ≥ 155', () => {

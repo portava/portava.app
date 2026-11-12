@@ -42,7 +42,8 @@ function SavedPlacesList() {
     fileInto: async (id: string) => (await fileSavedPlace(selected.placeId, id)).ok,
   } : undefined, [selected]);
   const close = useCallback(() => setSelected(null), []);
-  const notice = result?.state === 'offline' ? 'Offline. Showing places saved on this device.'
+  const notice = result?.state === 'offline' ? 'Could not connect. Showing places saved on this device.'
+    : result?.state === 'unavailable' && result.places.length ? 'Saved places could not be refreshed. Showing places saved on this device.'
     : result && result.state !== 'ready' ? 'Some saved places could not be loaded.' : null;
   return <View style={s.page}>
     <AppHeader variant="detail" title="Saved places" onBack={router.back} />

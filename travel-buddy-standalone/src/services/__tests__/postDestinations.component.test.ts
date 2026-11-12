@@ -1,5 +1,5 @@
 let mockCurrent = true;
-let mockToken: string | null = 'token';
+let mockToken: string | null | Promise<string | null> = 'token';
 // NOTE: auth/session boundary is controlled without constructing the native auth client.
 jest.mock('../messagingOwnerRequest.ts', () => ({ captureMessagingOwnerRequest: jest.fn(), messagingOwnerToken: async () => mockToken }));
 import { legacySharedPostId } from '../../constants/postReference.ts';
@@ -8,9 +8,10 @@ import { postReferenceId, POST_REFERENCE_MEDIA_TYPE, savePostToDestination, read
 const owner = { ownerId: 'owner', sessionId: 'session', isCurrent: () => mockCurrent, invalidate: jest.fn() };
 const id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const realFetch=globalThis.fetch;
+const originalBase=process.env.EXPO_PUBLIC_API_BASE_URL;
 const response=(data:unknown,status=200)=>({ok:status<300,status,json:async()=>data}) as Response;
-beforeEach(()=>{mockCurrent=true;mockToken='token';});
-afterEach(()=>{globalThis.fetch=realFetch;});
+beforeEach(()=>{mockCurrent=true;mockToken='token';process.env.EXPO_PUBLIC_API_BASE_URL='https://api.test';});
+afterEach(()=>{globalThis.fetch=realFetch;jest.useRealTimers();if(originalBase===undefined) delete process.env.EXPO_PUBLIC_API_BASE_URL;else process.env.EXPO_PUBLIC_API_BASE_URL=originalBase;});
 it('requires explicit reference type and a valid opaque identifier',()=>{
  expect(postReferenceId(POST_REFERENCE_MEDIA_TYPE,`portava-post-reference:${id}`)).toBe(id);
  expect(postReferenceId('image/jpeg',`portava-post-reference:${id}`)).toBeNull();
@@ -74,4 +75,31 @@ it('accepts a profile receipt only when it names a single newly published post',
  globalThis.fetch = jest.fn().mockResolvedValueOnce(response(row)).mockResolvedValueOnce(response({ ...row, memoryId: id }));
  expect(await savePostToDestination(id, intent, owner)).toEqual({ ok: true, data: row });
  expect((await savePostToDestination(id, intent, owner)).ok).toBe(false);
+});
+
+it.each(['token', 'headers', 'body'] as const)('ends a stalled %s stage and leaves sharing retryable', async (stage) => {
+ jest.useFakeTimers();
+ let finishToken!: (value: string) => void;
+ if (stage === 'token') mockToken = new Promise((resolve) => { finishToken = resolve; });
+ globalThis.fetch = jest.fn(stage === 'headers' ? () => new Promise<Response>(() => {}) : async () => ({
+  ok: true, status: 200, json: () => stage === 'body' ? new Promise(() => {}) : Promise.resolve({ referenceId: id, memoryId: id, highlightId: null }),
+ } as Response));
+ const pending = savePostToDestination(id, { operationId: id, destination: 'memory' }, owner);
+ await jest.advanceTimersByTimeAsync(10001);
+ expect(await pending).toEqual({ ok: false, message: 'Sharing took too long. Please try again.' });
+ if (stage === 'token') {
+  finishToken('late-token'); await Promise.resolve(); await Promise.resolve();
+  expect(fetch).not.toHaveBeenCalled();
+ } else expect(jest.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(true);
+ mockToken = 'token';
+ globalThis.fetch = jest.fn(async () => response({ referenceId: id, memoryId: id, highlightId: null }));
+ expect((await savePostToDestination(id, { operationId: id, destination: 'memory' }, owner)).ok).toBe(true);
+});
+it('uses the exact secure API origin and refuses redirect receipts', async () => {
+ process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test/';
+ globalThis.fetch = jest.fn(async () => response({ referenceId: id, memoryId: id, highlightId: null }));
+ expect((await savePostToDestination(id, { operationId: id, destination: 'memory' }, owner)).ok).toBe(true);
+ expect(jest.mocked(fetch).mock.calls[0]).toEqual([`https://api.test/api/posts/${id}/destinations`, expect.objectContaining({ redirect: 'error', credentials: 'omit', cache: 'no-store' })]);
+ globalThis.fetch = jest.fn(async () => ({ ...response({ referenceId: id, memoryId: id, highlightId: null }), redirected: true }));
+ expect((await savePostToDestination(id, { operationId: id, destination: 'memory' }, owner)).ok).toBe(false);
 });

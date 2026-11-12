@@ -17,6 +17,8 @@ export interface CaptionTrackResult {
   draftId?: string;
 }
 
+export class CaptionRequestError extends Error {}
+
 function captionEndpoint(path: string): string {
   const base = process.env.EXPO_PUBLIC_API_BASE_URL;
   try {
@@ -61,9 +63,18 @@ async function call(path: string, method = 'GET', body?: unknown, signal?: Abort
       });
       requireActive();
       if (response.redirected || response.url && new URL(response.url).href !== endpoint) throw new Error('Caption request redirected.');
-      const result = await response.json();
+      let result: any;
+      try { result = await response.json(); }
+      catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        throw new CaptionRequestError('The captions service is temporarily unavailable. Try again.');
+      }
       requireActive();
-      if (!response.ok) throw new Error(response.status === 409 ? 'The video changed. Close and reopen captions before editing.' : 'Captions unavailable. Check access and try again.');
+      if (!response.ok) throw new CaptionRequestError(response.status === 409 ? 'The video changed. Close and reopen captions before editing.'
+        : response.status === 401 ? 'Sign in again to use captions.'
+        : result?.error === 'feature_disabled' ? 'Captions are not available right now.'
+        : result?.error === 'not_found' || response.status === 403 ? 'Captions are not available for this video.'
+        : 'The captions service is temporarily unavailable. Try again.');
       return result;
     })()]);
   } finally {

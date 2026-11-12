@@ -132,7 +132,7 @@ describe.each(SHEETS)('%s — people search', (_name, open) => {
     searchReplies.set('ali', FAILED);
     await type('ali');
     await waitFor(() => expect(ui.getByText(SEARCH_FAILED)).toBeTruthy(), { timeout: 3000 });
-    expect(ui.queryByText(/No results for/)).toBeNull();
+    expect(ui.queryByText(/No (?:results|people or chats found) for/)).toBeNull();
     expect(ui.queryByText('No people found.')).toBeNull();
 
     searchReplies.set('ali', { status: 200, body: { users: [user('u-ali', 'Alison A', 'alison')] } });
@@ -146,13 +146,13 @@ describe.each(SHEETS)('%s — people search', (_name, open) => {
     searchReplies.set('bea', new TypeError('Network request failed'));
     await type('bea');
     await waitFor(() => expect(ui.getByText(SEARCH_FAILED)).toBeTruthy(), { timeout: 3000 });
-    expect(ui.queryByText(/No results for/)).toBeNull();
+    expect(ui.queryByText(/No (?:results|people or chats found) for/)).toBeNull();
   });
 
   it('P3. a genuine miss still says nothing matched', async () => {
     await open();
     await type('zzzz');
-    await waitFor(() => expect(ui.getByText(/No results for/)).toBeTruthy(), { timeout: 3000 });
+    await waitFor(() => expect(ui.getByText(/No (?:results|people or chats found) for/)).toBeTruthy(), { timeout: 3000 });
     expect(ui.queryByText(SEARCH_FAILED)).toBeNull();
   });
 
@@ -186,7 +186,7 @@ describe.each(SHEETS)('%s — people search', (_name, open) => {
     await waitFor(() => expect(pending(LATE)).toBeTruthy(), { timeout: 3000 });
     await act(async () => { pending(EARLY)!.resolve({ status: 200, body: { users: [] } }); });
     await act(async () => {});
-    expect(ui.queryByText(/No results for/)).toBeNull();
+    expect(ui.queryByText(/No (?:results|people or chats found) for/)).toBeNull();
     expect(ui.queryByText('No people found.')).toBeNull();
     await act(async () => { pending(LATE)!.resolve({ status: 200, body: { users: [user('u-ali', 'Alison A', 'alison')] } }); });
     await waitFor(() => expect(ui.getByText('Alison A')).toBeTruthy());

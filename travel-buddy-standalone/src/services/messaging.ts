@@ -752,8 +752,11 @@ export async function saveMessage(
 export async function sendTyping(
   threadId: string,
   typing: boolean,
+  viewerId?: string | null,
 ): Promise<void> {
-  await apiPost(`/api/threads/${threadId}/typing`, { typing }).catch(() => undefined);
+  const owner = captureMessagingOwnerRequest();
+  if (!owner || (viewerId !== undefined && owner.ownerId !== viewerId)) return;
+  await fetchOwnedApi(`/api/threads/${encodeURIComponent(threadId)}/typing`, { owner, method: 'POST', body: { typing } }).catch(() => undefined);
 }
 
 export async function muteThread(

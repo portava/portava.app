@@ -1,4 +1,5 @@
-import { captureMessagingOwnerRequest, messagingOwnerToken, type MessagingOwnerRequest } from './messagingOwnerRequest.ts';
+import { captureMessagingOwnerRequest, type MessagingOwnerRequest } from './messagingOwnerRequest.ts';
+import { fetchOwnedApi } from './ownedApiRequest.ts';
 import type { Memory } from './memories.ts';
 
 import { POST_REFERENCE_MEDIA_TYPE, POST_REFERENCE_PREFIX as PREFIX, POST_UUID as UUID } from '../constants/postReference.ts';
@@ -24,26 +25,25 @@ export type DestinationIntent = { operationId: string; destination: PostDestinat
   note?: string | null; visibility?: 'only_me' | 'friends_only' | 'public' | 'private' };
 
 async function request<T>(path: string, owner: MessagingOwnerRequest, body?: unknown, signal?: AbortSignal): Promise<Result<T>> {
-  const abort = new AbortController();
-  const cancel = () => abort.abort();
-  signal?.addEventListener('abort', cancel, { once: true });
-  const timeout = setTimeout(cancel, 12000);
   try {
-    const token = await messagingOwnerToken(owner);
-    if (!token || !owner.isCurrent() || signal?.aborted) return { ok: false, message: 'Your signed-in session changed. Reopen this screen.' };
-    const response = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL ?? ''}/api${path}`, {
-      method: body === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: abort.signal,
+    const response = await fetchOwnedApi(`/api${path}`, {
+      owner, signal, method: body === undefined ? 'GET' : 'POST',
+      ...(body === undefined ? {} : { body: body as object }),
     });
     if (!owner.isCurrent() || signal?.aborted) return { ok: false, message: 'Your signed-in session changed. Reopen this screen.' };
-    const data = await response.json().catch(() => null);
+    let data: any;
+    try { data = await response.json(); }
+    catch (error) { if (!(error instanceof SyntaxError)) throw error; data = null; }
     if (!owner.isCurrent() || signal?.aborted) return { ok: false, message: 'Your signed-in session changed. Reopen this screen.' };
     if (!response.ok) return { ok: false, message: typeof data?.message === 'string' && data.message.trim()
       ? data.message : 'Sharing is temporarily unavailable. Please try again shortly.' };
     if (!data) return { ok: false, message: 'The save could not be confirmed. Try again.' };
     return { ok: true, data };
-  } catch { return { ok: false, message: 'Could not connect. Try again.' }; }
-  finally { clearTimeout(timeout); signal?.removeEventListener('abort', cancel); }
+  } catch (error) {
+    if (!owner.isCurrent() || signal?.aborted) return { ok: false, message: 'Your signed-in session changed. Reopen this screen.' };
+    return { ok: false, message: error instanceof Error && /timed out/.test(error.message)
+      ? 'Sharing took too long. Please try again.' : 'Could not connect. Try again.' };
+  }
 }
 export async function savePostToDestination(postId: string, intent: DestinationIntent, owner: MessagingOwnerRequest): Promise<Result<PostDestinationResult>> {
   const result = await request<PostDestinationResult>(`/posts/${encodeURIComponent(postId)}/destinations`, owner, intent);

@@ -144,10 +144,15 @@ router.get("/users/me/collections", async (req, res) => {
   const ids = (data ?? []).map((c: any) => c.id as string);
   let countMap: Record<string, number> = {};
   if (ids.length > 0) {
-    const { data: counts } = await sc
+    const { data: counts, error: countError } = await sc
       .from("collection_items")
       .select("collection_id")
       .in("collection_id", ids);
+    if (countError) {
+      req.log.error({ err: countError }, "collection item counts failed");
+      sendError(res, "db_error", "Your collections could not be loaded. Please try again.");
+      return;
+    }
     for (const row of (counts ?? []) as any[]) {
       countMap[row.collection_id] = (countMap[row.collection_id] ?? 0) + 1;
     }

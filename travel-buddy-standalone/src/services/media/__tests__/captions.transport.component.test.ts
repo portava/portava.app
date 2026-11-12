@@ -150,3 +150,17 @@ it('does not accept a response decoded after the signed-in session ended', async
   jest.mocked(fetch).mockResolvedValueOnce(reply({ json: async () => { emitObservedAuthEvent('SIGNED_OUT', null); return status; } }));
   await expect(getCaptionAsrStatus(source)).rejects.toThrow(/session changed/);
 });
+
+it.each([
+ [404, null, 'The captions service is temporarily unavailable. Try again.'],
+ [404, { error: 'not_found' }, 'Captions are not available for this video.'],
+ [503, { error: 'feature_disabled' }, 'Captions are not available right now.'],
+ [401, {}, 'Sign in again to use captions.'],
+ [403, {}, 'Captions are not available for this video.'],
+])('classifies caption response %s without leaking server details', async (code, body, message) => {
+ jest.mocked(fetch).mockResolvedValueOnce(reply({ ok: false, status: code, json: async () => {
+  if (body === null) throw new SyntaxError('HTML from older deployment');
+  return { ...body, message: 'internal private detail' };
+ } }));
+ await expect(resolveCaptionSource('video')).rejects.toThrow(message);
+});

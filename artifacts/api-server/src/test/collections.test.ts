@@ -19,7 +19,7 @@ import app from "../app.js";
 import { _setTestClient } from "../lib/http.js";
 
 type Row = Record<string, any>;
-interface FakeTable { rows: Row[]; nextInsertError?: string; }
+interface FakeTable { rows: Row[]; nextInsertError?: string; nextReadError?: string; }
 
 const OWNER_ID   = "11111111-1111-1111-1111-111111111111";
 const OTHER_ID   = "22222222-2222-2222-2222-222222222222";
@@ -157,7 +157,12 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
         return { data: result, error: null };
       }
 
-      // SELECT
+      // SELECT: a resolved database error must not become an empty read.
+      if (table.nextReadError) {
+        const message = table.nextReadError;
+        delete table.nextReadError;
+        return { data: null, error: { message } };
+      }
       let rows = filteredRows();
       if (_orderCol) {
         rows = [...rows].sort((a, b) => {
@@ -225,6 +230,36 @@ describe("Collections & Saves", () => {
   let close: () => Promise<void> = async () => {};
 
   afterEach(async () => { await close(); });
+
+  it("does not present failed collection counts as zero and recovers using only the owner's collections", async () => {
+    const otherCollection = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    const tables: Record<string, FakeTable> = {
+      collections: { rows: [
+        { id: COL_ID, owner_id: OWNER_ID, name: "Food", position: 0, is_default: false, created_at: "2026-11-01", updated_at: "2026-11-01" },
+        { id: otherCollection, owner_id: OTHER_ID, name: "Private other collection", position: 0, is_default: false },
+      ] },
+      collection_items: { rows: [
+        { collection_id: COL_ID, entity_type: "post", entity_id: ENTITY_ID },
+        { collection_id: otherCollection, entity_type: "post", entity_id: ENTITY_ID },
+      ], nextReadError: "private database diagnostic" },
+    };
+    ({ url, close } = await startServer(tables));
+    const failed = await fetch(`${url}/api/users/me/collections`, { headers: auth("owner-token") });
+    assert.equal(failed.status, 500);
+    const failure = await failed.json();
+    assert.ok(failure && typeof failure === "object" && "error" in failure);
+    assert.equal(failure.error, "db_error");
+    assert.equal("collections" in failure, false);
+    assert.doesNotMatch(JSON.stringify(failure), /private database diagnostic/);
+    assert.equal(tables.collection_items.rows.length, 2, "a failed read must preserve saved items");
+    const recovered = await fetch(`${url}/api/users/me/collections`, { headers: auth("owner-token") });
+    assert.equal(recovered.status, 200);
+    const body = await recovered.json();
+    assert.ok(body && typeof body === "object" && "collections" in body && Array.isArray(body.collections));
+    assert.equal(body.collections.length, 1);
+    assert.equal(body.collections[0].id, COL_ID);
+    assert.equal(body.collections[0].itemCount, 1);
+  });
 
   // ── Default collection auto-created on first save ──────────────────────────
   it("auto-creates default collection on first save", async () => {

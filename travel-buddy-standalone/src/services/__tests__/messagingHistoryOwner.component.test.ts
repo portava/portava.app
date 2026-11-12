@@ -1,4 +1,4 @@
-import { getThreadMessages, resumeThreadMessages } from '../messaging.ts';
+import { getThreadMessages, resumeThreadMessages, sendTyping } from '../messaging.ts';
 import { realCryptoPort } from '../../lib/e2ee/realPort.ts';
 import { seedObservedOwnerSession, disposeObservedOwnerSession, observedOwnerAccessToken } from './observedOwnerSessionFixture.ts';
 import { setDiscoveryViewerFromSession } from '../discoveryViewerScope.ts';
@@ -44,4 +44,10 @@ it('canonical tombstones erase cached bodies even when the server omits cipherte
  const response=await getThreadMessages('thread');expect(response.data?.messages[0]).toMatchObject({deleted:true,body:'',displayBody:'',originalBody:''});
  expect(port.reconcileMessage).toHaveBeenCalledWith('thread','one',null,true,expect.objectContaining({ownerId:'owner-a'}));
  expect(port.decryptFromThread).not.toHaveBeenCalled();
+});
+
+it('typing binds the expected viewer and sends no presence for another account',async()=>{
+ await sendTyping('thread',true,'owner-b');expect(global.fetch).not.toHaveBeenCalled();
+ await sendTyping('thread',true,'owner-a');expect(global.fetch).toHaveBeenCalledTimes(1);
+ expect(global.fetch).toHaveBeenCalledWith('https://api.test/api/threads/thread/typing',expect.objectContaining({method:'POST',body:JSON.stringify({typing:true})}));
 });

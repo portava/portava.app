@@ -15,19 +15,23 @@ const originalFetch = global.fetch;
 const originalApi = process.env.EXPO_PUBLIC_API_BASE_URL;
 const stops: Array<() => void> = [];
 const instances: TestXHR[] = [];
+let sessionOwner = 'viewer-one';
+let sessionToken = 'same-owner-token';
 
 class TestXHR {
   readyState = 0;
   status = 0;
   responseText = '';
+  headers: Record<string, string> = {};
+  aborts = 0;
   onreadystatechange: (() => void) | null = null;
   onerror: (() => void) | null = null;
   ontimeout: (() => void) | null = null;
   constructor() { instances.push(this); }
   open() {}
-  setRequestHeader() {}
+  setRequestHeader(name: string, value: string) { this.headers[name] = value; }
   send() {}
-  abort() {}
+  abort() { this.aborts++; }
   opened(callback = this.onreadystatechange) { this.readyState = 2; this.status = 200; callback?.(); }
 }
 
@@ -35,18 +39,21 @@ beforeEach(() => {
   jest.useFakeTimers();
   instances.length = 0;
   stops.length = 0;
+  sessionOwner = 'viewer-one'; sessionToken = 'same-owner-token';
   process.env.EXPO_PUBLIC_API_BASE_URL = 'http://127.0.0.1:9';
   global.XMLHttpRequest = TestXHR as unknown as typeof XMLHttpRequest;
   global.fetch = jest.fn(async () => { throw new Error('No network'); });
   _setTestSupabase({ auth: {
-    getSession: async () => ({ data: { session: { access_token: 'same-owner-token', expires_at: 4_000_000_000 } } }),
+    getSession: async () => ({ data: { session: { access_token: sessionToken, expires_at: 4_000_000_000, user: { id: sessionOwner } } } }),
     refreshSession: async () => ({ data: { session: null } }),
   } });
+  telegraphRealtime.setViewer(sessionOwner);
 });
 
 afterEach(async () => {
   await cleanup();
   for (const stop of stops) stop();
+  telegraphRealtime.setViewer(null);
   jest.clearAllTimers();
   jest.useRealTimers();
   _resetTestSupabase();
@@ -85,7 +92,7 @@ it('the current replacement opening triggers the mounted hook exactly once', asy
   expect(catchUp).toHaveBeenCalledTimes(1);
 });
 
-it('delivers current frames but not retired frames after an actual hook consumer remount', async () => {
+it('delivers current frames but not the outgoing account frames after an actual hook consumer remount', async () => {
   const catchUp = jest.fn();
   const previousEvents = jest.fn();
   const previous = await renderHook(() => {
@@ -102,6 +109,11 @@ it('delivers current frames but not retired frames after an actual hook consumer
   });
   expect(previousEvents).toHaveBeenCalledTimes(1);
   await previous.unmount();
+  await act(async () => {
+    telegraphRealtime.setViewer(null);
+    sessionOwner = 'viewer-two'; sessionToken = 'replacement-owner-token';
+    telegraphRealtime.setViewer(sessionOwner);
+  });
   const currentEvents = jest.fn();
   await renderHook(() => {
     useReconnectCatchUp(catchUp);
@@ -122,6 +134,10 @@ it('delivers current frames but not retired frames after an actual hook consumer
   });
   expect(currentEvents).toHaveBeenCalledTimes(1);
   expect(currentEvents.mock.calls[0][0].payload.marker).toBe('current');
+  expect(retired.aborts).toBeGreaterThan(0);
+  expect(retired.headers.Authorization).toBe('Bearer same-owner-token');
+  expect(instances[1].headers.Authorization).toBe('Bearer replacement-owner-token');
+  expect(previousEvents).toHaveBeenCalledTimes(1);
 });
 
 it('preserves the disabled catch-up hook while the current stream reconnects', async () => {
@@ -132,4 +148,21 @@ it('preserves the disabled catch-up hook while the current stream reconnects', a
   await act(async () => { await jest.advanceTimersByTimeAsync(2000); });
   await act(async () => { instances[1].opened(); });
   expect(catchUp).not.toHaveBeenCalled();
+});
+
+it('waits for a viewer before connecting a mounted consumer and refuses mismatched session ownership', async () => {
+  await act(async () => { telegraphRealtime.setViewer(null); });
+  const catchUp = jest.fn();
+  await renderHook(() => {
+    useReconnectCatchUp(catchUp);
+    useEffect(() => telegraphRealtime.subscribe(() => {}), []);
+  });
+  expect(instances).toHaveLength(0);
+  await act(async () => { telegraphRealtime.setViewer('viewer-two'); });
+  expect(instances).toHaveLength(0);
+  await act(async () => { telegraphRealtime.setViewer('viewer-one'); });
+  expect(instances).toHaveLength(1);
+  await act(async () => { instances[0].opened(); });
+  expect(catchUp).not.toHaveBeenCalled();
+  expect(instances[0].headers.Authorization).toBe('Bearer same-owner-token');
 });

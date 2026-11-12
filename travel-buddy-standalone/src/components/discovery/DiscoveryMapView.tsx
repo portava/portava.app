@@ -86,6 +86,8 @@ export interface DiscoveryMapViewProps { children?: React.ReactNode;
   onSelectPlace: (place: DiscoveryPlace) => void;
   /** Pixels to shift map-overlay UI down so it clears a floating header/tab bar. */
   topInset?: number;
+  /** Space occupied by tab navigation and floating actions below the map controls. */
+  bottomInset?: number;
   /**
    * Optional camera ref forwarded from a parent screen (e.g. the full-screen
    * /map route) so an external Recenter button can call setCamera directly.
@@ -279,6 +281,7 @@ export function DiscoveryMapView({
   userLat,
   userLng,
   topInset = 0,
+  bottomInset = 0,
   externalCameraRef,
   entities,
   zoneObjects,
@@ -715,7 +718,7 @@ export function DiscoveryMapView({
       )}
 
       {/* ── Badge row ──────────────────────────────────────────────────────── */}
-      <View style={s.badgeRow}>
+      <View testID="discovery-map-status" style={[s.badgeRow, { bottom: bottomInset + 20 }]}>
         <View style={s.badge}>
           <MapPin size={10} color="#fff" />
           <Text style={s.badgeText}>
@@ -760,7 +763,7 @@ export function DiscoveryMapView({
       </View>
 
       {hasUser && (
-        <Pressable style={s.recenterBtn} onPress={recenterOnMe} hitSlop={8}>
+        <Pressable testID="discovery-map-recenter" style={[s.recenterBtn, { bottom: bottomInset + 14 }]} onPress={recenterOnMe} hitSlop={8}>
           <Navigation size={18} color={color.signal} />
         </Pressable>
       )}
@@ -943,13 +946,15 @@ const s = StyleSheet.create({
   },
   badgeRow: {
     position: 'absolute',
-    bottom: 20,
-    alignSelf: 'center',
+    left: 14,
+    right: 70,
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
     alignItems: 'center',
   },
   badge: {
+    maxWidth: '100%',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
@@ -962,6 +967,7 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(180,120,0,0.85)',
   },
   badgeText: {
+    flexShrink: 1,
     color: '#fff',
     fontSize: 12,
     fontWeight: '600',

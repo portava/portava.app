@@ -3,6 +3,8 @@ jest.mock('../../lib/supabase.ts', () => {
   const listeners = new Set();
   return { isSupabaseConfigured: true, supabase: { auth: { listeners, onAuthStateChange: (listener: unknown) => { listeners.add(listener); return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } }; } } } };
 });
+import { addComment, editComment, deleteComment, likeComment } from '../postEngagement.ts';
+import { readLiveComments, readLiveReplies } from '../commentActivity.ts';
 import { fetchOwnedApi } from '../ownedApiRequest.ts';
 import { captureMessagingOwnerRequest } from '../messagingOwnerRequest.ts';
 import { _setTestSupabase, _resetTestSupabase } from '../apiToken.ts';
@@ -82,3 +84,55 @@ it('treats malformed plan acceptance as unconfirmed rather than successful', asy
   fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
   await expect(createPlanItem('trip-a', { title: 'Stop' })).rejects.toThrow('confirm');
 });
+
+for (const write of [
+  () => addComment('post', 'private draft'), () => editComment('post', 'comment', 'edited draft'),
+  () => deleteComment('post', 'comment'), () => likeComment('post', 'comment'),
+]) {
+  it('refuses a comment mutation if token acquisition crosses to another account', async () => {
+    const pending = deferred<unknown>(); sdk(() => pending.promise);
+    const result = write();
+    emitObservedAuthEvent('SIGNED_IN', observedOwnerSession('owner-b', 'session-b'));
+    pending.resolve(tokenReply());
+    expect(await result).toBeNull(); expect(fetchMock).not.toHaveBeenCalled();
+  });
+}
+it('preserves comments-disabled refusal and accepted write contracts', async () => {
+  fetchMock.mockResolvedValueOnce({ok: false, status: 403, json: async () => ({error: 'comments_disabled', message: 'Disabled'})});
+  expect(await addComment('post', 'draft')).toEqual({error: 'comments_disabled'});
+  const comment = {id: 'comment', body: 'accepted'};
+  fetchMock.mockResolvedValueOnce({ok: true, status: 200, json: async () => ({ok: true, comment, commentCount: 2})});
+  expect(await addComment('post', 'accepted')).toMatchObject({comment, commentCount: 2});
+  expect(JSON.parse(fetchMock.mock.lastCall[1].body)).toEqual({body: 'accepted'});
+});
+const commentRow = {id: 'comment', body: 'readable', createdAt: '2026-11-12T00:00:00Z', updatedAt: null,
+  author: {id: 'owner-a', handle: '@owner', name: 'Owner', avatarUrl: null}, canDelete: true};
+for (const target of ['comments', 'replies'] as const) {
+  const read = () => target === 'comments' ? readLiveComments('post', {}) : readLiveReplies('post', 'comment', {});
+  it(`decodes checked ${target} and keeps empty success distinct from malformed/network/refused reads`, async () => {
+    for (const rows of [[commentRow], []]) {
+      fetchMock.mockResolvedValueOnce({ok: true, status: 200, json: async () => ({ok: true, [target]: rows})});
+      expect(await read()).toEqual({ok: true, [target]: rows});
+    }
+    fetchMock.mockResolvedValueOnce({ok: true, status: 200, json: async () => ({ok: true, [target]: [{...commentRow, author: {...commentRow.author, name: null, handle: null}}]})});
+    expect(await read()).toEqual({ok: true, [target]: [{...commentRow, author: {...commentRow.author, name: '', handle: ''}}]});
+    for (const data of [{}, {[target]: [{id: 'bad'}]}, {ok: false, [target]: []}]) {
+      fetchMock.mockResolvedValueOnce({ok: true, status: 200, json: async () => data});
+      expect(await read()).toEqual({ok: false, denied: false});
+    }
+    fetchMock.mockRejectedValueOnce(new Error('network failed'));
+    expect(await read()).toEqual({ok: false, denied: false});
+    for (const status of [401, 403, 404, 410, 500]) {
+      fetchMock.mockResolvedValueOnce({ok: false, status, json: async () => ({})});
+      expect(await read()).toEqual({ok: false, denied: status !== 500});
+    }
+  });
+  it(`refuses ${target} decoded after its post panel closes`, async () => {
+    let active = true; const body = deferred<unknown>();
+    fetchMock.mockResolvedValueOnce({ok: true, status: 200, json: () => body.promise});
+    const pending = target === 'comments' ? readLiveComments('post', {isCurrent: () => active}) : readLiveReplies('post', 'comment', {isCurrent: () => active});
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    active = false; body.resolve({ok: true, [target]: [commentRow]});
+    expect(await pending).toEqual({ok: false, denied: false});
+  });
+}

@@ -61,6 +61,10 @@ jest.mock('../../selectors/GlobalPlacePicker', () => ({
   GlobalPlacePicker: Null,
 }));
 
+const mockMapProps: Array<{bottomInset?: number}> = [];
+// NOTE: MapLibre is native; record the actual tab-to-map boundary for inset forwarding.
+jest.mock('../DiscoveryMapView', () => ({DiscoveryMapView: (props: {bottomInset?: number}) => {mockMapProps.push(props); return null;}}));
+
 // ── Imports after mocks ───────────────────────────────────────────────────────
 
 import { DiscoveryCategoryTab } from '../DiscoveryCategoryTab.tsx';
@@ -87,6 +91,15 @@ const MOCK_PLACE = {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('DiscoveryCategoryTab — no filters prop (pre-filters-feature caller)', () => {
+  it('forwards bottom chrome clearance in category map mode', async () => {
+    const ui = await render(<DiscoveryCategoryTab category="places" destination="Paris" viewMode="map"
+      onSelectPlace={jest.fn()} onAddToPlan={jest.fn()} bottomInset={130} mapBottomInset={174} />);
+    expect(mockMapProps.at(-1)?.bottomInset).toBe(174);
+    await ui.rerender(<DiscoveryCategoryTab category="places" destination="Paris" viewMode="map"
+      onSelectPlace={jest.fn()} onAddToPlan={jest.fn()} bottomInset={130} mapBottomInset={194} />);
+    expect(mockMapProps.at(-1)?.bottomInset).toBe(194);
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetCachedDiscoveryPlaces.mockReturnValue(null);

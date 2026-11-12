@@ -220,13 +220,14 @@ export function ShareSheet({ visible, postId = '', canonicalLink, onClose, onSha
     if (!isCurrentPicker()) return;
     resetSearch();
     setThreadSearch(text);
-    if (!text.trim()) return;
+    const query = text.trim().replace(/^@/, '').trim();
+    if (!query) return;
     setSearchingUsers(true);
     scheduler.schedule(async (request) => {
       const isCurrentRequest = () => isCurrentPicker() && request.isCurrent();
       if (!isCurrentRequest()) return;
       try {
-        const res = await searchUsers(text.trim(), 10, { ...request, isCurrent: isCurrentRequest, scope: context.scope });
+        const res = await searchUsers(query, 10, { ...request, isCurrent: isCurrentRequest, scope: context.scope });
         if (!isCurrentRequest()) return;
         if (res.ok && res.data) {
           setUserResults(res.data);
@@ -505,7 +506,7 @@ export function ShareSheet({ visible, postId = '', canonicalLink, onClose, onSha
               multiline
             />
 
-            <Text style={s.chooseLabel}>CHOOSE A CHAT</Text>
+            <Text style={s.chooseLabel}>CHOOSE A CHAT OR PERSON</Text>
 
             {threadsFailed && (
               <View style={s.loadingRow}>
@@ -556,10 +557,11 @@ export function ShareSheet({ visible, postId = '', canonicalLink, onClose, onSha
             )}
 
             {(() => {
-              const isSearchActive = threadSearch.trim().length > 0;
+              const query = threadSearch.trim().replace(/^@/, '').trim().toLowerCase();
+              const isSearchActive = query.length > 0;
               const filteredThreads = isSearchActive
                 ? threads.filter((thread) => {
-                    const q = threadSearch.toLowerCase();
+                    const q = query;
                     if (thread.title?.toLowerCase().includes(q)) return true;
                     return thread.otherMembers.some(
                       (m) =>
@@ -611,7 +613,8 @@ export function ShareSheet({ visible, postId = '', canonicalLink, onClose, onSha
                 return (
                   <View style={s.loadingRow}>
                     <MessageCircle size={24} color={color.faint} />
-                    <Text style={s.emptyLabel}>No results for "{threadSearch}".</Text>
+                    <Text style={s.emptyLabel}>No people or chats found for "{threadSearch.trim()}".</Text>
+                    <Text style={s.emptyLabel}>Try another name or @username. Your own account is not included.</Text>
                   </View>
                 );
               }

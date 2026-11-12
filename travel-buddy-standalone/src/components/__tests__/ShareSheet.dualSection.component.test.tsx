@@ -192,7 +192,32 @@ describe('ShareSheet — dual-section search results (picker mode)', () => {
     );
 
     // The combined no-results label must not be visible.
-    expect(screen.queryByText(/No results for/)).toBeNull();
+    expect(screen.queryByText(/No people or chats found for/)).toBeNull();
+  });
+
+  it('matches @handles with surrounding spaces in chats and searches the people directory', async () => {
+    await renderSheet();
+    const input = await openPicker();
+    await fireEvent.changeText(input, '  @bo  ');
+    await waitFor(() => expect(screen.getByText('Bob Explorer')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Bob Traveler')).toBeTruthy());
+    expect(jest.requireMock('../../services/follows.ts').searchUsers).toHaveBeenLastCalledWith(
+      'bo', 10, expect.objectContaining({isCurrent: expect.any(Function)}));
+  });
+
+  it('finds a two-character recipient with no prior conversation, without sending on search', async () => {
+    const messaging = jest.requireMock('../../services/messaging.ts');
+    messaging.getMyThreads.mockResolvedValueOnce({ok: true, data: {threads: []}});
+    jest.requireMock('../../services/follows.ts').searchUsers.mockResolvedValueOnce({ok: true, data: [{
+      id: 'recipient-ruby', displayName: 'Ruby', username: 'ruby', avatarUrl: null,
+      followerCount: 0, isFollowing: false, isPrivate: false,
+    }]});
+    messaging.openDirectThread.mockClear(); messaging.sendMessage.mockClear();
+    await renderSheet();
+    await fireEvent.changeText(await openPicker(), 'ru');
+    await waitFor(() => expect(screen.getByText('Ruby')).toBeTruthy());
+    expect(messaging.openDirectThread).not.toHaveBeenCalled();
+    expect(messaging.sendMessage).not.toHaveBeenCalled();
   });
 
   it('shows the no-results empty state only when both sections are empty', async () => {
@@ -209,7 +234,7 @@ describe('ShareSheet — dual-section search results (picker mode)', () => {
     fireEvent.changeText(searchInput, 'zzznomatch');
 
     await waitFor(
-      () => expect(screen.queryByText(/No results for/)).not.toBeNull(),
+      () => expect(screen.queryByText(/No people or chats found for/)).not.toBeNull(),
       { timeout: 3000 },
     );
   });

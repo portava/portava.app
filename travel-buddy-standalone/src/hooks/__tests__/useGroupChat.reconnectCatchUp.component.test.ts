@@ -46,11 +46,13 @@ jest.mock('../../context/SessionContext.tsx', () => ({
   useSession: () => ({ userId: 'me-1' }),
 }));
 
+let mockRealtimeStatus = 'connecting';
+const mockEvents = new Set<(event: any) => void>();
 const statusListeners: Array<(s: string) => void> = [];
 // NOTE: intentionally exhaustive — the hook subscribes to events and to status.
 jest.mock('../../services/telegraphRealtimeService.ts', () => ({
   telegraphRealtime: {
-    subscribe: () => () => {},
+    subscribe: (listener: (event: any) => void) => { mockEvents.add(listener); return () => mockEvents.delete(listener); },
     onStatus: (l: (s: string) => void) => {
       statusListeners.push(l);
       l('connecting');
@@ -59,21 +61,23 @@ jest.mock('../../services/telegraphRealtimeService.ts', () => ({
         if (i >= 0) statusListeners.splice(i, 1);
       };
     },
-    getStatus: () => 'connecting',
+    getStatus: () => mockRealtimeStatus,
   },
 }));
 
 const appListeners: Array<(s: AppStateStatus) => void> = [];
 
 const MSG = (id: string, createdAt: string) => ({
-  id, threadId: 't-1', senderId: 'u-2', body: `body of ${id}`, createdAt,
+  id, threadId: 't-1', senderId: 'u-2', body: `body of ${id}`, displayBody: `body of ${id}`, originalBody: `body of ${id}`, createdAt,
   deleted: false, editedAt: null, msgType: 'text', subtype: null,
 }) as any;
 
 function emitStatus(s: string) {
+  mockRealtimeStatus = s;
   for (const l of [...statusListeners]) l(s);
 }
 function emitApp(s: AppStateStatus) {
+  Object.defineProperty(AppState, 'currentState', { configurable: true, value: s, writable: true });
   for (const l of [...appListeners]) l(s);
 }
 
@@ -92,7 +96,8 @@ async function openChat() {
 
 describe('useGroupChat — catch-up on reconnect (TEL-F10)', () => {
   beforeEach(() => {
-    jest.resetAllMocks();
+  Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'active', writable: true });
+    jest.resetAllMocks(); mockRealtimeStatus = 'connecting'; mockEvents.clear();
     statusListeners.length = 0;
     appListeners.length = 0;
     jest.spyOn(AppState, 'addEventListener').mockImplementation(((_t: string, l: (s: AppStateStatus) => void) => {
@@ -104,7 +109,7 @@ describe('useGroupChat — catch-up on reconnect (TEL-F10)', () => {
   afterEach(async () => {
     await act(async () => {});
     cleanup();
-    jest.restoreAllMocks();
+    jest.restoreAllMocks(); jest.useRealTimers();
   });
 
   it('re-reads the thread when the stream drops and comes back, and shows what was missed', async () => {
@@ -164,6 +169,37 @@ describe('useGroupChat — catch-up on reconnect (TEL-F10)', () => {
     await act(async () => { await result.current.edit('m-1', 'fixed'); });
     expect(mockEditThreadMessage).toHaveBeenCalledWith('t-1', 'm-1', 'fixed');
     expect(mockEditMessage).not.toHaveBeenCalled();
-    expect(result.current.messages[0]).toMatchObject({ body: 'fixed', editedAt: '2026-08-01T10:05:00Z' });
+    expect(result.current.messages[0]).toMatchObject({ body: 'fixed', displayBody: 'fixed', originalBody: 'fixed', translated: false, editedAt: '2026-08-01T10:05:00Z' });
   });
+  it('continues to read new messages while realtime remains down, only in foreground', async () => {
+    jest.useFakeTimers();
+    const { result } = await openChat();
+    mockGetThreadMessages.mockResolvedValue({ok:true,data:{messages:[MSG('m-2','2026-08-01T11:00:00Z'),MSG('m-1','2026-08-01T10:00:00Z')]}});
+    await act(async () => { await jest.advanceTimersByTimeAsync(5_000); });
+    expect(result.current.messages.map(message => message.id)).toEqual(['m-1','m-2']);
+    const calls = mockGetThreadMessages.mock.calls.length;
+    await act(async () => { emitApp('background'); await jest.advanceTimersByTimeAsync(15_000); });
+    expect(mockGetThreadMessages).toHaveBeenCalledTimes(calls);
+    await act(async () => { emitApp('active'); emitStatus('open'); });
+    const activeCalls = mockGetThreadMessages.mock.calls.length;
+    await act(async () => { await jest.advanceTimersByTimeAsync(15_000); });
+    expect(mockGetThreadMessages).toHaveBeenCalledTimes(activeCalls);
+  });
+  it('an older in-flight refresh cannot overwrite a confirmed edit or its display text', async () => {
+    const { result } = await openChat();
+    let release!: (value: unknown) => void;
+    mockGetThreadMessages.mockReturnValueOnce(new Promise(resolve => { release = resolve; }));
+    await act(async () => { for (const event of mockEvents) event({type:'message.updated',threadId:'t-1'}); });
+    mockEditThreadMessage.mockResolvedValueOnce({ok:true,data:{id:'m-1',threadId:'t-1',body:'corrected',editedAt:'2026-08-01T10:05:00Z'}});
+    await act(async () => { await result.current.edit('m-1','corrected'); });
+    await act(async () => { release({ok:true,data:{messages:[MSG('m-1','2026-08-01T10:00:00Z')]}}); });
+    expect(result.current.messages[0]).toMatchObject({body:'corrected',displayBody:'corrected',originalBody:'corrected',editedAt:'2026-08-01T10:05:00Z'});
+  });
+  it('translation updates after an edit replace the pending original display', async () => {
+    const { result } = await openChat();
+    mockGetThreadMessages.mockResolvedValueOnce({ok:true,data:{messages:[{...MSG('m-1','2026-08-01T10:00:00Z'),displayBody:'translated correction',translationStatus:'completed'}]}});
+    await act(async () => { for (const event of mockEvents) event({type:'message.translated',threadId:'t-1'}); });
+    expect(result.current.messages[0].displayBody).toBe('translated correction');
+  });
+
 });

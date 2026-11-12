@@ -1,3 +1,4 @@
+import { useConversationTyping } from '../features/telegraph/lifecycle/useConversationTyping.ts';
 /**
  * Messaging hooks — same {data, loading, error, reload} shape as other hooks.
  * All reads/writes go through src/services/messaging.ts → API server.
@@ -26,7 +27,7 @@ import {
   markHighlightsViewed,
   getThreadMessages, resumeThreadMessages,
   sendMessage, cancelPendingMessage,
-  sendTyping,
+
   retryTranslation,
   getMyLanguageSettings,
   updateMyLanguageSettings,
@@ -53,7 +54,7 @@ const INBOX_POLL_MS = 7_000;
 const UNREAD_POLL_MS = 15_000;
 
 /** How long a peer is shown as "typing" before we auto-clear it. */
-const TYPING_TTL_MS = 6_000;
+
 
 function makeClientId(): string {
   return `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
@@ -274,14 +275,10 @@ export function useThreadMessages(threadId: string | null) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const [typingUserIds, setTypingUserIds] = useState<string[]>([]); const [accessLost, setAccessLost] = useState(false); // §6.3 T62: the server refused this thread to the viewer (no longer a member)
+  const [accessLost, setAccessLost] = useState(false); // §6.3 T62: the server refused this thread to the viewer (no longer a member)
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const sendingRef = useRef(false);
-  const typingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const lastTypingSentRef = useRef(0);
-  // What this device last TOLD the thread: a "stopped" is only worth a request
-  // when "typing" was said (re-verification R3).
-  const typingToldRef = useRef(false);
+  const { typingUserIds, notifyTyping } = useConversationTyping(accessLost ? null : threadId, userId);
   // True once the first network response has been applied for the current thread;
   // prevents the snapshot from overwriting fresher network data if AsyncStorage is slow.
   const networkFetchedRef = useRef(false);
@@ -292,6 +289,10 @@ export function useThreadMessages(threadId: string | null) {
   activeThreadIdRef.current = threadId;
   const activeOwnerIdRef = useRef(userId);
   activeOwnerIdRef.current = userId;
+
+  const readScope = useRef({ key: `${userId}:${threadId}`, epoch: 0, issued: 0, applied: 0 });
+  if (readScope.current.key !== `${userId}:${threadId}`) readScope.current = { key: `${userId}:${threadId}`, epoch: readScope.current.epoch + 1, issued: 0, applied: 0 };
+  useEffect(() => () => { readScope.current.epoch += 1; }, []);
 
   // Reset per-thread tracking whenever the thread changes.
   useEffect(() => {
@@ -322,7 +323,10 @@ export function useThreadMessages(threadId: string | null) {
     if (!threadId) return;
     setLoading(true);
     setError(null);
+    const scope = readScope.current; const request = ++scope.issued; const epoch = scope.epoch;
     const res = await getThreadMessages(threadId);
+    if (readScope.current !== scope || scope.epoch !== epoch || request < scope.applied) return;
+    scope.applied = request;
     // Fence: the user switched threads while this fetch was in flight — the
     // result belongs to the old thread, so drop it.
     if (activeThreadIdRef.current !== threadId || activeOwnerIdRef.current !== userId) return;
@@ -343,10 +347,13 @@ export function useThreadMessages(threadId: string | null) {
 
   const silentPoll = useCallback(async () => {
     if (!threadId || appStateRef.current !== 'active' || sendingRef.current) return;
+    const scope = readScope.current; const request = ++scope.issued; const epoch = scope.epoch;
     const res = await getThreadMessages(threadId);
+    if (readScope.current !== scope || scope.epoch !== epoch || request < scope.applied) return;
     // Fence: discard results that arrive after the user switched threads.
     if (activeThreadIdRef.current !== threadId || activeOwnerIdRef.current !== userId) return;
     if (!res.ok || !res.data) { if (isAccessLoss(res)) setAccessLost(true); return; } // §6.3 T62: a refused poll is an access loss, not silence
+    scope.applied = request; networkFetchedRef.current = true; setLoading(false);
     const incoming = [...(res.data.messages ?? [])].reverse();
     if (incoming.length === 0) return;
     setMessages((prev) => {
@@ -384,11 +391,13 @@ export function useThreadMessages(threadId: string | null) {
   useEffect(() => { noteThreadCursor(threadId, cursorOf(messages)); }, [threadId, messages]); // §71: the stream's reconnect replays from here
   const resumeThenPoll = useCallback(async () => {
     if (!threadId || appStateRef.current !== 'active' || sendingRef.current) return;
+    const scope = readScope.current; const epoch = scope.epoch;
     const outcome = await resumeFromCursor(cursorOf(messagesRef.current), async (after) => {
       const r = await resumeThreadMessages(threadId, after);
       return { ok: r.ok, status: r.errorKind === 'rate_limited' ? 429 : undefined, retryAfterSeconds: r.retryAfterSeconds ?? null, messages: r.data?.messages, resume: r.data?.resume ?? null };
     });
     if (activeThreadIdRef.current !== threadId || activeOwnerIdRef.current !== userId) return;
+    if (readScope.current !== scope || scope.epoch !== epoch) return;
     if (outcome.messages.length > 0) setMessages((prev) => mergeResumed(prev, outcome.messages));
     if (outcome.kind === 'fallback' && outcome.reason === 'backpressure') return; // the server is shedding: the interval poll comes back
     void silentPoll();
@@ -412,14 +421,8 @@ export function useThreadMessages(threadId: string | null) {
   // Realtime: react to events scoped to this thread.
   useEffect(() => {
     if (!threadId) return;
-    const clearTyping = (uid: string) => {
-      const t = typingTimers.current.get(uid);
-      if (t) { clearTimeout(t); typingTimers.current.delete(uid); }
-      setTypingUserIds((prev) => prev.filter((id) => id !== uid));
-    };
-
     const unsub = telegraphRealtime.subscribe((evt: TelegraphEvent) => {
-      if (evt.threadId && evt.threadId !== threadId) return;
+      if (evt.type !== 'stream.resumed' && evt.threadId !== threadId) return;
 
       switch (evt.type) {
         case 'message.created':
@@ -431,32 +434,12 @@ export function useThreadMessages(threadId: string | null) {
         case 'stream.resumed': // T233: every (re)connection — catch up from the sequence cursor
           void resumeThenPoll();
           break;
-        case 'typing.started': {
-          const uid = (evt.payload?.userId as string) ?? '';
-          if (!uid) break;
-          const existing = typingTimers.current.get(uid);
-          if (existing) clearTimeout(existing);
-          typingTimers.current.set(uid, setTimeout(() => clearTyping(uid), TYPING_TTL_MS));
-          setTypingUserIds((prev) => (prev.includes(uid) ? prev : [...prev, uid]));
-          break;
-        }
-        case 'typing.stopped': {
-          const uid = (evt.payload?.userId as string) ?? '';
-          if (uid) clearTyping(uid);
-          break;
-        }
         default:
           break;
       }
     });
 
-    const timers = typingTimers.current;
-    return () => {
-      unsub();
-      timers.forEach((t) => clearTimeout(t));
-      timers.clear();
-      setTypingUserIds([]);
-    };
+    return unsub;
   }, [threadId, silentPoll, resumeThenPoll]);
 
   /** Optimistically append a message, then reconcile with the server response. */
@@ -570,33 +553,6 @@ export function useThreadMessages(threadId: string | null) {
     [threadId, messages, userId],
   );
 
-  /**
-   * Relay a typing indicator: "typing" at most once per 2 s, "stopped" only as
-   * a TRANSITION — when "typing" was the last thing said. A constrained
-   * connection makes the screen call this with `false` on every keystroke
-   * (typing notifications follow the data-saver ladder), and each of those used
-   * to be a POST saying what the last one said. Since a "stopped" can only
-   * follow a sent "typing", and "typing" is throttled — the throttle is NOT
-   * reset by a stop — neither edge exceeds one request per 2 s window.
-   */
-  const notifyTyping = useCallback(
-    (isTyping: boolean) => {
-      if (!threadId) return;
-      if (!isTyping) {
-        if (!typingToldRef.current) return;
-        typingToldRef.current = false;
-        void sendTyping(threadId, false);
-        return;
-      }
-      const now = Date.now();
-      if (now - lastTypingSentRef.current < 2_000) return;
-      lastTypingSentRef.current = now;
-      typingToldRef.current = true;
-      void sendTyping(threadId, true);
-    },
-    [threadId],
-  );
-
   const retry = useCallback(
     async (messageId: string) => {
       const res = await retryTranslation(messageId);
@@ -624,7 +580,10 @@ export function useThreadMessages(threadId: string | null) {
     networkFetchedRef.current = false;
     setLoading(true);
     setError(null);
+    const scope = readScope.current; const request = ++scope.issued; const epoch = scope.epoch;
     const res = await getThreadMessages(threadId);
+    if (readScope.current !== scope || scope.epoch !== epoch || request < scope.applied) return;
+    scope.applied = request;
     // Fence: discard results that arrive after the user switched threads.
     if (activeThreadIdRef.current !== threadId || activeOwnerIdRef.current !== userId) return;
     if (res.ok && res.data) {

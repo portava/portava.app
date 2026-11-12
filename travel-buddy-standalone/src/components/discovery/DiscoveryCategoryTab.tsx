@@ -372,6 +372,8 @@ interface DiscoveryCategoryTabProps {
   /** Padding applied to the list top so first items clear the floating chrome overlay. 0 for map mode. */
   listTopInset?: number;
   bottomInset?: number;
+  /** Bottom chrome clearance for map controls, including the Layover entry. */
+  mapBottomInset?: number;
 }
 
 export function DiscoveryCategoryTab({
@@ -395,6 +397,7 @@ export function DiscoveryCategoryTab({
   filters = DEFAULT_FILTERS,
   listTopInset = 0,
   bottomInset,
+  mapBottomInset,
   onRefresh,
 }: DiscoveryCategoryTabProps) {
   // SWR: seed from in-memory client cache so second opens paint instantly.
@@ -643,7 +646,7 @@ export function DiscoveryCategoryTab({
       )}
 
       {viewMode === 'map' ? (
-        <DiscoveryMapView key={destination} places={places} placesLoading={loading || refreshing} placesError={error} placesPartial={partial} onRetryPlaces={handleRefresh} onSelectPlace={onSelectPlace} fallbackLat={lat} fallbackLng={lng} userLat={userLat} userLng={userLng} fallbackZoom={fallbackZoom} topInset={listTopInset} />
+        <DiscoveryMapView key={destination} places={places} placesLoading={loading || refreshing} placesError={error} placesPartial={partial} onRetryPlaces={handleRefresh} onSelectPlace={onSelectPlace} fallbackLat={lat} fallbackLng={lng} userLat={userLat} userLng={userLng} fallbackZoom={fallbackZoom} topInset={listTopInset} bottomInset={mapBottomInset ?? bottomInset ?? 0} />
       ) : loading && places.length === 0 ? (
         <PlaceSkeletonList count={6} />
       ) : error && places.length === 0 ? (

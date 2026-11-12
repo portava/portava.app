@@ -47,10 +47,22 @@ const OBS_ID = "33333333-3333-4333-8333-333333333333";
  * `observationsError` makes the read RESOLVE with an error (never throw) —
  * modelling a throw would test a shape the real client does not produce.
  */
-function makeClient(opts: { observationsError?: boolean; row?: any; consent?: "error" | "row" | "none" } = {}) {
+function makeClient(opts: { observationsError?: boolean; row?: any; consent?: "error" | "row" | "none"; tokens?: string[]; identityError?: boolean } = {}) {
   let reads = 0;
+  const claims: any[] = [];
   const client: any = {
     _reads: () => reads,
+    _claims: claims,
+    async rpc(fn: string, args: any) {
+      if (opts.tokens || opts.identityError) {
+        if (fn === "intel_consented_contributor_tokens") return { data: [], error: null };
+        if (fn === "intel_contributor_tokens_for_actor") {
+          assert.equal(args.p_actor_id, USER_ID);
+          return opts.identityError ? { data: null, error: { code: "42501" } } : { data: opts.tokens, error: null };
+        }
+      }
+      return { data: null, error: { code: "PGRST202" } };
+    },
     auth: {
       // eslint-disable-next-line @typescript-eslint/require-await
       async getUser(token: string) {
@@ -76,17 +88,27 @@ function makeClient(opts: { observationsError?: boolean; row?: any; consent?: "e
         return q;
       }
       if (table === "intel_observations") {
+        let wantedId: string | undefined;
+        let actors: string[] = [];
         const q: any = {
           select: () => q,
-          eq: () => q,
+          eq: (column: string, value: string) => { if (column === "id") wantedId = value; return q; },
+          in: (column: string, values: string[]) => { assert.equal(column, "actor_id"); actors = values; return q; },
           maybeSingle: async () => {
             reads++;
             return opts.observationsError
               ? { data: null, error: { code: "42501", message: "permission denied for table intel_observations" } }
-              : { data: opts.row ?? null, error: null };
+              : { data: opts.row?.id === wantedId && actors.includes(opts.row.actor_id) ? opts.row : null, error: null };
           },
         };
         return q;
+      }
+      if (table === "feature_flags") {
+        const q: any = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: { enabled: true }, error: null }) };
+        return q;
+      }
+      if (table === "intel_claims") {
+        return { insert: (row: any) => { claims.push(row); return { select: () => ({ single: async () => ({ data: { id: "44444444-4444-4444-8444-444444444444", ...row }, error: null }) }) }; } };
       }
       // Any other table: an empty, error-free read. Nothing below should reach one.
       const q: any = { select: () => q, eq: () => q, in: () => q, is: () => q, limit: async () => ({ data: [], error: null }), maybeSingle: async () => ({ data: null, error: null }) };
@@ -149,6 +171,48 @@ describe("propose: an unreadable intel_observations must not read as 'you have n
     assert.equal(status, 404, `expected 404 not_found, got ${status} ${JSON.stringify(body)}`);
     assert.equal(body?.error, "not_found", JSON.stringify(body));
     assert.equal(client._reads(), 1);
+  });
+});
+
+describe("Moment proposal ownership after contributor token rotation", () => {
+  after(() => { _setTestClient(null, false); });
+  const priorToken = "55555555-5555-4555-8555-555555555555";
+  const currentToken = "66666666-6666-4666-8666-666666666666";
+  const otherToken = "77777777-7777-4777-8777-777777777777";
+  const observation = (actor_id: string) => ({ id: OBS_ID, actor_id, subject_id: "88888888-8888-4888-8888-888888888888", subject_kind: "place", claim_type: "crowd.level", value: { level: "busy" }, moderation_state: "allowed", observed_at: new Date().toISOString() });
+
+  for (const actor of [USER_ID, priorToken, currentToken]) {
+    for (const suffix of ["claims/propose", "claims:propose"]) {
+      it(`proposes the caller's ${actor} observation through ${suffix}`, async () => {
+        const client = makeClient({ tokens: [priorToken, currentToken], row: observation(actor) });
+        _setTestClient(client, true);
+        const response = await post(await makeApp(), `/api/v1/intel/observations/${OBS_ID}/${suffix}`);
+        assert.equal(response.status, 201, JSON.stringify(response.body));
+        assert.equal(response.body.canApprove, false, "traveller never acquires review privileges");
+        assert.equal(client._claims.length, 1);
+        assert.equal(client._claims[0].status, "candidate");
+        assert.equal(client._claims[0].observation_id, OBS_ID);
+      });
+    }
+  }
+  for (const row of [observation(otherToken), null]) {
+    it(`keeps another contributor and a missing observation indistinguishable (${row ? "other" : "missing"})`, async () => {
+      const client = makeClient({ tokens: [priorToken, currentToken], row });
+      _setTestClient(client, true);
+      const response = await post(await makeApp(), PATH);
+      assert.equal(response.status, 404);
+      assert.equal(response.body.error, "not_found");
+      assert.equal(client._claims.length, 0);
+    });
+  }
+  it("fails before observation access when ownership cannot be established", async () => {
+    const client = makeClient({ identityError: true, row: observation(currentToken) });
+    _setTestClient(client, true);
+    const response = await post(await makeApp(), PATH);
+    assert.equal(response.status, 500);
+    assert.equal(response.body.error, "db_error");
+    assert.equal(client._reads(), 0);
+    assert.equal(client._claims.length, 0);
   });
 });
 
