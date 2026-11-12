@@ -11,6 +11,7 @@
  *
  * Run: node --import tsx/esm --test src/test/tripCompassAttention.test.ts
  */
+import { canonicalPlaceFixture } from "./helpers/canonicalPlaceFixture.js";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
@@ -31,6 +32,7 @@ function makeClient(tables: Record<string, Row[]>) {
   const like = (pat: string) => new RegExp("^" + String(pat).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*") + "$", "i");
   return {
     from(table: string) {
+      if (table === "places") return canonicalPlaceFixture(tables.places ?? []);
       const filters: Array<(r: Row) => boolean> = [];
       let single = false; let lim: number | null = null;
       const settle = () => {

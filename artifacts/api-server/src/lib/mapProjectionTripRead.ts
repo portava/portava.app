@@ -72,7 +72,7 @@ import {
 } from "./capability/schemaCapability.js";
 import { isMissingSchemaError } from "./capability/schemaCapability.js";
 import type { CapabilityVerdict, SchemaReadinessState } from "./capability/schemaRequirement.js";
-import { toAuthorizedTripView } from "./privacy/tripSerializers.js";
+import { toAuthorizedTripViewAt } from "./privacy/tripSerializers.js";
 import type { TripViewLike } from "./mapProjection.js";
 import {
   EXPECTED_PROJECTION_SCHEMA_VERSION,
@@ -199,6 +199,7 @@ export async function loadViewerTripsCanonical(
   sc: any,
   viewerId: string,
   scope?: string[] | null,
+  asOf: Date = new Date(),
 ): Promise<{ trips: TripViewLike[] | null; scoped: number; refusal: TripLayerRefusal | null }> {
   const tripIds = scope === undefined ? await loadViewerTripScope(sc, viewerId) : scope;
   if (tripIds === null) return { trips: null, scoped: 0, refusal: "scope_read_failed" };
@@ -212,7 +213,7 @@ export async function loadViewerTripsCanonical(
   if (tripsErr) return { trips: null, scoped: tripIds.length, refusal: "canonical_read_failed" };
 
   return {
-    trips: ((trips ?? []) as any[]).map(toAuthorizedTripView) as unknown as TripViewLike[],
+    trips: ((trips ?? []) as any[]).map(trip => toAuthorizedTripViewAt(trip, asOf)) as unknown as TripViewLike[],
     scoped: tripIds.length,
     refusal: null,
   };
@@ -358,7 +359,7 @@ async function readFromProjection(
  * branch that was attempted, because a map layer must not be able to take the
  * whole gateway down.
  */
-export async function readTripStopLayer(sc: any, viewerId: string): Promise<TripLayerRead> {
+export async function readTripStopLayer(sc: any, viewerId: string, asOf: Date = new Date()): Promise<TripLayerRead> {
   let verdict: CapabilityVerdict;
   try {
     verdict = await resolveCapability(sc, MAP_TRIP_PROJECTION_CAPABILITY);
@@ -396,7 +397,7 @@ export async function readTripStopLayer(sc: any, viewerId: string): Promise<Trip
   // ── The not-ready branch: exactly what ran before this file existed. ──────
   const report = emptyReport("canonical", capability);
   try {
-    const legacy = await loadViewerTripsCanonical(sc, viewerId);
+    const legacy = await loadViewerTripsCanonical(sc, viewerId, undefined, asOf);
     report.scoped = legacy.scoped;
     report.refusal = legacy.refusal;
     report.served = legacy.trips?.length ?? 0;

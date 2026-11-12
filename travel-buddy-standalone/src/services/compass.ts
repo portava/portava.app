@@ -5,6 +5,7 @@
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import { currentDiscoveryScope, isCurrentDiscoveryScope, viewerKeyForToken, type DiscoveryScope } from './discoveryViewerScope.ts';
 import { withSensingZone } from './sensing/sensingZoneHint.ts';
 
 type AsyncStorageStub = {
@@ -34,8 +35,17 @@ async function freshToken(): Promise<string | null> {
   return freshApiToken();
 }
 
-async function authedFetch(path: string, opts: RequestInit = {}): Promise<Response> {
+async function tokenForCompass(owner?: DiscoveryScope): Promise<string | null> {
   const token = await freshToken();
+  if (owner && (!isCurrentDiscoveryScope(owner) || (owner.viewer !== undefined && owner.viewer !== viewerKeyForToken(token)))) {
+    throw new Error('session_changed');
+  }
+  return token;
+}
+
+async function authedFetch(path: string, opts: RequestInit = {}, owner?: DiscoveryScope): Promise<Response> {
+  const token = await tokenForCompass(owner);
+  if (owner && !isCurrentDiscoveryScope(owner)) throw new Error('session_changed');
   return fetch(`${apiBase()}${path}`, {
     ...opts,
     headers: {
@@ -703,21 +713,23 @@ export async function postCompassAsk(
     stream?:          boolean;
     /** Optional media context (§32): the server hydrates it via CompassMediaContext. */
     mediaId?:         string;
-    /** S39: this device's own current coarse sensing zone(s). Defaults to the
-     *  live capture's zone hint; absent whenever capture is not running. */
+    /** Coarse area explicitly included by the traveler for this question. */
     sensingZoneIds?:  string[];
   } = {},
 ): Promise<{ ok: boolean; data?: CompassAskResponse; error?: string }> {
   if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  const owner = currentDiscoveryScope();
   const { signal, cancel } = timeoutSignal(COMPASS_ASK_TIMEOUT_MS);
   try {
     const r = await untilCompassTimeout(authedFetch('/api/compass/ask', {
       method: 'POST',
       body:   JSON.stringify({ prompt, ...withSensingZone(opts), tzOffsetMinutes: deviceTzOffsetMinutes() }),
       signal,
-    }), signal);
+    }, owner), signal);
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
-    return compassResponse(await untilCompassTimeout(r.json(), signal));
+    const body = await untilCompassTimeout(r.json(), signal);
+    if (!isCurrentDiscoveryScope(owner)) return { ok: false, error: 'session_changed' };
+    return compassResponse(body);
   } catch {
     return { ok: false, error: signal.aborted ? 'timeout' : 'network_error' };
   } finally {
@@ -871,10 +883,12 @@ export async function postCompassAskStream(
   if (!isSupabaseConfigured || !apiBase()) return notConfigured();
   const doFetch = _testStreamFetch !== undefined ? _testStreamFetch : getStreamFetch();
   if (!doFetch) return { ...await postCompassAsk(prompt, opts), streamed: false };
+  const owner = currentDiscoveryScope();
   const { signal, cancel } = timeoutSignal(COMPASS_ASK_TIMEOUT_MS);
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
-    const token = await untilCompassTimeout(freshToken(), signal);
+    const token = await untilCompassTimeout(tokenForCompass(owner), signal);
+    if (!isCurrentDiscoveryScope(owner)) return { ok: false, error: 'session_changed' };
     const r = await untilCompassTimeout(doFetch(`${apiBase()}/api/compass/ask`, {
       method: 'POST',
       headers: {
@@ -887,7 +901,9 @@ export async function postCompassAskStream(
     }), signal);
     if (!r.ok) return { ok: false, error: `http_${r.status}`, streamed: false };
     if (r.headers.get('content-type')?.includes('application/json')) {
-      return { ...compassResponse(await untilCompassTimeout(r.json(), signal)), streamed: false };
+      const body = await untilCompassTimeout(r.json(), signal);
+      if (!isCurrentDiscoveryScope(owner)) return { ok: false, error: 'session_changed' };
+      return { ...compassResponse(body), streamed: false };
     }
     const body = r.body;
     const live = typeof body?.getReader === 'function' && typeof TextDecoder === 'function';
@@ -898,6 +914,7 @@ export async function postCompassAskStream(
     const decoder = reader ? new TextDecoder() : null;
     for (;;) {
       const chunk = reader ? await untilCompassTimeout(reader.read(), signal) : { done: true, value: undefined };
+      if (!isCurrentDiscoveryScope(owner)) return { ok: false, error: 'session_changed' };
       if (chunk.value) buffer += decoder!.decode(chunk.value, { stream: true });
       if (chunk.done) buffer += (decoder?.decode() ?? '') + '\n\n';
       const { events, rest } = splitCompassSseBuffer(buffer);
@@ -932,7 +949,7 @@ export async function confirmCompassProposal(
     const r = await authedFetch(`/api/compass/proposals/${encodeURIComponent(proposalId)}/confirm`, {
       method: 'POST',
       body:   JSON.stringify({ conversationId }),
-    });
+    }, currentDiscoveryScope());
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     return { ok: true };
   } catch {
@@ -950,7 +967,7 @@ export async function declineCompassProposal(
     const r = await authedFetch(`/api/compass/proposals/${encodeURIComponent(proposalId)}/decline`, {
       method: 'POST',
       body:   JSON.stringify({ conversationId }),
-    });
+    }, currentDiscoveryScope());
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
     return { ok: true };
   } catch {

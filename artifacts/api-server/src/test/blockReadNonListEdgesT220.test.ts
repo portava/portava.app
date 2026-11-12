@@ -208,8 +208,9 @@ const POST_ROW = {
   deleted_at: null, media_urls: [], location_privacy_mode: null, created_at: "2026-09-29T00:00:00.000Z", updated_at: "2026-09-29T00:00:00.000Z",
 };
 
-function shareWorld(mode: BlocksMode) {
+function shareWorld(mode: BlocksMode, attachmentCount: number | null = 0) {
   return world(mode, (table, calls, single) => {
+    if (table === "post_media") return { data: [], count: attachmentCount, error: null };
     if (table === "posts") return single ? { data: POST_ROW, error: null } : { data: [POST_ROW], error: null };
     if (table === "profiles") {
       const row = { id: BLOCKED, handle: "postauthor", account_status: "active" };
@@ -247,6 +248,11 @@ describe("T220 edge — share cards: a malformed blocks answer is unknown, never
   it("CONTROL (coalesced): healthy, nobody blocked → the card resolves through the batcher", async () => {
     const r = await postCard(coalescingClient(shareWorld({ kind: "healthy", rows: [] })));
     assert.equal(r.available, true, JSON.stringify(r));
+  });
+  it("a coalesced attachment read without an exact count withholds the post card", async () => {
+    const r = await postCard(coalescingClient(shareWorld({ kind: "healthy", rows: [] }, null)));
+    assert.equal(r.available, false);
+    assert.equal(!r.available && r.reason, "unknown");
   });
   it("CONTROL (coalesced): healthy, the viewer blocked the author → unauthorized through the batcher", async () => {
     const r = await postCard(coalescingClient(shareWorld({ kind: "healthy", rows: [{ blocker_id: VIEWER, blocked_id: BLOCKED }] })));

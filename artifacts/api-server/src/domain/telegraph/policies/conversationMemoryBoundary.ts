@@ -77,6 +77,7 @@ export const MEMORY_CREATION_TABLES = [
  */
 export const MEMORY_CREATION_RPCS = [
   "memory_kernel_execute",
+  "telegraph_memory_draft_execute",
   "project_user_memory",
   "project_user_memory_with_retraction",
   "project_inferred_preferences",
@@ -295,7 +296,7 @@ export function stringConstsIn(code: string): Map<string, string> {
 export function constCandidatesIn(code: string, consts: ReadonlyMap<string, string> = stringConstsIn(code)): Map<string, Set<string>> {
   const out = new Map<string, Set<string>>();
   for (const [k, v] of consts) out.set(k, new Set([v]));
-  for (const m of code.matchAll(/(?:^|[\s;{(])(?:export\s+)?const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^=\n]+)?=\s*([^;\n]+)/g)) {
+  for (const m of code.matchAll(/(?:^|[\s;{(])(?:export\s+)?const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^=\n]+)?=\s*([^;]+)/g)) {
     if (out.has(m[1]!)) continue;
     const vals = new Set<string>();
     for (const lit of m[2]!.matchAll(/(["'`])([A-Za-z0-9_]+)\1/g)) vals.add(lit[2]!);
@@ -872,10 +873,16 @@ export interface ReviewedClientJsxNonFlow {
 }
 
 export const REVIEWED_CLIENT_JSX_NON_FLOWS: readonly ReviewedClientJsxNonFlow[] = [
+  { file: "app/messages/[id].tsx", unit: "function MessageBubble({", components: ["PostCardMessage", "PortavaObjectMessage", "LinkedMessageMedia"], why: "The message renders a registered post/media reference. A tap opens a fresh authorized source projection. Save-to-Memory in its post overlay receives the canonical post id and requires an explicit destination action. The message caption and thread history are not supplied to that command.", pinnedBy: "src/test/telegraphConversationMemoryBoundary.test.ts" },
+  { file: "src/components/GroupChatScreen.tsx", unit: "export function GroupChatScreen(", components: ["PortavaObjectMessage"], why: "The group renders the same registered source-reference card. The nested overlay saves only its authorized canonical post id after the user chooses a destination. Its memory command cannot accept the surrounding group messages.", pinnedBy: "src/test/telegraphConversationMemoryBoundary.test.ts" },
+  { file: "src/components/ShareSheet.tsx", unit: "export function ShareSheet(", components: ["PostSaveDestinationPanel"], why: "The sheet reads conversation summaries to choose chat recipients. Its separate Memory destination panel receives postId from the shared source plus the chosen destination and active scope. Saving requires a press inside that panel and never receives recipient messages.", pinnedBy: "src/test/telegraphConversationMemoryBoundary.test.ts" },
+  { file: "src/components/TelegraphInboxScreen.tsx", unit: "export function TelegraphInboxScreen(", components: ["ThreadRow", "ArchivedThreadRow", "InboxFollowingHighlights"], why: "Thread rows display a profile Highlight viewer and the followed Highlight strip reads its own authorized Highlight feed. The source-post overlay inside a Highlight can explicitly save its canonical post. The inbox does not pass message bodies into that operation.", pinnedBy: "src/test/telegraphConversationMemoryBoundary.test.ts" },
+  { file: "app/circle.tsx", unit: "export default function Circle()", components: ["CircleUserRow"], why: "openCircleChat returns navigation metadata. Each CircleUserRow separately opens the selected profile Highlight feed. A source post can be saved from its overlay after an explicit action. Conversation contents are not passed to the profile or post save command.", pinnedBy: "src/test/telegraphConversationMemoryBoundary.test.ts" },
+  { file: "src/features/telegraph/memory/RecapCurationScreen.tsx", unit: "function OwnedSelection(", components: ["saveMessageAsMemoryDraft"], why: "The recap screen presents eligible individual messages. The person selects one radio item and presses Save private draft. The handler requires that selected id to remain in the current choices and uses the same explicit single-message private-draft endpoint as the long-press action. It never creates a Memory for the whole recap.", pinnedBy: "src/test/telegraphConversationMemoryBoundary.test.ts" },
   {
     file: "app/messages/[id].tsx",
     unit: "export default function TelegraphThread()",
-    components: ["LongPressActionSheet"],
+    components: ["LongPressActionSheet", "MessageBubble"],
     why:
       "The sheet's ONLY memory creation is saveMessageAsMemoryDraft(message.id) behind its own 'Save to Memory' press: " +
       "ONE long-pressed message the person chose, as a private draft — §10.2 / §29's explicit path (the server's " +
@@ -932,6 +939,10 @@ export const CLIENT_SHARED_STORE_RE =
   /\bcreateContext\s*[<(]|\buseSyncExternalStore\s*[<(]|from\s+["'](?:zustand|jotai|valtio|mobx|redux|@reduxjs\/toolkit|react-redux|recoil)/;
 
 export const REVIEWED_CLIENT_SHARED_STORES: readonly { readonly file: string; readonly carries: string }[] = [
+  { file: "src/features/telegraph/sharing/threadSharePlayback.tsx", carries: "The thread-local context carries message ids, visible/video membership, pause and mute choices, and callbacks. It schedules playback and contains no message text or Memory writer." },
+  { file: "src/hooks/usePostPlaybackLayer.ts", carries: "The playback layer carries opaque symbols and subscriber callbacks. A stack grants playback to the topmost post modal. It stores no post or message contents." },
+  { file: "src/hooks/usePrivateSurfaceKey.ts", carries: "The hook subscribes to account/session epoch changes and exposes a remount key. It carries owner identifiers and generation numbers so private screens discard stale state." },
+  { file: "src/platform/input-assistance/hooks/useInputAssistance.ts", carries: "The hook subscribes to sharedPolicyStore for input-permission and performance policy. Its account/field request state stays local to the hook. The shared subscription carries policy settings, and it has no Memory writer." },
   /* wave 5 correction: StampAnimationContext un-reviewed — it was reached only through the GET /memories/X false positive (REVIEWED_PREDICATE_READS, foot of file) */ { file: "src/components/stamps/StampEarnedToast.tsx", carries: "showStampToast(stamp) and checkForNewStamps(delay) — a PassportStampNew from /stamps/me; no message content. A thread screen consumes it, nothing of the thread is handed in." },
   { file: "src/context/BlockedIdsContext.tsx", carries: "blockedIds / blockerIds (user-id sets), load state, addBlock/removeBlock(id) — ids only." },
   { file: "src/context/CallContext.tsx", carries: "call state (phase, session, peer, participants, roles, device toggles, an error/notice string the call layer sets) and call actions — no message content." },
@@ -1045,6 +1056,8 @@ export interface ReviewedClientModuleState {
 }
 
 export const REVIEWED_CLIENT_MODULE_STATE: readonly ReviewedClientModuleState[] = [
+  { file: "src/hooks/usePostPlaybackLayer.ts", writers: ["enterPostPlaybackLayer"], carries: "The shared stack contains opaque layer symbols and notifies subscribers. Its writer pushes a symbol and returns a cleanup that removes it. It never stores media or message data." },
+  { file: "src/services/discoveryViewerScope.ts", writers: ["onDiscoveryScopeChange"], carries: "The module adds/removes subscriber callbacks to signal viewer-scope replacement. Its state is account identity, epoch and listeners. Conversation bodies are not passed through those callbacks." },
   { file: "src/components/trip/NeighborhoodMatchSheet.tsx", writers: ["self:LocationCheckSheet"], carries: "`_sessionMapFullScreen = true` when the person opens the map full screen — one boolean UI preference for the session; no content." },
   { file: "src/features/telegraph/composer/composerTaskOutcome.ts", writers: ["reportThreadSend"], carries: "held: thread id → { served, at } — the recipient pick that opened that thread from New Telegraph (a ServedField: the telegraph.recipient field id and context, and ONE entity { entityType: 'user', entityId }) and the epoch-ms time it was held. Its only setter is holdRecipientPick, called by app/telegraph/new.tsx, which reads no history. The thread screen hands reportThreadSend only (thread id, whether the send succeeded); that unit only DELETES the hold (on success, or once older than HOLD_MS) and reports the held pick as message_sent — ids, a field id, a boolean and a timestamp, never message content (wave 5 correction: reviewed on the lead's request; pinned below the REVIEWED_PREDICATE_READS suite)." }, { file: "src/features/telegraph/connection/sequenceCursorStore.ts", writers: ["noteThreadCursor"], carries: "cursors: thread id → the last §12 sequence NUMBER this device has seen (bounded, recency-ordered) — integers, never a message." },
   { file: "src/features/telegraph/kinds/useAnnouncementAcknowledgement.ts", writers: ["self:load", "self:useAnnouncementAcknowledgement", "useAnnouncementAcknowledgement"], carries: "cache: thread id → the in-flight GET /threads/:id/announcements promise for TTL_MS. That answer DOES hold conversation content — each announcement's title and the acknowledgement notes — but the map is module-private (only _resetAnnouncementCache is exported beside the hook), and the hook returns only { acknowledged, acknowledgedCount } for one announcement. No other module can read the cached answer." },
@@ -1070,6 +1083,8 @@ export interface ReviewedClientDeviceStorage {
 }
 
 export const REVIEWED_CLIENT_DEVICE_STORAGE: readonly ReviewedClientDeviceStorage[] = [
+  { file: "src/features/telegraph/outbox/storage.ts", writes: ["AsyncStorage.setItem(indexKey(entry.ownerId), JSON.stringify([...next, ref]))", "AsyncStorage.setItem(indexKey(entry.ownerId), JSON.stringify([...refs, { ...ref, staging: true }]))", "AsyncStorage.setItem(indexKey(entry.ownerId), JSON.stringify(refs))", "AsyncStorage.setItem(indexKey(scope.ownerId), JSON.stringify(refs.filter((r) => !removed.includes(r))))", "AsyncStorage.setItem(indexKey(scope.ownerId), JSON.stringify(refs.map((r) => removed.includes(r) ? { ...r, staging: true } : r)))"], carries: "The native outbox index stores immutable-version references, owner/session ids, chunk counts and staging markers. Message payload and local display stay in secure storage. This retry queue publishes the user-requested chat message and has no Memory destination." },
+  { file: "src/lib/secureStore.ts", writes: ["setItemAsync(key, value, ACCESSIBILITY_OPTION)"], carries: "Secure storage holds account credentials, encryption keys and the user-requested outgoing message queue, including local display text needed for retries. The outbox is scoped by owner/session and cleared by cancellation or account erasure. This persistence does not create a Memory." },
   { file: "app/messages/[id].tsx", writes: ["AsyncStorage.setItem(`thread_ai_hidden:${id}`, next ? '1' : '0')", "AsyncStorage.setItem(`thread_translation:${id}`, JSON.stringify({ autoTranslate: at, showOriginal: so }))"], carries: "Two per-thread display choices keyed by thread id: whether the AI tray is hidden ('1'/'0'), and the translation toggles { autoTranslate, showOriginal } — booleans, no message content." },
   { file: "src/components/GroupChatScreen.tsx", writes: ["AsyncStorage.setItem(`thread_translation:${id}`, JSON.stringify({ autoTranslate: at, showOriginal: so }))"], carries: "The group thread's translation toggles { autoTranslate, showOriginal } keyed by thread id — booleans." },
   { file: "src/features/telegraph/coordination/CoordinationPanel.tsx", writes: ["AsyncStorage.setItem(closeoutDismissKey(threadId, closeoutPlanId), '1')"], carries: "A '1' under a (thread id, plan id) key once the person dismisses the closeout card — a flag." },
@@ -1145,14 +1160,14 @@ export const REVIEWED_PREDICATE_READS: readonly ReviewedPredicateRead[] = [
     unit: "async function decide(",
     reads: ["messages"],
     selects: ["thread_id, sender_id, created_at"],
-    declassifies: ["${base}/draft", "/me/saved-memories", "/media/captions/X", "/media/captions/X/draft", "/media/captions/source", "/media/file/X/X", "/memories", "/memories/X", "/users/X/memories"], clientMayClear: ["/me/saved-memories", "/memories", "/memories/X", "/users/X/memories"], clears: ['src/routes/memories.ts :: router.post("/memories/:id/items", async (req, res) => {', 'src/routes/memories.ts :: router.post("/memories/:id/items/from-post", async (req, res) => {'],
+    declassifies: ["/capture-stamps/X/X", "/places/X/living", "/post-references/X", "/posts/X/share-preview", "${base}/draft", "/me/saved-memories", "/media/captions/X", "/media/captions/X/draft", "/media/captions/source", "/media/file/X/X", "/memories", "/memories/X", "/users/X/memories"], clientMayClear: ["/capture-stamps/X/X", "/places/X/living", "/post-references/X", "/posts/X/share-preview", "/me/saved-memories", "/memories", "/memories/X", "/users/X/memories"], clears: ['src/routes/memories.ts :: router.post("/memories/:id/items", async (req, res) => {', 'src/routes/memories.ts :: router.post("/memories/:id/items/from-post", async (req, res) => {'],
     why:
       "authorizeMediaAccess's decision function. Branch 3c finds the live message whose media_url or media_thumbnail_url IS " +
       "the requested storage key, selecting only thread_id, sender_id and created_at, and uses them to require that the " +
       "sender owns the object, the viewer is a current member of that thread, and the message is inside the viewer's " +
       "§14.3 window. It returns Promise<boolean>; the row never leaves. The endpoints it reaches serve Memories with their " +
       "renditions (/memories/X, and the cover renditions of the three Memory lists), or the bytes / caption text of an object the CALLER names (/media/file, /media/captions, " +
-      "the caption-translation draft) — none returns a messages row. The two POSTs it `clears` add a Memory item from the request's own mediaUrl / post and only ENQUEUE that photo's rendition ladder (enqueueMemoryItemRenditions), which uses createImageVariantsAccess's enabled() and row() and never its authorized(); the fixpoint is unit-granular, so the factory as a whole reaches this boolean.",
+      "the caption-translation draft) — none returns a messages row. The capture stamp, living-place projection, post-reference and share-preview endpoints recheck media access and serve only their requested source projection. Explicit post saves consume its canonical source id. The two POSTs it `clears` add a Memory item from the request's own mediaUrl / post and only ENQUEUE that photo's rendition ladder (enqueueMemoryItemRenditions), which uses createImageVariantsAccess's enabled() and row() and never its authorized(); the fixpoint is unit-granular, so the factory as a whole reaches this boolean.",
     pinnedBy: "src/test/telegraphConversationMemoryBoundary.test.ts",
   },
 ];

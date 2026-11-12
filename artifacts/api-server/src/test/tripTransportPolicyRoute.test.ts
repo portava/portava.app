@@ -14,6 +14,7 @@
  *
  * Run: node --import tsx/esm --test src/test/tripTransportPolicyRoute.test.ts
  */
+import { canonicalPlaceFixture } from "./helpers/canonicalPlaceFixture.js";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -50,6 +51,7 @@ function makeClient(tables: Record<string, Row[]>) {
       },
     },
     from(table: string) {
+      if (table === "places") return canonicalPlaceFixture(tables.places ?? []);
       const filters: Array<(r: Row) => boolean> = [];
       let pendingUpsert: Row | null = null;
       const rowsNow = () => (db[table] ?? []).filter((r) => filters.every((f) => f(r)));

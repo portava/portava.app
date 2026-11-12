@@ -2192,7 +2192,7 @@ decision-free.**
   evidence, and no observation.
 - **The tap is unaffected.** It is a separate request on the observation arrow
   and never reaches this gate. The test asserts both halves:
-  `` `artifacts/api-server/src/test/intelEvidenceReference.test.ts:660#it("under v1: the tap is recorded` ``.
+  `` `artifacts/api-server/src/test/intelEvidenceReference.test.ts:662#it("under v1: the tap is recorded` ``.
 - **What stayed unchanged.** No consent word, no consent version, no granted
   scope. `SENSING_ANON_GRANTED_SCOPES` is untouched.
 - **A test seam.** It names a fictional covering version, so suites can still
@@ -2227,7 +2227,7 @@ production, and it also needs `INTEL_EVIDENCE_REFERENCE_KEY`.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| M154 | C | **C** | Re-evidenced; does not move. The Evidence stage still attaches only to an existing, owned observation. It now stores a reference that names no account: `` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:224#const resolved = resolveAndSealOwnedMediaReference(` ``, pinned by `` `artifacts/api-server/src/test/intelEvidenceReference.test.ts:241#it("no stored reference, for forty accounts, contains any account id in any substring or encoding"` ``. Before this section the C never asked whose identity the stored row carries, and from 3002 on the row carried the account (§45.1), the same gap the port's cache note found for M203–M210. Under §21's stated convention (code that is correct and would run), activation is not graded. Activation now needs `INTEL_EVIDENCE_REFERENCE_KEY` as well as both flags and consent, and, for a photo to be kept at all, an owner-approved disclosure version in Gate 2b's list (§45.5). |
+| M154 | C | **C** | Re-evidenced; does not move. The Evidence stage still attaches only to an existing, owned observation. It now stores a reference that names no account: `` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:224#const resolved = resolveAndSealOwnedMediaReference(` ``, pinned by `` `artifacts/api-server/src/test/intelEvidenceReference.test.ts:243#it("no stored reference, for forty accounts, contains any account id in any substring or encoding"` ``. Before this section the C never asked whose identity the stored row carries, and from 3002 on the row carried the account (§45.1), the same gap the port's cache note found for M203–M210. Under §21's stated convention (code that is correct and would run), activation is not graded. Activation now needs `INTEL_EVIDENCE_REFERENCE_KEY` as well as both flags and consent, and, for a photo to be kept at all, an owner-approved disclosure version in Gate 2b's list (§45.5). |
 
 **For census-sensing's integrator, not restated here, because the rows are not
 this census's.** census-sensing §27.5 grades S118 ("the stored side cannot be
@@ -2628,7 +2628,7 @@ This supersedes §45.9 item 5 and the client clause in §45.5's option D.
 - **An unreadable consent row** still answers 500, and carries no bit at all.
 - **Tests:** four cases in section G of the capture suite. The last asserts
   the route's answer equals the gate's outcome for every state:
-  `` `artifacts/api-server/src/test/intelEvidenceReference.test.ts:852#the route's answer and the gate's answer are the same for every state` ``.
+  `` `artifacts/api-server/src/test/intelEvidenceReference.test.ts:854#the route's answer and the gate's answer are the same for every state` ``.
 
 **Client.**
 

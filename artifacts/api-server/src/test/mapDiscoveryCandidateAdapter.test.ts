@@ -170,6 +170,7 @@ const GOLDEN_FLAGS_OFF = JSON.stringify({
       distanceKm: 2.98,
     },
   ],
+  placeGovernance: { readable: true },
   viewport: {
     bbox: { west: 108, south: 15.9, east: 108.4, north: 16.2 },
     zoom: 14, center: { lat: 16.05, lng: 108.2 }, radiusKm: 27.140728833223914,

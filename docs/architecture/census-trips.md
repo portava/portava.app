@@ -3928,7 +3928,7 @@ AT_RISK, MOVED absent. TR194: no START_PLAN. TR396: no metric.
   — a state computed from facts (§3.1) rather than a column the UI writes.
 - **Tests.** `src/test/tripOperationalPhase.test.ts:27#clause`
   (13: every clause and its order, the zone, the health ladder),
-  `src/test/tripHealthProjection.test.ts:129#buildTripHealthProjection`
+  `src/test/tripHealthProjection.test.ts:131#buildTripHealthProjection`
   (8: the builder's reads, refusals, opt-in, the gate). Two mutations went
   red: disruption no longer first; a realised risk graded AT_RISK.
 
@@ -4006,7 +4006,7 @@ nothing to get.
   §11.2's order, actions from conflicts, the live §22.4 refusal, the crew
   summary's nulls, the gate, both routes, Compass, and
   `:170#AT_RISK` for §40.4's derived state);
-  `src/test/tripFreedomWindows.test.ts:172#feature_disabled`
+  `src/test/tripFreedomWindows.test.ts:189#feature_disabled`
   for the flag off.
 
 **What is NOT built.** Nothing produces opportunities or pulse signals; the
@@ -5436,7 +5436,7 @@ mutations are named with the rows.
   whether there is a table to write (`routes/tripFeasibility.ts:474#transport-policy",`;
   `routes/tripFeasibility.ts:486#canEditTrip(sc,`). `test/tripTransportPolicy.test.ts:44#fitsOnlyByDisallowed,`
   derives the hop that fits by road and not on foot from the provider's
-  constants; `test/tripTransportPolicyRoute.test.ts:129#TRIP_AUTH_NOT_OWNER`
+  constants; `test/tripTransportPolicyRoute.test.ts:131#TRIP_AUTH_NOT_OWNER`
   drives the app: owner 200, member 403 with the reason, "taxi" 400, gate
   off refused by name, and the three feasibility outcomes (blocked,
   available, gate off). The two existing feasibility suites pass unmodified;
@@ -5863,7 +5863,7 @@ and the column §17.4 needed.
   when everyone has arrived or the checkpoint is closed the reason is not
   derived and the switch is `NORMAL` again. The route says so in words
   (`prioritySwitch`) rather than writing a priority anywhere.
-  `test/tripHealthProjection.test.ts:224#REGROUP_OPEN → SAFETY_EVENT` and
+  `test/tripHealthProjection.test.ts:226#REGROUP_OPEN → SAFETY_EVENT` and
   `test/tripTodayProjection.test.ts:354#kind === "regroup"` pin the flip and
   the flip back; `test/tripMeetingCheckpointsRoute.test.ts:82#chosenBy` pins
   the route.
@@ -6629,7 +6629,7 @@ rows stay W with the reason narrowed to the gate alone.
   the client shows it as read — one line, even with nothing left to show
   (`travel-buddy-standalone/src/components/TripPage.tsx:861#testID="compass-brief-attention"`).
   Tests through `executeCompassTool` with the health fixture's open regroup
-  (`test/tripCompassAttention.test.ts:100#describe("search_places under the §17.2 switch"`):
+  (`test/tripCompassAttention.test.ts:102#describe("search_places under the §17.2 switch"`):
   the pharmacy offered and the bar withheld under SAFETY_EVENT, both offered
   when everyone has arrived, nothing withheld and `consulted: false` with the
   gate closed or for a non-member; through the route
@@ -6670,7 +6670,7 @@ rows stay W with the reason narrowed to the gate alone.
   the Discovery route with a trip whose windows are readable — the clashing
   event comes first on the search's own order and second with the trip in
   context, every row NOT_CONSULTED with the gate closed, a malformed
-  `tripId` ignored (`test/discoverySearch.test.ts:1693#events carry tripFit when a trip is in context`);
+  `tripId` ignored (`test/discoverySearch.test.ts:1695#events carry tripFit when a trip is in context`);
   the booking route's wiring on its own harness, where the trip tables are
   not modelled and the response says NOT_CONSULTED rather than guessing
   (`test/rentABuddy.test.ts:5108#a booking on a trip consults the freedom windows`).

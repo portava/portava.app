@@ -5335,7 +5335,7 @@ from the surface rather than from a test."* Plus §18.6's audience conjunct and
 |---|---|
 | a production consumer calls `resolve` | `fuseMemberView`, called by `readSessionForViewer` for every member of a Locate session: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1086#const fused = presenceFusion.resolve(memberId, "locate_friends_session", audience, nowMs);` ``; `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1488#return fuseMemberView(own, id, sessionId, { ceiling: sessionCeiling, scopes }, nowMs);` `` |
 | the surface's output is derived from the fused estimate | When the winner is another source, the `MemberView` is rendered FROM it — rung, §10 state, age, `live`, and a new `fusedFrom` field naming the source: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1118#fusedFrom: fused.source,` ``. When the winner is this session's own entry, the current projection answers, never the store's retained copy: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1088#if (fused.source === "locate_friends_session") {` ``. |
-| a test asserts the resolver is reached from the surface | `` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:667#describe("E. readSessionForViewer fuses a Circle estimate only through Circle's own guard, per member"` `` — the first case reads through the real `readSessionForViewer` with a fake database and a fake guard and asserts `fusedFrom: "circle_presence"`; deleting the `fuseMemberView` call reds two cases (§25.4). |
+| a test asserts the resolver is reached from the surface | `` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:671#describe("E. readSessionForViewer fuses a Circle estimate only through Circle's own guard, per member"` `` — the first case reads through the real `readSessionForViewer` with a fake database and a fake guard and asserts `fusedFrom: "circle_presence"`; deleting the `fuseMemberView` call reds two cases (§25.4). |
 | §18.6 — the viewer's rung | The audience ceiling is the SESSION's ceiling, folded with the estimate's own bound; both only tighten. |
 | §24.3 — the viewer's MEMBERSHIP in the other source's audience | The circle scope is granted PER MEMBER, PER READ, only when Circle's own `canViewCirclePresenceBatch` allows THIS viewer to see THAT member in THAT context — kill switch, both memberships, bans, blocks, global and per-context pause, consent version, visibility mode — AND the row it read admits through `circlePresenceEstimate` now: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1021#circlePresenceBatch: canViewCirclePresenceBatch,` ``; `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1058#return fresh === null ? null : circleConsentScope(circle.type, circle.id);` ``. A guard that throws or answers `unavailable` grants nobody anything: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1465#circleAccess = await deps.circlePresenceBatch(db, viewerId, otherIds, circle.type, circle.id);` ``. Gate (5) still governs: with the §24 policy unreadable the fused step is not taken at all: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1461#const circle = zones === null ? null : circleContextOf(session);` ``. |
 
@@ -5345,7 +5345,7 @@ decision, unchanged). A pause handled by another server instance revokes THAT
 instance's copy and not this one's, and a copy lives up to 60 minutes. So the
 fused read does not trust a retained circle estimate: it re-derives from the
 row Circle's guard just read and admits it fresh under the scope, and a
-retained copy with no current row behind it is NOT served — `` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:728#test("MULTI-PROCESS: a retained copy with no current row behind it is NOT served` ``.
+retained copy with no current row behind it is NOT served — `` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:732#test("MULTI-PROCESS: a retained copy with no current row behind it is NOT served` ``.
 The in-store `revoke*` calls are defence in depth for the instance that
 handled the revocation. This is what makes the read correct across instances,
 and it is why "the store was revoked" is not the whole of §25.4's proof.
@@ -5378,7 +5378,7 @@ old and would have DOWNGRADED a live precise position to a coordinate-less
 
 The §24.3 scenario now resolves to the live sighting — `` `artifacts/api-server/src/test/presenceFusionStore.test.ts:231#test("one subject seen by two SAME-CLASS sources resolves to the CURRENT position` `` — and
 the case that ISOLATES rule 1 from rule 2 (a live `nearby` beating a stale
-`precise`, and losing to it while both are live) is `` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:483#describe("D. how observations of different quality and freshness compete"` ``. Both were seen
+`precise`, and losing to it while both are live) is `` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:486#describe("D. how observations of different quality and freshness compete"` ``. Both were seen
 red: deleting rule 1 reds 2 cases, deleting rule 2 reds 3.
 
 ### §25.4 Cross-audience denial and revocation — the proofs, and what turned them red
@@ -5393,7 +5393,7 @@ ceiling still narrows what a scope unlocks. **Admission** (`` `artifacts/api-ser
 scope, empty scope, malformed scope → `no_scope`; every source × every other
 kind → `scope_mismatch`, measured over the register rather than listed.
 
-**Revocation** (`` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:291#describe("C. revocation drops exactly what was consented, and reports it"` ``, `` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:415#describe("C. the production revocation points reach the store"` ``): each of the four store operations drops
+**Revocation** (`` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:291#describe("C. revocation drops exactly what was consented, and reports it"` ``, `` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:418#describe("C. the production revocation points reach the store"` ``): each of the four store operations drops
 exactly what it names and reports the count; a second revoke reports 0; a
 malformed request drops nothing; re-admission after revocation is admitted (a
 revoke is not a ban). The production points:

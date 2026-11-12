@@ -31,6 +31,8 @@
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *        node --import tsx/esm --test src/test/telegraphCardTruthDoors.test.ts
  */
+import { attachTelegraphMemoryDraftFixture } from './helpers/telegraphMemoryDraftFixture.js';
+import { makeFakeClient as makeCatalogClient } from './telegraphCertificationHarness.js';
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -81,7 +83,7 @@ function msg(id: string, sender: string, body: string, created_at: string, extra
 
 function fixture(): Record<string, any[]> {
   return {
-    feature_flags: [],
+    feature_flags: [{ flag: "memory_kernel_enabled", enabled: true }],
     profiles: [
       { id: ALICE, handle: "alice", name: "Alice", account_status: "active" },
       { id: BOB, handle: "bob", name: "Bob", account_status: "active" },
@@ -154,6 +156,7 @@ function clause(c: string): (r: any) => boolean {
 function makeClient(db: Record<string, any[]>) {
   let idSeq = 0;
   function from(table: string) {
+    if (table === "places") return makeCatalogClient({ places: db.places ?? [] }).from(table);
     const preds: Array<(r: any) => boolean> = [];
     let lim: number | null = null;
     let order: { col: string; asc: boolean } | null = null;
@@ -247,7 +250,7 @@ before(async () => {
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}/api`;
 });
 after(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); });
-beforeEach(() => { client = makeClient(fixture()); _setTestClient(client, true); });
+beforeEach(() => { client = makeClient(fixture()); attachTelegraphMemoryDraftFixture(client, client._db); _setTestClient(client, true); });
 
 function noSnapshot(where: string, payload: unknown) {
   const s = typeof payload === "string" ? payload : JSON.stringify(payload);
@@ -375,10 +378,11 @@ describe("T448 door 8 — Compass getSharedPlaces", () => {
 });
 
 describe("T448 door 9 — a Memory draft made from a card", () => {
-  it("is titled by the source as it is now, never by the snapshot JSON", async () => {
+  it("retains a source reference and generic title, never a private snapshot", async () => {
     const live = await call("POST", `/me/memory-drafts`, ALICE, { messageId: M_PLACE });
     assert.equal(live.status, 201, live.text.slice(0, 300));
-    assert.equal(live.body.draft.title, CURRENT_NAME);
+    assert.equal(live.body.draft.title, "Saved place");
+    assert.equal(client._db.telegraph_memory_sources?.[0]?.message_id, M_PLACE);
     const gone = await call("POST", `/me/memory-drafts`, ALICE, { messageId: M_GEM });
     assert.equal(gone.status, 201, gone.text.slice(0, 300));
     assert.equal(gone.body.draft.title, "Saved place");

@@ -18,14 +18,9 @@
  * migration. A static-check fix that quietly removed the runtime compatibility
  * would have left every one of those tests green.
  *
- * That matters because migration 2991 is applied to portava-ci and NOT to
- * production: `src/test/generated/liveColumns.json` — the information_schema of
- * the LIVE database — lists eleven columns on `message_translations` and
- * NEITHER `confidence` NOR `provider_version`. The fallback is not a
- * theoretical branch; it is what runs on every translation the deployed system
- * writes today. So `makeSchemaStrictClient` reproduces the old schema for free
- * and with a real 42703, and `unchecked` is how this file stages the NEW schema
- * that portava-ci already has.
+ * The current production table includes the confidence and provider-version
+ * columns. The September 22 production snapshot predates migration 2991 and
+ * exercises the compatibility branch with an actual historical column set.
  *
  * MUTATION REQUIREMENT, stated so a later reader can check this file is still
  * doing its job:
@@ -72,6 +67,8 @@ const BODY = 'Hello there, this is a real message body with enough text to valid
  * short payload must write, spelled out here rather than derived from the
  * module, so that a column silently dropped from the fallback literal fails.
  */
+const pre2991 = { historicalTable: { table: 'message_translations', snapshot: '20260922-production-schema.json' } } as const;
+
 const BASE_COLUMNS = [
   'error_message',
   'message_id',
@@ -186,10 +183,8 @@ afterEach(() => _setTestTranslationProvider(null));
 
 describe('2991 APPLIED — quality is unknown, provider identity is retained', () => {
   it('writes null confidence and actual provider_version during retranslation', async () => {
-    // `unchecked` stands in for portava-ci, where 2991 IS applied. The live
-    // snapshot this double reads predates the migration, so without this the
-    // new-schema case is unreachable and only the fallback would ever be tested.
-    const sc = makeSchemaStrictClient(seed(), { unchecked: ['message_translations'] });
+    // Exercise the full payload against the currently captured production table.
+    const sc = makeSchemaStrictClient(seed());
     const attempts = attemptsOf(sc);
     const { lines, logger } = recordingLogger();
 
@@ -234,9 +229,8 @@ describe('2991 APPLIED — quality is unknown, provider identity is retained', (
 
 describe('2991 PENDING — the translation is kept and the operator is told why', () => {
   it('retries ONCE without both columns, and the row lands with the nine the old schema has', async () => {
-    // No `unchecked`: the live snapshot has neither new column, so the first
-    // upsert earns a REAL 42703 the way production does.
-    const sc = makeSchemaStrictClient(seed());
+    // The September snapshot rejects both columns, exercising the retry.
+    const sc = makeSchemaStrictClient(seed(), pre2991);
     const attempts = attemptsOf(sc);
     const { lines, logger } = recordingLogger();
 
@@ -291,13 +285,13 @@ describe('2991 PENDING — the translation is kept and the operator is told why'
 
 describe('2991 PENDING — the process learns it once', () => {
   it('pays the failed round-trip exactly once, and never un-learns it', async () => {
-    const first = makeSchemaStrictClient(seed());
+    const first = makeSchemaStrictClient(seed(), pre2991);
     const firstAttempts = attemptsOf(first);
     await sweep(first, recordingLogger().logger);
     assert.equal(firstAttempts.length, 2, 'the first sweep discovers the pending migration');
 
     // A FRESH client, so nothing but the module-level flag can carry the fact.
-    const second = makeSchemaStrictClient(seed());
+    const second = makeSchemaStrictClient(seed(), pre2991);
     const secondAttempts = attemptsOf(second);
     const { lines, logger } = recordingLogger();
     await sweep(second, logger);
@@ -319,7 +313,7 @@ describe('2991 PENDING — the process learns it once', () => {
 
     // NEVER NEGATED BACK. This client would accept the full payload, so a flag
     // cleared on success would show up here as the columns returning.
-    const third = makeSchemaStrictClient(seed(), { unchecked: ['message_translations'] });
+    const third = makeSchemaStrictClient(seed());
     const thirdAttempts = attemptsOf(third);
     await sweep(third, recordingLogger().logger);
     assert.equal(thirdAttempts.length, 1);
@@ -332,7 +326,7 @@ describe('2991 PENDING — the process learns it once', () => {
 
     // …but a test can reset it, or every later test in this file inherits it.
     __resetConfidenceColumnProbe();
-    const fourth = makeSchemaStrictClient(seed(), { unchecked: ['message_translations'] });
+    const fourth = makeSchemaStrictClient(seed());
     const fourthAttempts = attemptsOf(fourth);
     await sweep(fourth, recordingLogger().logger);
     assert.equal(
@@ -347,13 +341,9 @@ describe('2991 PENDING — the process learns it once', () => {
 // ── 4. An UNRELATED failure ──────────────────────────────────────────────────
 
 describe('an unrelated database failure is not a pending migration', () => {
-  /**
-   * `unchecked` so the ONLY thing that can fail this write is the injected
-   * error — otherwise a 42703 from the stale snapshot would mask the answer.
-   */
+  // Inject the failure after validating the full payload against the current schema.
   function staged(error: { code?: string; message?: string }) {
     const sc = makeSchemaStrictClient(seed(), {
-      unchecked: ['message_translations'],
       writeError: { table: 'message_translations', error },
     });
     return { sc, attempts: attemptsOf(sc), ...recordingLogger() };
@@ -385,7 +375,7 @@ describe('an unrelated database failure is not a pending migration', () => {
 
     // The flag must be untouched, or ONE unrelated failure silently drops the
     // confidence reading from every later write in the process.
-    const after = makeSchemaStrictClient(seed(), { unchecked: ['message_translations'] });
+    const after = makeSchemaStrictClient(seed());
     const afterAttempts = attemptsOf(after);
     await sweep(after, recordingLogger().logger);
     assert.ok(
@@ -461,11 +451,9 @@ describe('an unrelated database failure is not a pending migration', () => {
 
 describe('2991 PENDING and the retry ALSO fails', () => {
   it('logs the failure by name, does not throw, and does not lose the caller', async () => {
-    // No `unchecked`, so the FIRST upsert earns a real 42703 from the stale
-    // snapshot; `writeError` then takes the retry, which names only live
-    // columns. The double checks columns before it applies `writeError`, which
-    // is what makes this ordering reachable.
+    // The historical table rejects the full payload before writeError applies to the retry.
     const sc = makeSchemaStrictClient(seed(), {
+      ...pre2991,
       writeError: {
         table: 'message_translations',
         error: { code: '08006', message: 'connection terminated unexpectedly' },

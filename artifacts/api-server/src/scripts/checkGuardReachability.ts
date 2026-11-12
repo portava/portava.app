@@ -84,8 +84,8 @@ const WORKFLOW_DIR = process.env.GUARD_WORKFLOW_DIR
   ? resolve(process.env.GUARD_WORKFLOW_DIR)
   : join(REPO_ROOT, ".github", "workflows");
 
-/** Per-guard ceiling when the manual claim is tested by running it. */
-const MANUAL_RUN_TIMEOUT_MS = 120_000;
+/** Each inspection proof and each manual-run proof has its own deadline. */
+export const GUARD_PROBE_TIMEOUT_MS = 120_000;
 
 /**
  * Tracked files git reports as changed, relative to the repo root.
@@ -482,7 +482,7 @@ function main(): void {
     );
     const before = dirtyTrackedFiles();
     const run = spawnSync(process.execPath, argv, {
-      cwd: API_ROOT, encoding: "utf8", timeout: MANUAL_RUN_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024,
+      cwd: API_ROOT, encoding: "utf8", timeout: GUARD_PROBE_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024,
     });
     const mutated = mutationProblem(g.checker, before);
     if (mutated !== null) {
@@ -682,7 +682,7 @@ function main(): void {
           }
           const beforeManual = dirtyTrackedFiles();
           const run = spawnSync(process.execPath, argv, {
-            cwd: API_ROOT, encoding: "utf8", timeout: MANUAL_RUN_TIMEOUT_MS,
+            cwd: API_ROOT, encoding: "utf8", timeout: GUARD_PROBE_TIMEOUT_MS,
             maxBuffer: 32 * 1024 * 1024, env: sanitised,
           });
           const manualMutated = mutationProblem(g.checker, beforeManual);

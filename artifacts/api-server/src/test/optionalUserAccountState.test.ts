@@ -74,7 +74,10 @@ function makeClient(opts: {
       const filters: Array<(r: any) => boolean> = [];
       const result = () => behaviour.error
         ? { data: null, error: behaviour.error }
-        : { data: (behaviour.rows ?? []).filter((r) => filters.every((f) => f(r))), error: null };
+        : (() => {
+            const data = (behaviour.rows ?? []).filter(r => filters.every(f => f(r)));
+            return { data, count: data.length, error: null };
+          })();
       const builder: any = {
         select: () => builder,
         eq: (col: string, val: any) => { filters.push((r) => r[col] === val); return builder; },
@@ -256,7 +259,7 @@ describe("GET /api/places/:id/votes — viewer personalisation", () => {
   const PLACE = "33333333-3333-4333-8333-333333333333";
   const votesWorld = (p: TableBehaviour) => makeClient({
     user: USER,
-    tables: { profiles: p, place_votes: { rows: [{ vote: "worth_it", user_id: USER.id, entity_type: "place", entity_id: PLACE }] } },
+    tables: { profiles: p, places: { rows: [{ id: PLACE, moderation_status: "visible", merged_into_place_id: null }] }, place_votes: { rows: [{ vote: "worth_it", user_id: USER.id, entity_type: "place", entity_id: PLACE }] } },
   });
 
   it("an unreadable account state is a 503, not a served myVote", async () => {

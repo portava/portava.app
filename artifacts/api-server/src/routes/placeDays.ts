@@ -1,5 +1,5 @@
 import { readCanonicalPlaceRow } from "../lib/places/placeGovernance.js";
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
@@ -29,10 +29,12 @@ const cursorSchema = z.string().transform((value, ctx) => {
   return { createdAt: new Date(createdAt).toISOString(), id };
 });
 
-async function canonicalPlace(sc: any, id: string): Promise<any | null> {
-  const result=await readCanonicalPlaceRow(sc,id);
-  if(!result.ok) { if(result.reason==='not_found') return null; throw Object.assign(new Error('Canonical place group unavailable'),{status:503}); }
-  return result.place;
+async function canonicalPlace(sc: any, id: string, res: Response): Promise<any | null> {
+  const result = await readCanonicalPlaceRow(sc, id);
+  if (result.ok) return result.place;
+  if (result.reason === "not_found") sendError(res, "not_found", "Place not found");
+  else sendError(res, "degraded_unavailable", "Place information is temporarily unavailable.");
+  return null;
 }
 
 async function guard(req: any, res: any) {
@@ -48,8 +50,8 @@ async function guard(req: any, res: any) {
 router.get("/places/:id/place-days", asyncHandler(async (req, res) => {
   const ctx = await guard(req, res); if (!ctx) return;
   if (!UUID.test(req.params.id)) { sendError(res, "invalid_payload", "Invalid place id"); return; }
-  const place = await canonicalPlace(ctx.sc, req.params.id);
-  if (!place) { sendError(res, "not_found", "Place not found"); return; }
+  const place = await canonicalPlace(ctx.sc, req.params.id, res);
+  if (!place) return;
   const requested = req.query.date;
   if (requested !== undefined && !dateSchema.safeParse(requested).success) {
     sendError(res, "invalid_payload", "date must be YYYY-MM-DD"); return;
@@ -84,8 +86,8 @@ router.get("/places/:id/place-days/:date/feed", asyncHandler(async (req, res) =>
   const parsed = z.object({ cursor: cursorSchema.optional(), limit: z.coerce.number().int().min(1).max(50).default(20) })
     .safeParse(req.query);
   if (!parsed.success) { sendError(res, "invalid_payload", "Invalid pagination"); return; }
-  const place = await canonicalPlace(ctx.sc, req.params.id);
-  if (!place) { sendError(res, "not_found", "Place not found"); return; }
+  const place = await canonicalPlace(ctx.sc, req.params.id, res);
+  if (!place) return;
   const timezone = resolvePlaceTimezone(place);
   const blocked = await fetchBlockedSet(ctx.sc, ctx.userId);
   if (blocked === null) { res.json({ placeId: place.id, localDate: req.params.date, items: [], nextCursor: null }); return; }

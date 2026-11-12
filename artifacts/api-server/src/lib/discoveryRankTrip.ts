@@ -116,7 +116,7 @@ export async function loadTripMatch(
 ): Promise<TripMatchRead> {
   if (!sc || !viewerId || places.length === 0) return { tripMatch: null, degraded: !sc && !!viewerId, trips: 0 };
   try {
-    const read = await readTripStopLayer(sc, viewerId);
+    const read = await readTripStopLayer(sc, viewerId, new Date(nowMs));
     if (read.trips === null) return { tripMatch: null, degraded: true, trips: 0 };
     const counted = read.trips.filter((t) => tripTiming(t, nowMs) > 0);
     if (counted.length === 0) return { tripMatch: null, degraded: false, trips: 0 };

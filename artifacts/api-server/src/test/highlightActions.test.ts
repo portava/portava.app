@@ -90,8 +90,8 @@ function seed(): Record<string, any[]> {
       memory(MEM_CLOSED, { place_id: PLACE_CLOSED }),
     ],
     places: [
-      { id: PLACE_OPEN, name: "Din Tai Fung Xinyi", primary_category: "food", latitude: 25.033, longitude: 121.565, address: "No. 194", city: "Taipei", country_code: "TW", status: "active", merged_into_place_id: null, canonical_location_id: null },
-      { id: PLACE_CLOSED, name: "Gone Noodles", primary_category: "food", latitude: 25.04, longitude: 121.56, address: null, city: "Taipei", country_code: "TW", status: "closed", merged_into_place_id: null, canonical_location_id: null },
+      { id: PLACE_OPEN, name: "Din Tai Fung Xinyi", primary_category: "food", latitude: 25.033, longitude: 121.565, address: "No. 194", city: "Taipei", country_code: "TW", status: "active", moderation_status: "visible", merged_into_place_id: null, canonical_location_id: null },
+      { id: PLACE_CLOSED, name: "Gone Noodles", primary_category: "food", latitude: 25.04, longitude: 121.56, address: null, city: "Taipei", country_code: "TW", status: "closed", moderation_status: "visible", merged_into_place_id: null, canonical_location_id: null },
     ],
     hidden_gems: [],
     memory_saves: [],
@@ -351,5 +351,19 @@ describe("H-17a — a Highlight whose source Memory's canonical location matches
     base = await start({ mutate: unplaced });
     const bare = await menu(base, H_SOURCED, VIEWER);
     assert.deepEqual([rejected.status, rejected.body], [bare.status, bare.body]);
+  });
+});
+
+describe("Highlight actions recheck moderation of the source place", () => {
+  it("withholds the venue from an otherwise readable source Memory after moderation", async () => {
+    const base = await start({ mutate(tables) {
+      tables.places.find(row => row.id === PLACE_OPEN).moderation_status = "withheld";
+    } });
+    const result = await menu(base, H_SOURCED, VIEWER);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.menu.place, null);
+    assert.equal(result.by.DO_THIS.available, false);
+    assert.equal(result.by.VIEW_PLACE.available, false);
+    assert.doesNotMatch(JSON.stringify(result.body), /Din Tai Fung Xinyi/);
   });
 });

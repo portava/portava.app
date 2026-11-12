@@ -19,7 +19,7 @@
         "usesNonExemptEncryption": true
       },
       "bundleIdentifier": "com.passporttravelbuddy.app",
-      "buildNumber": "6",
+      "buildNumber": "7",
       "associatedDomains": [
         "applinks:rumazi.com"
       ],

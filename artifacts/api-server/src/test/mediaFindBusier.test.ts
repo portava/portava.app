@@ -17,6 +17,7 @@
  *
  * Run: node --import tsx/esm --test src/test/mediaFindBusier.test.ts
  */
+import { makeFakeClient as makeCatalogClient } from './telegraphCertificationHarness.js';
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -46,6 +47,7 @@ function makeSc(data: Dataset) {
   const resolveRows = (table: string, filters: Array<(r: any) => boolean>) =>
     (data[table] ?? []).map((r) => ({ ...r })).filter((r) => filters.every((f) => f(r)));
   const builder = (table: string): any => {
+    if (table === "places") return makeCatalogClient({ places: data.places ?? [] }).from(table);
     const filters: Array<(r: any) => boolean> = [];
     const b: any = {
       select() { return b; },
@@ -92,6 +94,7 @@ function data(opts: { compass: boolean; busier: boolean; post?: any }): Dataset 
   if (opts.compass) flags.push({ flag: "COMPASS_ENABLED", enabled: true });
   if (opts.busier) flags.push({ flag: FIND_BUSIER_FLAG, enabled: true });
   return {
+    places: [{ id: PLACE }],
     posts: [opts.post ?? makePost()],
     profiles: [
       { id: VIEWER, location_country: "VN", date_of_birth: "1990-01-01", account_status: "active" },

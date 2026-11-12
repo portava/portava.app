@@ -517,7 +517,7 @@ describe("writeObservation replay lookup — a failed re-read is not a key colli
   const rows = {
     feature_flags: [{ flag: "intel_capture_quick_signal", enabled: true }],
     intel_contribution_consent: [{ user_id: ACTOR, enabled: true, withdrawn_at: null }],
-    places: [{ id: SUBJECT }],
+    places: [{ id: SUBJECT, moderation_status: "visible", merged_into_place_id: null }],
     intel_observations: [
       { id: "obs-1", actor_id: ACTOR, idempotency_key: "obs-key-1" },
     ],

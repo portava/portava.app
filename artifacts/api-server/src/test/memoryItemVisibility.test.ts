@@ -431,7 +431,7 @@ describe("H-17 — the crew's recap: the owner rejected the auto-matched place, 
   const store = (rejected: boolean) => {
     const s = seed(null);
     Object.assign(s.memories[0], { place_id: PICK, canonical_location_id: CANON });
-    s.places = [{ id: P, name: "Auto-matched", primary_category: "food", latitude: 1, longitude: 1, address: null, city: "X", country_code: "XX", status: "active", merged_into_place_id: null, canonical_location_id: CANON }];
+    s.places = [{ id: P, name: "Auto-matched", primary_category: "food", latitude: 1, longitude: 1, address: null, city: "X", country_code: "XX", status: "active", moderation_status: "visible", merged_into_place_id: null, canonical_location_id: CANON }];
     s.memory_corrections = rejected ? [{ id: "c-17", memory_id: MEM, owner_id: OWNER, field: "place", kind: "reject", place_id: P, canonical_location_id: null, source: "correction_route", created_at: "2026-10-08T00:00:00.000Z" }] : [];
     return s;
   };
@@ -460,7 +460,7 @@ describe("H-17a — the crew's recap: C matches two catalog rows and the owner r
   const CANON = "31111111-1111-4111-8111-11111111111a";
   const P1 = "32222222-2222-4222-8222-22222222222a";
   const P2 = "32222222-2222-4222-8222-22222222222b";
-  const row = (id: string) => ({ id, name: "Twin", primary_category: "food", latitude: 1, longitude: 1, address: null, city: "X", country_code: "XX", status: "active", merged_into_place_id: null, canonical_location_id: CANON });
+  const row = (id: string) => ({ id, name: "Twin", primary_category: "food", latitude: 1, longitude: 1, address: null, city: "X", country_code: "XX", status: "active", moderation_status: "visible", merged_into_place_id: null, canonical_location_id: CANON });
   const store = (rejectedId: string) => {
     const s = seed(null);
     Object.assign(s.memories[0], { place_id: PICK, canonical_location_id: CANON });

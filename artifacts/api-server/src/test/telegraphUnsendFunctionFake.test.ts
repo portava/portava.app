@@ -57,10 +57,15 @@ const MIGRATION = resolve(
 
 /** Just the plpgsql body, so the header's prose list is not mistaken for code. */
 function functionBody(sql: string): string {
-  const start = sql.indexOf("AS $fn$");
-  const end = sql.indexOf("$fn$;", start);
-  assert.ok(start > 0 && end > start, "could not find the function body in the migration");
-  return sql.slice(start, end);
+  const declaration = /CREATE OR REPLACE FUNCTION public\.telegraph_unsend_message_before_seen\(/i.exec(sql);
+  assert.ok(declaration, "unsend function definition missing");
+  const definition = sql.slice(declaration.index);
+  const opener = /\bAS\s+(\$[\w]*\$)/i.exec(definition);
+  assert.ok(opener);
+  const start = opener.index + opener[0].length;
+  const end = definition.indexOf(opener[1]!, start);
+  assert.ok(end > start, "unterminated unsend function");
+  return definition.slice(start, end).replace(/--[^\n]*/g, "");
 }
 
 describe("the model and the migration agree on the outcomes", () => {
@@ -81,52 +86,23 @@ describe("the model and the migration agree on the outcomes", () => {
     );
   });
 
-  it("the function still takes the row locks it exists for", () => {
-    const locks = body.match(/FOR UPDATE/g) ?? [];
-    assert.equal(locks.length, 2,
-      "two FOR UPDATE clauses: the message row, then every eligible recipient's receipt");
-  });
-
-  it("locks the receipt rows BEFORE it reads last_read_at, which is the guarantee", () => {
-    // Counting the clauses is not enough and was measured to be not enough: two
-    // FOR UPDATEs placed after the seen-check would satisfy a count and close
-    // nothing. The §7.4 guarantee is an ORDER — lock, then read, then write —
-    // and the order is what is asserted.
-    const lockMessage = body.indexOf("FOR UPDATE");
-    const lockReceipts = body.indexOf("FOR UPDATE", lockMessage + 1);
-    // `INTO v_seen_count`, not `v_seen_count`: the name's first appearance is
-    // its DECLARE, hundreds of characters above any of this, and using it made
-    // the assertion fire on a function that is in fact correct.
-    const readReceipts = body.indexOf("INTO v_seen_count");
+  it("locks the conversation, message and receipts before deciding whether to unsend", () => {
+    const locks = [...body.matchAll(/\bFROM public\.(message_threads|messages|message_thread_members)\b[^;]*?\bFOR UPDATE\b/gi)];
+    assert.deepEqual(locks.map(lock => lock[1]), ["message_threads", "messages", "message_thread_members"]);
+    const read = body.indexOf("INTO v_seen_count");
     const write = body.indexOf("UPDATE public.messages");
-
-    assert.ok(lockMessage > 0, "no lock on the message row");
-    assert.ok(lockReceipts > lockMessage, "no second lock on the receipt rows");
-    assert.ok(
-      readReceipts > lockReceipts,
-      "last_read_at is read BEFORE the receipt rows are locked — the race is open",
-    );
-    assert.ok(write > readReceipts, "the write happens before the seen-check");
-
-    // And the second lock must be on the receipts, not a second lock on the
-    // message: an index comparison alone cannot tell those apart.
-    const between = body.slice(lockMessage, lockReceipts);
-    assert.match(
-      between.slice(between.indexOf("PERFORM")),
-      /public\.message_thread_members/,
-      "the second FOR UPDATE is not on message_thread_members",
-    );
+    assert.ok(locks[2]!.index! < read && read < write, "the seen decision must hold the receipt locks");
   });
 
-  it("P-T6 (3650): the newest definition leaves a member in a block with the actor out of BOTH counts", () => {
-    assert.match(MIGRATION, /3650_telegraph_unsend_blocked_reader_excluded\.sql$/, `pinned against ${MIGRATION}`);
-    const recipients = body.slice(body.indexOf("INTO v_recipients"), body.indexOf("IF v_msg.sender_id"));
-    const seen = body.slice(body.indexOf("INTO v_seen_count"), body.indexOf("IF v_seen_count > 0"));
-    for (const [what, part] of [["recipientCount", recipients], ["seenBy", seen]] as const) {
-      assert.match(part, /NOT EXISTS \(\s*SELECT 1 FROM public\.blocks/, `${what}: no blocks term`);
-      assert.match(part, /b\.blocker_id = p_actor_id AND b\.blocked_id = /, `${what}: the actor's own block is not read`);
-      assert.match(part, /b\.blocked_id = p_actor_id/, `${what}: a block ON the actor is not read`);
+  it("removes both directions of a block from both counts, and applies the appropriate receipt format", () => {
+    for (const name of ["recipients", "seen_count"]) {
+      const count = body.match(new RegExp(`INTO v_${name}\\b([\\s\\S]*?);`, "i"))?.[1];
+      assert.ok(count, name);
+      assert.match(count, /NOT EXISTS\s*\(\s*SELECT 1 FROM public\.blocks/i);
+      assert.match(count, /b\.blocker_id\s*=\s*p_actor_id\s+AND\s+b\.blocked_id\s*=/i);
+      assert.match(count, /b\.blocked_id\s*=\s*p_actor_id/i);
     }
+    assert.match(body, /CASE WHEN v_msg\.sequence IS NOT NULL AND EXISTS\([\s\S]*?telegraph_sequence_state_enabled[\s\S]*?THEN coalesce\(m\.seen_sequence,0\)\s*>=\s*v_msg\.sequence[\s\S]*?ELSE m\.last_read_at IS NOT NULL AND m\.last_read_at\s*>=\s*v_msg\.created_at/i);
   });
 
   it("the function still writes lifecycle_state, which is why 3000 exists", () => {
@@ -166,6 +142,22 @@ describe("the model itself", () => {
     assert.equal(db.messages[0].deleted_at, "2026-05-04T00:00:00.000Z");
     assert.equal(db.messages[0].lifecycle_state, "unsent");
     assert.equal(db.messages[0].body, "");
+  });
+
+  it("sequence receipts decide sequenced messages when enabled; legacy messages and flag-off use timestamps", async () => {
+    for (const [enabled, sequence, seen, timestamp, outcome] of [
+      [true, 4, 4, null, "seen"],
+      [true, 4, 3, "2026-05-03T00:00:00Z", "unsent"],
+      [false, 4, 4, null, "unsent"],
+      [true, null, 0, "2026-05-03T00:00:00Z", "seen"],
+    ] as const) {
+      const db = { ...fixture(), feature_flags: [{ flag: "telegraph_sequence_state_enabled", enabled }] };
+      db.messages[0]!.sequence = sequence;
+      db.message_thread_members[1]!.seen_sequence = seen;
+      db.message_thread_members[1]!.last_read_at = timestamp;
+      const { data } = await call(makeUnsendFunctionFake(() => db));
+      assert.equal(data.outcome, outcome);
+    }
   });
 
   it("a recipient who read PAST the message closes the window", async () => {

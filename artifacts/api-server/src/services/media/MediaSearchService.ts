@@ -748,7 +748,7 @@ async function mapPositions(
     try {
       ({ data, error } = await (sc as any)
         .from("places")
-        .select("id, name, primary_category, city, neighborhood, country_code, latitude, longitude, status, merged_into_place_id") // = mapProjectPlace PLACE_SELECT_COLUMNS, as a literal so check:write-path-columns can verify it; pinned equal by mediaWorldProjection.test.ts
+        .select("id, name, primary_category, city, neighborhood, country_code, latitude, longitude, status, moderation_status, merged_into_place_id") // = mapProjectPlace PLACE_SELECT_COLUMNS, as a literal so check:write-path-columns can verify it; pinned equal by mediaWorldProjection.test.ts
         .in("id", ids.slice(i, i + PLACE_ID_CHUNK)));
     } catch (e) {
       throw new MediaSearchNearUnavailableError("places", e instanceof Error ? e.message : "read threw");

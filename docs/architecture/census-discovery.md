@@ -12614,7 +12614,7 @@ No existing suite compared whole responses across every search type. So `artifac
 - the full body, with the per-request `recommendationId` removed;
 - the ordered list of reads: every `from`, `select`, `or` and `ilike`.
 
-Date is frozen, so recency terms cannot drift the golden. As a vacuity control, 17 of the 18 types serve at least one row in it (`artifacts/api-server/src/test/searchPlatformGolden.test.ts:289#it("the golden holds every case`).
+Date is frozen, so recency terms cannot drift the golden. As a vacuity control, 17 of the 18 types serve at least one row in it (`artifacts/api-server/src/test/searchPlatformGolden.test.ts:293#it("the golden holds every case`).
 
 **After the move, all 42 cases pass**, along with the vacuity case. That is the byte-identity proof. The route and the gateway served and read exactly what they did at `fd1b1fbb1`.
 
@@ -17108,7 +17108,7 @@ No row moves: the behaviour is behind flags that are off.
   and the masking read
   (`artifacts/api-server/src/test/discoveryTrailReview.test.ts:194#describe("O6 (verifier F3 on dc0107eda5)`).
 - **L2.** A followed Trail under review no longer feeds the viewer's Trail affinity
-  (`artifacts/api-server/src/test/discoveryTrailReview.test.ts:240#describe("O7 (verifier on dc0107eda5, L2)`).
+  (`artifacts/api-server/src/test/discoveryTrailReview.test.ts:247#describe("O7 (verifier on dc0107eda5, L2)`).
 - **L3.** 3977's `trail_propose` refuses a parent that is not approved at the decision itself (database suite D6, CI's
   local-db job); 3977 is applied nowhere and was corrected in place.
 

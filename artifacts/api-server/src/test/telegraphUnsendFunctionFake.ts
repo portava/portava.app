@@ -28,6 +28,7 @@ export interface UnsendFakeRow {
   thread_id: string;
   sender_id: string;
   created_at: string;
+  sequence?: number | null;
   deleted_at?: string | null;
   unsent_at?: string | null;
   lifecycle_state?: string | null;
@@ -39,6 +40,7 @@ export interface UnsendFakeMember {
   user_id: string;
   left_at?: string | null;
   last_read_at?: string | null;
+  seen_sequence?: number | null;
 }
 
 export interface UnsendFakeOptions {
@@ -82,7 +84,7 @@ export interface UnsendFakeOptions {
  * reads the table as it is when it takes the lock.
  */
 export function makeUnsendFunctionFake(
-  tables: () => { messages: UnsendFakeRow[]; message_thread_members: UnsendFakeMember[]; blocks?: Array<{ blocker_id: string; blocked_id: string }> },
+  tables: () => { messages: UnsendFakeRow[]; message_thread_members: UnsendFakeMember[]; blocks?: Array<{ blocker_id: string; blocked_id: string }>; feature_flags?: Array<{ flag: string; enabled: boolean }> },
   options: UnsendFakeOptions = {},
 ) {
   return async function rpc(fn: string, args: Record<string, unknown>) {
@@ -139,7 +141,9 @@ export function makeUnsendFunctionFake(
     if (!actorActive) return { data: { outcome: "not_member", recipientCount }, error: null };
 
     const createdMs = Date.parse(String(msg.created_at));
+    const sequenceReceipts = db.feature_flags?.some(flag => flag.flag === "telegraph_sequence_state_enabled" && flag.enabled);
     const seenBy = recipients.filter((m) => {
+      if (sequenceReceipts && msg.sequence != null) return (m.seen_sequence ?? 0) >= msg.sequence;
       if (!m.last_read_at) return false;
       const lr = Date.parse(String(m.last_read_at));
       return Number.isFinite(lr) && Number.isFinite(createdMs) && lr >= createdMs;

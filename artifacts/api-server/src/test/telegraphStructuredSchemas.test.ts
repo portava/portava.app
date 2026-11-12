@@ -307,7 +307,7 @@ function writeClient(state: WState) {
       { thread_id: THREAD, user_id: BOB, left_at: null },
     ],
     messages: [],
-    posts: [{ id: POST_OK, author_id: BOB, content: "A bar", visibility: "public", status: "active", deleted_at: null, media_urls: [], updated_at: "2026-05-01T00:00:00.000Z" }],
+    posts: [{ id: POST_OK, author_id: BOB, content: "A bar", visibility: "public", status: "active", post_status: "published", deleted_at: null, media_urls: [], updated_at: "2026-05-01T00:00:00.000Z" }],
     profiles: [{ id: BOB, handle: "bob", name: "Bob", account_status: "active" }],
     hidden_gems: [{ id: GEM_ACTIVE, name: "Rooftop", city: "Hue", neighborhood: "Old town", category: "bar", status: "active", sensitivity_level: "public", merged_into: null, updated_at: "2026-05-02T00:00:00.000Z" }],
     places: [],

@@ -36,7 +36,8 @@
  *        re-CREATE — and none of the shapes that do not.
  *   B-*  3814 and its rollback are shaped as they claim.
  *   P-*  the premise: no client tree reads or writes the four directly, and
- *        every chain function that does is service-role-only or a definer trigger.
+ *        every chain function that does requires service execution, is a definer
+ *        trigger, or fires only through tables whose client ACLs are closed.
  *   K-*  the live guard agrees: the four are in the authorization contract with
  *        no client grant and exactly their baseline (3672) policies.
  *
@@ -531,7 +532,47 @@ describe("the premise: no client path reads or writes the four tables as a clien
     return out;
   }
 
-  it("P-3: every chain function whose body reads or writes one of the four is revoked from anon and authenticated, or is a SECURITY DEFINER trigger function", () => {
+  /** Trigger ACLs are checked at creation. An invoker trigger remains reachable
+   * through writes to its current table even after EXECUTE is revoked. */
+  function invokerTriggerIsServerOnly(files: readonly Mig[], functionName: string): boolean {
+    const bindings = new Map<string, { table: string; fn: string }>();
+    const identifier = String.raw`(?:"[^"]+"|[a-z_][\w$]*)(?:\.(?:"[^"]+"|[a-z_][\w$]*))?`;
+    const create = new RegExp(String.raw`^create\s+(?:or\s+replace\s+)?(?:constraint\s+)?trigger\s+(${identifier})[\s\S]*?\bon\s+(${identifier})[\s\S]*?\bexecute\s+(?:function|procedure)\s+(${identifier})\s*\(`, "i");
+    const drop = new RegExp(String.raw`^drop\s+trigger\s+(?:if\s+exists\s+)?(${identifier})\s+on\s+(${identifier})(?=\s|;|$)`, "i");
+    const definition = new RegExp(String.raw`^create\s+(?:or\s+replace\s+)?function\s+(${identifier})\s*\(`, "i");
+    const qualified = (name: string) => {
+      const parts = name.split(".").map(fold);
+      return parts.length === 1 ? "public." + parts[0] : parts.join(".");
+    };
+    let defined = false;
+    for (const file of [{ name: "(baseline)", sql: BASELINE }, ...files]) {
+      for (const statement of topLevelStatements(file.sql)) {
+        const text = blankSqlComments(statement).trim();
+        const declared = definition.exec(text);
+        if (declared && qualified(declared[1]!) === qualified(functionName)) defined = true;
+        const removed = drop.exec(text);
+        if (removed) bindings.delete(qualified(removed[2]!) + "." + fold(removed[1]!));
+        const added = create.exec(text);
+        if (added) {
+          const table = qualified(added[2]!);
+          bindings.set(table + "." + fold(added[1]!), { table, fn: qualified(added[3]!) });
+        }
+        // Once the function exists, an unparsed/dynamic attachment could give a
+        // client-writable table a path to it. Require a reviewable literal edge.
+        if (defined && !added && /\b(?:create\s+(?:or\s+replace\s+)?(?:constraint\s+)?|alter\s+)trigger\b/i.test(text)) return false;
+      }
+    }
+    const attached = [...bindings.values()].filter(binding => binding.fn === qualified(functionName));
+    if (!attached.length) return false;
+    return attached.every(({ table }) => {
+      const protectedTable = TABLES.find(name => table === "public." + name);
+      if (!protectedTable) return false;
+      const result = replay(files, protectedTable);
+      return result.unresolvedAfterCloser.length === 0 && ROLES.every(role => heldBy(result.acl, role).length === 0);
+    });
+  }
+
+  it("P-3: functions touching the four require service execution or fire only through closed tables", () => {
     const fns = touchingFunctions();
     const names = fns.map((f) => f.name);
     for (const expected of ["memory_kernel_execute", "memory_graph_kernel_execute", "memory_graph_mirror_memory"]) {
@@ -543,9 +584,26 @@ describe("the premise: no client path reads or writes the four tables as a clien
       if (r.trigger && r.definer) continue;
       const revoked = (role: string) =>
         new RegExp(String.raw`\brevoke\s+(all|execute)\s+on\s+function\s+(public\.)?${r.name}\s*\([^)]*\)\s+from\s+[^;]*\b${role}\b`, "i").test(allText);
-      if (r.trigger || !revoked("anon") || !revoked("authenticated")) open.push(`${r.name} (${r.file})`);
+      if (!revoked("anon") || !revoked("authenticated")
+        || (r.trigger && !invokerTriggerIsServerOnly(chain(), r.name))) open.push(`${r.name} (${r.file})`);
     }
     assert.deepEqual(open, [], "a client role may call, or fire as an invoker, a function that touches the four; after 3814 it fails with 42501");
+  });
+
+  it("P-3a: an invoker guard is safe only while all its attachments remain on closed tables", () => {
+    const name = "post_reference_destination_guard";
+    assert.equal(invokerTriggerIsServerOnly(chain(), name), true);
+    assert.equal(invokerTriggerIsServerOnly(chain(["4021_reference_guard_and_place_policy.sql"]), name), false,
+      "the original highlight attachment lets client writes fire the Memory-reading guard");
+    assert.equal(invokerTriggerIsServerOnly(chain([], [{
+      name: "9999_reopen.sql", sql: "GRANT INSERT ON public.memory_items TO authenticated;",
+    }]), name), false);
+    assert.equal(invokerTriggerIsServerOnly(chain([], [{
+      name: "9999_reattach.sql", sql: "CREATE TRIGGER restored AFTER INSERT ON public.highlights FOR EACH ROW EXECUTE FUNCTION public.post_reference_destination_guard();",
+    }]), name), false);
+    assert.equal(invokerTriggerIsServerOnly(chain([], [{
+      name: "9999_dynamic_reattach.sql", sql: "DO $$ BEGIN EXECUTE 'CREATE TRIGGER restored AFTER INSERT ON public.highlights FOR EACH ROW EXECUTE FUNCTION public.' || 'post_reference_' || 'destination_guard()'; END $$;",
+    }]), name), false, "a dynamic attachment cannot escape the closed-table proof");
   });
 
   it("P-4: no client source calls an RPC that touches the four, and no chain policy on another table reads them", () => {

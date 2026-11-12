@@ -2,9 +2,8 @@
  * routes/index.ts — a router registered inside a comment is not registered.
  *
  * THE DEFECT, FOUND BY AN INDEPENDENT VERIFIER (lane C, 2026-10-05). The file
- * is pinned at a fixed line count (censuses cite it by line, and
- * creatorLedgerMigrationShape3385 M6 asserts the length), so new routers are
- * appended to existing long lines. Wave 1 appended
+ * was pinned at a fixed line count because the censuses cite it by line.
+ * At the time, new routers were appended to existing long lines. Wave 1 appended
  * `import tripAnchorSharesRouter …; router.use(tripAnchorSharesRouter);` AFTER
  * an existing `// census-discovery §58 …` comment on line 437, so both
  * statements were part of the comment. Every share route answered Express's
@@ -131,6 +130,8 @@ describe("B. routes/index.ts registers nothing inside a comment, and mounts ever
   });
 
   it("B4. the file keeps its pinned length (censuses cite it by line)", () => {
-    assert.equal(SRC.split("\n").length, 439);
+    const lines = SRC.split("\n");
+    assert.equal(lines.length, 453);
+    assert.equal(lines[451], "router.use(recordingCaptureStampsRouter);");
   });
 });

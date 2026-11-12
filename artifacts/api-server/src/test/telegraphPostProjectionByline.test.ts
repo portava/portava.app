@@ -7,14 +7,14 @@
  * certification harness's PostgREST fake.
  *   - a public post resolves with `subtitle: "@<current handle>"`;
  *   - a renamed author shows the NEW handle (the snapshot's is never consulted);
- *   - an unreadable `profiles` read leaves the subtitle null and the post still
- *     AVAILABLE — a byline failure never revokes a post, and never invents a name;
+ *   - an unreadable `profiles` read withholds the post rather than declaring it
+ *     available when author eligibility cannot be established;
  *   - a deleted post still carries nothing, byline included.
  *   - (verifier finding 1, 2026-10-05) a block EITHER WAY between the viewer and
  *     the author refuses the post — the posts routes' own bidirectional rule —
  *     so a blocker's handle never reaches the person they blocked; an unreadable
  *     block read is `unknown`, never "no block"; a banned / suspended / deleted
- *     author is never named in a byline (loadProfile degrades that account).
+ *     author has both the post and byline withheld by the shared source reader.
  *
  * SHOWN RED (T2 lane report): the profiles read's error branch dropped (an error
  * read as a handle) turns the unreadable case red; the byline removed turns the
@@ -38,12 +38,12 @@ const POST_GONE = "11110000-0000-4000-8000-000000000002";
 function seed(handle: string): Record<string, Record<string, unknown>[]> {
   return {
     posts: [
-      { id: POST_OK, author_id: BOB, content: "A bar with no sign", visibility: "public", status: "active",
+      { id: POST_OK, author_id: BOB, content: "A bar with no sign", visibility: "public", status: "active", post_status: "published",
         deleted_at: null, media_urls: [], updated_at: "2026-05-01T00:00:00.000Z" },
       { id: POST_GONE, author_id: BOB, content: "Gone", visibility: "public", status: "deleted",
         deleted_at: "2026-05-02T00:00:00.000Z", media_urls: [], updated_at: "2026-05-02T00:00:00.000Z" },
     ],
-    profiles: [{ id: BOB, handle }],
+    profiles: [{ id: BOB, handle, account_status: "active" }],
   };
 }
 
@@ -64,11 +64,12 @@ describe("POST projection byline", () => {
     assert.equal(r.available && r.projection.subtitle, "@bob_renamed");
   });
 
-  it("an unreadable profiles read leaves the byline null and the post AVAILABLE", async () => {
+  it("an unreadable profiles read withholds the post and byline", async () => {
     const c = makeFakeClient(seed("bob"), { errors: { profiles: { message: "profiles unreadable" } } });
     const r = await resolvePost(c, POST_OK);
-    assert.equal(r.available, true, "a byline failure must not revoke the post");
-    assert.equal(r.available && r.projection.subtitle, null, "a failed read is not a handle");
+    assert.equal(r.available, false, "an unreadable profile cannot establish author eligibility");
+    assert.equal(r.projection, null);
+    assert.ok(!JSON.stringify(r).includes("@bob"));
   });
 
   it("a deleted post carries nothing, byline included", async () => {
@@ -87,7 +88,7 @@ describe("POST projection byline", () => {
 
 function blocked(over: Partial<Record<string, Record<string, unknown>[]>> = {}): Record<string, Record<string, unknown>[]> {
   return {
-    posts: [{ id: POST_OK, author_id: BOB, content: "A bar with no sign", visibility: "public", status: "active",
+    posts: [{ id: POST_OK, author_id: BOB, content: "A bar with no sign", visibility: "public", status: "active", post_status: "published",
       deleted_at: null, media_urls: [], updated_at: "2026-05-01T00:00:00.000Z" }],
     profiles: [{ id: BOB, handle: "bob", name: "Bob", account_status: "active", avatar_url: null, updated_at: null }],
     blocks: [{ blocker_id: BOB, blocked_id: ALICE }],
@@ -120,11 +121,11 @@ describe("verifier finding 1 — a block, and an account that is not active", ()
     assert.equal(!r.available && r.reason, "unknown");
   });
 
-  it("a SUSPENDED author is not named: the post stays, the byline is withheld", async () => {
+  it("a SUSPENDED author has both post and byline withheld", async () => {
     const c = makeFakeClient(blocked({ blocks: [], profiles: [{ id: BOB, handle: "bob", account_status: "suspended" }] }));
     const r = await resolvePost(c, POST_OK);
-    assert.equal(r.available, true);
-    assert.equal(r.available && r.projection.subtitle, null, JSON.stringify(r));
+    assert.equal(r.available, false);
+    assert.equal(r.projection, null, JSON.stringify(r));
   });
 
   it("CONTROL: the author reads their own post whatever the blocks say", async () => {

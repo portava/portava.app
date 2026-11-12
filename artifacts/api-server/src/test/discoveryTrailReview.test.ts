@@ -197,11 +197,18 @@ describe("O6 (verifier F3 on dc0107eda5) — the canonicalisation 409 never name
   // the rpc, as the harness answers none: the database's refusal names the conflicting Trail and suggests it as
   // the parent, which is exactly what it does for a near-duplicate.
   const refuseAgainst = (c: FakeClient, conflict: string) => {
-    const base = (c as any).rpc;
-    (c as any).rpc = async (name: string, args: any) => name === "trail_propose"
-      ? { data: { outcome: "refused", refusals: [{ check: "duplicate_title_similarity", conflictsWith: conflict, similarity: 0.9 },
-        { check: "destination_overlap", conflictsWith: conflict, similarity: 0.8 }], suggestedParentTrailId: conflict }, error: null }
-      : base(name, args);
+    // The preview read found no peer. A competing proposal commits before
+    // trail_propose checks again under its lock, and the route must mask its id.
+    const peer = c._store.trails.find(row => row.id === conflict);
+    assert.ok(peer);
+    c._store.trails = [];
+    const base = c.rpc.bind(c);
+    c.rpc = async (name: string, args: any) => {
+      if (name !== "trail_propose") return base(name, args);
+      c._store.trails.push(peer);
+      return { data: { outcome: "refused", refusals: [{ check: "duplicate_title_similarity", conflictsWith: conflict, similarity: 0.9 },
+        { check: "destination_overlap", conflictsWith: conflict, similarity: 0.8 }], suggestedParentTrailId: conflict }, error: null };
+    };
   };
   const propose = (who: string) => req("POST", "/v1/discovery/trails", who, { title: "Secret Tiles Walk Again", destination: "lisbon" });
   it("O6a. THE POINT: colliding with someone else's PENDING Trail — 409, every conflictsWith and the suggested parent are null", async () => {

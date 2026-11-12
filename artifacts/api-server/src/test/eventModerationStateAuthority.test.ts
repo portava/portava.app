@@ -368,7 +368,7 @@ describe("B. structural — every events.state writer in the server asks the tra
     assert.ok(!/\.update\(/.test(sanitize(evCase.text)), "the appeal's event case writes events itself");
   });
 
-  it("GREEN before (CONTROL): no migration or baseline function UPDATEs events.state", () => {
+  it("the only SQL state writer archives reported events through the same transition authority and records the reversible change", () => {
     const root = fileURLToPath(new URL("../..", import.meta.url));
     const files = [...readdirSync(join(root, "src/migrations")).map((n) => join(root, "src/migrations", n)), ...readdirSync(join(root, "baseline")).map((n) => join(root, "baseline", n))].filter((p) => p.endsWith(".sql"));
     assert.ok(files.length > 100, "vacuity: the migrations were not read");
@@ -377,7 +377,25 @@ describe("B. structural — every events.state writer in the server asks the tra
       const sql = readFileSync(p, "utf8").replace(/--[^\n]*/g, "");
       for (const m of sql.matchAll(/update\s+(?:public\.)?events\s+set\s+([^;]*)/gi)) if (/\bstate\s*=/i.test(m[1]!.split(/\bwhere\b/i)[0]!)) hits.push(relative(root, p));
     }
-    assert.deepEqual(hits, []);
+    const command = "src/migrations/4004_reported_content_audited_removal.sql";
+    assert.deepEqual(hits, [command], "every state-changing SQL statement is accounted for");
+    const sql = readFileSync(join(root, command), "utf8").replace(/--[^\n]*/g, "");
+    const context = /CREATE FUNCTION public\.get_reported_content_removal_context\b([\s\S]*?)END \$fn\$/i.exec(sql)?.[1] ?? "";
+    const archive = /CREATE FUNCTION public\.remove_reported_content\b([\s\S]*?)END \$fn\$/i.exec(sql)?.[1] ?? "";
+    const allowed = /p_type='event' AND \(target->>'state' IS NULL OR target->>'state' NOT IN \(([^)]*)\)/.exec(context)?.[1];
+    assert.ok(allowed, "the context must reject states outside the lawful archive transitions");
+    assert.deepEqual([...allowed.matchAll(/'([^']+)'/g)].map((m) => m[1]).sort(), [...lifecycle.eventStatesAllowedBefore("archived")].sort());
+    assert.match(archive, /current_user<>'service_role'/);
+    assert.match(archive, /id=p_admin_id AND role='admin' FOR SHARE/);
+    assert.match(archive, /public\.moderation_reports WHERE id=p_report_id FOR UPDATE/);
+    assert.match(archive, /read_reported_content_target\(p_type,p_id,true\)/);
+    assert.match(archive, /get_reported_content_removal_context\(p_admin_id,p_type,p_id,p_report_id\)/);
+    assert.match(archive, /context->>'contentToken' IS DISTINCT FROM p_expected_content_token OR context->>'reportToken' IS DISTINCT FROM p_expected_report_token/);
+    assert.match(archive, /WHEN 'event' THEN UPDATE public\.events SET state='archived',visibility='invite_only',updated_at=committed_at WHERE id=target_id/);
+    assert.match(archive, /'from_state',target->>'state','to_state','archived',[\s\S]*?'from_visibility',target->>'visibility','to_visibility','invite_only'/);
+    assert.match(archive, /INSERT INTO public\.event_activity_log\(event_id,actor_id,action,metadata\)\s+VALUES\(target_id,p_admin_id,'admin_remove'/);
+    assert.match(archive, /INSERT INTO public\.moderation_actions[\s\S]*?WHEN p_type='event' THEN 'event_remove'/);
+    assert.match(archive, /IF receipt.id IS NULL[\s\S]*?RAISE EXCEPTION[\s\S]*?'removal_audit_incomplete'/);
   });
 });
 

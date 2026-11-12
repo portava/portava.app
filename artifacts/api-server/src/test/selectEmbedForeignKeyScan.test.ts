@@ -47,9 +47,9 @@ const KNOWN_UNBACKED_SELECT_EMBEDS: ReadonlyArray<{ file: string; parent: string
  * (posts has three keys to profiles: posts_author_id_fkey, posts_created_by_fkey,
  * posts_updated_by_fkey; live_place_recaps and live_place_recap_versions key each
  * other both ways) and each now names its key:
- *   routes/placeDays.ts:101, routes/placeRecaps.ts:41 and :59, routes/sharedMoments.ts:314
+ *   routes/placeDays.ts:100, routes/placeRecaps.ts:42 and :60, routes/sharedMoments.ts:314
  *     → `profiles!author_id(...)` (the post's author: every caller reads it as the author's privacy);
- *   routes/placeRecaps.ts:151
+ *   routes/placeRecaps.ts:157
  *     → `live_place_recap_versions!live_place_recap_versions_recap_id_fkey!inner(...)` (every
  *       version of the recap, the array the client sorts by version_number).
  * The doubles now REFUSE an ambiguous embed too (helpers/migrationForeignKeys.ts).
@@ -135,8 +135,8 @@ describe("an embed PostgREST cannot resolve to one relationship (PGRST201) is on
 // Read from the scan (the select exactly as the source spells it, at the cited
 // line), then resolved by the guard the doubles use. "author" is the post's
 // author_id: every caller hands the embedded profile to excludePrivateAuthorPosts
-// as THAT author's privacy (placeDays.ts and placeRecaps.ts:59 key it by
-// author_id; placeRecaps.ts:41 by contributor_id, which POST
+// as THAT author's privacy (placeDays.ts and placeRecaps.ts:60 key it by
+// author_id; placeRecaps.ts:42 by contributor_id, which POST
 // /shared-moments/:id/contributions requires to be the post's author). The
 // recap list is every version of the recap: the client sorts that ARRAY by
 // version_number (travel-buddy-standalone PlaceRecapsSection `latestTitle`).
@@ -146,10 +146,10 @@ describe("the five wave-5 reads resolve to the relationship each one means", () 
   const VERSIONS = "live_place_recap_versions.recap_id → live_place_recaps (live_place_recap_versions_recap_id_fkey, one-to-many)";
   const CONTRIBUTION_POST = "shared_moment_contributions.post_id → posts (shared_moment_contributions_post_id_fkey, many-to-one)";
   const SITES: ReadonlyArray<{ at: string; table: string; expect: string[] }> = [
-    { at: "src/routes/placeDays.ts:101", table: "posts", expect: [`profiles ${AUTHOR}`] },
-    { at: "src/routes/placeRecaps.ts:41", table: "shared_moment_contributions", expect: [`posts ${CONTRIBUTION_POST}`, `profiles ${AUTHOR}`] },
-    { at: "src/routes/placeRecaps.ts:59", table: "posts", expect: [`profiles ${AUTHOR}`] },
-    { at: "src/routes/placeRecaps.ts:151", table: "live_place_recaps", expect: [`live_place_recap_versions ${VERSIONS} inner`] },
+    { at: "src/routes/placeDays.ts:100", table: "posts", expect: [`profiles ${AUTHOR}`] },
+    { at: "src/routes/placeRecaps.ts:42", table: "shared_moment_contributions", expect: [`posts ${CONTRIBUTION_POST}`, `profiles ${AUTHOR}`] },
+    { at: "src/routes/placeRecaps.ts:60", table: "posts", expect: [`profiles ${AUTHOR}`] },
+    { at: "src/routes/placeRecaps.ts:157", table: "live_place_recaps", expect: [`live_place_recap_versions ${VERSIONS} inner`] },
     { at: "src/routes/sharedMoments.ts:314", table: "shared_moment_contributions", expect: [`posts ${CONTRIBUTION_POST}`, `profiles ${AUTHOR}`] },
   ];
   const flat = (nodes: ResolvedEmbed[]): ResolvedEmbed[] => nodes.flatMap((n) => [n, ...flat(n.children)]);

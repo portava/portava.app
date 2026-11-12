@@ -231,7 +231,7 @@ describe('Saved place collection previews use current catalog and moderation', (
     const db = fixture();
     assert.equal((await saved())[0].title, 'Community 2');
     db._store.places![0]!.moderation_status = 'withheld';
-    assert.deepEqual((await saved())[0], { id: id(40), entityType: 'place', entityId: id(2), savedAt: '2026-11-05T00:00:00Z', title: null, coverUrl: null });
+    assert.deepEqual((await saved())[0], { id: id(40), entityType: 'place', entityId: id(2), savedAt: '2026-11-05T00:00:00Z', title: null, coverUrl: null, placeId: null });
     db._store.places![0]!.moderation_status = 'visible';
     assert.equal((await saved())[0].coverUrl, 'https://example.test/cover.jpg');
   });

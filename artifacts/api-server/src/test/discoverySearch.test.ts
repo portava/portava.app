@@ -193,6 +193,8 @@ function makeFakeClient(
                 return re.test(cellStr);
               }
               if (op === "eq") return cellStr === val;
+              if (op === "is" && val === "null") return r[col] == null;
+              if (op === "gte") return r[col] != null && cellStr >= val;
               return false;
             }),
           );

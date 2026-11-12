@@ -78,7 +78,7 @@ function memory(id: string, over: Record<string, unknown> = {}) {
 function place(id: string, over: Record<string, unknown> = {}) {
   return {
     id, name: "Somewhere", primary_category: "food", latitude: 21.03, longitude: 105.85, address: null, city: "Hanoi",
-    country_code: "VN", status: "active", merged_into_place_id: null, canonical_location_id: null, ...over,
+    country_code: "VN", status: "active", moderation_status: "visible", merged_into_place_id: null, canonical_location_id: null, ...over,
   };
 }
 
@@ -115,7 +115,7 @@ function seed(w: World): Record<string, any[]> {
     feature_flags: flags,
     memories: rows,
     places: [
-      place(PLACE_P, { name: "Cafe A (renamed since)", status: "duplicate", merged_into_place_id: PLACE_Q }),
+      place(PLACE_P, { name: "Cafe A (renamed since)", status: "duplicate", moderation_status: "visible", merged_into_place_id: PLACE_Q }),
       place(PLACE_Q, { name: "Cafe B" }),
       place(PLACE_R, { name: "Ramen R" }),
     ],

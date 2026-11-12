@@ -4,6 +4,7 @@
  * timeline projection; §21.1 temporal_conflict_total.
  * census-trips TR132, TR133, TR205, TR197, TR129, TR130, TR395.
  */
+import { canonicalPlaceFixture } from "./helpers/canonicalPlaceFixture.js";
 import { describe, it, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -52,6 +53,7 @@ function makeClient(tables: Record<string, Row[]>, errorOn: string[] = []) {
         };
         return f;
       }
+      if (table === "places") return canonicalPlaceFixture(tables.places ?? []);
       const filters: Array<(r: Row) => boolean> = [];
       let single = false;
       const settle = () => {
@@ -160,6 +162,17 @@ describe("GET /trips/:id/freedom-windows — §7.3 through the §12.1 read", () 
     r = await get("freedom-windows");
     assert.equal(r.status, 503);
     assert.equal(r.body.reason, "TRIP_PROJECTION_UNAVAILABLE");
+  });
+
+  it("refuses a route window based on a venue that has since been withheld", async () => {
+    install({ places: [
+      { id: PLACE_A, latitude: ORIGIN.lat, longitude: ORIGIN.lng },
+      { id: PLACE_B, latitude: DEST.lat, longitude: DEST.lng, moderation_status: "withheld" },
+    ] });
+    const r = await get("freedom-windows");
+    assert.equal(r.status, 503);
+    assert.equal(r.body.reason, "TRIP_PROJECTION_UNAVAILABLE");
+    assert.equal(r.body.windows, undefined);
   });
 
   it("unreadable commitments are refused — a window over 'no commitments' is the whole trip, the most confident wrong answer", async () => {

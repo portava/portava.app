@@ -117,7 +117,7 @@ function fixture(state: State): Record<string, any[]> {
     message_forwards: [],
     blocks: state.blockedTarget ? [{ blocker_id: CAROL, blocked_id: BOB }] : [],
     posts: [
-      { id: POST_OK, author_id: ALICE, content: "A bar with no sign", visibility: "public", status: "active", deleted_at: null, media_urls: [], updated_at: "2026-05-01T00:00:00.000Z" },
+      { id: POST_OK, author_id: ALICE, content: "A bar with no sign", visibility: "public", status: "active", post_status: "published", deleted_at: null, media_urls: [], updated_at: "2026-05-01T00:00:00.000Z" },
       { id: POST_GONE, author_id: ALICE, content: "Gone", visibility: "public", status: "deleted", deleted_at: "2026-05-02T00:00:00.000Z", media_urls: [], updated_at: "2026-05-02T00:00:00.000Z" },
     ],
     profiles: [

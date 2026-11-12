@@ -37,6 +37,7 @@
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *      node --import tsx/esm --test src/test/mediaTrailReviewCapability.test.ts
  */
+import { makeFakeClient as makeCatalogClient } from './telegraphCertificationHarness.js';
 import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -88,6 +89,7 @@ function makeSc(data: Dataset, mode: Mode) {
   const resolveRows = (table: string, filters: Array<(r: any) => boolean>) =>
     (data[table] ?? []).map((r) => ({ ...r })).filter((r) => filters.every((f) => f(r)));
   const builder = (table: string): any => {
+    if (table === "places") return makeCatalogClient({ places: data.places ?? [] }).from(table);
     const filters: Array<(r: any) => boolean> = [];
     const seen: Seen = { table, list: "*", filters: [] };
     const error = () => {
@@ -173,6 +175,7 @@ function makePost(): any {
 /** A post in one Trail, a plan-editable trip for the viewer, and the Trail in the given review state. */
 function railData(review: "approved" | "pending", trailId = TRAIL_1): Dataset {
   return {
+    places: [{ id: PLACE_1 }],
     profiles: [
       { id: VIEWER, location_country: "VN", date_of_birth: "1990-01-01", account_status: "active" },
       { id: AUTHOR_A, account_status: "active", passport_visibility: "public", is_private: false },

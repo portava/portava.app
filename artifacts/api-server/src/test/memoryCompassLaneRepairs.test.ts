@@ -249,12 +249,6 @@ describe("CompassSearchDecayService — the decay flag is actually readable", ()
     assert.equal((await getDecayConfig(c as any)).halfLifeDays, 30);
   });
 
-  // `compass_search_signal_log` is NOT in the live snapshot — see the
-  // "capability is inert" test below — so the strict client is told not to
-  // check it. That exemption is the finding, not a convenience: without it
-  // these two tests could not run at all.
-  const UNCHECKED = { unchecked: ["compass_search_signal_log"] };
-
   it("a disabled flag short-circuits getDecayedWeights — weights are returned undecayed", async () => {
     const weights = { food: 8 };
     const c = makeSchemaStrictClient({
@@ -264,7 +258,7 @@ describe("CompassSearchDecayService — the decay flag is actually readable", ()
         // ~4 half-lives ago at the default: decay would shed almost all of it.
         last_nudge_at: new Date(Date.now() - 28 * 86_400_000).toISOString(),
       }],
-    }, UNCHECKED);
+    });
     assert.deepEqual(await getDecayedWeights(c as any, ME, weights), weights);
   });
 
@@ -277,28 +271,16 @@ describe("CompassSearchDecayService — the decay flag is actually readable", ()
         user_id: ME, category: "food", search_weight: 8,
         last_nudge_at: new Date(Date.now() - 28 * 86_400_000).toISOString(),
       }],
-    }, UNCHECKED);
+    });
     const out = await getDecayedWeights(c as any, ME, { food: 8 });
     assert.ok(out.food < 8, `expected decay to shed weight, got ${out.food}`);
   });
 
-  it("the decay CAPABILITY is inert in production: its table is not in the live schema", () => {
-    // Repairing the flag read makes the CONTROL work. It does not make the
-    // feature work. `compass_search_signal_log` and the
-    // `upsert_compass_search_signal` RPC have never been created: their DDL
-    // sits in the frozen, never-applied root
-    // artifacts/api-server/supabase/migrations/20260812_compass_search_signal_log.sql
-    // (frozenMigrationRoots.ts:211). Migration 2306 therefore seeds the flag
-    // OFF and says so in the row's own description.
-    //
-    // WHEN SOMEONE PORTS THAT DDL, THIS TEST GOES RED. That is the intent:
-    // delete this test in the same commit that applies the table, and stop
-    // exempting it above.
-    assert.throws(
-      () => liveColumns("compass_search_signal_log"),
-      /not found in generated live schema/,
-      "compass_search_signal_log now EXISTS live — port-complete: drop this test and the `unchecked` exemption above",
-    );
+  it("production has the columns the decay reader actually uses", () => {
+    const columns = liveColumns("compass_search_signal_log");
+    for (const name of ["user_id", "category", "last_nudge_at", "search_weight"]) {
+      assert.ok(columns.has(name), `decay reader needs compass_search_signal_log.${name}`);
+    }
   });
 
   it("a missing, zero or negative half-life falls back to the default rather than annihilating the weight", () => {

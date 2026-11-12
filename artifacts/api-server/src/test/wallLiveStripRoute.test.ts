@@ -129,6 +129,7 @@ const BASE_TABLES: Record<string, any[]> = {
   places: PLACES,
   profiles: Object.values(PROFILES),
   user_follows: [{ following_id: "author-1" }, { following_id: "author-2" }, { following_id: "author-3" }],
+  trips: [{ id: "trip-1", status: "active", end_date: at(48 * 60).slice(0, 10), timezone: "Asia/Ho_Chi_Minh" }],
   trip_members: TRIP_MEMBERS,
   trip_saved_places: TRIP_SAVED_PLACES,
   trip_plan_items: TRIP_PLAN_ITEMS,
@@ -267,6 +268,15 @@ describe("Live For You strip — the routes serve the full multi-kind set (§4/T
   });
 
   beforeEach(() => useWorld());
+
+  it("withholds an expired trip even when its saved stop and milestone remain", async () => {
+    useWorld({ tables: { trips: [{ id: "trip-1", status: "active", end_date: at(-48 * 60).slice(0, 10), timezone: "Asia/Ho_Chi_Minh" }] } });
+    const res = await get("/api/wall/live?limit=4");
+    assert.equal(res.status, 200);
+    assert.ok(kindsOf(res.json.liveForYou).has("event_state"));
+    assert.ok(!kindsOf(res.json.liveForYou).has("trip_signal"));
+    assert.ok(!reads.includes("trip_saved_places"));
+  });
 
   it("GET /wall/live serves trip_signal, event_state, social_presence and hidden_gem", async () => {
     const res = await get("/api/wall/live?limit=4");

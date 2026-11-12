@@ -93,6 +93,10 @@ export function toPrivateTripPreview(
  * included because the viewer has already passed authorization.
  */
 export function toAuthorizedTripView(t: any): AuthorizedTripView {
+  return toAuthorizedTripViewAt(t, new Date());
+}
+
+export function toAuthorizedTripViewAt(t: any, now: Date): AuthorizedTripView {
   return {
     id: t.id as string,
     ownerId: t.owner_id as string,
@@ -105,7 +109,7 @@ export function toAuthorizedTripView(t: any): AuthorizedTripView {
     neighborhoods: (t.neighborhoods as string[]) ?? [],
     startDate: (t.start_date as string | null) ?? null,
     endDate: (t.end_date as string | null) ?? null,
-    status: tripStatusAtRead(t),
+    status: tripStatusAtRead(t, now),
     visibility: t.visibility as string,
     tripType: (t.trip_type as string) ?? "leisure",
     timezone: (t.timezone as string | null) ?? null,

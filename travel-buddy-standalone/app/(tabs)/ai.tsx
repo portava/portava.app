@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet,
   ActivityIndicator, ScrollView, RefreshControl,
@@ -12,7 +12,7 @@ import {
   confirmCompassProposal, declineCompassProposal,
 } from '../../src/services/compass';
 import { sensingZoneHint } from '../../src/services/sensing/sensingZoneHint';
-import { currentDiscoveryScope, isCurrentDiscoveryScope, type DiscoveryScope } from '../../src/services/discoveryViewerScope';
+import { currentDiscoveryScope, isCurrentDiscoveryScope, onDiscoveryScopeChange, type DiscoveryScope } from '../../src/services/discoveryViewerScope';
 import type { CompassAskResponse, CompassPendingProposal, CompassUiPlace } from '../../src/services/compass';
 import { CompassChatBlocks, usePlaceNavigation } from '../../src/components/compass/CompassChatBlocks'; import { solePlaceCard, soleEventCard } from '../../src/lib/compassActionTarget.ts';
 import { AppHeader } from '../../src/components/ui/AppHeader';
@@ -43,12 +43,25 @@ type ChatEntry =
   // Live-streaming assistant reply — replaced by a 'rec' entry on finalize.
   | { kind: 'stream';  id: string; text: string };
 
+type CompassHandoff = { prompt: string; mediaId?: string; owner: DiscoveryScope };
+const scopeEpoch = () => currentDiscoveryScope().epoch;
+
 export default function AiChat() {
+  const epoch = useSyncExternalStore(onDiscoveryScopeChange, scopeEpoch, scopeEpoch);
+  const { prefillMessage, mediaId } = useLocalSearchParams<{ prefillMessage?: string; mediaId?: string }>();
+  const handoff = useMemo<CompassHandoff | null>(() => (
+    typeof prefillMessage === 'string' && prefillMessage.trim()
+      ? { prompt: prefillMessage, mediaId: typeof mediaId === 'string' ? mediaId : undefined, owner: currentDiscoveryScope() }
+      : null
+  ), [prefillMessage, mediaId]);
+  return <CompassConversation key={epoch} handoff={handoff} />;
+}
+
+function CompassConversation({ handoff }: { handoff: CompassHandoff | null }) {
   const router = useRouter();
   const [selectedArea, setSelectedArea] = useState<{ zone: string; owner: DiscoveryScope } | null>(null);
   const area = sensingZoneHint();
   const areaSelected = Boolean(selectedArea && selectedArea.zone === area && isCurrentDiscoveryScope(selectedArea.owner));
-  const { prefillMessage, mediaId } = useLocalSearchParams<{ prefillMessage?: string; mediaId?: string }>();
   const planPicker = usePlanPicker(); const openPlace = usePlaceNavigation();
   // Pre-seed Compass with the user's resolved city (GPS → last-known → home)
   // so it never has to ask "where are you right now?" when the app already
@@ -109,21 +122,22 @@ export default function AiChat() {
     postCompassFrontloadEvent({ eventType: 'navigation', screen: 'ai_chat' }).catch(() => {});
   }, []));
 
-  // Layover's "Ask locals" hands off a ready-made prompt (airport + city +
-  // time-to-spare context) via router params — auto-send it once so the
-  // traveler lands in a live conversation instead of a blank chat that
-  // silently dropped their layover context.
-  const sentPrefillRef = useRef(false);
+  // Each navigation carries one question. Keep arrivals in order while the previous
+  // reply is in flight, including a repeat visit with the same prompt or another video.
+  const consumedHandoff = useRef<CompassHandoff | null>(null);
+  const pendingHandoffs = useRef<CompassHandoff[]>([]);
   useEffect(() => {
-    if (!prefillMessage || sentPrefillRef.current) return;
-    sentPrefillRef.current = true;
-    // The media action rail hands off both a prompt and (optionally) the media
-    // id so Compass grounds its first reply in the media context (§32); the
-    // context only needs to ride the initiating turn — follow-ups carry it via
-    // the conversation id.
-    send(prefillMessage, typeof mediaId === 'string' ? mediaId : undefined);
+    if (handoff && handoff !== consumedHandoff.current && isCurrentDiscoveryScope(handoff.owner)) {
+      consumedHandoff.current = handoff;
+      pendingHandoffs.current.push(handoff);
+      router.setParams({ prefillMessage: undefined, mediaId: undefined });
+    }
+    if (loading || streamingRef.current) return;
+    const next = pendingHandoffs.current.shift();
+    if (next && isCurrentDiscoveryScope(next.owner)) void send(next.prompt, next.mediaId);
+    // send uses the current render's city and conversation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefillMessage]);
+  }, [handoff, loading]);
 
   function scrollToEnd() {
     setTimeout(() => scroll.current?.scrollToEnd({ animated: true }), 80);

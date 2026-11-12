@@ -175,7 +175,7 @@ export function makeKitClient(state: KitState, calls: KitCalls) {
       or(expr: string) {
         calls.ors.push({ table, expr });
         const parts = expr.split(",").map((p) => {
-          const m = p.trim().match(/^([\w]+)\.(ilike|eq|is|gt)\.(.*)$/);
+          const m = p.trim().match(/^([\w]+)\.(ilike|eq|is|gt|gte)\.(.*)$/);
           if (!m) throw new Error(`kit: unmodelled .or() clause "${p}"`);
           if (m[2] === "is" && m[3] !== "null") throw new Error(`kit: unmodelled .or() clause "${p}"`);
           named.add(m[1]!);
@@ -184,6 +184,7 @@ export function makeKitClient(state: KitState, calls: KitCalls) {
         filters.push((record) => parts.some(({ col, op, val }) => {
           if (op === "is") return record[col] == null;
           if (op === "gt") return record[col] != null && record[col] > val;
+          if (op === "gte") return record[col] != null && record[col] >= val;
           return op === "eq" ? String(record[col] ?? "") === val : record[col] != null && likeToRegExp(val).test(String(record[col]));
         }));
         return b;

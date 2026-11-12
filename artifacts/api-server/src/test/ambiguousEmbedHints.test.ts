@@ -14,9 +14,9 @@
  * live_place_recaps_current_version_fk (recaps.current_version_id → versions) and
  * live_place_recap_versions_recap_id_fkey (versions.recap_id → recaps). So:
  *   GET  /places/:id/place-days/:date/feed       routes/placeDays.ts:101   posts → profiles(...)
- *   POST /place-recaps (moment) and regenerate   routes/placeRecaps.ts:41  contributions → posts → profiles(...)
- *   POST /place-recaps (place day) and regenerate routes/placeRecaps.ts:59 posts → profiles(...)
- *   GET  /places/:placeId/recaps                 routes/placeRecaps.ts:151 recaps → live_place_recap_versions!inner(...)
+ *   POST /place-recaps (moment) and regenerate   routes/placeRecaps.ts:43  contributions → posts → profiles(...)
+ *   POST /place-recaps (place day) and regenerate routes/placeRecaps.ts:61 posts → profiles(...)
+ *   GET  /places/:placeId/recaps                 routes/placeRecaps.ts:157 recaps → live_place_recap_versions!inner(...)
  *   GET  /shared-moments/:id/feed                routes/sharedMoments.ts:314 contributions → posts → profiles(...)
  * every one answered PGRST201. No error was swallowed: each route turned it into
  * `db_error` (500), so in production the Place Day feed, the Shared Moment feed
@@ -234,7 +234,7 @@ function world(): Seed {
       { id: PRIV_F, is_private: true }, { id: PUB_X, is_private: false }, { id: PRIV_R, is_private: true },
     ],
     user_follows: [{ follower_id: VIEWER, following_id: PRIV_F }],
-    places: [{ id: PLACE, name: "The Place", city: null, latitude: null, longitude: null, merged_into_place_id: null }],
+    places: [{ id: PLACE, name: "The Place", city: null, latitude: null, longitude: null, moderation_status: "visible", merged_into_place_id: null }],
     posts: POSTS.map((p) => ({ ...p })),
     place_days: [{ id: PLACE_DAY, place_id: PLACE, local_date: DATE, timezone: "UTC", status: "closing" }],
     shared_moments: [{ id: MOMENT, owner_id: VIEWER, place_id: PLACE, status: "archived", title: "A moment" }],
@@ -279,7 +279,7 @@ const auth = { getUser: async (token: string) => (token === TOKEN ? { data: { us
  * and answers success. Everything else — the live-column check, the embed guard,
  * the materialised join — is the double's own. Every read's result is recorded.
  */
-function install(seed: Seed) {
+function install(seed: Seed, failedRead?: "placeVisibility" | "placeDetails" | "recapParent") {
   const strict = makeSchemaStrictClient(seed, { joinEmbeds: true });
   const reads: Array<{ table: string; cols: string; data: any }> = [];
   const rpcs: Array<{ fn: string; args: any }> = [];
@@ -290,8 +290,16 @@ function install(seed: Seed) {
     const select = b.select;
     b.select = (c?: string, o?: any) => { cols = c ?? ""; return select(c, o); };
     b.or = (expr: string) => { preds.push(orPredicate(expr)); return b; };
+    const readError = { data: null, error: { code: "57P01", message: "injected read failure" }, count: null };
+    const single = b.maybeSingle;
+    b.maybeSingle = () => {
+      if ((failedRead === "placeDetails" && table === "places") ||
+          (failedRead === "recapParent" && (table === "place_days" || table === "shared_moments"))) return Promise.resolve(readError);
+      return single();
+    };
     const then = b.then;
     b.then = (onF: any, onR: any) => then((r: any) => {
+      if (failedRead === "placeVisibility" && table === "places" && cols.includes("moderation_status")) return onF(readError);
       let data = r?.data;
       if (Array.isArray(data) && preds.length) data = data.filter((row: any) => preds.every((p) => p(row)));
       reads.push({ table, cols, data });
@@ -332,7 +340,7 @@ describe("routes/placeDays.ts:101 — GET /places/:id/place-days/:date/feed deci
   });
 });
 
-describe("routes/placeRecaps.ts:59 — POST /place-recaps (a Place Day) collects sources on the AUTHOR's profile", () => {
+describe("routes/placeRecaps.ts:61 — POST /place-recaps (a Place Day) collects sources on the AUTHOR's profile", () => {
   it("answers 201; the recap's sources leave out the unfollowed private author's post and keep the public author's", async () => {
     const { strict, rpcs } = install(world());
     const r = await call("POST", "/place-recaps", { placeDayId: PLACE_DAY });
@@ -344,7 +352,7 @@ describe("routes/placeRecaps.ts:59 — POST /place-recaps (a Place Day) collects
   });
 });
 
-describe("routes/placeRecaps.ts:41 — POST /place-recaps (a Shared Moment) collects contributions on the post AUTHOR's profile", () => {
+describe("routes/placeRecaps.ts:43 — POST /place-recaps (a Shared Moment) collects contributions on the post AUTHOR's profile", () => {
   it("answers 201; the unfollowed private author's contribution is left out, a caption-only one is kept", async () => {
     const { strict, rpcs, reads } = install(world());
     const r = await call("POST", "/place-recaps", { momentId: MOMENT });
@@ -360,7 +368,7 @@ describe("routes/placeRecaps.ts:41 — POST /place-recaps (a Shared Moment) coll
   });
 });
 
-describe("routes/placeRecaps.ts:151 — GET /places/:placeId/recaps lists EVERY version of each recap, as the client reads it", () => {
+describe("routes/placeRecaps.ts:157 — GET /places/:placeId/recaps lists EVERY version of each recap, as the client reads it", () => {
   it("answers 200; each recap carries an array of its own versions; a recap with no version is not listed", async () => {
     const { strict } = install(world());
     const r = await call("GET", `/places/${PLACE}/recaps`);
@@ -392,4 +400,37 @@ describe("routes/sharedMoments.ts:314 — GET /shared-moments/:id/feed answers, 
     assert.equal(withPost.length, 4);
     for (const row of withPost) assert.equal(row.posts.profiles.id, row.posts.author_id, "the embedded profile is the post's author");
   });
+});
+
+
+describe("Place Day and recap source lookup refusals", () => {
+  for (const path of [`/places/${PLACE}/place-days?date=${DATE}`, `/places/${PLACE}/place-days/${DATE}/feed`]) {
+    it(`returns retryable JSON for unavailable place moderation at ${path}`, async () => {
+      const { reads } = install(world(), "placeVisibility");
+      const reply = await call("GET", path);
+      assert.equal(reply.status, 503);
+      assert.equal(reply.body.error, "degraded_unavailable");
+      assert.equal(reply.body.retryable, true);
+      assert.ok(!reads.some(row => row.table === "posts" || row.table === "place_days"));
+    });
+    it(`withholds the place without exposing content at ${path}`, async () => {
+      const seed = world();
+      seed.places[0]!.moderation_status = "withheld";
+      const { reads } = install(seed);
+      const reply = await call("GET", path);
+      assert.equal(reply.status, 404);
+      assert.equal(reply.body.error, "not_found");
+      assert.ok(!reads.some(row => row.table === "posts" || row.table === "place_days"));
+    });
+  }
+  for (const failure of ["recapParent", "placeVisibility", "placeDetails"] as const) {
+    it(`refuses a recap retryably and writes nothing on an unreadable ${failure}`, async () => {
+      const { rpcs } = install(world(), failure);
+      const reply = await call("POST", "/place-recaps", { placeDayId: PLACE_DAY });
+      assert.equal(reply.status, 503);
+      assert.equal(reply.body.error, "degraded_unavailable");
+      assert.equal(reply.body.retryable, true);
+      assert.deepEqual(rpcs, []);
+    });
+  }
 });

@@ -268,7 +268,7 @@ const SITES: Site[] = [
     harness: () => groupChatHarness, method: "PATCH",
     path: `/messages/${MSG}`, absentPath: `/messages/${ABSENT}`,
     actor: A, body: { body: "hello there friend, edited" },
-    table: "messages", sel: "id, thread_id, sender_id, body, deleted_at" },
+    table: "messages", sel: "id, thread_id, sender_id, body, content_ref, deleted_at" },
 
   { what: "groupChat DELETE /messages/:id — the same, on delete",
     harness: () => groupChatHarness, method: "DELETE",

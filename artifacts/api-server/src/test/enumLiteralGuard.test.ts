@@ -469,7 +469,7 @@ describe("the repository is clean, and the ratchet is honest", () => {
     // Kept separate from KNOWN_DEAD_LITERALS deliberately: merging them would
     // bury the filter list's progress (2, heading for 0) inside a combined 15.
     assert.equal(
-      Object.keys(KNOWN_DEAD_WRITE_LITERALS).length, 11, // 13 -> 11 (2026-10-03): admin.ts account_status banned / suspended struck — moderation state is user_account_states
+      Object.keys(KNOWN_DEAD_WRITE_LITERALS).length, 10, // Report-linked removal writes posts.status; the invalid posts.post_status:removed entry is retired.
       "KNOWN_DEAD_WRITE_LITERALS is shrink-only. Every entry is a row the " +
         "database REJECTS — 22P02 on an enum, 23514 on a text CHECK — so unlike " +
         "the read side these are not quiet misses, they are writes that never " +

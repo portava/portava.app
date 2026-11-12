@@ -287,13 +287,15 @@ router.get(
     // §10.3: CONFIRMED session context. The window is the plan's own, and a
     // thread with no completed plan has no session to recap — it does not get
     // a made-up one from "the last few hours".
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
     let planQuery = client
       .from("meetups")
       .select("id, title, starts_at, ends_at, status, chat_thread_id, creator_id")
       .eq("chat_thread_id", threadId)
       .eq("status", "confirmed")
-      .lte("starts_at", new Date().toISOString())
-      .or(`ends_at.is.null,ends_at.lte.${new Date().toISOString()}`)
+      .lte("starts_at", nowIso)
+      .or(`ends_at.is.null,ends_at.lte.${nowIso}`)
       .order("starts_at", { ascending: false })
       .limit(20);
     if (planIdRaw) planQuery = planQuery.eq("id", planIdRaw);
@@ -303,7 +305,6 @@ router.get(
       return;
     }
 
-    const nowMs = Date.now();
     const candidates = ((plans as any[]) ?? [])
       .filter((p) => p.starts_at && p.status === "confirmed")
       .filter((p) => Date.parse(p.ends_at ?? p.starts_at) <= nowMs)

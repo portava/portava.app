@@ -17,6 +17,7 @@
  *   digest, and text pins on migration 2276 (flag OFF postcondition, RLS,
  *   REVOKE-first, own-row policy, append-only triggers, nonce columns).
  */
+import { canonicalPlaceFixture } from './helpers/canonicalPlaceFixture.js';
 import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
@@ -70,6 +71,10 @@ function makeDb(flags: Record<string, boolean>, seed: Record<string, Row[]> = {}
   let seq = 0;
 
   function from(table: string) {
+    if (table === "places" && opts.errorOn !== table && opts.throwOn !== table) {
+      reads[table] = (reads[table] ?? 0) + 1;
+      return canonicalPlaceFixture(tables.places);
+    }
     let op: "select" | "insert" | "update" = "select";
     let payload: any = null;
     let wantRows = false;
@@ -626,12 +631,12 @@ describe("I3 presence — verifier helpers", () => {
     assert.equal(claimMatchesFamily("crowd.level", null), false);
   });
 
-  it("verifyPresence itself never throws — a throwing client yields P1 with the error named", async () => {
+  it("verifyPresence itself never throws — a throwing client yields P1 and identifies the failed visibility check", async () => {
     const boom = { from() { throw new Error("client exploded"); } };
     const out = await verifyPresence(boom, { actorId: ACTOR, subjectId: PLACE, subjectKind: "experience", claimType: "crowd.level", observedAt: OBSERVED, capturedAt: null, claimedLevel: "P2", attestation: null });
     assert.equal(out.level, "P1");
     assert.equal(out.method, null);
-    assert.match(String(out.evidence.error), /client exploded/);
+    assert.equal(out.evidence.error, "Place visibility unavailable");
   });
 
   it("an invalid capture time ⇒ P1 before any read", async () => {

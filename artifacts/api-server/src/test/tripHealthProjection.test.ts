@@ -4,6 +4,7 @@
  * timeline's derived AT_RISK plans. census-trips TR38–TR45, TR314, TR317,
  * TR396.
  */
+import { canonicalPlaceFixture } from "./helpers/canonicalPlaceFixture.js";
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
@@ -33,6 +34,7 @@ export function makeClient(tables: Record<string, Row[]>, errorOn: string[] = []
           then: (onF: any, onR: any) => Promise.resolve({ data: null, error: { message: `${table} unavailable` } }).then(onF, onR) };
         return f;
       }
+      if (table === "places") return canonicalPlaceFixture(tables.places ?? []);
       const filters: Array<(r: Row) => boolean> = []; let single = false;
       const settle = () => { const rows = (tables[table] ?? []).filter((r) => filters.every((f) => f(r))); return { data: single ? rows[0] ?? null : rows, error: null }; };
       const chain: any = {

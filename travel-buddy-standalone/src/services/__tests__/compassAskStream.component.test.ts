@@ -231,3 +231,35 @@ describe('postCompassAskStream', () => {
     assert.equal(r.error, 'http_429');
   });
 });
+
+describe('Compass account changes during a streamed reply', () => {
+  const scope = require('../discoveryViewerScope.ts') as typeof import('../discoveryViewerScope.ts');
+  afterEach(() => { scope._resetDiscoveryViewerScopeForTests(); _setTestAuthToken(null); _setTestStreamFetch(undefined); });
+
+  it('withholds both incremental text and the terminal result after an account switch', async () => {
+    scope._resetDiscoveryViewerScopeForTests();
+    scope.noteDiscoveryViewer('t:first');
+    _setTestAuthToken('first');
+    const seen: string[] = [];
+    _setTestStreamFetch((async () => {
+      scope.noteDiscoveryViewer('t:second');
+      return sseResponse(['data: {"delta":"Private reply"}\n\ndata: {"done":true,"message":"Private reply"}\n\n']);
+    }) as typeof fetch);
+    const result = await postCompassAskStream('My private question', {}, { onDelta: value => seen.push(value) });
+    assert.equal(result.ok, false);
+    assert.equal(result.error, 'session_changed');
+    assert.deepEqual(seen, []);
+    assert.equal(result.data, undefined);
+  });
+
+  it('does not send the previous account prompt using the new account token', async () => {
+    scope._resetDiscoveryViewerScopeForTests();
+    scope.noteDiscoveryViewer('t:first');
+    _setTestAuthToken('second');
+    let calls = 0;
+    _setTestStreamFetch((async () => { calls += 1; return sseResponse([]); }) as typeof fetch);
+    const result = await postCompassAskStream('My private question');
+    assert.equal(result.ok, false);
+    assert.equal(calls, 0);
+  });
+});

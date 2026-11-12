@@ -10,6 +10,7 @@
  * the §13 privacy threshold + 0.65 confidence floor fail closed; ungrouped rows
  * are excluded from the aggregate; and a blocked actor's Trail row is filtered.
  */
+import { canonicalPlaceFixture } from "./helpers/canonicalPlaceFixture.js";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -55,9 +56,10 @@ const OBSERVED = new Date(Date.now() - 5 * 60_000).toISOString();
 /** A fake supabase client sufficient for the capture service's chains (mirrors intelCapture.test.ts). */
 function makeDb(flags: Record<string, boolean>, opts: { places?: string[] } = {}) {
   const tables: Record<string, any[]> = { intel_observations: [], intel_claims: [], intel_confirmations: [] };
-  const places = new Set(opts.places ?? []);
+  const places = (opts.places ?? []).map(id => ({ id }));
   let seq = 0;
   function from(table: string) {
+    if (table === "places") return canonicalPlaceFixture(places);
     let op: "select" | "insert" | "insert_select" | "update" = "select";
     let payload: any = null;
     const filters: [string, any][] = [];
@@ -66,10 +68,6 @@ function makeDb(flags: Record<string, boolean>, opts: { places?: string[] } = {}
       if (table === "feature_flags") {
         const flag = filters.find(([c]) => c === "flag")?.[1];
         return { data: { enabled: Boolean(flags[flag]) }, error: null };
-      }
-      if (table === "places") {
-        const id = filters.find(([c]) => c === "id")?.[1];
-        return { data: places.has(id) ? { id } : null, error: null };
       }
       if (table === "intel_contribution_consent") {
         return { data: { enabled: true, withdrawn_at: null }, error: null }; // consent granted (D4 gate)

@@ -11,7 +11,7 @@
  */
 import React from 'react';
 import { registerSensingZoneSource } from '../../../src/services/sensing/sensingZoneHint.ts';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 
 const mockRab = { enabled: false };
 // NOTE: intentionally exhaustive — the flag is the input under test; the real hook fetches /api/feature-flags.
@@ -25,7 +25,7 @@ let mockPrefill: string | undefined = 'Who could show me around Da Nang?';
 jest.mock('expo-router', () => {
   const R = jest.requireActual('react');
   return {
-    useRouter: () => ({ push: (...a: unknown[]) => mockPush(...a), back: jest.fn(), replace: jest.fn(), canGoBack: () => true }),
+    useRouter: () => ({ push: (...a: unknown[]) => mockPush(...a), back: jest.fn(), setParams: jest.fn(), replace: jest.fn(), canGoBack: () => true }),
     useLocalSearchParams: () => ({ prefillMessage: mockPrefill }),
     useFocusEffect: (cb: () => void) => R.useEffect(cb, []),
   };
@@ -82,8 +82,9 @@ jest.mock('../../../src/platform/input-assistance', () => ({
 }));
 
 import AiChat from '../ai.tsx';
+import { noteDiscoveryViewer, _resetDiscoveryViewerScopeForTests } from '../../../src/services/discoveryViewerScope.ts';
 
-beforeEach(() => { mockRab.enabled = false; mockPush.mockClear(); mockPrefill = 'Who could show me around Da Nang?'; });
+beforeEach(() => { _resetDiscoveryViewerScopeForTests(); jest.requireMock('../../../src/services/compass').postCompassAskStream.mockClear(); mockRab.enabled = false; mockPush.mockClear(); mockPrefill = 'Who could show me around Da Nang?'; });
 
 describe('Compass — Find Buddy behind rent_buddy_enabled', () => {
   it('A1: flag off → the answer\'s other chips, no "Find Buddy"', async () => {
@@ -149,5 +150,51 @@ describe('Compass composer', () => {
       service._setTestStreamFetch(undefined);
       postCompassAskStream.mockImplementation(originalImplementation);
     }
+  });
+});
+
+describe('Compass repeated navigation and session ownership', () => {
+  it('answers a second handoff on the mounted tab and permits a repeated question after consuming params', async () => {
+    const { postCompassAskStream } = jest.requireMock('../../../src/services/compass');
+    const view = await render(<AiChat />);
+    expect(await screen.findByText('Open Map')).toBeTruthy();
+    mockPrefill = undefined;
+    await view.rerender(<AiChat />);
+    mockPrefill = 'What about tomorrow?';
+    await view.rerender(<AiChat />);
+    await waitFor(() => expect(postCompassAskStream).toHaveBeenCalledTimes(2));
+    mockPrefill = undefined;
+    await view.rerender(<AiChat />);
+    mockPrefill = 'What about tomorrow?';
+    await view.rerender(<AiChat />);
+    await waitFor(() => expect(postCompassAskStream).toHaveBeenCalledTimes(3));
+    expect(postCompassAskStream.mock.calls.map((args: unknown[]) => args[0])).toEqual([
+      'Who could show me around Da Nang?', 'What about tomorrow?', 'What about tomorrow?',
+    ]);
+  });
+
+  it('queues the next navigation while a reply is pending', async () => {
+    const { postCompassAskStream } = jest.requireMock('../../../src/services/compass');
+    let finish!: (value: unknown) => void;
+    postCompassAskStream.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const view = await render(<AiChat />);
+    mockPrefill = 'A different video question';
+    await view.rerender(<AiChat />);
+    expect(postCompassAskStream).toHaveBeenCalledTimes(1);
+    await act(() => finish({ ok: true, data: { message: 'First answer', conversationId: 'first', quickActions: [], pendingProposals: [] } }));
+    await waitFor(() => expect(postCompassAskStream).toHaveBeenCalledTimes(2));
+    expect(postCompassAskStream.mock.calls[1][1].conversationId).toBe('first');
+  });
+
+  it('clears the transcript and suppresses a prior account response without replaying its prompt', async () => {
+    const { postCompassAskStream } = jest.requireMock('../../../src/services/compass');
+    let finish!: (value: unknown) => void;
+    postCompassAskStream.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await render(<AiChat />);
+    await act(() => noteDiscoveryViewer('u:second'));
+    await act(() => finish({ ok: true, data: { message: 'Private previous answer', conversationId: 'old', quickActions: [], pendingProposals: [] } }));
+    expect(screen.queryByText('Private previous answer')).toBeNull();
+    expect(screen.queryByText('Who could show me around Da Nang?')).toBeNull();
+    expect(postCompassAskStream).toHaveBeenCalledTimes(1);
   });
 });

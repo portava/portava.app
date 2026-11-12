@@ -1027,7 +1027,7 @@ describe("T366 hardening, round 3 — the verifier's three shapes (verification 
     assert.equal(references("<AutoRecapCard messages={messages} />", "AutoRecapCard"), false, "references alone does not see JSX");
   });
 
-  describe("(c) the two reviewed client units: each still crosses only through its named components, and its argument is pinned", () => {
+  describe("(c) the reviewed client units: each still crosses only through its named components, and its argument is pinned", () => {
     const client = clientAnalysis();
     for (const r of REVIEWED_CLIENT_JSX_NON_FLOWS) {
       it(`${r.file} :: ${r.unit}`, () => {
@@ -1552,5 +1552,42 @@ describe("T366 detector — a negated non-database `.from(` is not a read (Layov
     assert.deepEqual(fromSites("const r = !sc!.from(table);").map((s) => s.expr), ["table"]);
     assert.deepEqual(fromSites('const r = await client!.from("messages").select("body");').map((s) => s.table), ["messages"]);
     assert.ok(conversationReadsResolved("const r = !sc.from(t);", new Map())[0]!.startsWith("?"), "an unresolved negated read still fails closed");
+  });
+});
+
+describe("T366 release source-reference and recap controls", () => {
+  it("a multiline RPC choice includes every creation branch", () => {
+    const source = [
+      "export async function dispatch(sc, command) {",
+      " const fn = command.type === 'CREATE_MEMORY'",
+      "   ? 'telegraph_memory_draft_execute' : command.type === 'CREATE_HIGHLIGHT'",
+      "     ? 'submit_uploaded_highlight' : 'memory_kernel_execute';",
+      " return sc.rpc(fn, command);",
+      "}",
+    ].join("\n");
+    assert.deepEqual(memoryCreationsResolved(source, stringConstsIn(source), source).sort(),
+      ["rpc:memory_kernel_execute", "rpc:telegraph_memory_draft_execute"]);
+    assert.deepEqual(memoryCreationsResolved(source.replace("const fn =", "const another ="), stringConstsIn(source), source.replace("const fn =", "const another =")), ["rpc:?fn"]);
+  });
+
+  it("the shared post overlay opens the canonical source, and its Memory destination is a pressed save action", () => {
+    const media = readFileSync(join(CLIENT, "src/features/telegraph/sharing/SharedMessageMedia.tsx"), "utf8");
+    assert.match(media, /PostTakeover postId=\{projection\.objectId\}/);
+    const sheet = readFileSync(join(CLIENT, "src/components/ShareSheet.tsx"), "utf8");
+    assert.match(sheet, /PostSaveDestinationPanel[\s\S]*?postId=\{postId\}[\s\S]*?destination=\{mode\}/);
+    const panel = readFileSync(join(CLIENT, "src/components/PostSaveDestinationPanel.tsx"), "utf8");
+    assert.match(panel, /async function save\(\)/);
+    assert.match(panel, /savePostToDestination\(postId, \{ \.\.\.intent, operationId: operation\.current\.id \}, owner\)/);
+    assert.match(panel, /onPress=\{\(\) => void save\(\)\}/);
+    assert.equal((panel.match(/savePostToDestination\(/g) ?? []).length, 1);
+  });
+
+  it("a recap draft requires a selected live message and an explicit save press", () => {
+    const recap = readFileSync(join(CLIENT, "src/features/telegraph/memory/RecapCurationScreen.tsx"), "utf8");
+    assert.match(recap, /choices\?\.items\.find\(item => item\.messageId === selected\)/);
+    assert.match(recap, /if \(!current\(\) \|\| !owner \|\| !selected \|\| !chosen \|\| locked\.current \|\| draft\) return/);
+    assert.match(recap, /saveMessageAsMemoryDraft\(selected, undefined, \{ owner, signal: controller\.current\?\.signal, isCurrent: activity\.isCurrent \}\)/);
+    assert.match(recap, /onPress=\{\(\) => void save\(\)\}/);
+    assert.equal((recap.match(/saveMessageAsMemoryDraft\(/g) ?? []).length, 1);
   });
 });
