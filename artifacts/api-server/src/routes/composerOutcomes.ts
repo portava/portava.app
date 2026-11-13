@@ -45,7 +45,7 @@ router.post('/media/analytics/composer-outcomes', asyncHandler(async (req, res) 
                 payload: { version: event.version, surface: event.surface, outcome: event.outcome,
                     ...(event.failure_code ? { failure_code: event.failure_code } : {}) },
             }])).values()];
-    const { error } = await sc.from('media_events').upsert(rows, { onConflict: 'id', ignoreDuplicates: true });
+    const { error } = await sc.from('media_events').upsert(rows.map(row => ({ id: row.id, event_type: row.event_type, payload: row.payload })), { onConflict: 'id', ignoreDuplicates: true });
     if (error) {
         res.status(503).json({ error: 'unavailable' });
         return;

@@ -107,7 +107,7 @@ export async function normalizeGeneratedOutput(bytes: Buffer, mime: string, kind
 /** One leased step; the receipt is durable before processing a completion event. */
 export async function processGenerationJob(sc: any, job: GenerationJob, env: Env = process.env, provider = new HiggsfieldProvider(env), normalize = normalizeGeneratedOutput) {
   const update = async (values: Record<string, unknown>) => {
-    const result = await sc.from("media_generation_jobs").update({ ...values, updated_at: new Date().toISOString() }).eq("id", job.id).eq("lease_token", job.lease_token).select("id");
+    const result = await sc.from("media_generation_jobs").update({ ...values, updated_at: new Date(Date.now()).toISOString() }).eq("id", job.id).eq("lease_token", job.lease_token).select("id");
     if (result.error || !result.data?.length) throw new GenerationError("generation_lease_lost", true);
   };
   const readCurrent = async (): Promise<GenerationJob> => {
@@ -131,7 +131,7 @@ export async function processGenerationJob(sc: any, job: GenerationJob, env: Env
       const account = await resolveAccountRestriction(sc, job.owner_user_id);
       if (account.state !== "ok") throw new GenerationError("generation_owner_unavailable", true);
       if (account.accountStatus !== "active" || account.restriction.kind !== "none") throw new GenerationError("generation_owner_restricted");
-      await update({ state: "running", submission_started_at: job.submission_started_at ?? new Date().toISOString() });
+      await update({ state: "running", submission_started_at: job.submission_started_at ?? new Date(Date.now()).toISOString() });
       job.provider_receipt = await provider.submit(job.id, job.kind, job.provider_input, job.model);
       await update({ provider_receipt: job.provider_receipt });
     }

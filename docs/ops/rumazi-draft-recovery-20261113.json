@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "auditedAt": "2026-11-13",
-  "status": "code_verified_activation_and_device_validation_pending",
-  "scope": "User-authorized draft recovery and abandoned-action outcomes. Local-account-scoped drafts; no iPhone build, production mutation, model-provider change, new sensor permission, analytics SDK or polling.",
+  "status": "code_and_live_database_verified_api_client_activation_and_device_validation_pending",
+  "scope": "User-authorized draft recovery and abandoned-action outcomes. Local-account-scoped drafts; no iPhone build, model-provider change, new sensor permission, analytics SDK or polling. This agent used only synthetic CI fixtures; root separately applied the immutable production migration.",
   "firstInstrumentationPatch": "12c4afb71",
   "repositoryHeadAtVerification": "e51f2887e8a90a889ffb6ca8b6444958ec016259",
   "supportedSurfaces": [
@@ -33,7 +33,8 @@
         "330 API account/postcard/SQL tests",
         "261 API upload/access/vendor/outcome/crash tests",
         "65 client contract tests",
-        "196 final API/SQL tests; read-only CI trigger/column/grant catalog review"
+        "196 final API/SQL tests; read-only CI trigger/column/grant catalog review",
+        "Six actual CI PostgreSQL two-backend lock cases plus full-schema attachment failure rollback and response-loss replay; exact queries and results in docs/ops/rumazi-composer-ci-races-20261113.json"
       ]
     },
     {
@@ -61,6 +62,13 @@
       "evidence": [
         "component controls exercised",
         "source review only for device accessibility"
+      ]
+    },
+    {
+      "id": "layover_publication_regression",
+      "result": "Ready media creates no Passport projection before explicit publish; premature publish is refused; retry is idempotent; Taipei/Taiwan stays unverified and non-stamp-eligible with no stamps.",
+      "evidence": [
+        "19/19 layover postcard route tests; /private/tmp/portava-drafts-layover-publish.log"
       ]
     }
   ],
@@ -156,17 +164,27 @@
       "summary": "4/4 host/native-adapter contract tests passed. 50,000,000-byte synthetic source copied in 172.2 ms in this run; byte hash matched; saved-copy reuse made no second copy; scratch data removed. RSS delta is noisy and not a device memory budget.",
       "log": "/private/tmp/portava-drafts-host-filesystem.log",
       "sha256": "769d2e7bcef86588c98b56c8427a8dfd5224c320e4d8003ee4a744b0e4772fa5"
+    },
+    {
+      "summary": "19/19 layover postcard tests passed with explicit publication and no prepublication projection; original location/presence assertions retained.",
+      "log": "/private/tmp/portava-drafts-layover-publish.log",
+      "sha256": "193f09beeb899773fbb67054c170cec5dfa44a49cf41268ed902892c67bf2736"
+    },
+    {
+      "summary": "Six two-backend PostgreSQL race cases passed against applied 4028 on CI. Distinct backend PIDs and 7.5\u201312.5 second waits observed. Attachment constraint failure rolled back post, intent claim and media; successful retry and repeated receipt returned one complete post. Two draft Passport projections were refused. Synthetic cleanup independently verified zero across all 11 counters.",
+      "artifact": "docs/ops/rumazi-composer-ci-races-20261113.json",
+      "sha256": "4b78f9364227252fb7229e84148e94e5a2ec8085aa2f247a9ef1c4ad08e278e5",
+      "method": "Existing pg_cron launched self-unscheduling one-shot operations; foreground sessions exercised the real applied functions/triggers. Initial serialized connector attempts are explicitly excluded. Self-unscheduling is recorded as canceled in cron history; committed SQL outcomes were independently checked."
     }
   ],
   "activationRequirements": [
     "Root verified production post-media public=false and media_pending_upload_sweep_enabled=true. 4028 still enforces private-bucket precondition; no bucket change by this agent.",
-    "Root must replay 4028 against the full canonical schema and apply it before deploying these API/client paths. PGlite fixtures validate behavior but are not the full live schema.",
+    "4028 applied to full CI and then production with immutable SHA256 8dcf89d2bb5491db2d366b1b6b6765d8da1281ae22a3d667db03f35204d58359. Root reports production version 20261113220440, ledger applied_at 2026-11-13T22:04:55.669002Z; catalog captured 22:05:19Z. API/client deployment remains pending.",
     "Deploy API and client as a compatible rollout, retain private bucket posture and verify unauthenticated legacy public URLs plus foreign signed-URL access against real objects.",
     "Root verified the existing pending-upload cleanup flag true; verify deployed maintenance execution after rollout. No new scheduler added.",
     "Register the new test paths centrally in project CI as applicable; root owns package scripts/census/CI edits.",
     "Run authorized physical iOS/Android restart/termination/background upload, account-switch, offline/retry and screen-reader checks when device/build access is available. No iPhone build made.",
-    "Verify real Sentry export envelopes after activation; unit payload tests and no-DSN SDK smoke tests do not prove the hosted export configuration.",
-    "Real two-session PostgreSQL race execution remains unverified: isolated local initdb failed on macOS System V IPC exhaustion (shmget size=56, No space left on device). No server started; both owned scratch directories were removed. Do not remove unknown user IPC segments. Run the concurrent lock cases in an authorized isolated DB when available."
+    "Verify real Sentry export envelopes after activation; unit payload tests and no-DSN SDK smoke tests do not prove the hosted export configuration."
   ],
   "newTestPaths": [
     "artifacts/api-server/src/test/composerDraftLifecycle.pglite.test.ts",
@@ -328,12 +346,57 @@
     "cancelWinner": "cancel_composer_upload locks the same intent. If cancellation wins, commit refuses and writes nothing; if commit wins, cancellation returns already_published and the UI shows publication, not discard. Unknown cleanup receipts preserve the local draft.",
     "canonicalWrites": "guard_composer_media_asset_write takes profile and intent FOR SHARE locks before accepting new canonical metadata; cancellation/erasure waits or the write sees the terminal state.",
     "passportProjection": "New Passport projection INSERT/UPDATE checks and locks its postcard parent. Cancel either deletes a committed projection or prevents a late copy from appearing after deletion. New post_media INSERT also locks/checks its parent.",
-    "compatibility": "CI catalog read-only review confirmed enum types, required columns, no direct client writes to posts/post_media/media_assets, and existing moderation/invalidation triggers. passport_postcards previously had only set_updated_at trigger. Old clients omit deferPublication and publish on /complete; pre-existing null lifecycle rows retain legacy behavior. Full migration-chain execution remains root-owned."
+    "compatibility": "CI catalog read-only review confirmed enum types, required columns, no direct client writes to posts/post_media/media_assets, and existing moderation/invalidation triggers. passport_postcards previously had only set_updated_at trigger. Old clients omit deferPublication and publish on /complete; pre-existing null lifecycle rows retain legacy behavior. Root applied the exact migration to the full CI schema; real trigger interactions passed in the CI race/atomicity checks. Production migration activation was reported separately by root.",
+    "liveVerification": {
+      "artifact": "docs/ops/rumazi-composer-ci-races-20261113.json",
+      "passedCases": 6,
+      "cleanup": [
+        {
+          "cleanup": {
+            "auth": 0,
+            "posts": 0,
+            "intents": 0,
+            "profile": 0,
+            "cron_jobs": 0,
+            "checked_at": "2026-11-13T23:18:58.069255+00:00",
+            "post_media": 0,
+            "cron_history": 0,
+            "media_assets": 0,
+            "test_sessions": 0,
+            "storage_objects": 0,
+            "passport_projections": 0
+          }
+        }
+      ],
+      "limitation": "SQL ran as postgres with service/client grants checked separately. No real storage objects, authenticated end-to-end HTTP requests, native devices or hosted Sentry export were exercised in this database test."
+    }
   },
   "performanceReview": {
     "nativeCopy": "New persistence uses asynchronous native file copy; an already-owned file is reused without another copy. Draft records hold paths/form data, not media bytes. Retained originals survive cancelled uploads; separate prepared copies are cleaned.",
     "limits": "Existing client envelope is 10 MB images/50 MB video; missing picker size still requires server validation. Native OS quota, interruption during copy, and large-device-memory behavior remain device checks.",
     "hostEvidence": "50 MB filesystem adapter proof verifies exact bytes, removed-source recovery, one-copy reuse and idempotent delete. It uses Node filesystem effects, not Expo; browser IndexedDB proof is separate.",
-    "resources": "Synthetic 50 MB source and copy removed after test; no PostgreSQL test server started; failed initdb scratch directories removed. No unknown IPC or user process was altered."
+    "resources": "Synthetic 50 MB source and copy removed after test; no PostgreSQL test server started; failed initdb scratch directories removed. No unknown IPC or user process was altered. Subsequent CI checks created only synthetic metadata; no storage bytes. All fixture records and one-shot jobs/history/sessions were removed and zero counts independently verified."
+  },
+  "integratedDraftPatch": "93d900bec",
+  "sourceSha256Scope": "Original frozen 70-path patch snapshot. Later root-owned followups are tracked separately; these hashes are not represented as the current whole-tree hashes.",
+  "rolloutStatus": {
+    "migrationVersion": "20261113220440",
+    "ledgerAppliedAt": "2026-11-13T22:04:55.669002Z",
+    "catalogCapturedAt": "2026-11-13T22:05:19Z",
+    "apiClientDeployed": false,
+    "privateBucketVerified": true,
+    "rlsVerified": true,
+    "clientRpcAccess": false,
+    "serviceCommitAccess": true,
+    "higgsfieldEnabled": false
+  },
+  "followUpPaths": [
+    "artifacts/api-server/src/test/layoverPostcard.test.ts",
+    "docs/ops/rumazi-composer-ci-races-20261113.json",
+    "docs/ops/rumazi-draft-recovery-20261113.json"
+  ],
+  "followUpSourceSha256": {
+    "artifacts/api-server/src/test/layoverPostcard.test.ts": "4825bf1af5957d8b14f793c90ba5e820c394eea4321005717eea27bc31bfae5e",
+    "docs/ops/rumazi-composer-ci-races-20261113.json": "4b78f9364227252fb7229e84148e94e5a2ec8085aa2f247a9ef1c4ad08e278e5"
   }
 }

@@ -11,7 +11,7 @@ function client() { return { auth: { getUser: async (token: string) => ({ data: 
             return { error: { code: 'outage' } }; for (const r of values)
             if (!rows.has(r.id))
                 rows.set(r.id, r); return { error: null }; }, then: (ok: any, bad: any) => Promise.resolve({ data: [], error: null }).then(ok, bad) }; return b; } } as any; }
-before(async () => { const app = express(); app.use(express.json()); app.use('/api', router); await new Promise<void>((resolve, reject) => { server = app.listen(0, '127.0.0.1', resolve); server.on('error', reject); }); base = `http://127.0.0.1:${(server.address() as any).port}`; });
+before(async () => { const app = express(); app.use(express.json()); app.use('/api', router); await new Promise<void>((resolve, reject) => { server = app.listen(0, '127.0.0.1', () => resolve()); server.on('error', reject); }); base = `http://127.0.0.1:${(server.address() as any).port}`; });
 after(async () => { await new Promise<void>(done => server.close(() => done())); });
 beforeEach(() => { rows.clear(); enabled = true; fail = false; actor = '10000000-0000-4000-8000-000000000001'; const c = client(); _setTestClient(c, true); _setTestServiceClient(c); });
 const event = { event_id: '20000000-0000-4000-8000-000000000001', version: 1, surface: 'postcard', outcome: 'upload_failed', failure_code: 'network' };

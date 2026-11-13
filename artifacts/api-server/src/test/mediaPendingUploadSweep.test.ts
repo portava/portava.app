@@ -173,7 +173,6 @@ function client() {
 }
 
 const sc: any = client();
-const previousSupabaseUrl = process.env.SUPABASE_URL;
 
 function baseTables(flagOn: boolean | null = true): Record<string, Row[]> {
   return {
@@ -237,7 +236,6 @@ const objectsUnder = (path: string) => [...objects.keys()].filter((k) => k.start
 
 before(async () => {
   process.env.INTERNAL_API_SECRET = SECRET;
-  process.env.SUPABASE_URL = "http://sb.example.test";
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => { (req as any).log = pino({ level: "silent" }); next(); });
@@ -250,7 +248,6 @@ before(async () => {
 });
 
 after(() => {
-  if (previousSupabaseUrl === undefined) delete process.env.SUPABASE_URL; else process.env.SUPABASE_URL = previousSupabaseUrl;
   server.close();
   _setTestClient(null as any, false);
   _setTestServiceClient(null as any);

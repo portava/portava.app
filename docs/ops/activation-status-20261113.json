@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "status": "database_applied_application_deployment_blocked",
+  "application": "port",
+  "productionUrl": "https://rumazi.com",
+  "pullRequest": "https://github.com/portava/portava.app/pull/826",
+  "database": {
+    "projectRef": "ajrurzioarfkagpuxfnb",
+    "capturedAt": "2026-11-13T22:05:19.947371+00:00",
+    "catalogChecksums": {
+      "flags": "07a275ad5eb5cac4d82ea0683e15e3da",
+      "tables": "d94a1d37859a6059c4f8f5f1a64bd704",
+      "functions": "eedbd2928c833bf7dedb516e30f74cc8"
+    },
+    "appliedMigrations": [
+      {
+        "version": "20261113141905",
+        "checksum": "aded73c56f2bd91ba185ec30ce9fdecb456e3e344203ea10982f601c6bd01085",
+        "filename": "4023_managed_media_processing_consent.sql"
+      },
+      {
+        "version": "20261113141905",
+        "checksum": "3ec9b5770e8ed590f0a1b914f6c54a8d5ac70cc862b5083ef479319c4d2aff53",
+        "filename": "4024_managed_image_cost_semantics.sql"
+      },
+      {
+        "version": "20261113172746",
+        "checksum": "a46a6749662c8688c3ff7d739fea5f1ec57438f203ff49fc499de8cb27645be8",
+        "filename": "4025_higgsfield_generation_jobs.sql"
+      },
+      {
+        "version": "20261113175352",
+        "checksum": "dd97f5286aa962ec99df463b56e88701a76101f073e17aff4df338bb98e724f3",
+        "filename": "4026_intelligence_system_monitor.sql"
+      },
+      {
+        "version": "20261113175352",
+        "checksum": "631049d2d4feb57fe8e7912acdc63542cbc210225d8e4036e6ff137f71dd6c34",
+        "filename": "4027_whole_system_monitor.sql"
+      },
+      {
+        "version": "20261113220455",
+        "checksum": "8dcf89d2bb5491db2d366b1b6b6765d8da1281ae22a3d667db03f35204d58359",
+        "filename": "4028_postcard_private_draft_publication.sql"
+      }
+    ],
+    "checks": [
+      "post-media remains private",
+      "composer_upload_intents RLS enabled",
+      "anon/authenticated cannot execute commit_composer_post",
+      "authenticated cannot select composer_upload_intents",
+      "service_role can execute commit_composer_post"
+    ]
+  },
+  "applicationDeployment": {
+    "republished": false,
+    "blocker": "Browser origin permission for replit.com explicitly declined. No alternate surface or indirect workaround attempted. User is away for four hours; resume only with restored authorized access.",
+    "runningBuildBeforeActivation": "49288c03bd4424409f6cae032d66447a995180559adc7d0b0ce9c8fbe58294f4"
+  },
+  "higgsfield": {
+    "enabled": false,
+    "credentials": "User deferred HIGGSFIELD_CREDENTIALS and REDIS_URL; no new request or activation."
+  },
+  "verification": {
+    "fullApiInitial": {
+      "tests": 42486,
+      "passed": 42454,
+      "failed": 32,
+      "skipped": 0,
+      "note": "Failed before follow-up fixes; not a green full-suite claim. Tests that create filesystem probes must be rechecked sequentially.",
+      "log": "/private/tmp/portava-activation-api-full-local-network.log"
+    },
+    "privacyFollowup": {
+      "passed": 137,
+      "failed": 0,
+      "log": "/private/tmp/portava-activation-privacy-followup.log"
+    },
+    "schemaFollowup": {
+      "passed": 69,
+      "failed": 0,
+      "log": "/private/tmp/portava-activation-schema-followup.log"
+    },
+    "layover": {
+      "passed": 19,
+      "failed": 0,
+      "log": "/private/tmp/portava-drafts-layover-publish.log"
+    },
+    "ciConcurrentDatabase": "docs/ops/rumazi-composer-ci-races-20261113.json",
+    "staticChecks": "14 of 15 initially passed; one new test callback type error fixed; test typecheck now passes. Existing baseline860 test diagnostics remain.",
+    "censusScope": "13 measured, all cited code within declared scope; not acceptance validation.",
+    "schedulerInventory": "74 started,26reported,13durable,46unobservable; static inventory matches, not runtime health.",
+    "noNativeBuild": true
+  },
+  "masterChecklist": {
+    "path": "docs/ops/remaining-items-20261113.json",
+    "remaining": 888,
+    "newlyClosed": 0,
+    "note": "Historical verdicts preserved. Underlying acceptance audit remains required."
+  },
+  "remainingValidation": [
+    "Republish the validated API/client code when Replit access is restored",
+    "Verify actual private media object access and cancellation cleanup through deployed endpoints",
+    "Verify hosted Sentry export payloads",
+    "Physical-device restart, termination, background upload, account-switch, offline and accessibility tests; no iPhone build authorized",
+    "Higgsfield provider activation deferred by owner"
+  ]
+}

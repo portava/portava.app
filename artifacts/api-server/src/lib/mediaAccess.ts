@@ -392,7 +392,7 @@ async function decide(
   // tries to attach a guessed key. Explicit cancellation denies the owner too.
   try {
     if (path.includes('/composer-drafts/') || path.includes('/capture-stamps/')) {
-    const intent = await sc.from('composer_upload_intents' as never).select('owner_id,state').overlaps('storage_paths', [path]).maybeSingle();
+    const intent = await sc.from('composer_upload_intents').select('owner_id,state').overlaps('storage_paths', [path]).maybeSingle();
     if (intent.error) return false;
     const draft = intent.data as unknown as { owner_id: string; state: string } | null;
     if (draft && draft.state !== 'published' && (!['uploading','ready'].includes(draft.state) || draft.owner_id !== viewerId)) return false;
