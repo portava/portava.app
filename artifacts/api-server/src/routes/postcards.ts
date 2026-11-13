@@ -18,7 +18,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireUser, sendError, safeSecretEquals, tripExists, isAcceptedTripMember } from '../lib/http.js';
 import { getServiceClient } from '../lib/supabase.js';
-import { processTagging } from '../services/tagging/TaggingService.js';
+import { postcardDraftRouter, publishPostcardDraft } from './postcardDrafts.js';
 import { isKillSwitchEngaged } from '../lib/featureFlags.js';
 import { processImage, computePHash, makeFeedVariant } from '../lib/mediaProcessing.js';
 import { stripVideoLocationMetadata } from '../lib/videoMetadata.js';
@@ -31,6 +31,7 @@ import {
 import { recordEntityMedia, MEDIA_SOURCE_UNDECLARED } from '../lib/mediaAssets.js'; import { recordPostcardCreatedSignal } from '../lib/mediaAnalytics.js';
 
 const router = Router();
+router.use(postcardDraftRouter(syncPostcardAfterMediaChange));
 
 const STORAGE_BUCKET = 'post-media';
 const MAX_MEDIA_PER_POSTCARD = 10;
@@ -225,6 +226,9 @@ async function refreshMediaCounts(sc: any, postId: string): Promise<{
  * completed media item when add_to_passport=true.
  */
 const createPostcardSchema = z.object({
+  operationId: z.string().uuid().optional(),
+  /** Current clients publish explicitly after checking their upload lifetime. */
+  deferPublication: z.boolean().optional().default(false),
   caption:         z.string().max(2000).optional(),
   visibility:      z.enum(['public', 'private', 'trip_only']).optional().default('public'),
   locationName:    z.string().max(200).optional(),
@@ -290,6 +294,15 @@ router.post('/postcards', async (req, res) => {
 
   // Column mapping: provider place refs go to location_place_id (same column
   // the /api/posts flow writes — a bare `place_id` column does not exist).
+  if (p.operationId) {
+    const existing = await sc.from('posts').select('id,postcard_draft_state' as never).eq('author_id', user.id).eq('postcard_draft_operation_id' as never, p.operationId).maybeSingle();
+    if (existing.error) { sendError(res, 'db_error', 'Draft could not be read. Try again.'); return; }
+    const previous = existing.data as unknown as { id: string; postcard_draft_state: string } | null;
+    if (previous) {
+      if (previous.postcard_draft_state === 'cancelled') { res.status(409).json({ error: 'draft_cancelled' }); return; }
+      res.status(201).json({ id: previous.id }); return;
+    }
+  }
   const baseRow = {
     author_id:          user.id,
     content:            p.caption ?? '',
@@ -297,7 +310,12 @@ router.post('/postcards', async (req, res) => {
     media_count:        0,
     has_video:          false,
     primary_media_type: 'none',
-    visibility:         p.visibility,
+    visibility:         'private' as const,
+    post_status:        'draft' as const,
+    postcard_draft_state: 'draft',
+    postcard_requested_visibility: p.visibility,
+    postcard_draft_operation_id: p.operationId ?? null,
+    postcard_publish_on_complete: !p.deferPublication,
     status:             'active',
     location_name:      p.locationName ?? null,
     location_city:      (layover ? layover.city : p.locationCity) ?? null, // census-layover L275: a layover postcard's city is the layover's, never the client's
@@ -364,19 +382,8 @@ router.post('/postcards', async (req, res) => {
     }).catch(() => {});
   }
 
-  // Fire-and-forget: extract @mentions and #hashtags from caption
-  if (p.caption) {
-    processTagging({
-      db:         sc,
-      authorId:   user.id,
-      sourceType: 'post',
-      sourceId:   postId,
-      content:    p.caption,
-      city:       p.locationCity ?? null,
-      country:    p.locationCountry ?? null,
-      logger:     (req as any).log,
-    }).catch(() => {});
-  }
+  // Mentions/hashtags are processed only after explicit publication, never for
+  // a private upload shell or discarded caption.
 
   res.status(201).json({ id: postId });
 });
@@ -691,6 +698,7 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
 
   // Idempotent: already ready
   if ((mediaRow as any).processing_status === 'ready') {
+    if (!await autoPublishLegacyPostcard(sc, postId, user.id)) { sendError(res, 'db_error', 'Publication could not be confirmed. Try again.'); return; }
     res.status(200).json({ ok: true });
     return;
   }
@@ -1069,9 +1077,22 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     sendError(res, "db_error", "We couldn't finish your upload. Please try again.", { exposeDetail: true });
     return;
   }
+  if (!await autoPublishLegacyPostcard(sc, postId, user.id)) { sendError(res, 'db_error', 'Publication could not be confirmed. Try again.'); return; }
   const counts = await syncPostcardAfterMediaChange(sc, postId, user, req); res.status(200).json({ ok: true, mediaCount: counts.mediaCount, hasVideo: counts.hasVideo, ...(p.stampOverlay ? (overlay ? { stampOverlayApplied: true } : { stampOverlayApplied: false, stampOverlayError: overlayError ?? 'stamp_unavailable' }) : {}) }); }); // census-media §37.9: the step below is shared with admin moderation; the response is unchanged
+async function autoPublishLegacyPostcard(sc: NonNullable<ReturnType<typeof getServiceClient>>, postId: string, actor: string): Promise<boolean> {
+  const { data, error } = await sc.from('posts').select('postcard_draft_state,postcard_publish_on_complete' as never).eq('id', postId).eq('author_id', actor).maybeSingle();
+  if (error || !data) return false;
+  const draft = data as unknown as { postcard_draft_state?: string; postcard_publish_on_complete?: boolean };
+  if (draft.postcard_draft_state === 'cancelled') return false;
+  if (draft.postcard_draft_state !== 'draft' || !draft.postcard_publish_on_complete) return true;
+  if (await isKillSwitchEngaged(sc, 'disable_posting')) return false;
+  return (await publishPostcardDraft(sc, actor, postId)).ok;
+}
 export async function syncPostcardAfterMediaChange(sc: any, postId: string, user: { id: string }, req: { log: { warn: (...args: any[]) => void } }, alsoGone: readonly string[] = []): Promise<PostcardStepResult> { // census-media §37.10: it also moves the passport cover (was: …, req: {…}): Promise<PostcardMediaCounts> {) // Refresh parent counts and get first-ready URL for postcard creation (census-media §37.9: /complete and POST /admin/media/:id/moderate)
   const counts = await refreshMediaCounts(sc, postId);
+
+  const lifecycle = await sc.from('posts').select('postcard_draft_state').eq('id', postId).maybeSingle();
+  if (lifecycle.error || ['draft', 'cancelled'].includes(lifecycle.data?.postcard_draft_state)) return { ...counts, cover: lifecycle.error ? 'failed' : 'no_postcard' };
 
   // Lazily create passport_postcard on the first ready media when add_to_passport=true.
   // Uses insert-or-nothing (ON CONFLICT DO NOTHING via ignoreDuplicates) so concurrent

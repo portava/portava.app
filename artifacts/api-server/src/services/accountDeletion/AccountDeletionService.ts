@@ -1,3 +1,4 @@
+import { eraseAccountComposerUploads } from './composerUploads.js';
 /**
  * AccountDeletionService
  *
@@ -510,6 +511,9 @@ export async function executeAccountDeletion(
     warnings.push("Media cleanup unconfirmed — account deletion remains pending; retry is safe");
     return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
   }
+
+  const draftUploadsOk = await step(steps, 'erase_account_composer_uploads', () => eraseAccountComposerUploads(sc, userId));
+  if (!draftUploadsOk) { warnings.push('Draft upload cleanup unconfirmed — account deletion remains pending; retry is safe'); return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts }; }
 
   // ── 1. Collect storage paths BEFORE the rows that hold them are deleted ────
   const storageTargets: Array<{ bucket: string; path: string }> = [];

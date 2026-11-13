@@ -230,6 +230,8 @@ function isNetworkError(e: unknown): boolean {
 }
 
 interface CreatePostInput {
+  composerUploadOperationId?: string;
+  composerPublicationOperationId?: string;
   content?: string;
   mediaUrls?: string[];
   tripId?: string | null;
@@ -278,6 +280,8 @@ export async function createPost(input: CreatePostInput, owner?: MessagingOwnerR
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({
+        composerUploadOperationId: input.composerUploadOperationId,
+        composerPublicationOperationId: input.composerPublicationOperationId,
         content: input.content ?? '',
         mediaUrls: input.mediaUrls ?? [],
         tripId: input.tripId ?? null,

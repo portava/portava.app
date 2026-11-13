@@ -19,8 +19,10 @@ import {
 } from "../lib/mediaAnalytics.js";
 
 import { mediaAnalyticsClientPayload } from "../lib/mediaAnalyticsClientPayload.js";
+import composerOutcomesRouter from "./composerOutcomes.js";
 
 const router = Router();
+router.use(composerOutcomesRouter);
 
 /**
  * Event types this endpoint will forward. Still a closed allow-list — an

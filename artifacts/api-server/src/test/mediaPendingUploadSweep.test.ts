@@ -173,6 +173,7 @@ function client() {
 }
 
 const sc: any = client();
+const previousSupabaseUrl = process.env.SUPABASE_URL;
 
 function baseTables(flagOn: boolean | null = true): Record<string, Row[]> {
   return {
@@ -236,6 +237,7 @@ const objectsUnder = (path: string) => [...objects.keys()].filter((k) => k.start
 
 before(async () => {
   process.env.INTERNAL_API_SECRET = SECRET;
+  process.env.SUPABASE_URL = "http://sb.example.test";
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => { (req as any).log = pino({ level: "silent" }); next(); });
@@ -248,6 +250,7 @@ before(async () => {
 });
 
 after(() => {
+  if (previousSupabaseUrl === undefined) delete process.env.SUPABASE_URL; else process.env.SUPABASE_URL = previousSupabaseUrl;
   server.close();
   _setTestClient(null as any, false);
   _setTestServiceClient(null as any);
@@ -310,10 +313,13 @@ describe("§56 DV-77 — NEVER SERVED while it waits: the relay refuses a row th
     assert.equal(await authorizeMediaAccess(sc, OWNER, "post-media", path), true, "the owner must still reach their own upload");
   });
 
-  it("POSITIVE CONTROL: the same object is served once its row is ready", async () => {
+  it("POSITIVE CONTROL: ready bytes stay private until publication, then become readable", async () => {
     const { mediaId, path } = await abandonedUpload();
     rowOf(mediaId)!.processing_status = "ready";
     rowOf(mediaId)!.moderation_status = "approved";
+    Object.assign(tables.posts[0], { postcard_draft_state: "draft", post_status: "draft", visibility: "private" });
+    assert.equal(await authorizeMediaAccess(sc, STRANGER, "post-media", path), false, "ready is not published");
+    Object.assign(tables.posts[0], { postcard_draft_state: "published", post_status: "published", visibility: "public" });
     assert.equal(await authorizeMediaAccess(sc, STRANGER, "post-media", path), true);
   });
 });

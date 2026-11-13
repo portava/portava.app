@@ -1,3 +1,4 @@
+import './composerDraftTestRuntime.ts';
 /**
  * PostcardComposer with a `layover` — census-layover L275, the postcard half.
  *

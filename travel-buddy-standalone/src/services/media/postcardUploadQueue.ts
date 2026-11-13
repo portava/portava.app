@@ -19,7 +19,7 @@
  * nothing is enqueued and nothing runs — a job is never executed under another
  * person's session.
  *
- * Gated by uploadTransportFlag (ships OFF). Every effect is injected through
+ * Multipart transport is gated by uploadTransportFlag. Every effect is injected through
  * QueueRuntime, so this module runs under node:test.
  */
 import {
@@ -30,6 +30,7 @@ import {
   type PostcardUploadInput,
   type PostcardUploadJob,
 } from './postcardUploadPipeline.ts';
+import { newClientEventId } from '../clientEventId';
 
 export interface QueueStorage {
   getItem(key: string): Promise<string | null>;
@@ -64,7 +65,7 @@ export function queueKey(accountId: string): string {
 function isStoredJob(value: unknown, accountId: string): value is PostcardUploadJob {
   if (!value || typeof value !== 'object') return false;
   const job = value as Partial<PostcardUploadJob>;
-  const stages = ['queued', 'shell', 'slot', 'bytes', 'poster', 'done', 'failed', 'cancelled'];
+  const stages = ['queued', 'shell', 'slot', 'bytes', 'poster', 'verified', 'done', 'failed', 'cancelled'];
   if (typeof job.id !== 'string' || !job.id || job.accountId !== accountId
     || !stages.includes(job.stage ?? '') || !Number.isFinite(job.createdAt) || !Number.isFinite(job.updatedAt)
     || !Number.isInteger(job.runs) || job.runs! < 0) return false;
@@ -74,8 +75,8 @@ function isStoredJob(value: unknown, accountId: string): value is PostcardUpload
     || typeof asset.mimeType !== 'string' || typeof asset.isVideo !== 'boolean'
     || !['public', 'private', 'trip_only'].includes(input.visibility)
     || !input.location || typeof input.location !== 'object' || Array.isArray(input.location)) return false;
-  if (['shell', 'slot', 'bytes', 'poster', 'done'].includes(job.stage!) && !job.postId) return false;
-  if (['slot', 'bytes', 'poster', 'done'].includes(job.stage!) && !job.mediaId) return false;
+  if (['shell', 'slot', 'bytes', 'poster', 'verified', 'done'].includes(job.stage!) && !job.postId) return false;
+  if (['slot', 'bytes', 'poster', 'verified', 'done'].includes(job.stage!) && !job.mediaId) return false;
   return true;
 }
 
@@ -120,9 +121,9 @@ export class PostcardUploadQueue {
     const next = this.writeChain.then(async () => {
       const jobs = await this.load(accountId);
       const i = jobs.findIndex((j) => j.id === job.id);
-      if (i >= 0) jobs[i] = job; else jobs.push(job);
-      const live = jobs.filter((j) => !TERMINAL_STAGES.has(j.stage));
-      const done = jobs.filter((j) => TERMINAL_STAGES.has(j.stage)).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, KEEP_TERMINAL);
+      if (i >= 0) jobs[i] = { ...job, cancelRequested: job.cancelRequested || jobs[i].cancelRequested, ...(jobs[i].stage === 'cancelled' && job.stage === 'done' ? { stage: 'cancelled' as const, cleanupPending: true } : {}) }; else jobs.push(job);
+      const live = jobs.filter((j) => (!TERMINAL_STAGES.has(j.stage) || j.cleanupPending || j.localDraftPending || j.localAssetPending || j.pendingOutcomes?.length));
+      const done = jobs.filter((j) => TERMINAL_STAGES.has(j.stage) && !j.cleanupPending && !j.localDraftPending && !j.localAssetPending && !j.pendingOutcomes?.length).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, KEEP_TERMINAL);
       await this.rt.storage.setItem(queueKey(accountId), JSON.stringify([...live, ...done]));
     });
     this.writeChain = next.catch(() => {});
@@ -142,13 +143,17 @@ export class PostcardUploadQueue {
    * Record the job, then start (or join) the runner. Resolves once the job is
    * DURABLE — not when it finishes. Null when no account is signed in.
    */
-  async enqueue(input: PostcardUploadInput): Promise<PostcardUploadJob | null> {
+  async enqueue(input: PostcardUploadInput, options: { start?: boolean } = {}): Promise<PostcardUploadJob | null> {
     const accountId = await this.rt.accountId();
     if (!accountId) return null;
     const job = newPostcardUploadJob(this.rt.newId(), accountId, input, this.rt.now());
     await this.upsert(accountId, job);
-    if (await this.rt.accountId() !== accountId) return null;
+    if (await this.rt.accountId() !== accountId) {
+      await this.upsert(accountId, { ...job, cancelRequested: true });
+      return null;
+    }
     this.emit({ job });
+    if (options.start === false) return job;
     if (this.draining) this.drainAgain = true;
     // Explicit resume callers still receive a storage failure. The background
     // kickoff must not turn that same failure into an unhandled rejection.
@@ -157,9 +162,22 @@ export class PostcardUploadQueue {
   }
 
   /** Stop the active transport immediately; cleanup persists at the next stage boundary. */
-  cancel(jobId: string): void {
+  async cancel(jobId: string): Promise<void> {
     this.cancelled.add(jobId);
     if (this.active?.id === jobId) this.active.cancel?.();
+    const accountId = await this.rt.accountId();
+    if (!accountId) return;
+    const work = this.writeChain.then(async () => {
+      if (await this.rt.accountId() !== accountId) return;
+      const jobs = await this.load(accountId), index = jobs.findIndex(j => j.id === jobId);
+      if (index < 0) return;
+      jobs[index] = { ...jobs[index], cancelRequested: true,
+        ...(jobs[index].stage === 'done' ? { cleanupPending: true } : {}) };
+      await this.rt.storage.setItem(queueKey(accountId), JSON.stringify(jobs));
+    });
+    this.writeChain = work.catch(() => {}); await work;
+    if (this.draining) this.drainAgain = true;
+    void this.resumePending().catch(() => {});
   }
 
   /**
@@ -180,7 +198,7 @@ export class PostcardUploadQueue {
     const accountId = await this.rt.accountId();
     if (!accountId) return;
     const pending = (await this.load(accountId))
-      .filter((j) => !TERMINAL_STAGES.has(j.stage))
+      .filter((j) => (!TERMINAL_STAGES.has(j.stage) || j.cleanupPending || j.localDraftPending || j.localAssetPending || j.pendingOutcomes?.length))
       .sort((a, b) => a.createdAt - b.createdAt);
     if (pending.length === 0) return;
     for (const stored of pending) {
@@ -192,12 +210,13 @@ export class PostcardUploadQueue {
       this.active = { id: stored.id, cancel: deps.cancel };
       try {
       let job = stored;
-      if (job.runs >= MAX_RUNS) {
-        if (job.postId) await deps.discardShell(job.postId).catch(() => {});
-        job = { ...job, stage: 'failed', retryable: false, lastError: 'Upload gave up after repeated failures', updatedAt: this.rt.now() };
+      if (job.runs >= MAX_RUNS && !TERMINAL_STAGES.has(job.stage) && job.stage !== 'verified' && !job.cleanupPending && !job.cancelRequested) {
+        let cleanupPending = !!job.postId;
+        if (job.postId) { try { await deps.discardShell(job.postId); cleanupPending = false; } catch { /* retry cleanup next foreground */ } }
+        job = { ...job, cleanupPending, localAssetPending: !!job.input.retainedDraftAssetUri, stage: 'failed', retryable: false, lastError: 'Upload gave up after repeated failures', updatedAt: this.rt.now(),
+          pendingOutcomes: job.input.trackOutcomes ? [...(job.pendingOutcomes ?? []), { event_id: newClientEventId(), version: 1 as const, surface: 'postcard' as const, outcome: 'upload_failed' as const, failure_code: 'unknown' as const }].slice(-50) : job.pendingOutcomes };
         await this.upsert(accountId, job);
         this.emit({ job });
-        continue;
       }
       let latest = job;
       job = await runPostcardUpload(
@@ -215,6 +234,11 @@ export class PostcardUploadQueue {
           isCancelled: () => this.cancelled.has(stored.id),
         },
       );
+      if (deps.recordOutcome && job.pendingOutcomes?.length) {
+        const remaining = [];
+        for (const event of job.pendingOutcomes) { if (!await deps.recordOutcome(event)) remaining.push(event); }
+        await this.upsert(accountId, { ...job, pendingOutcomes: remaining });
+      }
       this.cancelled.delete(stored.id);
       // A paused job stays paused for this run; the next trigger resumes it.
       } catch (error) {
@@ -228,7 +252,7 @@ export class PostcardUploadQueue {
   }
 }
 
-// ── The device queue (lazily assembled; nothing here runs while the flag is off) ──
+// ── The device queue (lazily assembled; transport policy stays in the runtime) ──
 
 let _queue: PostcardUploadQueue | null = null;
 

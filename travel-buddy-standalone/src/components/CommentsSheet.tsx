@@ -72,6 +72,7 @@ import { useInputAccountEpoch } from '../platform/input-assistance/hooks/useInpu
 import { useCommentTyping } from '../hooks/useCommentTyping.ts';
 import { useLiveComments, type CommentMutation } from '../hooks/useLiveComments.ts';
 import { useScreenFocused } from '../hooks/useScreenFocused.ts';
+import { useCommentDraft } from '../hooks/useCommentDraft.ts';
 
 // ── Shared contexts ───────────────────────────────────────────────────────────
 
@@ -667,9 +668,8 @@ function CommentsSectionContent({ postId, onCountChange, onInputFocus }: Section
     repliesLoading, repliesErrors, loadReplies: handleLoadReplies, beginMutation,
   } = useLiveComments(postId, screenFocused, onCountChange);
   const [commentsDisabled, setCommentsDisabled] = useState(false);
-  const [text, setText] = useState('');
+  const { text, setText, replyingTo, setReplyingTo, finishSubmission, discard, draftError, draftReady } = useCommentDraft(postId, screenFocused, 'comment_inline');
   const [submitting, setSubmitting] = useState(false);
-  const [replyingTo, setReplyingTo] = useState<{ id: string; authorName: string } | null>(null);
   const mentionRef = useRef<MentionInputHandle>(null);
   const [mentionSuggestions, setMentionSuggestions] = useState<AnyMentionSuggestion[]>([]);
   const [mentionLoading, setMentionLoading] = useState(false);
@@ -722,7 +722,7 @@ function CommentsSectionContent({ postId, onCountChange, onInputFocus }: Section
       Alert.alert('Too long', 'Comments must be 1000 characters or fewer.');
       return;
     }
-    if (!trimmed || submitGuardRef.current.isSubmitting()) return;
+    if (!draftReady || !trimmed || submitGuardRef.current.isSubmitting()) return;
     const mutation = beginMutation();
     if (!mutation) return;
     setSubmitting(true);
@@ -732,9 +732,9 @@ function CommentsSectionContent({ postId, onCountChange, onInputFocus }: Section
           const result = await addReply(postId, replyingTo.id, t);
           if (!mutation.isCurrent()) return;
           if (result && 'reply' in result) {
-            setText('');
+            finishSubmission({ text, replyingTo });
             const parentId = replyingTo.id;
-            setReplyingTo(null);
+
             setRepliesMap((prev) => ({
               ...prev,
               [parentId]: [...(prev[parentId] ?? []), result.reply],
@@ -755,7 +755,7 @@ function CommentsSectionContent({ postId, onCountChange, onInputFocus }: Section
           const result = await addComment(postId, t);
           if (!mutation.isCurrent()) return;
           if (result && 'comment' in result) {
-            setText('');
+            finishSubmission({ text, replyingTo });
             setComments((prev) => [...prev, result.comment]);
             onCountChange(result.commentCount);
           } else if (result && 'error' in result) {
@@ -774,7 +774,7 @@ function CommentsSectionContent({ postId, onCountChange, onInputFocus }: Section
       if (mutation.isCurrent()) setSubmitting(false);
       mutation.finish();
     }
-  }, [beginMutation, setComments, setRepliesMap, setRepliesLoaded, setRepliesOpen, text, postId, replyingTo, onCountChange]);
+  }, [beginMutation, setComments, setRepliesMap, setRepliesLoaded, setRepliesOpen, text, postId, replyingTo, onCountChange, finishSubmission, draftReady]);
 
   const handleDelete = useCallback(
     async (commentId: string) => {
@@ -826,7 +826,7 @@ function CommentsSectionContent({ postId, onCountChange, onInputFocus }: Section
     if (screenFocused) return;
     // Reset this hidden composer once per navigation transition, never during an active refresh.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setText(''); setSubmitting(false); setReplyingTo(null); setCommentsDisabled(false);
+    setSubmitting(false); setCommentsDisabled(false);
     setMentionSuggestions([]); setMentionVisible(false); setMentionLoading(false);
     setPreviewHandle(null); setReportTarget(null);
     submitGuardRef.current = createSubmitGuard();
@@ -901,6 +901,8 @@ function CommentsSectionContent({ postId, onCountChange, onInputFocus }: Section
               onSelect={(sg) => mentionRef.current?.insertTag(sg)}
             />
 
+            {draftError && <Text accessibilityRole="alert" style={s.liveNotice}>{draftError}</Text>}
+            {draftReady && !!text.trim() && <Pressable accessibilityRole="button" accessibilityLabel="Discard comment draft" disabled={submitting} onPress={() => void discard()}><Text style={s.liveNotice}>Discard draft</Text></Pressable>}
             {typingCount > 0 && <Text accessibilityLiveRegion="polite" style={s.liveNotice}>{typingCount === 1 ? 'Someone is typing…' : `${typingCount} people are typing…`}</Text>}
             {!commentsDisabled && (
               <View style={s.inputRow}>
@@ -926,7 +928,9 @@ function CommentsSectionContent({ postId, onCountChange, onInputFocus }: Section
                 <Pressable
                   style={[s.sendBtn, (!text.trim() || submitting) && s.sendBtnDisabled]}
                   onPress={handleSubmit}
-                  disabled={!text.trim() || submitting}
+                  accessibilityRole="button"
+                  accessibilityLabel="Send comment"
+                  disabled={!draftReady || !text.trim() || submitting}
                   hitSlop={8}
                 >
                   {submitting ? (
@@ -1003,9 +1007,8 @@ function CommentsSheetContent({ visible, postId, onClose, onCountChange, onComme
     repliesLoading, repliesErrors, loadReplies: handleLoadReplies, beginMutation,
   } = useLiveComments(postId, visible && screenFocused && !closing, onCountChange);
   const [commentsDisabled, setCommentsDisabled] = useState(false);
-  const [text, setText] = useState('');
+  const { text, setText, replyingTo, setReplyingTo, finishSubmission, discard, draftError, draftReady } = useCommentDraft(postId, visible && screenFocused && !closing, 'comment_sheet');
   const [submitting, setSubmitting] = useState(false);
-  const [replyingTo, setReplyingTo] = useState<{ id: string; authorName: string } | null>(null);
   const mentionRef = useRef<MentionInputHandle>(null);
   const [mentionSuggestions, setMentionSuggestions] = useState<AnyMentionSuggestion[]>([]);
   const [mentionLoading, setMentionLoading] = useState(false);
@@ -1031,8 +1034,6 @@ function CommentsSheetContent({ visible, postId, onClose, onCountChange, onComme
     sheetH.value = 0;
     backdropAlpha.value = 0;
     setCommentsDisabled(false);
-    setReplyingTo(null);
-    setText('');
     // Live comments load when the sheet becomes visible.
     // Slide up from bottom
     sheetH.value = withSpring(PEEK_H, SHEET_SPRING);
@@ -1153,7 +1154,7 @@ function CommentsSheetContent({ visible, postId, onClose, onCountChange, onComme
       Alert.alert('Too long', 'Comments must be 1000 characters or fewer.');
       return;
     }
-    if (!trimmed || submitGuardRef.current.isSubmitting()) return;
+    if (!draftReady || !trimmed || submitGuardRef.current.isSubmitting()) return;
     const mutation = beginMutation();
     if (!mutation) return;
     setSubmitting(true);
@@ -1163,9 +1164,9 @@ function CommentsSheetContent({ visible, postId, onClose, onCountChange, onComme
           const result = await addReply(postId, replyingTo.id, t);
           if (!mutation.isCurrent()) return;
           if (result && 'reply' in result) {
-            setText('');
+            finishSubmission({ text, replyingTo });
             const parentId = replyingTo.id;
-            setReplyingTo(null);
+
             setRepliesMap((prev) => ({
               ...prev,
               [parentId]: [...(prev[parentId] ?? []), result.reply],
@@ -1187,7 +1188,7 @@ function CommentsSheetContent({ visible, postId, onClose, onCountChange, onComme
           const result = await addComment(postId, t);
           if (!mutation.isCurrent()) return;
           if (result && 'comment' in result) {
-            setText('');
+            finishSubmission({ text, replyingTo });
             onCommentPosted?.();
             // Mark that a successful submit has raced any in-flight load so
             // load()'s setComments won't overwrite the optimistic state.
@@ -1209,7 +1210,7 @@ function CommentsSheetContent({ visible, postId, onClose, onCountChange, onComme
       if (mutation.isCurrent()) setSubmitting(false);
       mutation.finish();
     }
-  }, [beginMutation, setComments, setRepliesMap, setRepliesLoaded, setRepliesOpen, text, postId, replyingTo, onCountChange, onCommentPosted]);
+  }, [beginMutation, setComments, setRepliesMap, setRepliesLoaded, setRepliesOpen, text, postId, replyingTo, onCountChange, onCommentPosted, finishSubmission, draftReady]);
 
   const handleDelete = useCallback(
     async (commentId: string) => {
@@ -1261,7 +1262,7 @@ function CommentsSheetContent({ visible, postId, onClose, onCountChange, onComme
     if (visible && screenFocused && !closing) return;
     // Reset this hidden composer once per navigation transition, never during an active refresh.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setText(''); setSubmitting(false); setReplyingTo(null); setCommentsDisabled(false);
+    setSubmitting(false); setCommentsDisabled(false);
     setMentionSuggestions([]); setMentionVisible(false); setMentionLoading(false);
     setPreviewHandle(null); setReportTarget(null);
     submitGuardRef.current = createSubmitGuard();
@@ -1424,7 +1425,9 @@ function CommentsSheetContent({ visible, postId, onClose, onCountChange, onComme
           />
 
           {/* Input row — safe-area-aware bottom padding */}
-          {typingCount > 0 && <Text accessibilityLiveRegion="polite" style={s.liveNotice}>{typingCount === 1 ? 'Someone is typing…' : `${typingCount} people are typing…`}</Text>}
+          {draftError && <Text accessibilityRole="alert" style={s.liveNotice}>{draftError}</Text>}
+            {draftReady && !!text.trim() && <Pressable accessibilityRole="button" accessibilityLabel="Discard comment draft" disabled={submitting} onPress={() => void discard()}><Text style={s.liveNotice}>Discard draft</Text></Pressable>}
+            {typingCount > 0 && <Text accessibilityLiveRegion="polite" style={s.liveNotice}>{typingCount === 1 ? 'Someone is typing…' : `${typingCount} people are typing…`}</Text>}
           {!commentsDisabled && (
             <View style={[s.inputRow, { paddingBottom: insets.bottom > 0 ? insets.bottom : 8 }]}>
               <MentionInput
@@ -1448,7 +1451,9 @@ function CommentsSheetContent({ visible, postId, onClose, onCountChange, onComme
               <Pressable
                 style={[s.sendBtn, (!text.trim() || submitting) && s.sendBtnDisabled]}
                 onPress={handleSubmit}
-                disabled={!text.trim() || submitting}
+                accessibilityRole="button"
+                accessibilityLabel="Send comment"
+                disabled={!draftReady || !text.trim() || submitting}
                 hitSlop={8}
               >
                 {submitting ? (

@@ -52,6 +52,7 @@ interface FakeState {
   events?: any[];
   eventRoles?: any[];
   rsvps?: any[];
+  composerUploads?: any[];
 }
 
 function makeClient(state: FakeState = {}) {
@@ -66,6 +67,7 @@ function makeClient(state: FakeState = {}) {
       const src =
         table === "feature_flags" ? Object.entries(state.flags ?? {}).map(([flag, enabled]) => ({ flag, enabled })) :
         table === "events" ? state.events ?? [] :
+        table === "composer_upload_intents" ? state.composerUploads ?? [] :
         table === "event_roles" ? state.eventRoles ?? [] :
         table === "event_rsvps" ? state.rsvps ?? [] : [];
       return src.filter((r: any) => filters.every((f) => f(r)));
@@ -925,4 +927,27 @@ describe('camera stamps use the verified upload pipeline', () => {
     const malformed=await rawReq('POST','/api/media/upload',mp4Head(),'video/mp4',{'x-portava-capture-token':`${randomUUID()}.${'a'.repeat(43)}`});
     assert.equal(malformed.status,400); assert.equal(client._uploads.length,0);
   });
+});
+
+
+describe('main composer upload ownership and cancellation boundary',()=>{
+ const operation='30000000-0000-4000-8000-000000000001';
+ it('reserves owned immutable paths before bytes and returns a recovery receipt only after finalization',async()=>{
+  _resetRateLimit('media_upload',USER_ID);const client=makeClient(),calls:Array<{name:string;args:any}>=[];
+  client.rpc=async(name:string,args:any)=>{calls.push({name,args});if(name==='reserve_composer_upload')assert.equal(client._uploads.length,0);if(name==='finish_composer_upload')assert.equal(client._uploads.length,3);return {data:{ok:true},error:null};};setClients(client);
+  const jpeg=await sharp({create:{width:16,height:16,channels:3,background:'#369'}}).jpeg().toBuffer();
+  const result=await rawReq('POST','/api/media/upload',jpeg,'image/jpeg',{'X-Composer-Operation':operation});
+  assert.equal(result.status,201,JSON.stringify(result.body));assert.match(result.body.url,new RegExp('^post-media/'+USER_ID+'/composer-drafts/'+operation));
+  assert.deepEqual(calls.map(call=>call.name),['reserve_composer_upload','finish_composer_upload']);
+  assert.equal(calls[0]!.args.p_digest,createHash('sha256').update(client._uploads[0]!.buf).digest('hex'));
+  assert.ok(calls[0]!.args.p_paths.every((path:string)=>path.startsWith(USER_ID+'/composer-drafts/')));
+ });
+ it('a cancellation that wins finalization removes the late bytes and never returns a media URL',async()=>{
+  _resetRateLimit('media_upload',USER_ID);const rows:any[]=[],client=makeClient({composerUploads:rows});
+  client.rpc=async(name:string,args:any)=>{if(name==='reserve_composer_upload'){rows.push({id:operation,owner_id:USER_ID,state:'cancelled',storage_paths:args.p_paths});return {data:{ok:true},error:null};}return {data:{ok:false,error:'draft_cancelled'},error:null};};setClients(client);
+  const jpeg=await sharp({create:{width:16,height:16,channels:3,background:'#369'}}).jpeg().toBuffer();
+  const result=await rawReq('POST','/api/media/upload',jpeg,'image/jpeg',{'X-Composer-Operation':operation});
+  assert.equal(result.status,409,JSON.stringify(result.body));assert.equal(result.body.url,undefined);
+  assert.deepEqual(client._removed[0]!.paths,rows[0].storage_paths);
+ });
 });

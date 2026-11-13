@@ -2,6 +2,7 @@ import { useCallback, useEffect, type PropsWithChildren } from 'react';
 import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as Sentry from '@sentry/react-native';
+import { redactCrashBreadcrumb, redactCrashEvent } from '../src/lib/crashInputPrivacy.ts';
 // Register the geofence background task at module root — must be imported
 // before any call to Location.startGeofencingAsync.
 import '../src/tasks/geofenceExitTask';
@@ -22,6 +23,12 @@ if (startupSentryDsn) Sentry.init({
   enabled: !__DEV__,
   // Performance tracing — 10 % sample rate; adjust once baseline is known.
   tracesSampleRate: 0.1,
+  sendDefaultPii: false,
+  attachScreenshot: false,
+  attachViewHierarchy: false,
+  beforeBreadcrumb: redactCrashBreadcrumb,
+  beforeSend: redactCrashEvent,
+  beforeSendTransaction: redactCrashEvent,
 });
 
 // Warn loudly in non-dev builds when the DSN is missing so the misconfiguration

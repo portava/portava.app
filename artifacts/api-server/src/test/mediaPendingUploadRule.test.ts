@@ -61,12 +61,13 @@ function world(opts: { reservedMinAgo: number; renewedMinAgo?: number; partMinAg
   if (opts.partMinAgo !== undefined) objects.set(`${PATH}.parts/00000`, new Date(NOW - opts.partMinAgo * MIN).toISOString());
 
   function from(table: string) {
-    assert.equal(table, "post_media");
+    assert.ok(["post_media", "composer_upload_intents"].includes(table));
+    const source = table === "post_media" ? rows : [];
     const preds: Array<(r: Row) => boolean> = [];
     let op: { kind: "select" } | { kind: "delete" } | { kind: "update"; patch: Row } = { kind: "select" };
     let single = false;
     const run = () => {
-      const hit = rows.filter((r) => preds.every((p) => p(r)));
+      const hit = source.filter((r) => preds.every((p) => p(r)));
       if (op.kind === "delete") { for (const r of hit) rows.splice(rows.indexOf(r), 1); return { data: null, error: null }; }
       if (op.kind === "update") { for (const r of hit) Object.assign(r, op.patch); return { data: null, error: null }; }
       return single ? { data: hit[0] ?? null, error: null } : { data: hit, error: null };
