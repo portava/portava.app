@@ -1,3 +1,4 @@
+import { withInputDeadline } from '../lib/inputAssistance/requestDeadline.js';
 /**
  * POST /api/input-assistance/suggest — Global Input Intelligence gateway (§41).
  *
@@ -283,9 +284,13 @@ router.post(
     // hands it back on `suggestion_request_completed`, where it lands in the
     // serve log beside the round trip the device actually saw.
     const startedAt = Date.now();
+    const disconnect = new AbortController();
+    const onClose = () => disconnect.abort();
+    res.once('close', onClose);
 
     try {
-      const { suggestions: generated, refusal, laneRefusals } = await generateSuggestionsWithCoverage(sc, {
+      const { suggestions: generated, refusal, laneRefusals } = await withInputDeadline((signal) => generateSuggestionsWithCoverage(sc, {
+        signal,
         context,
         policy: servePolicy,
         text,
@@ -299,7 +304,7 @@ router.post(
         tz,
         aiAssist,
         outcomeLearning,
-      });
+      }), undefined, disconnect.signal);
 
       // The second half of the handshake: a row the client has told us it
       // cannot resolve is withheld rather than sent to be dropped on arrival.
@@ -331,6 +336,7 @@ router.post(
       );
       res.status(200).json(payload);
     } catch (err) {
+      if (res.destroyed) return;
       // Typeahead must never surface an error mid-keystroke — fail soft to an
       // empty, well-formed envelope (still carries policyVersion + requestId).
       logger.warn({ err, context, serverMs: Date.now() - startedAt }, 'input-assistance/suggest failed');
@@ -347,7 +353,7 @@ router.post(
         serverMs: Date.now() - startedAt,
       };
       res.status(200).json(payload);
-    }
+    } finally { res.off('close', onClose); }
   }),
 );
 

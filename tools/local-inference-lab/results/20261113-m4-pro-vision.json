@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "kind": "local_feasibility_probe",
+  "eligibleForReplacement": false,
+  "startedAt": "2026-11-13T14:49:26.691698+00:00",
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "python": "3.12.16",
+  "limitations": [
+    "tiny_public_and_synthetic_sample",
+    "no_paid_baseline",
+    "not_a_production_load_test"
+  ],
+  "vision": {
+    "worker": "existing_siglip_cpu",
+    "modelLoadMs": 54518.174374476075,
+    "cases": [
+      {
+        "case": "blank_white",
+        "inputSha256": "9e121f4dcc228adfd07731058d333070e1c3eb8042e2a1e1c155dd2b0b5b9b76",
+        "latencyMs": [
+          8486.451,
+          5737.835,
+          7220.731
+        ],
+        "result": {
+          "modelId": "google/siglip-base-patch16-224",
+          "modelRevision": "7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed",
+          "taxonomyVersion": "travel-scene-v1",
+          "crowdLevel": null,
+          "confidence": 2.0059150074303034e-07,
+          "confidenceKind": "uncalibrated_similarity",
+          "inferenceMs": 7220.731,
+          "travelCandidates": []
+        }
+      },
+      {
+        "case": "blank_black",
+        "inputSha256": "708d17c0385897cb27b99d70f1cd0e904c5e543d140a39ea9e0cde706a39a2bb",
+        "latencyMs": [
+          6162.091,
+          7055.951,
+          8423.152
+        ],
+        "result": {
+          "modelId": "google/siglip-base-patch16-224",
+          "modelRevision": "7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed",
+          "taxonomyVersion": "travel-scene-v1",
+          "crowdLevel": "empty",
+          "confidence": 2.8481963454396464e-08,
+          "confidenceKind": "uncalibrated_similarity",
+          "inferenceMs": 8423.152,
+          "travelCandidates": []
+        }
+      },
+      {
+        "case": "public_coffee_photo",
+        "inputSha256": "14e95c22745cc5335c4c7a9979efb309af519622208406c0ab39e18fabb19317",
+        "latencyMs": [
+          5683.409,
+          8533.11,
+          6686.86
+        ],
+        "result": {
+          "modelId": "google/siglip-base-patch16-224",
+          "modelRevision": "7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed",
+          "taxonomyVersion": "travel-scene-v1",
+          "crowdLevel": null,
+          "confidence": 1.4897906019939455e-08,
+          "confidenceKind": "uncalibrated_similarity",
+          "inferenceMs": 6686.86,
+          "travelCandidates": []
+        }
+      }
+    ],
+    "experimentalMetal": {
+      "available": true,
+      "productionEnabled": false,
+      "latencyMs": [
+        16686.12162489444,
+        538.9493340626359,
+        577.8946671634912,
+        880.4462915286422,
+        807.0154581218958
+      ],
+      "warmMedianMs": 692.4550626426935,
+      "maxScoreDifferenceFromCpu": 3.0411229090532288e-12,
+      "result": {
+        "modelId": "google/siglip-base-patch16-224",
+        "modelRevision": "7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed",
+        "taxonomyVersion": "travel-scene-v1",
+        "crowdLevel": null,
+        "confidence": 9.656734079044327e-09,
+        "confidenceKind": "uncalibrated_similarity",
+        "inferenceMs": 807.0154581218958,
+        "travelCandidates": []
+      }
+    }
+  },
+  "peakProcessRssMiB": 821.578125,
+  "completedAt": "2026-11-13T14:51:59.603414+00:00"
+}

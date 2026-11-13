@@ -15,6 +15,7 @@
  * action bar does not touch the location module.
  */
 import { freshToken } from '../../../services/apiToken.ts';
+import { withServiceRequest } from '../../../services/serviceRequest.ts';
 
 export type LocationPermission = 'granted' | 'undetermined' | 'denied';
 
@@ -33,32 +34,49 @@ function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 }
 
-export const expoDeviceLocator: DeviceLocator = {
+export function createDeviceLocator(load: () => Promise<ExpoLocation> = loadLocation): DeviceLocator {
+  return {
   async permission() {
-    const L = await loadLocation();
+    const L = await load();
     const p = await L.getForegroundPermissionsAsync();
     if (p.status === 'granted') return 'granted';
     return p.canAskAgain === false || p.status === 'denied' ? 'denied' : 'undetermined';
   },
   async request() {
-    const L = await loadLocation();
+    const L = await load();
     const p = await L.requestForegroundPermissionsAsync();
     return p.status === 'granted';
   },
   async currentLabel() {
-    const L = await loadLocation();
-    const pos = await L.getCurrentPositionAsync({ accuracy: L.Accuracy.Balanced });
-    const token = await freshToken();
-    if (!token || !apiBase()) return null;
-    const res = await fetch(`${apiBase()}/api/location/reverse-geocode`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-    });
-    if (!res.ok) return null;
-    const body = (await res.json().catch(() => null)) as { place?: { city?: string | null; district?: string | null } } | null;
-    const p = body?.place;
-    const label = [p?.district, p?.city].filter((x): x is string => typeof x === 'string' && x.trim().length > 0).join(', ');
-    return label || null;
+    try {
+      const base = apiBase();
+      if (!base || /[\s\\?#@]/.test(base)) return null;
+      const origin = new URL(base);
+      if (origin.protocol !== 'https:' || origin.pathname !== '/') return null;
+      return await withServiceRequest(async (request) => {
+        const token = await request.token(freshToken);
+        if (!token) return null;
+        const L = await request.wait(load);
+        const permission = await request.wait(() => L.getForegroundPermissionsAsync());
+        if (permission.status !== 'granted') return null;
+        const pos = await request.wait(() => L.getCurrentPositionAsync({ accuracy: L.Accuracy.Balanced }));
+        const { latitude: lat, longitude: lng } = pos.coords;
+        if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+        const res = await request.fetch(`${origin.origin}/api/location/reverse-geocode`, {
+          method: 'POST', credentials: 'omit', cache: 'no-store',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ lat, lng }),
+        });
+        if (!res.ok) return null;
+        const body = await request.wait(() => res.json()) as { place?: { city?: string | null; district?: string | null } } | null;
+        const label = [body?.place?.district, body?.place?.city]
+          .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+          .map((value) => value.trim()).join(', ');
+        return label && label.length <= 240 ? label : null;
+      });
+    } catch { return null; }
   },
-};
+  };
+}
+
+export const expoDeviceLocator = createDeviceLocator();

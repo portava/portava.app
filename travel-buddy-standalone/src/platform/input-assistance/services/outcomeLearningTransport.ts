@@ -11,7 +11,7 @@
  *   PUT  /api/input-assistance/outcome-consent   { enabled, disclosureVersion }
  *   POST /api/input-assistance/outcome           { context, fieldId, task, ok, entities }
  */
-import { freshToken as freshApiToken } from '../../../services/apiToken.ts';
+import { withInputApiResponse } from './inputApiRequest.ts';
 import { onAuthChange, getSessionUserId } from '../../../services/auth.ts';
 import {
   OUTCOME_DISCLOSURE_VERSION,
@@ -20,26 +20,6 @@ import {
   type OutcomeConsentState,
   type TaskOutcomeBody,
 } from './outcomeLearning.ts';
-
-function apiBase(): string {
-  return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-}
-
-async function authed(path: string, init: RequestInit = {}): Promise<Response | null> {
-  const base = apiBase();
-  if (!base) return null;
-  let token: string | null = null;
-  try {
-    token = await freshApiToken();
-  } catch {
-    token = null;
-  }
-  if (!token) return null;
-  return fetch(`${base}${path}`, {
-    ...init,
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(init.headers ?? {}) },
-  });
-}
 
 /**
  * The read, with "could not read it" kept apart from "off" — a settings screen
@@ -52,10 +32,11 @@ export type OutcomeConsentRead =
 
 export async function readOutcomeConsent(): Promise<OutcomeConsentRead> {
   try {
-    const res = await authed('/api/input-assistance/outcome-consent');
-    if (!res || !res.ok) return { status: 'unreadable' };
-    const state = parseOutcomeConsentState(await res.json());
-    return state ? { status: 'ok', state } : { status: 'unreadable' };
+    return await withInputApiResponse<OutcomeConsentRead>('/api/input-assistance/outcome-consent', {}, async res => {
+      if (!res.ok) return { status: 'unreadable' };
+      const state = parseOutcomeConsentState(await res.json());
+      return state ? { status: 'ok', state } : { status: 'unreadable' };
+    });
   } catch {
     return { status: 'unreadable' };
   }
@@ -70,19 +51,19 @@ export type OutcomeConsentWrite =
 /** Grant (sending the version of the words actually shown) or withdraw. */
 export async function writeOutcomeConsent(enabled: boolean): Promise<OutcomeConsentWrite> {
   try {
-    const res = await authed('/api/input-assistance/outcome-consent', {
-      method: 'PUT',
+    return await withInputApiResponse<OutcomeConsentWrite>('/api/input-assistance/outcome-consent', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(enabled ? { enabled: true, disclosureVersion: OUTCOME_DISCLOSURE_VERSION } : { enabled: false }),
+    }, async res => {
+      if (res.status === 404) return { status: 'unavailable' };
+      if (res.status === 409) return { status: 'stale_disclosure' };
+      if (!res.ok) return { status: 'failed' };
+      const body = (await res.json()) as Record<string, unknown>;
+      const state = parseOutcomeConsentState(body);
+      if (!state) return { status: 'failed' };
+      const erased = body.countersErased;
+      return { status: 'ok', state, countersErased: typeof erased === 'boolean' ? erased : null };
     });
-    if (!res) return { status: 'failed' };
-    if (res.status === 404) return { status: 'unavailable' };
-    if (res.status === 409) return { status: 'stale_disclosure' };
-    if (!res.ok) return { status: 'failed' };
-    const body = (await res.json()) as Record<string, unknown>;
-    const state = parseOutcomeConsentState(body);
-    if (!state) return { status: 'failed' };
-    const erased = body.countersErased;
-    return { status: 'ok', state, countersErased: typeof erased === 'boolean' ? erased : null };
   } catch {
     return { status: 'failed' };
   }
@@ -91,8 +72,9 @@ export async function writeOutcomeConsent(enabled: boolean): Promise<OutcomeCons
 /** The per-user credit for a completed task. Resolves false on any failure. */
 export async function postTaskOutcome(body: TaskOutcomeBody): Promise<boolean> {
   try {
-    const res = await authed('/api/input-assistance/outcome', { method: 'POST', body: JSON.stringify(body) });
-    return !!res && res.ok;
+    return await withInputApiResponse('/api/input-assistance/outcome', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    }, async res => res.ok);
   } catch {
     return false;
   }

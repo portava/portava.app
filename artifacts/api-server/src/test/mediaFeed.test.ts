@@ -1883,8 +1883,8 @@ describe("hydrateMediaGridItem — relay URL resolution for video assets", () =>
 
     assert.equal(
       item.videoUrl,
-      `${API_BASE}/api/media/file/post-media/uploads/user456/vid.mp4`,
-      "relay URL must use 'post-media' as default bucket when storage_bucket is absent",
+      'post-media/uploads/user456/vid.mp4',
+      "private storage refs must go through the authenticated signer",
     );
   });
 
@@ -2105,5 +2105,24 @@ describe("census-media §28.13 — DELETE /media/:id answers a stranger as it an
     const upd = (client._updated as any[]).filter((u) => u.table === "posts");
     assert.equal(upd.length, 1);
     assert.equal(upd[0].data.status, "deleted");
+  });
+});
+
+describe('grid private media signing contract', () => {
+  const row = { id: POST_1, author_id: CREATOR_A, view_count: 0, qualified_view_count: 0 };
+  it('returns signable image and video poster refs regardless of the API deployment hostname', () => {
+    const image = hydrateMediaGridItem(row, [{ media_type: 'image', storage_bucket: 'post-media',
+      storage_path: 'owner/photo.jpg' }], 'https://internal-api.test');
+    assert.equal(image.posterUrl, 'post-media/owner/photo.jpg');
+    const video = hydrateMediaGridItem(row, [{ media_type: 'video', storage_bucket: 'post-media',
+      storage_path: 'owner/clip.mp4', thumbnail_storage_path: 'owner/poster.jpg' }], 'https://internal-api.test');
+    assert.equal(video.posterUrl, 'post-media/owner/poster.jpg');
+    assert.equal(video.videoUrl, 'post-media/owner/clip.mp4');
+  });
+  it('does not hand a video file to the image loader when the thumbnail is missing', () => {
+    const video = hydrateMediaGridItem(row, [{ media_type: 'video', storage_bucket: 'post-media',
+      storage_path: 'owner/clip.mp4' }]);
+    assert.equal(video.posterUrl, null);
+    assert.equal(video.videoUrl, 'post-media/owner/clip.mp4');
   });
 });

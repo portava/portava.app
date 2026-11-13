@@ -109,7 +109,7 @@ const deferred = () => {
 
 beforeEach(() => {
   jest.useFakeTimers();
-  process.env.EXPO_PUBLIC_API_BASE_URL = 'http://api.test';
+  process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
   mockLegacy = false;
   mockOwner = 'owner-a';
   mockParams = { draftId: 'existing-draft' };

@@ -1,0 +1,54 @@
+name: Provider release events
+on:
+  repository_dispatch:
+    types: [provider-release]
+permissions:
+  contents: read
+concurrency:
+  group: provider-release-events
+  cancel-in-progress: false
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate signed release and independent live evaluation
+        env:
+          PROVIDER_RELEASE_EVENT_SECRET: ${{ secrets.PROVIDER_RELEASE_EVENT_SECRET }}
+          PROVIDER_EVALUATION_SECRET: ${{ secrets.PROVIDER_EVALUATION_SECRET }}
+        run: node scripts/provider-release-events.mjs
+      - name: Prepare dependency lockfiles
+        run: |
+          set -euo pipefail
+          corepack enable
+          bash .github/scripts/pnpm-run.sh . travel-buddy-workspace provider:update-lockfiles
+      - name: Open qualified update and queue merge behind required CI
+        env:
+          GH_TOKEN: ${{ secrets.PROVIDER_UPDATE_GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN"
+          # A token that creates ordinary PRs is required so CI actually runs.
+          # Fail closed unless the complete CI verdict is a required branch check.
+          gh api "repos/$REPO/branches/$BASE_BRANCH/protection/required_status_checks" > /tmp/provider-protection.json
+          node -e 'const p=require("/tmp/provider-protection.json");if(![...(p.contexts||[]),...(p.checks||[]).map(c=>c.context)].includes("CI · verdict (skipped or cancelled is not a pass)"))process.exit(1)'
+          branch="automation/provider-$(node -p 'require("./provider-update-result.json").eventId')"
+          git checkout -b "$branch"
+          git config user.name 'Portava provider updates'
+          git config user.email 'provider-updates@users.noreply.github.com'
+          git add artifacts/api-server/src/config/providerVersions.json artifacts/api-server/package.json travel-buddy-standalone/package.json tools/media-worker/package.json pnpm-lock.yaml travel-buddy-standalone/pnpm-lock.yaml
+          git diff --cached --quiet && exit 1
+          git commit -m 'Update qualified external provider version'
+          gh auth setup-git
+          git push origin "$branch"
+          node -e 'const fs=require("fs"),r=require("./provider-update-result.json");fs.writeFileSync("/tmp/provider-update-pr.md",`Updates ${r.provider} to the independently evaluated version ${r.version}. The release event and live evaluation are signed and bound to the previous commit and model registry.\n\nValidation: full required CI must pass before automatic merge. Previous model versions remain available for existing jobs and rollback.\n`)'
+          pr="$(gh pr create --repo "$REPO" --base "$BASE_BRANCH" --head "$branch" --title 'Update qualified external provider version' --body-file /tmp/provider-update-pr.md)"
+          gh pr merge --repo "$REPO" --auto --squash "$pr"

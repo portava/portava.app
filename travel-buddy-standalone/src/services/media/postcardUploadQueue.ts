@@ -61,6 +61,24 @@ export function queueKey(accountId: string): string {
   return `${KEY_PREFIX}${accountId}`;
 }
 
+function isStoredJob(value: unknown, accountId: string): value is PostcardUploadJob {
+  if (!value || typeof value !== 'object') return false;
+  const job = value as Partial<PostcardUploadJob>;
+  const stages = ['queued', 'shell', 'slot', 'bytes', 'poster', 'done', 'failed', 'cancelled'];
+  if (typeof job.id !== 'string' || !job.id || job.accountId !== accountId
+    || !stages.includes(job.stage ?? '') || !Number.isFinite(job.createdAt) || !Number.isFinite(job.updatedAt)
+    || !Number.isInteger(job.runs) || job.runs! < 0) return false;
+  const input = job.input;
+  const asset = input?.asset;
+  if (!input || !asset || typeof asset.uri !== 'string' || !asset.uri
+    || typeof asset.mimeType !== 'string' || typeof asset.isVideo !== 'boolean'
+    || !['public', 'private', 'trip_only'].includes(input.visibility)
+    || !input.location || typeof input.location !== 'object' || Array.isArray(input.location)) return false;
+  if (['shell', 'slot', 'bytes', 'poster', 'done'].includes(job.stage!) && !job.postId) return false;
+  if (['slot', 'bytes', 'poster', 'done'].includes(job.stage!) && !job.mediaId) return false;
+  return true;
+}
+
 export class PostcardUploadQueue {
   private readonly rt: QueueRuntime;
   private readonly listeners = new Set<(e: QueueEvent) => void>();
@@ -87,13 +105,15 @@ export class PostcardUploadQueue {
   }
 
   private async load(accountId: string): Promise<PostcardUploadJob[]> {
-    try {
-      const raw = await this.rt.storage.getItem(queueKey(accountId));
-      const parsed = raw ? (JSON.parse(raw) as unknown) : [];
-      return Array.isArray(parsed) ? (parsed as PostcardUploadJob[]).filter((j) => j && j.accountId === accountId) : [];
-    } catch {
-      return [];
+    const raw = await this.rt.storage.getItem(queueKey(accountId));
+    // An unreadable journal is not an empty one. In particular, upsert must
+    // never replace recoverable uploads after a transient storage failure.
+    if (raw === null) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.some(j => !isStoredJob(j, accountId))) {
+      throw new Error('Saved uploads could not be read. Try again when device storage is available.');
     }
+    return parsed;
   }
 
   private upsert(accountId: string, job: PostcardUploadJob): Promise<void> {
@@ -113,7 +133,9 @@ export class PostcardUploadQueue {
   async list(): Promise<PostcardUploadJob[]> {
     const accountId = await this.rt.accountId();
     if (!accountId) return [];
-    return (await this.load(accountId)).sort((a, b) => b.createdAt - a.createdAt);
+    const jobs = await this.load(accountId);
+    if (await this.rt.accountId() !== accountId) return [];
+    return jobs.sort((a, b) => b.createdAt - a.createdAt);
   }
 
   /**
@@ -125,9 +147,12 @@ export class PostcardUploadQueue {
     if (!accountId) return null;
     const job = newPostcardUploadJob(this.rt.newId(), accountId, input, this.rt.now());
     await this.upsert(accountId, job);
+    if (await this.rt.accountId() !== accountId) return null;
     this.emit({ job });
     if (this.draining) this.drainAgain = true;
-    void this.resumePending();
+    // Explicit resume callers still receive a storage failure. The background
+    // kickoff must not turn that same failure into an unhandled rejection.
+    void this.resumePending().catch(() => {});
     return job;
   }
 
@@ -192,6 +217,12 @@ export class PostcardUploadQueue {
       );
       this.cancelled.delete(stored.id);
       // A paused job stays paused for this run; the next trigger resumes it.
+      } catch (error) {
+        if (deps.isCurrent?.() !== false && await this.rt.accountId() === accountId) {
+          this.emit({ job: { ...stored, retryable: true,
+            lastError: 'Upload paused. Check your connection and device storage, then reopen the app to retry.' } });
+        }
+        throw error;
       } finally { this.active = null; deps.dispose?.(); }
     }
   }

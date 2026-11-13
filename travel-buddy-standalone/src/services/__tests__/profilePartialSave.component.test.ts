@@ -12,7 +12,7 @@
  *   npx jest src/services/__tests__/profilePartialSave.component.test.ts
  */
 import assert from 'node:assert/strict';
-import { _setTestAuthToken, updateMyProfile } from '../profile.ts';
+import { _setTestAuthToken, updateMyProfile, subscribeOwnProfileChanges } from '../profile.ts';
 
 const FAKE_TOKEN = 'fake-test-token-partial-save';
 
@@ -38,6 +38,25 @@ afterEach(() => {
 });
 
 describe('updateMyProfile — partial save (schema drift)', () => {
+  it('refreshes subscribers after full or partial persistence, but not a rejected save', async () => {
+    const changed = jest.fn();
+    const unsubscribe = subscribeOwnProfileChanges(changed);
+    try {
+      globalThis.fetch = mockFetch(200, { id: 'u1', avatarUrl: null });
+      await updateMyProfile({ avatarUrl: '' });
+      expect(changed).toHaveBeenCalledTimes(1);
+      globalThis.fetch = mockFetch(200, { id: 'u1', displayName: 'Ada', unsavedFields: ['bio'] });
+      await updateMyProfile({ displayName: 'Ada', bio: 'Hello' });
+      expect(changed).toHaveBeenCalledTimes(2);
+      globalThis.fetch = mockFetch(403, { error: 'forbidden' });
+      await updateMyProfile({ displayName: 'Ada' });
+      expect(changed).toHaveBeenCalledTimes(2);
+    } finally { unsubscribe(); }
+    globalThis.fetch = mockFetch(200, { id: 'u1', displayName: 'Ada' });
+    await updateMyProfile({ displayName: 'Ada' });
+    expect(changed).toHaveBeenCalledTimes(2);
+  });
+
   it('returns ok:false with partial_save when unsavedFields is non-empty', async () => {
     globalThis.fetch = mockFetch(200, {
       id: 'u1',

@@ -17,7 +17,7 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import express, { type Express } from "express";
 import { _setTestClient } from "../lib/http.js";
-import { _setTestOpenAI } from "../lib/openai.js";
+import { _setTestOpenAI, resolveOpenAIConfig } from "../lib/openai.js";
 
 const USER_ID = "11111111-1111-1111-1111-111111111111";
 
@@ -102,7 +102,9 @@ function makeOpenAIMock(content: string, capture?: { opts: any[]; calls: number 
   return {
     chat: {
       completions: {
-        create: async (opts: any) => {
+        create: async (opts: any, requestOptions: any) => {
+          assert.deepEqual(requestOptions, { timeout: 20_000, maxRetries: 0 });
+          assert.deepEqual(opts.response_format, { type: 'json_object' });
           if (capture) { capture.opts.push(opts); capture.calls++; }
           return { choices: [{ message: { role: "assistant", content } }] };
         },
@@ -110,6 +112,25 @@ function makeOpenAIMock(content: string, capture?: { opts: any[]; calls: number 
     },
   } as any;
 }
+
+describe('trip extractor provider configuration', () => {
+  it('uses standard OpenAI credentials when no integration pair is configured', () => {
+    assert.deepEqual(resolveOpenAIConfig({ OPENAI_API_KEY: 'direct-test-key' }), {
+      baseURL: 'https://api.openai.com/v1', apiKey: 'direct-test-key',
+    });
+  });
+  it('keeps an integration key paired with its own endpoint', () => {
+    assert.deepEqual(resolveOpenAIConfig({ AI_INTEGRATIONS_OPENAI_API_KEY: 'integration-test-key',
+      AI_INTEGRATIONS_OPENAI_BASE_URL: 'https://integration.test/v1', OPENAI_API_KEY: 'direct-test-key' }), {
+      baseURL: 'https://integration.test/v1', apiKey: 'integration-test-key',
+    });
+  });
+  it('never sends a direct key to an incomplete integration endpoint', () => {
+    assert.deepEqual(resolveOpenAIConfig({ AI_INTEGRATIONS_OPENAI_BASE_URL: 'https://integration.test/v1', OPENAI_API_KEY: 'direct-test-key' }), {
+      baseURL: 'https://api.openai.com/v1', apiKey: 'direct-test-key',
+    });
+  });
+});
 
 const FENCED_DRAFT =
   "```json\n" +
@@ -240,7 +261,7 @@ describe("POST /trips/draft-from-text", () => {
     assert.ok(userMsg.content.includes(text));
     assert.equal(sent.model, "gpt-5.4-mini");
     assert.equal(sent.reasoning_effort, "none");
-    assert.equal(sent.max_completion_tokens, 400);
+    assert.equal(sent.max_completion_tokens, 1600);
     assert.equal("temperature" in sent, false);
   });
 

@@ -2,8 +2,10 @@ import React from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
 import { UnifiedPostComposer } from '../src/components/PulseCreate';
 import type { Place } from '../src/lib/location/placeTypes';
-import { Alert } from 'react-native';
+import { Alert, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { AppHeader } from '../src/components/ui/AppHeader';
+import { color } from '../src/theme/tokens';
 import { PostSaveDestinationPanel } from '../src/components/PostSaveDestinationPanel.tsx';
 import { POST_UUID } from '../src/constants/postReference.ts';
 
@@ -48,8 +50,13 @@ export default function Create() {
     sharePostId?: string;
   }>();
   if (typeof sharePostId === 'string' && POST_UUID.test(sharePostId)) {
-    return <SafeAreaView style={{ flex: 1 }}><PostSaveDestinationPanel postId={sharePostId} destination="profile" active
-      onCancel={dismiss} onSaved={() => { dismiss(); Alert.alert('Shared to your profile'); }} /></SafeAreaView>;
+    return <View style={{ flex: 1, backgroundColor: color.paper }}>
+      <AppHeader variant="modal" title="Share to my profile" onBack={dismiss} />
+      <SafeAreaView edges={['left', 'right', 'bottom']} style={{ flex: 1 }}>
+        <PostSaveDestinationPanel postId={sharePostId} destination="profile" active showTitle={false}
+          onCancel={dismiss} onSaved={() => { dismiss(); Alert.alert('Shared to your profile'); }} />
+      </SafeAreaView>
+    </View>;
   }
 
   // Build a minimal Place snapshot from the query params so the composer

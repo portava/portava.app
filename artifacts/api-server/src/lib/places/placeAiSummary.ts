@@ -1,3 +1,4 @@
+import { providerModel } from "../providerVersions.js";
 /**
  * placeAiSummary — AI-generated community summaries for the Living Destination Page.
  *
@@ -145,7 +146,7 @@ export async function generateAiSummary(
     const prompt = buildPrompt(placeName, topPosts, officialInfo);
 
     const response = await getOpenAI().chat.completions.create({
-      model:       "gpt-5.4-mini",
+      model:       providerModel("openai", "gpt-5.4-mini"),
       messages:    [{ role: "user", content: prompt }],
       max_completion_tokens: 400,
       reasoning_effort:      "none",

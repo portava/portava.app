@@ -56,11 +56,9 @@ async function authedFetch(path: string, opts: RequestInit = {}, owner?: Discove
   });
 }
 
-// A Compass reply normally lands well under this even on a slow multi-tool-call
-// turn; this exists purely so a stalled request (upstream hang, dropped
-// connection, proxy stall) fails soft with a visible retry instead of leaving
-// the "AI BUDDY" bubble spinning forever with no feedback at all.
-const COMPASS_ASK_TIMEOUT_MS = 30_000;
+// Planning can require several bounded model/tool rounds. Keep one finite
+// end-to-end deadline without cutting off deliberation after the first round.
+export const COMPASS_ASK_TIMEOUT_MS = 90_000;
 
 /** Rejects with an Error whose message is 'timeout' after `ms` unless `signal` fires first. */
 function timeoutSignal(ms: number): { signal: AbortSignal; cancel: () => void } {
@@ -707,7 +705,9 @@ export async function postCompassAsk(
   prompt:  string,
   opts: {
     city?:            string;
+    currentCity?:     string;
     conversationId?:  string;
+    tripId?:          string;
     /** @deprecated ignored when conversationId is present */
     conversationContext?: string;
     stream?:          boolean;
@@ -877,7 +877,7 @@ export interface CompassAskStreamHandlers {
  */
 export async function postCompassAskStream(
   prompt: string,
-  opts: { city?: string; conversationId?: string; mediaId?: string; sensingZoneIds?: string[] } = {},
+  opts: { city?: string; currentCity?: string; conversationId?: string; tripId?: string; mediaId?: string; sensingZoneIds?: string[] } = {},
   handlers: CompassAskStreamHandlers = {},
 ): Promise<{ ok: boolean; data?: CompassAskResponse; error?: string; streamed?: boolean }> {
   if (!isSupabaseConfigured || !apiBase()) return notConfigured();

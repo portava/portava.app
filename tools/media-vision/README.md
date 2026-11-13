@@ -1,6 +1,6 @@
 # Main-app image understanding (disabled integration)
 
-This is the local inference subprocess for the **existing shared media derivative worker**, not another queue, HTTP inference service, app-process inference loop or deployment. It performs actual SigLIP tensor inference over decoded pixels. No model/runtime is installed or downloaded by this patch.
+This is the local inference subprocess for the **existing shared media derivative worker**, not another queue, HTTP inference service, app-process inference loop or deployment. It performs actual SigLIP tensor inference over decoded pixels. Inference never installs or downloads models. The separate [local inference lab](../local-inference-lab/README.md) records the subsequently provisioned development Mac runtime and measured results; production inference remains disabled.
 
 ## Model and predictions
 
@@ -64,4 +64,4 @@ MEDIA_VISION_PGLITE_MODULE=/absolute/read-only/pglite/dist/index.js MEDIA_QUEUE_
 
 PGlite executes the real feature/shared queue SQL against a synthetic in-memory fixture, not a live/shared DB. Node tests execute real Sharp transforms, local HTTP and the actual Python refusal path; successful inference in orchestration tests uses explicit synthetic runner outputs. Python tests validate protocol and score-to-candidate formatting only. **None proves actual model inference success, language/recognition quality, hosted Supabase/RLS behavior, multiprocess contention or scalability.**
 
-Primary docs: [pinned SigLIP model/license](https://huggingface.co/google/siglip-base-patch16-224/tree/7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed), [SigLIP API](https://huggingface.co/docs/transformers/model_doc/siglip), [Supabase functions](https://supabase.com/docs/guides/database/functions), [PostgreSQL locking](https://www.postgresql.org/docs/current/explicit-locking.html). Managed OpenAI was investigated but deferred; no managed inference path is present.
+Primary docs: [pinned SigLIP model/license](https://huggingface.co/google/siglip-base-patch16-224/tree/7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed), [SigLIP API](https://huggingface.co/docs/transformers/model_doc/siglip), [Supabase functions](https://supabase.com/docs/guides/database/functions), [PostgreSQL locking](https://www.postgresql.org/docs/current/explicit-locking.html). The optional dedicated Hugging Face execution adapter reuses this pinned worker; see [hybrid processing](../../docs/media/hybrid-processing-20261113.md) for consent, hosting and validation requirements. General-purpose managed vision models are not substituted for these scores.

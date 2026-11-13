@@ -180,7 +180,7 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
       if (ctrl.signal.aborted) return;
 
       if (!result.ok) {
-        setState((prev) => ({ ...prev, loading: false }));
+        setState((prev) => ({ ...prev, loading: false, refused: true }));
         return;
       }
 
@@ -231,7 +231,7 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
       }
     } catch {
       if (!ctrl.signal.aborted) {
-        setState((prev) => ({ ...prev, loading: false }));
+        setState((prev) => ({ ...prev, loading: false, refused: true }));
       }
     }
   }, [sortBy, cKey]);

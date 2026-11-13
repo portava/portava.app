@@ -319,7 +319,7 @@ describe("CX-11 — Compass is downstream of lib/opportunityEngine, behind its p
 describe("CCL-05 — the chain, under one model turn", () => {
   it("authorized request → Home context → shared kernel → shared opportunities → the existing ranker's line, in one context", async () => {
     const ctx = await askWith({ opportunityFlag: true });
-    const iRanker = ctx.indexOf("Verified nearby places");
+    const iRanker = ctx.indexOf("Ranked app suggestions");
     const iHome = ctx.indexOf(HOME_PROJECTION_HEADER);
     const iKernel = ctx.indexOf(KERNEL_HEADER);
     const iOpp = ctx.indexOf(OPPORTUNITY_HEADER);

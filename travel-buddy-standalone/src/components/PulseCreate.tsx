@@ -1,5 +1,7 @@
 import { usePrivateSurfaceKey } from '../hooks/usePrivateSurfaceKey.ts';
 import { useRecordingStampDraft } from '../features/capture-stamps/useRecordingStampDraft.ts';
+import { WritingAssistControl } from '../platform/input-assistance/compass/WritingAssistControl.tsx';
+import { AI_WRITING_FIELD_IDS } from '../platform/input-assistance/compass/compassFields.ts';
 import { RecordingStampOption } from '../features/capture-stamps/RecordingStamp.tsx';
 import { beginCaptureSession, bindCameraRecording } from '../features/capture-stamps/recordingStamp.ts';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -654,10 +656,17 @@ function PostDraft({
                       setMentionVisible(!!trigger && (items.length > 0 || isLoading));
                     }}
                   />
+                  {(selectedType === 'share_postcard' || selectedType === 'share_moment' || selectedType === 'post_update') && (
+                    <WritingAssistControl context="caption" fieldId={AI_WRITING_FIELD_IDS.caption}
+                      text={text} onInsert={setText} disabled={submitting || inFlight} />
+                  )}
                 </View>
 
                 {/* photo picker */}
                 <View style={uc.field}>
+                  <Pressable accessibilityRole="button" disabled={submitting || inFlight || !!stamp.pending} onPress={() => router.push('/create-ai')} style={{ minHeight: 44, justifyContent: 'center' }}>
+                    <Text style={uc.fieldLabel}>Create an AI image or video</Text>
+                  </Pressable>
                   <Text style={uc.fieldLabel}>{photoLabel(selectedType)}</Text>
                   <Pressable style={uc.mediaPicker} onPress={openPickerSheet} disabled={submitting || inFlight || !!stamp.pending}>
                     {media ? (

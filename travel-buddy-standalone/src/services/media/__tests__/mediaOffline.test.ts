@@ -243,6 +243,7 @@ const TRIP = '22222222-2222-4222-8222-222222222222';
 const EVENT = '33333333-3333-4333-8333-333333333333';
 
 describe('MD295–MD301 — each §39 scope is filled online and served, aged and labelled, offline', () => {
+  const originalApiBase = process.env.EXPO_PUBLIC_API_BASE_URL;
   let env: ReturnType<typeof fakeEnv>;
   beforeEach(() => {
     env = fakeEnv();
@@ -251,6 +252,8 @@ describe('MD295–MD301 — each §39 scope is filled online and served, aged an
     useFakeNetwork();
   });
   afterEach(() => {
+    if (originalApiBase === undefined) delete process.env.EXPO_PUBLIC_API_BASE_URL;
+    else process.env.EXPO_PUBLIC_API_BASE_URL = originalApiBase;
     _setMediaCache(null);
     _clearTestFreshToken();
     (globalThis as { fetch: unknown }).fetch = realFetch;
@@ -395,6 +398,7 @@ describe('MD295–MD301 — each §39 scope is filled online and served, aged an
 describe('MD325 — hydration serves the cached file only when signing is UNREACHABLE, and purges on DENIAL', () => {
   let env: ReturnType<typeof fakeEnv>;
   beforeEach(async () => {
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
     env = fakeEnv();
     const c = new MediaCache(env);
     _setMediaCache(c);
@@ -421,6 +425,15 @@ describe('MD325 — hydration serves the cached file only when signing is UNREAC
     await new Promise((res) => setTimeout(res, 5));
     const c = await (await import('../mediaCache.ts')).getMediaCache();
     assert.equal(await c.localFileFor('post-media/u/1.jpg'), null);
+  });
+
+  for (const status of [401, 403, 404, 410]) it(`HTTP ${status} cannot reuse an offline private copy`, async () => {
+    (globalThis as { fetch: unknown }).fetch = async () => ({ ok: false, status });
+    const r = await hydrateMediaUrls(['post-media/u/1.jpg']);
+    assert.equal(r['post-media/u/1.jpg'], null);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    const cache = await (await import('../mediaCache.ts')).getMediaCache();
+    assert.equal(await cache.localFileFor('post-media/u/1.jpg'), null);
   });
 
   it('online and allowed → the SIGNED url, not the local copy (authorization is re-checked every time)', async () => {

@@ -1,0 +1,105 @@
+{
+  "name": "Production intelligence monitor",
+  "description": "Six-system operational monitoring: hourly snapshots, 90-day history, evidence gaps, feature posture and scheduler health.",
+  "content": {
+    "cells": [
+      {
+        "type": "markdown",
+        "text": "# Production intelligence monitor\n\nCompass, Sensing, community information, personalized media, Discovery and Input. Hourly snapshots cover the preceding 24 hours ending at the hour; history is retained for 90 days. Run this notebook to refresh the display.\n\n**Observed** means telemetry exists, not that a system is accurate or A++. **No data**, **disabled**, **unreadable** and **stale** stay explicit. Latency percentiles need at least 60 valid samples. The monitor reads aggregate counters and stores no prompts, user identifiers, coordinates or media. No synthetic user activity is injected."
+      },
+      {
+        "type": "database",
+        "title": "Latest status — all six systems",
+        "view": "table",
+        "row_limit": 6,
+        "sql": "select systems.system, case when s.measured_at is null then 'not_collected' when s.measured_at < now()-interval '90 minutes' then 'stale' else s.state end as operational_status, s.sample_count, s.measured_at, s.window_start, s.window_end, coalesce(s.effectiveness,'unverified') as effectiveness, s.flags from (values ('compass'),('sensing'),('community'),('media'),('discovery'),('input')) systems(system) left join lateral (select * from intelligence_monitor.snapshots s where s.system=systems.system order by measured_at desc limit 1) s on true order by systems.system;"
+      },
+      {
+        "type": "markdown",
+        "text": "## Code assessments and A++ target\n\nProvisional development assessments from code review and local regression tests: **Compass B; Sensing B−; community information B−; personalized media B−; Discovery B; Input B+**. These are not measured production grades. A++ is the target for every system and requires live effectiveness evidence as well as operational health. The monitor does not automatically upgrade a grade from traffic volume or a zero error count.\n\nDiscovery and Input were checked with 236 targeted tests on 2026-11-13. The preceding four-system hardening pass checked 433 server cases and 14 reference-formula cases. Local code changes and production deployment remain separate states."
+      },
+      {
+        "type": "database",
+        "title": "Compass — latest measurements and limits",
+        "view": "table",
+        "row_limit": 40,
+        "sql": "select metric.key as metric, metric.value from (select metrics from intelligence_monitor.snapshots where system='compass' order by measured_at desc limit 1) s cross join lateral jsonb_each(s.metrics) metric order by metric.key;"
+      },
+      {
+        "type": "database",
+        "title": "Sensing — latest measurements and limits",
+        "view": "table",
+        "row_limit": 40,
+        "sql": "select metric.key as metric, metric.value from (select metrics from intelligence_monitor.snapshots where system='sensing' order by measured_at desc limit 1) s cross join lateral jsonb_each(s.metrics) metric order by metric.key;"
+      },
+      {
+        "type": "database",
+        "title": "Community — latest measurements and limits",
+        "view": "table",
+        "row_limit": 40,
+        "sql": "select metric.key as metric, metric.value from (select metrics from intelligence_monitor.snapshots where system='community' order by measured_at desc limit 1) s cross join lateral jsonb_each(s.metrics) metric order by metric.key;"
+      },
+      {
+        "type": "database",
+        "title": "Media — latest measurements and limits",
+        "view": "table",
+        "row_limit": 40,
+        "sql": "select metric.key as metric, metric.value from (select metrics from intelligence_monitor.snapshots where system='media' order by measured_at desc limit 1) s cross join lateral jsonb_each(s.metrics) metric order by metric.key;"
+      },
+      {
+        "type": "database",
+        "title": "Discovery — latest measurements and limits",
+        "view": "table",
+        "row_limit": 40,
+        "sql": "select metric.key as metric, metric.value from (select metrics from intelligence_monitor.snapshots where system='discovery' order by measured_at desc limit 1) s cross join lateral jsonb_each(s.metrics) metric order by metric.key;"
+      },
+      {
+        "type": "database",
+        "title": "Input — latest measurements and limits",
+        "view": "table",
+        "row_limit": 40,
+        "sql": "select metric.key as metric, metric.value from (select metrics from intelligence_monitor.snapshots where system='input' order by measured_at desc limit 1) s cross join lateral jsonb_each(s.metrics) metric order by metric.key;"
+      },
+      {
+        "type": "database",
+        "title": "Input latency trend — valid samples only",
+        "view": "chart",
+        "row_limit": 750,
+        "chart": {
+          "type": "line",
+          "x_column": "measured_at",
+          "y_series": [
+            {
+              "column": "server_p95_ms"
+            },
+            {
+              "column": "client_p95_ms"
+            }
+          ],
+          "scale": "linear",
+          "cumulative": false,
+          "show_labels": false
+        },
+        "sql": "select measured_at, (metrics->>'server_p95_ms')::numeric as server_p95_ms, (metrics->>'client_p95_ms')::numeric as client_p95_ms, (metrics->>'server_timing_samples')::bigint as server_samples, (metrics->>'client_timing_samples')::bigint as client_samples from intelligence_monitor.snapshots where system='input' and measured_at >= now()-interval '30 days' order by measured_at;"
+      },
+      {
+        "type": "database",
+        "title": "History — latest status changes and observation gaps",
+        "view": "table",
+        "row_limit": 200,
+        "sql": "with history as (select system,measured_at,state,sample_count,lag(state) over(partition by system order by measured_at) as previous_state from intelligence_monitor.snapshots where measured_at >= now()-interval '30 days') select system,measured_at,previous_state,state,sample_count from history where state is distinct from previous_state order by measured_at desc,system limit 200;"
+      },
+      {
+        "type": "database",
+        "title": "Collection job — schedule and last scheduled execution",
+        "view": "table",
+        "row_limit": 1,
+        "sql": "select j.jobname,j.schedule,j.active,d.status as last_run_status,d.start_time,d.end_time,case when d.start_time is null then 'awaiting_first_scheduled_run' when d.start_time < now()-interval '90 minutes' then 'stale' when d.status='failed' then 'needs_attention' else d.status end as scheduler_health from cron.job j left join lateral (select status,start_time,end_time from cron.job_run_details d where d.jobid=j.jobid order by runid desc limit 1) d on true where j.jobname='intelligence-system-monitor-hourly';"
+      },
+      {
+        "type": "markdown",
+        "text": "## Interpretation\n\n- Discovery impressions count item exposures, not unique people or requests. Taps and saves are counts, not causal conversion rates. Shadow timings are separate diagnostics.\n- Input timing is client-reported; degraded responses are excluded from server timing. A blank percentile means insufficient valid samples.\n- Compass covers persisted turns and recorded unavailability events; failures before persistence and answer quality require separate evaluation.\n- Sensing's publication switch remains under its existing consent and rollout controls. A disabled capability is not a pass or a defect.\n- Community volumes do not establish independence, accuracy or truth. Media processing status does not establish playback reliability or personalized relevance.\n- No alerts are sent to others. Investigation flags and missing observations appear here. Scheduling failures are visible separately from system failures."
+      }
+    ]
+  }
+}

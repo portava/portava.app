@@ -392,3 +392,19 @@ describe('Passport — tabs header always inside the scroll after deep-link + ta
     expect(screen.getByTestId('tab-content-postcards')).toBeTruthy();
   });
 });
+
+it('keeps secondary profile tools collapsed while the main content stays reachable', async () => {
+  mockSearchParams = {};
+  await render(<PassportScreen />);
+  await act(async () => {});
+  const tools = screen.getByRole('button', { name: 'Profile tools' });
+  expect(tools.props.accessibilityState.expanded).toBe(false);
+  expect(screen.queryByTestId('quicklink-my-world')).toBeNull();
+  expect(screen.getByTestId('tab-content-postcards')).toBeTruthy();
+  await act(async () => { fireEvent.press(tools); });
+  expect(screen.getByTestId('quicklink-my-world')).toBeTruthy();
+  expect(screen.getByTestId('quicklink-availability')).toBeTruthy();
+  await act(async () => { fireEvent.press(screen.getByRole('button', { name:'Profile tools' })); });
+  expect(screen.queryByTestId('quicklink-my-world')).toBeNull();
+  expect(screen.getByTestId('tab-content-postcards')).toBeTruthy();
+});

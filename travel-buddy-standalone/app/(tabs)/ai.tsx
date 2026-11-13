@@ -183,7 +183,7 @@ function CompassConversation({ handoff }: { handoff: CompassHandoff | null }) {
       setEntries(prev => prev.map(e => e.id === pendingId ? entry : e));
     }
     try {
-      const result = await postCompassAskStream(text, { city: currentCity, mediaId: mediaIdOverride, conversationId: conversationId.current, ...(includeArea ? { sensingZoneIds: [includeArea] } : {}) }, {
+      const result = await postCompassAskStream(text, { currentCity, mediaId: mediaIdOverride, conversationId: conversationId.current, ...(includeArea ? { sensingZoneIds: [includeArea] } : {}) }, {
         onDelta: (messageSoFar) => finish({ kind: 'stream', id: pendingId, text: messageSoFar }),
       });
       if (result.data?.conversationId) conversationId.current = result.data.conversationId;

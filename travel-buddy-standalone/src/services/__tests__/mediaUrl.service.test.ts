@@ -61,7 +61,9 @@ function stubFetch(flagOn: boolean, onSign?: SignHandler) {
 
 // ── Setup / teardown ─────────────────────────────────────────────────────────
 
+const originalApiBase = process.env.EXPO_PUBLIC_API_BASE_URL;
 beforeEach(() => {
+  process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
   _origFetch = globalThis.fetch;
   _origDateNow = Date.now;
   _resetBatchSignCache();
@@ -69,6 +71,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (originalApiBase === undefined) delete process.env.EXPO_PUBLIC_API_BASE_URL;
+  else process.env.EXPO_PUBLIC_API_BASE_URL = originalApiBase;
   globalThis.fetch = _origFetch;
   Date.now = _origDateNow;
   _resetBatchSignCache();
@@ -300,4 +304,29 @@ describe('hydrateMediaUrls', () => {
     assert.equal(signCalled, false, 'stamp-artwork bare path must not trigger a sign request');
     assert.equal(result[stampPath], stampPath, 'stamp-artwork bare path returned unchanged');
   });
+});
+
+it('signs same-API relay images using bare refs and maps results back to the original URL', async () => {
+  const originalBase = process.env.EXPO_PUBLIC_API_BASE_URL;
+  process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
+  try {
+    const relay = 'https://api.test/api/media/file/post-media/owner/photo.jpg';
+    const relative = '/api/media/file/post-media/owner/photo.jpg';
+    const ref = 'post-media/owner/photo.jpg';
+    let calls = 0;
+    stubFetch(true, ({ urls }) => {
+      calls++; assert.deepEqual(urls, [ref]);
+      return { [ref]: 'https://storage.test/signed/photo.jpg' };
+    });
+    assert.deepEqual(await hydrateMediaUrls([relay, relative]), {
+      [relay]: 'https://storage.test/signed/photo.jpg', [relative]: 'https://storage.test/signed/photo.jpg',
+    });
+    assert.equal(calls, 1);
+    const foreign = 'https://other.test/api/media/file/post-media/owner/photo.jpg';
+    assert.deepEqual(await hydrateMediaUrls([foreign]), { [foreign]: foreign });
+    assert.equal(calls, 1);
+  } finally {
+    if (originalBase === undefined) delete process.env.EXPO_PUBLIC_API_BASE_URL;
+    else process.env.EXPO_PUBLIC_API_BASE_URL = originalBase;
+  }
 });

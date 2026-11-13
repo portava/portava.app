@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "models": [
+    {
+      "key": "openai-text-mini",
+      "provider": "openai",
+      "baseline": "gpt-5-mini",
+      "current": "gpt-5-mini",
+      "history": [],
+      "contract": "openai-chat-text-v1",
+      "requiredSegments": [
+        "compass",
+        "input_writing",
+        "translation",
+        "trip_extraction",
+        "memory",
+        "telegraph"
+      ]
+    },
+    {
+      "key": "openai-text-mini-54",
+      "provider": "openai",
+      "baseline": "gpt-5.4-mini",
+      "current": "gpt-5.4-mini",
+      "history": [],
+      "contract": "openai-chat-text-v1",
+      "requiredSegments": [
+        "trip_prefill",
+        "place_summary"
+      ]
+    },
+    {
+      "key": "openai-image",
+      "provider": "openai",
+      "baseline": "gpt-image-1",
+      "current": "gpt-image-1",
+      "history": [],
+      "contract": "openai-image-transparent-v1",
+      "requiredSegments": [
+        "transparent_stamp",
+        "entity_cover",
+        "place_representation",
+        "safety"
+      ]
+    },
+    {
+      "key": "higgsfield-image",
+      "provider": "higgsfield",
+      "baseline": "higgsfield-ai/soul/v2/standard",
+      "current": "higgsfield-ai/soul/v2/standard",
+      "history": [],
+      "contract": "higgsfield-soul-text-image-v1",
+      "requiredSegments": [
+        "travel_illustration",
+        "prompt_adherence",
+        "safety"
+      ]
+    },
+    {
+      "key": "higgsfield-video",
+      "provider": "higgsfield",
+      "baseline": "bytedance/seedance-2.5/text-to-video",
+      "current": "bytedance/seedance-2.5/text-to-video",
+      "history": [],
+      "contract": "higgsfield-seedance-text-video-v1",
+      "requiredSegments": [
+        "temporal_coherence",
+        "prompt_adherence",
+        "safety"
+      ]
+    }
+  ]
+}

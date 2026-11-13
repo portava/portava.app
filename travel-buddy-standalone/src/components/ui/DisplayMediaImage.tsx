@@ -10,15 +10,15 @@
  *   - Respect reduce-motion (skeleton omits pulse animation when enabled)
  *   - Forward accessibilityLabel from alt / title
  *
- * Media sources are resolved through useHydratedMedia() so that when the
- * `media_private_buckets_enabled` flag is ON, images are served via signed
- * URLs. When the flag is OFF (default) the original URL is used with no
- * overhead.  On a 403/onError the cached entry is evicted and one re-hydration
+ * Private media waits for viewer-scoped signing through useHydratedMedia().
+ * On a 403/onError the cached entry is evicted and one re-hydration
  * attempt is made before transitioning to the designed fallback.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated,
+  AccessibilityInfo,
+  Pressable,
   Platform,
   StyleProp,
   StyleSheet,
@@ -33,35 +33,33 @@ import { type IdentityInput, fallbackInitials } from '../../utils/identity.ts';
 import { resolveDisplayMedia } from '../../lib/displayMedia.ts';
 import { hydrateMediaUrls, useHydratedMedia } from '../../services/mediaUrl.ts';
 import { _evictBatchSignEntry } from '../../lib/batchSignMedia.ts';
+import { isPrivateMediaRefOf, mediaSigningReference } from '../../services/playbackUri.ts';
+import { useMediaScopeKey } from '../../hooks/useMediaScopeKey.ts';
+import { currentDiscoveryScope, isCurrentDiscoveryScope } from '../../services/discoveryViewerScope.ts';
 import { resolveFilterStyle, type FilterStyle } from '../../lib/media/filters.ts';
-
-// Only these two buckets can benefit from re-hydration; all other URLs get an
-// immediate error fallback rather than a no-op re-sign attempt.
-// Matches BOTH shapes a private-bucket reference arrives in:
-//   - the legacy full public URL, /storage/v1/object/public/post-media/...
-//   - the bare storage key the upload endpoints return today, post-media/<uid>/...
-//
-// It previously matched only the first. Every current upload persists the bare
-// form, so `isPrivateBucket` was false for all of them and the one-shot
-// re-hydration escape hatch below never fired for the exact case it exists to
-// rescue — it only ever helped legacy rows.
-const PRIVATE_BUCKET_ERROR_RE = /(?:\/storage\/v1\/object\/public\/|^)(post-media|profile-media)\//;
 
 // ── Skeleton pulse ──────────────────────────────────────────────────────────
 
 function SkeletonBox({ style }: { style?: StyleProp<ViewStyle> }) {
   const anim = useRef(new Animated.Value(0.5)).current;
 
+  const [reduced, setReduced] = useState(true);
   useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(anim, { toValue: 1, duration: 700, useNativeDriver: true }),
-        Animated.timing(anim, { toValue: 0.5, duration: 700, useNativeDriver: true }),
-      ]),
-    );
+    let mounted = true;
+    let changed = false;
+    void AccessibilityInfo.isReduceMotionEnabled().then(value => { if (mounted && !changed) setReduced(value); }).catch(() => {});
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', value => { changed = true; setReduced(value); });
+    return () => { mounted = false; subscription.remove(); };
+  }, []);
+  useEffect(() => {
+    if (reduced) { anim.setValue(1); return; }
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(anim, { toValue: 1, duration: 700, useNativeDriver: true }),
+      Animated.timing(anim, { toValue: 0.5, duration: 700, useNativeDriver: true }),
+    ]));
     loop.start();
     return () => loop.stop();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [anim, reduced]);
 
   return (
     <Animated.View style={[sk.box, style, { opacity: anim }]} />
@@ -189,7 +187,27 @@ export interface DisplayMediaImageProps {
 
 type Phase = 'loading' | 'loaded' | 'error';
 
-export function DisplayMediaImage({
+export function DisplayMediaImage(props: DisplayMediaImageProps) {
+  const scope = useMediaScopeKey();
+  const [attempt, setAttempt] = useState(0);
+  return <ScopedMediaImage key={JSON.stringify([scope, props.uri, attempt])} {...props} onRetry={() => {
+    const resolved = resolveDisplayMedia([props.uri]);
+    if (resolved && isPrivateMediaRefOf(resolved)) _evictBatchSignEntry(mediaSigningReference(resolved));
+    setAttempt(value => value + 1);
+  }} />;
+}
+
+/** This instance owns exactly one source, viewer and user-initiated attempt. */
+function useMediaAttempt() {
+  const [scope] = useState(currentDiscoveryScope);
+  const mounted = useRef(true);
+  const retired = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const current = useCallback(() => mounted.current && !retired.current && isCurrentDiscoveryScope(scope), [scope]);
+  return { current, retired };
+}
+
+function ScopedMediaImage({
   uri,
   width,
   height,
@@ -208,99 +226,56 @@ export function DisplayMediaImage({
   onLoad,
   onError,
   testID,
-}: DisplayMediaImageProps) {
+  onRetry,
+}: DisplayMediaImageProps & { onRetry: () => void }) {
   const resolved = resolveDisplayMedia([uri]);
-  // A null/absent `uri` starts in the 'error' phase so the fallback renders,
-  // but it deliberately does NOT notify the consumer's onError: nothing
-  // failed here, the caller simply had no image to show. onError is reserved
-  // for a real load failure reported by ExpoImage.
-  //
-  // CachedImage draws the same distinction and lands on the opposite answer
-  // for its own null case, which is a different event: a null RESOLVE there
-  // means the sign endpoint rejected a URL the caller believed in, so it is a
-  // genuine, final failure and the parent IS told. Absent uri → nobody is
-  // told; rejected URL → the parent is told. Both components follow that rule.
+  const { current, retired } = useMediaAttempt();
   const [phase, setPhase] = useState<Phase>(resolved ? 'loading' : 'error');
-
-  // Re-evaluate when the URI prop changes (e.g. list recycling).
-  const prevUri = useRef(uri);
   const reHydrated = useRef(false);
-  if (prevUri.current !== uri) {
-    prevUri.current = uri;
-    setPhase(resolved ? 'loading' : 'error');
-    reHydrated.current = false;
-  }
-
-  // Initialized with the plain URI so ExpoImage mounts immediately (correct for
-  // flag-OFF, the common case, and required for component tests). useHydratedMedia
-  // updates to the signed URL once the async call resolves.
+  const onErrorRef = useRef(onError); onErrorRef.current = onError;
   const [resolvedSource, setResolvedSource] = useState<{ uri: string } | null>(
-    resolved ? { uri: resolved } : null,
+    resolved && !isPrivateMediaRefOf(resolved) ? { uri: resolved } : null,
   );
+  const sourceRef = useRef(resolvedSource?.uri); sourceRef.current = resolvedSource?.uri;
+  const [deadline] = useState(() => Date.now() + 12_000);
+  useEffect(() => {
+    if (phase !== 'loading') return;
+    const timer = setTimeout(() => {
+      if (!current()) return;
+      retired.current = true; setPhase('error'); onErrorRef.current?.();
+    }, Math.max(0, deadline - Date.now()));
+    return () => clearTimeout(timer);
+  }, [phase, deadline, current, retired]);
 
   // Hydrate via signed-URL layer — replaces the old mediaSource() useEffect.
   const { resolved: hydratedMap } = useHydratedMedia(resolved ? [resolved] : []);
 
   useEffect(() => {
-    if (!resolved) {
-      setResolvedSource(null);
-      return;
-    }
+    if (!current() || !resolved) return;
     const hydratedUrl = hydratedMap[resolved];
-    if (typeof hydratedUrl === 'string') {
-      setResolvedSource({ uri: hydratedUrl });
-      // Lift a prior error latch. The prevUri resync above only fires when the
-      // `uri` PROP changes — but in the private-bucket flow the prop never
-      // changes: what changes is this hydration resolving the same bare
-      // `post-media/...` reference into a signed URL. The component mounts
-      // ExpoImage on the bare path first (line ~219), that path is unsigned and
-      // returns HTTP 400, handleError drives phase → 'error', and the render at
-      // line ~312 then unmounts the image on `phase !== 'error'`. Without this
-      // reset the signed URL lands in resolvedSource with nothing left to
-      // render it, and the postcard stays blank permanently.
-      //
-      // Only 'error' is lifted — flipping a 'loaded' image back to 'loading'
-      // would flash a skeleton over an image that is already on screen.
-      setPhase((p) => (p === 'error' ? 'loading' : p));
-    } else if (hydratedUrl === null) {
-      // Server explicitly rejected the URL — show the designed fallback.
-      setResolvedSource(null);
-      setPhase('error');
+    if (typeof hydratedUrl === 'string') setResolvedSource({ uri: hydratedUrl });
+    else if (hydratedUrl === null) {
+      retired.current = true; setResolvedSource(null); setPhase('error'); onErrorRef.current?.();
     }
-    // undefined = still loading; keep the initialised plain-URI source.
-  }, [resolved, hydratedMap]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [resolved, hydratedMap, current, retired]);
 
-  // One-time re-hydration on 403 / onError.  The cache entry is evicted first
-  // so the next batchSignUrls call fetches a fresh signed URL from the server.
-  // Re-hydration is only attempted for private-bucket URLs (post-media /
-  // profile-media) — other URLs can't benefit from signing, so they go straight
-  // to the error phase.
   const handleError = useCallback(() => {
-    if (!resolved) {
-      setPhase('error');
-      onError?.();
-      return;
-    }
-    const isPrivateBucket = PRIVATE_BUCKET_ERROR_RE.test(resolved);
-    if (isPrivateBucket && !reHydrated.current) {
+    if (!current() || sourceRef.current !== resolvedSource?.uri) return;
+    const fail = () => {
+      if (!current()) return;
+      retired.current = true; setPhase('error'); onErrorRef.current?.();
+    };
+    if (resolved && isPrivateMediaRefOf(resolved) && !reHydrated.current) {
       reHydrated.current = true;
-      _evictBatchSignEntry(resolved);
-      hydrateMediaUrls([resolved]).then((result) => {
+      _evictBatchSignEntry(mediaSigningReference(resolved));
+      hydrateMediaUrls([resolved]).then(result => {
+        if (!current()) return;
         const newUrl = result[resolved];
-        if (newUrl == null) {
-          setPhase('error');
-          onError?.();
-        } else {
-          // Update source and let ExpoImage retry.  If this second load also
-          // errors, onError fires again → reHydrated.current is true → error phase.
-          setResolvedSource({ uri: newUrl });
-        }
-      });
-    } else {
-      setPhase('error');
-      onError?.();
-    }
-  }, [resolved, onError]); // eslint-disable-line react-hooks/exhaustive-deps
+        if (!newUrl) fail();
+        else setResolvedSource({ uri: newUrl });
+      }).catch(fail);
+    } else fail();
+  }, [resolved, resolvedSource?.uri, current, retired]);
 
   const label = alt ?? title;
   const contentFit = FIT_MAP[resizeMode] ?? 'cover';
@@ -331,6 +306,10 @@ export function DisplayMediaImage({
 
       {/* Fallback shown when uri is null or the image errors (incl. 403) */}
       {phase === 'error' && renderedFallback}
+      {phase === 'error' && resolved && <Pressable onPress={onRetry} accessibilityRole="button"
+        accessibilityLabel="Retry image" style={dm.retry}>
+        <Text style={dm.retryText}>Retry</Text>
+      </Pressable>}
 
       {/* Image — mounted only once the source has been resolved so the signed
           URL is available before the first network request.
@@ -344,6 +323,8 @@ export function DisplayMediaImage({
         withFilter(
           filterStyle,
           <ExpoImage
+            key={resolvedSource.uri}
+            recyclingKey={resolvedSource.uri}
             source={resolvedSource}
             style={StyleSheet.absoluteFill}
             contentFit={contentFit}
@@ -352,7 +333,7 @@ export function DisplayMediaImage({
             placeholder={blurhash ? { blurhash } : undefined}
             accessibilityLabel={label}
             accessible={!!label}
-            onLoad={() => { setPhase('loaded'); onLoad?.(); }}
+            onLoad={() => { if (current() && sourceRef.current === resolvedSource.uri) { setPhase('loaded'); onLoad?.(); } }}
             onError={handleError}
           />,
         )
@@ -369,6 +350,8 @@ export function DisplayMediaImage({
 }
 
 const dm = StyleSheet.create({
+  retry: { position: 'absolute', bottom: 0, alignSelf: 'center', minWidth: 64, minHeight: 44, justifyContent: 'center', alignItems: 'center', backgroundColor: color.deep, borderRadius: radius.sm },
+  retryText: { ...t.small, color: color.paper, fontWeight: '600' },
   attrWrap: {
     position: 'absolute',
     bottom: 0,
@@ -404,14 +387,18 @@ export interface AvatarImageProps {
  * Circular avatar that degrades to an initials chip instead of a blank circle.
  * Covers three cases: null URL, broken URL, and missing user data.
  *
- * The avatar URL is resolved through useHydratedMedia() so that when the
- * `media_private_buckets_enabled` flag is ON the signed URL is used —
- * preventing broken circles for private-bucket profile photos.
- * When the flag is OFF (default) the original URL is used with zero overhead.
+ * Private avatar URLs wait for viewer-scoped signing through useHydratedMedia().
  * On a 403/onError the cache entry is evicted and one re-hydration attempt is
  * made before falling back to the initials chip.
  */
-export function AvatarImage({ uri, user, size, style, bg, testID }: AvatarImageProps) {
+export function AvatarImage(props: AvatarImageProps) {
+  const scope = useMediaScopeKey();
+  const uri = resolveDisplayMedia([props.uri, props.user?.avatarUrl ?? undefined]);
+  return <ScopedAvatar key={JSON.stringify([scope, uri])} {...props} />;
+}
+
+function ScopedAvatar({ uri, user, size, style, bg, testID }: AvatarImageProps) {
+  const { current, retired } = useMediaAttempt();
   const resolvedUri = resolveDisplayMedia([uri, user?.avatarUrl ?? undefined]);
   const initials = user ? fallbackInitials(user) : (uri ? '?' : '?');
   const [imgError, setImgError] = useState(false);
@@ -420,70 +407,33 @@ export function AvatarImage({ uri, user, size, style, bg, testID }: AvatarImageP
   // Reset error state AND source when the URI changes so no stale relay URL
   // from the previous avatar is briefly shown for the new one.
   const [resolvedSource, setResolvedSource] = useState<{ uri: string } | null>(
-    resolvedUri ? { uri: resolvedUri } : null,
+    resolvedUri && !isPrivateMediaRefOf(resolvedUri) ? { uri: resolvedUri } : null,
   );
-
-  const prevUri = useRef(resolvedUri);
-  if (prevUri.current !== resolvedUri) {
-    prevUri.current = resolvedUri;
-    setImgError(false);
-    setResolvedSource(resolvedUri ? { uri: resolvedUri } : null);
-    reHydrated.current = false;
-  }
 
   // Hydrate via signed-URL layer — replaces the old mediaSource() useEffect.
   const { resolved: hydratedMap } = useHydratedMedia(resolvedUri ? [resolvedUri] : []);
 
   useEffect(() => {
-    if (!resolvedUri) {
-      setResolvedSource(null);
-      return;
-    }
+    if (!current() || !resolvedUri) return;
     const hydratedUrl = hydratedMap[resolvedUri];
-    if (typeof hydratedUrl === 'string') {
-      setResolvedSource({ uri: hydratedUrl });
-      // Fourth instance of the same latch (CachedImage had the fix; MediaCard,
-      // DisplayMediaImage and this did not). The prevUri resync above only fires
-      // when the avatar URL PROP changes — but in the private-bucket flow it
-      // never does: what changes is hydration turning the same bare
-      // `profile-media/...` reference into a signed URL. The first paint is on
-      // the unsigned path, that returns HTTP 400, imgError latches true, and
-      // `showImage = !!resolvedUri && !imgError` then pins the avatar to its
-      // initials chip permanently even though the signed URL arrived moments
-      // later. Clearing it here is what lets the real photo render.
-      setImgError(false);
-    } else if (hydratedUrl === null) {
-      // Server explicitly rejected — fall back to initials.
-      setResolvedSource(null);
-      setImgError(true);
-    }
-    // undefined = still loading; keep the initialised plain-URI source.
-  }, [resolvedUri, hydratedMap]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (typeof hydratedUrl === 'string') setResolvedSource({ uri: hydratedUrl });
+    else if (hydratedUrl === null) { retired.current = true; setResolvedSource(null); setImgError(true); }
+  }, [resolvedUri, hydratedMap, current, retired]);
 
-  // One-time re-hydration on 403 / onError (private-bucket URLs only).
   const handleAvatarError = useCallback(() => {
-    if (!resolvedUri) {
-      setImgError(true);
-      return;
-    }
-    const isPrivateBucket = PRIVATE_BUCKET_ERROR_RE.test(resolvedUri);
-    if (isPrivateBucket && !reHydrated.current) {
+    if (!current()) return;
+    const fail = () => { if (current()) { retired.current = true; setImgError(true); } };
+    if (resolvedUri && isPrivateMediaRefOf(resolvedUri) && !reHydrated.current) {
       reHydrated.current = true;
-      _evictBatchSignEntry(resolvedUri);
-      hydrateMediaUrls([resolvedUri]).then((result) => {
+      _evictBatchSignEntry(mediaSigningReference(resolvedUri));
+      hydrateMediaUrls([resolvedUri]).then(result => {
+        if (!current()) return;
         const newUrl = result[resolvedUri];
-        if (newUrl == null) {
-          setImgError(true);
-        } else {
-          setResolvedSource({ uri: newUrl });
-          // Don't set imgError — let the second load attempt proceed.
-          // If it also errors, onError fires → reHydrated true → setImgError.
-        }
-      });
-    } else {
-      setImgError(true);
-    }
-  }, [resolvedUri]); // eslint-disable-line react-hooks/exhaustive-deps
+        if (!newUrl) fail();
+        else setResolvedSource({ uri: newUrl });
+      }).catch(fail);
+    } else fail();
+  }, [resolvedUri, current, retired]);
 
   const showImage = !!resolvedUri && !imgError;
   const bgColor = bg ?? color.deep;

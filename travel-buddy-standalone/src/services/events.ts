@@ -1,3 +1,4 @@
+import { withServiceRequest } from './serviceRequest.ts';
 /**
  * Events service — typed wrappers over /api/events/*.
  */
@@ -154,24 +155,30 @@ async function apiCall<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<ApiResult<T>> {
-  const token = await freshToken();
-  if (!token) return { ok: false, message: 'Not authenticated' };
+  return withServiceRequest<ApiResult<T>>(async (request) => {
+    const token = await request.token(freshToken);
+    if (!token) return { ok: false, message: 'Not authenticated' };
 
-  try {
-    const r = await fetch(`${BASE}${path}`, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        ...(options.headers ?? {}),
-      },
-    });
-    const json = await r.json().catch(() => ({}));
-    if (!r.ok) return { ok: false, message: json.message ?? json.error ?? `HTTP ${r.status}` };
-    return { ok: true, data: json as T };
-  } catch (err: any) {
-    return { ok: false, message: err?.message ?? 'Network error' };
-  }
+    try {
+      const r = await request.fetch(`${BASE}${path}`, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          ...(options.headers ?? {}),
+        },
+      });
+      const json = r.status === 204 ? {} : await r.json().catch(() => null);
+      if (!r.ok) return { ok: false, message: json?.message ?? json?.error ?? `HTTP ${r.status}` };
+      if (!json || typeof json !== 'object' || Array.isArray(json)) {
+        return { ok: false, message: 'The event response could not be read. Refresh to check its status.' };
+      }
+      return { ok: true, data: json as T };
+    } catch (err: any) {
+      return { ok: false, message: err?.message ?? 'Network error' };
+    }
+
+  }, { signal: options.signal ?? undefined }).catch((e: unknown): ApiResult<T> => { return { ok: false, message: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 // ── Create event ──────────────────────────────────────────────────────────────
@@ -211,6 +218,7 @@ export interface CreateEventInput {
 
 export async function createEvent(input: CreateEventInput): Promise<ApiResult<EventSummary>> {
   const r = await apiCall<EventSummary>('/api/events', { method: 'POST', body: JSON.stringify(input) });
+  if (r.ok && (typeof r.data?.id !== 'string' || !r.data.id)) return { ok: false, message: 'Event could not be confirmed. Refresh to check its status.' };
   return r.ok ? { ok: true, data: normalizeEventSummary(r.data!) } : r;
 }
 
@@ -250,7 +258,9 @@ export async function listEvents(
   if (params.page)            qs.set('page', String(params.page));
   if (params.limit)           qs.set('limit', String(params.limit));
   const q = qs.toString();
-  return apiCall(`/api/events${q ? `?${q}` : ''}`);
+  const result = await apiCall<{ events: EventListItem[]; page: number; limit: number }>(`/api/events${q ? `?${q}` : ''}`);
+  if (result.ok && !Array.isArray(result.data?.events)) return { ok: false, message: 'Unreadable events response' };
+  return result;
 }
 
 // ── My events (hosting + attending) ──────────────────────────────────────────
@@ -258,13 +268,16 @@ export async function listEvents(
 export async function listMyEvents(
   limit = 20,
 ): Promise<ApiResult<{ events: EventListItem[] }>> {
-  return apiCall(`/api/events/me?limit=${limit}`);
+  const result = await apiCall<{ events: EventListItem[] }>(`/api/events/me?limit=${limit}`);
+  if (result.ok && !Array.isArray(result.data?.events)) return { ok: false, message: 'Unreadable events response' };
+  return result;
 }
 
 // ── Get event detail ──────────────────────────────────────────────────────────
 
 export async function getEvent(eventId: string): Promise<ApiResult<EventDetail>> {
   const r = await apiCall<EventDetail>(`/api/events/${eventId}`);
+  if (r.ok && (typeof r.data?.id !== 'string' || !r.data.id)) return { ok: false, message: 'Unreadable event response' };
   return r.ok ? { ok: true, data: normalizeEventDetail(r.data!) } : r;
 }
 
@@ -305,6 +318,7 @@ export interface UpdateEventInput {
 
 export async function updateEvent(eventId: string, input: UpdateEventInput): Promise<ApiResult<EventSummary>> {
   const r = await apiCall<EventSummary>(`/api/events/${eventId}`, { method: 'PATCH', body: JSON.stringify(input) });
+  if (r.ok && (typeof r.data?.id !== 'string' || !r.data.id)) return { ok: false, message: 'Event could not be confirmed. Refresh to check its status.' };
   return r.ok ? { ok: true, data: normalizeEventSummary(r.data!) } : r;
 }
 
@@ -977,34 +991,38 @@ const NEARBY_MAX_PAGES = 4;
 async function listEventsNear(
   params: ListEventsParams,
 ): Promise<ApiResult<{ events: EventListItem[]; page: number; limit: number }>> {
-  const want = Math.min(50, Math.max(1, params.limit ?? 20));
-  const from = params.dateFrom ? Date.parse(params.dateFrom) : Date.now();
-  const to = params.dateTo ? Date.parse(params.dateTo) : Number.POSITIVE_INFINITY;
-  const kept: EventListItem[] = [];
-  for (let page = 1; page <= NEARBY_MAX_PAGES; page++) {
-    const qs = new URLSearchParams({
-      lat: String(params.nearLat),
-      lng: String(params.nearLng),
-      page: String(page),
-      limit: String(NEARBY_PAGE_SIZE),
-    });
-    if (params.nearRadiusKm) qs.set('radiusKm', String(params.nearRadiusKm));
-    const r = await apiCall<{ events?: EventListItem[] }>(`/api/events/nearby?${qs.toString()}`);
-    if (!r.ok) return { ok: false, message: r.message };
-    const rows = r.data?.events ?? [];
-    let pastWindow = false;
-    for (const ev of rows) {
-      const start = ev.startsAt ? Date.parse(ev.startsAt) : NaN;
-      if (Number.isNaN(start)) continue; // undated: no "when" to place in the window
-      if (start > to) { pastWindow = true; break; }
-      const end = ev.endsAt ? Date.parse(ev.endsAt) : start;
-      if ((Number.isNaN(end) ? start : end) < from) continue; // already over
-      kept.push(ev);
-      if (kept.length >= want) break;
+  return withServiceRequest<ApiResult<{ events: EventListItem[]; page: number; limit: number }>>(async (request) => {
+    const want = Math.min(50, Math.max(1, params.limit ?? 20));
+    const from = params.dateFrom ? Date.parse(params.dateFrom) : Date.now();
+    const to = params.dateTo ? Date.parse(params.dateTo) : Number.POSITIVE_INFINITY;
+    const kept: EventListItem[] = [];
+    for (let page = 1; page <= NEARBY_MAX_PAGES; page++) {
+      const qs = new URLSearchParams({
+        lat: String(params.nearLat),
+        lng: String(params.nearLng),
+        page: String(page),
+        limit: String(NEARBY_PAGE_SIZE),
+      });
+      if (params.nearRadiusKm) qs.set('radiusKm', String(params.nearRadiusKm));
+      const r = await request.wait(() => apiCall<{ events?: EventListItem[] }>(`/api/events/nearby?${qs.toString()}`, { signal: request.signal }));
+      if (!r.ok) return { ok: false, message: r.message };
+      if (!Array.isArray(r.data?.events)) return { ok: false, message: 'Unreadable nearby events response' };
+      const rows = r.data.events;
+      let pastWindow = false;
+      for (const ev of rows) {
+        const start = ev.startsAt ? Date.parse(ev.startsAt) : NaN;
+        if (Number.isNaN(start)) continue; // undated: no "when" to place in the window
+        if (start > to) { pastWindow = true; break; }
+        const end = ev.endsAt ? Date.parse(ev.endsAt) : start;
+        if ((Number.isNaN(end) ? start : end) < from) continue; // already over
+        kept.push(ev);
+        if (kept.length >= want) break;
+      }
+      if (pastWindow || kept.length >= want || rows.length < NEARBY_PAGE_SIZE) break;
     }
-    if (pastWindow || kept.length >= want || rows.length < NEARBY_PAGE_SIZE) break;
-  }
-  return { ok: true, data: { events: kept, page: 1, limit: want } };
+    return { ok: true, data: { events: kept, page: 1, limit: want } };
+
+  }).catch((e: unknown): ApiResult<{ events: EventListItem[]; page: number; limit: number }> => ({ ok: false, message: e instanceof Error ? e.message : 'Network error' }));
 }
 
 // ── Reminder rows → EventReminder ────────────────────────────────────────────

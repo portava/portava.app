@@ -34,7 +34,21 @@
  *   _getCacheSize()          — current cache size (tests only)
  */
 
-const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+import { requestDeadline } from './requestDeadline.ts';
+import { currentDiscoveryScope, isCurrentDiscoveryScope, onDiscoveryScopeChange, viewerKeyForToken } from '../services/discoveryViewerScope.ts';
+
+export const MEDIA_SIGN_TIMEOUT_MS = 10_000;
+let cacheViewer: string | null = null;
+onDiscoveryScopeChange(() => { _resetBatchSignCache(); });
+
+function signEndpoint(): string {
+  const base = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  if (!base || /[\s\\?#@]/.test(base)) throw new Error('Invalid media API origin');
+  const url = new URL(base);
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) || url.pathname !== '/') throw new Error('Invalid media API origin');
+  return `${base.replace(/\/$/, '')}/api/media/sign`;
+}
 
 // ── Token provider (test seam) ───────────────────────────────────────────────
 
@@ -86,6 +100,8 @@ const _cache = new Map<string, CacheEntry>();
 /** Clear the signed-URL cache. For use in tests only. */
 export function _resetBatchSignCache(): void {
   _cache.clear();
+  _lastOutcome.clear();
+  cacheViewer = null;
 }
 
 /** Return the current number of cached entries. For use in tests only. */
@@ -99,7 +115,8 @@ export function _getCacheSize(): number {
  * batchSignUrls call for that URL fetches a fresh signed URL from the server.
  */
 export function _evictBatchSignEntry(url: string): void {
-  _cache.delete(url);
+  for (const key of _cache.keys()) if (key === url || key.startsWith(`${url}\0`)) _cache.delete(key);
+  _lastOutcome.delete(url);
 }
 
 /**
@@ -165,94 +182,88 @@ export async function batchSignUrls(
   const result = new Map<string, string>();
   if (urls.length === 0) return result; if (transform && urls.some(isVideoRef)) { const [videos, stills] = await Promise.all([batchSignUrls(urls.filter(isVideoRef)), batchSignUrls(urls.filter((u) => !isVideoRef(u)), transform)]); return new Map([...videos, ...stills]); } // Supabase's image transform answers 400 for a video: sign videos plainly
 
-  const now = Date.now();
-
-  // Build a stable cache-key suffix that encodes the transform so that the
-  // same URL requested at different sizes gets separate cache entries.
-  const transformSuffix =
-    transform && (transform.width !== undefined || transform.quality !== undefined)
-      ? `\x00w${transform.width ?? ''}q${transform.quality ?? ''}`
-      : '';
-
-  // Partition: cached vs. needs fetch
-  const toFetch: string[] = [];
-  for (const url of urls) {
-    const cacheKey = url + transformSuffix;
-    const entry = _cacheGet(cacheKey, now);
-    if (entry) {
-      result.set(url, entry.url);
-    } else {
-      toFetch.push(url);
+  const scope = currentDiscoveryScope();
+  const cancellation = new AbortController();
+  const unsubscribe = onDiscoveryScopeChange(() => cancellation.abort());
+  const budget = requestDeadline(MEDIA_SIGN_TIMEOUT_MS, cancellation.signal);
+  const fallback = () => new Map(urls.map(url => [url, url]));
+  let requestViewer: string | null = null;
+  const current = () => isCurrentDiscoveryScope(scope) && !cancellation.signal.aborted
+    && (requestViewer === null || cacheViewer === requestViewer);
+  try {
+    const endpoint = signEndpoint();
+    const token = await budget.wait(signToken);
+    if (!current()) return fallback();
+    const viewer = token ? viewerKeyForToken(token) : null;
+    if (!token || (scope.viewer && viewer !== scope.viewer)) {
+      for (const url of urls) noteSignOutcome(url, 'unavailable');
+      return fallback();
     }
-  }
-
-  if (toFetch.length === 0) return result;
-
-  // The sign endpoint is authenticated. No session → no signed URLs; pass the
-  // originals back so callers fall through to their designed empty state
-  // rather than waiting on a request that can only 401.
-  const token = await signToken();
-  if (!token) {
-    for (const url of toFetch) result.set(url, url);
-    return result;
-  }
-
-  // Batch into ≤BATCH_SIZE chunks
-  for (let i = 0; i < toFetch.length; i += BATCH_SIZE) {
-    const batch = toFetch.slice(i, i + BATCH_SIZE);
-    try {
-      const r = await fetch(`${API_BASE}/api/media/sign`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          urls: batch,
-          ...(transform && (transform.width !== undefined || transform.quality !== undefined)
-            ? { transform }
-            : undefined),
-        }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      // Server returns { signed: { [url]: string | null }, ttlSeconds: number }
-      const body = (await r.json()) as {
-        signed?: Record<string, string | null>;
-        ttlSeconds?: number;
-      };
-      // Use the server-reported TTL minus the safety buffer so the cache evicts
-      // entries before the actual signed URL expires, preventing mid-session 403s.
-      const serverTtlS =
-        typeof body.ttlSeconds === 'number' && body.ttlSeconds > SIGN_TTL_SAFETY_BUFFER_S
-          ? body.ttlSeconds
-          : undefined;
-      const cacheTtlMs = serverTtlS !== undefined
-        ? (serverTtlS - SIGN_TTL_SAFETY_BUFFER_S) * 1000
-        : FALLBACK_CACHE_TTL_MS;
-      const expiresAt = now + cacheTtlMs;
-      for (const url of batch) {
-        const cacheKey = url + transformSuffix;
-        const signedUrl = body.signed?.[url] ?? null;
-        noteSignOutcome(url, signedUrl ? 'signed' : 'denied');
-        if (signedUrl) {
-          _cacheSet(cacheKey, { url: signedUrl, expiresAt });
-          result.set(url, signedUrl);
-        } else {
-          // null = unauthorized or unrecognized — fall back to original per-URL
-          result.set(url, url);
+    if (cacheViewer !== viewer) { _resetBatchSignCache(); cacheViewer = viewer; }
+    requestViewer = viewer;
+    const now = Date.now();
+    const transformSuffix = transform && (transform.width !== undefined || transform.quality !== undefined)
+      ? `\x00w${transform.width ?? ''}q${transform.quality ?? ''}` : '';
+    const toFetch: string[] = [];
+    for (const url of [...new Set(urls)]) {
+      const entry = _cacheGet(url + transformSuffix, now);
+      if (entry) { result.set(url, entry.url); noteSignOutcome(url, 'signed'); }
+      else toFetch.push(url);
+    }
+    for (let i = 0; i < toFetch.length; i += BATCH_SIZE) {
+      const batch = toFetch.slice(i, i + BATCH_SIZE);
+      let failure: SignOutcome = 'unreachable';
+      try {
+        const response = await budget.wait(() => fetch(endpoint, {
+          method: 'POST', redirect: 'error', credentials: 'omit', cache: 'no-store', signal: budget.signal,
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ urls: batch, ...(transform ? { transform } : {}) }),
+        }));
+        if (!current()) return fallback();
+        failure = 'unavailable';
+        if (response.redirected || response.url && response.url !== endpoint) throw new Error('Media signing redirected');
+        if (!response.ok) {
+          failure = [401, 403, 404, 410].includes(response.status) ? 'denied'
+            : response.status === 429 || response.status >= 500 ? 'unreachable' : 'unavailable';
+          throw new Error('Media signing refused');
         }
-      }
-    } catch {
-      // Silently fall back: pass through the original URLs for this batch.
-      // On 429 the caller already has the cached value; new URLs fall back.
-      for (const url of batch) {
-        if (!result.has(url)) result.set(url, url);
-        noteSignOutcome(url, 'unreachable');
+        // JSON/body stalls are connectivity failures; a decoded malformed body
+        // is not authorization to recover a previously saved private copy.
+        failure = 'unreachable';
+        const body: unknown = await budget.wait(() => response.json());
+        if (!current()) return fallback();
+        failure = 'unavailable';
+        if (!body || typeof body !== 'object' || !('signed' in body) || !body.signed || typeof body.signed !== 'object' || Array.isArray(body.signed)) throw new Error('Malformed signing response');
+        const payload = body as { signed: Record<string, unknown>; ttlSeconds?: unknown };
+        const ttl = payload.ttlSeconds;
+        // A short or zero TTL must NEVER fall back to 55 minutes. Keep a 10%
+        // margin for short grants and the existing five-minute margin otherwise.
+        const cacheTtlMs = typeof ttl === 'number' && Number.isFinite(ttl)
+          ? Math.max(0, ttl - (ttl > SIGN_TTL_SAFETY_BUFFER_S ? SIGN_TTL_SAFETY_BUFFER_S : Math.max(0, ttl * 0.1))) * 1000
+          : ttl === undefined ? FALLBACK_CACHE_TTL_MS : 0;
+        for (const url of batch) {
+          const signedUrl = payload.signed[url];
+          if (typeof signedUrl === 'string' && signedUrl.length > 0) {
+            noteSignOutcome(url, 'signed');
+            if (cacheTtlMs > 0) _cacheSet(url + transformSuffix, { url: signedUrl, expiresAt: now + cacheTtlMs });
+            result.set(url, signedUrl);
+          } else {
+            noteSignOutcome(url, signedUrl === null ? 'denied' : 'unavailable');
+            result.set(url, url);
+          }
+        }
+      } catch {
+        if (!current()) return fallback();
+        for (const url of batch) { result.set(url, url); noteSignOutcome(url, failure); }
       }
     }
+    return current() ? result : fallback();
+  } catch {
+    if (current()) for (const url of urls) noteSignOutcome(url, 'unavailable');
+    return fallback();
+  } finally {
+    budget.dispose(); unsubscribe();
   }
-
-  return result;
 }
 
 // ── Why the last sign attempt did not produce a URL (Media §39) ──────────────
@@ -263,10 +274,11 @@ export async function batchSignUrls(
 // shown while the sign endpoint is UNREACHABLE, and must be deleted the moment
 // the server DENIES it. This records which of the two the last attempt was.
 // Appended at the tail so no line above moves.
-const _lastOutcome = new Map<string, 'signed' | 'denied' | 'unreachable'>();
+type SignOutcome = 'signed' | 'denied' | 'unreachable' | 'unavailable';
+const _lastOutcome = new Map<string, SignOutcome>();
 const MAX_OUTCOMES = 2000;
 
-function noteSignOutcome(url: string, outcome: 'signed' | 'denied' | 'unreachable'): void {
+function noteSignOutcome(url: string, outcome: SignOutcome): void {
   _lastOutcome.delete(url);
   if (_lastOutcome.size >= MAX_OUTCOMES) {
     const oldest = _lastOutcome.keys().next().value;
@@ -276,7 +288,7 @@ function noteSignOutcome(url: string, outcome: 'signed' | 'denied' | 'unreachabl
 }
 
 /** The outcome of the last sign attempt for `url`, or null if it was never attempted (or was served from cache). */
-export function lastSignOutcome(url: string): 'signed' | 'denied' | 'unreachable' | null {
+export function lastSignOutcome(url: string): SignOutcome | null {
   return _lastOutcome.get(url) ?? null;
 }
 import { isVideoRef } from './media/videoPosterRef.ts';

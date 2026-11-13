@@ -52,16 +52,22 @@ export async function fetchWallMoments(subjectIds: string[], seen: string[] = []
   if (call.kind === 'off') return { state: 'off' };
   if (call.kind !== 'ok') return { state: 'unavailable', call };
   const b = call.body;
-  if (!Array.isArray(b.moments) || !Array.isArray(b.subjects) || typeof b.liveIntelligenceReadable !== 'boolean') {
+  if (!Array.isArray(b.moments) || !Array.isArray(b.subjects) || typeof b.liveIntelligenceReadable !== 'boolean'
+    || b.moments.some((m: any) => !m || typeof m.id !== 'string' || !m.id || m.subject?.kind !== 'place'
+      || !ids.includes(m.subject.id) || typeof m.reason?.text !== 'string'
+      || !Number.isFinite(Date.parse(m.occurredAt)) || !Number.isFinite(Date.parse(m.expiresAt)))
+    || b.subjects.some((s: any) => !s || !ids.includes(s.subjectId) || !(s.refusal === null || typeof s.refusal === 'string'))) {
     return { state: 'unavailable', call: { kind: 'unavailable', status: call.status, detail: 'unreadable moments response' } };
   }
   return { state: 'ok', moments: b.moments, subjects: b.subjects, liveIntelligenceReadable: b.liveIntelligenceReadable };
 }
 
 /** The Attention Engine's placement is obeyed: NOTIFY and WALL moments are shown; SILENT / IGNORE are counted, not shown. */
-export function shownMoments(moments: WallMomentView[]): { shown: WallMomentView[]; held: number } {
-  const shown = moments.filter((m) => m.attention?.route === 'NOTIFY' || m.attention?.route === 'WALL');
-  return { shown, held: moments.length - shown.length };
+export function shownMoments(moments: WallMomentView[], now = Date.now()): { shown: WallMomentView[]; held: number; expired: number } {
+  const unique = [...new Map(moments.map((m) => [m.id, m])).values()];
+  const current = unique.filter((m) => Date.parse(m.occurredAt) <= now && Date.parse(m.expiresAt) > now);
+  const shown = current.filter((m) => m.attention?.route === 'NOTIFY' || m.attention?.route === 'WALL');
+  return { shown, held: current.length - shown.length, expired: unique.length - current.length };
 }
 
 const TRUTH_WORDS: Record<string, string> = {

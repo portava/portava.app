@@ -63,6 +63,15 @@ const fsq = (name: string, lat: number, lng: number, extra: Record<string, unkno
 const search = (c: any, args: Record<string, unknown> = { city: "Da Nang" }) => executeCompassTool(c, USER, PROFILE, "search_places", args) as Promise<any>;
 
 describe("CPH-08-ADAPT — the gates, in order, and nothing spent on a refusal", () => {
+  it("preserves category-only searches in the live provider request", async () => {
+    const queries: string[] = [];
+    _setLiveSearchDeps({ placesKey: () => "test-key", searchPlaces: async query => { queries.push(query); return []; } });
+    await search(world({ flag: true }), { city: "Da Nang", category: "cafe" });
+    assert.equal(queries.length, 1);
+    assert.match(queries[0], /cafe/);
+    assert.match(queries[0], /Da Nang/);
+  });
+
   it("flag OFF (absent): no quota taken, no provider called, and the result is exactly today's (no live fields)", async () => {
     const calls = providers({ places: [fsq("Han Market", HAN.lat, HAN.lng)] });
     const c = world();

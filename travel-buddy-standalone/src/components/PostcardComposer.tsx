@@ -15,6 +15,8 @@ import {
 } from 'react-native';
 import { MentionInput, type MentionInputHandle } from './MentionInput.tsx';
 import { MentionSuggestionList } from './MentionSuggestionList.tsx';
+import { WritingAssistControl } from '../platform/input-assistance/compass/WritingAssistControl.tsx';
+import { AI_WRITING_FIELD_IDS } from '../platform/input-assistance/compass/compassFields.ts';
 import type { AnyMentionSuggestion } from '../services/tagging.ts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
@@ -289,7 +291,12 @@ export function PostcardComposer({ visible, onClose, onSuccess, layover = null, 
     if (!upload) return;
 
     if (isResumableMediaUploadEnabled()) {
-      await postThroughQueue(upload);
+      try {
+        await postThroughQueue(upload);
+      } catch {
+        setError('Your upload could not be saved on this device. Check available storage and try again.');
+        setPhase('pick');
+      }
       return;
     }
 
@@ -488,7 +495,7 @@ export function PostcardComposer({ visible, onClose, onSuccess, layover = null, 
         setError(e.job.lastError ?? 'Upload failed');
         setPhase('pick');
       } else if (e.job.retryable) {
-        setError('Waiting for a connection — your upload will continue.');
+        setError(e.job.lastError ?? 'Waiting for a connection — your upload will continue.');
       }
     });
   }
@@ -632,6 +639,9 @@ export function PostcardComposer({ visible, onClose, onSuccess, layover = null, 
                     setMentionVisible(!!trigger && (items.length > 0 || isLoading));
                   }}
                 />
+
+                <WritingAssistControl context="caption" fieldId={AI_WRITING_FIELD_IDS.caption}
+                  text={caption} onInsert={setCaption} maxLength={2000} disabled={!visible || phase !== 'pick'} />
 
                 {/* City — universal canonical location picker */}
                 <Text style={s.label}>City</Text>

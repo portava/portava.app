@@ -17,6 +17,8 @@
  *   9. Preview       — summary + Publish / Save as draft
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { WritingAssistControl } from '../../../src/platform/input-assistance/compass/WritingAssistControl.tsx';
+import { AI_WRITING_FIELD_IDS } from '../../../src/platform/input-assistance/compass/compassFields.ts';
 import {
   View, Text, TextInput, Pressable, StyleSheet,
   ScrollView, Switch, Alert, ActivityIndicator, Image, Platform,
@@ -819,6 +821,8 @@ export default function CreateEventScreen() {
                 numberOfLines={5}
                 textAlignVertical="top"
               />
+              <WritingAssistControl context="event_description" fieldId={AI_WRITING_FIELD_IDS.eventDescription}
+                text={description} disabled={saving} onInsert={value => { setDescription(value); scheduleSave(); }} />
               <Text style={styles.label}>Category</Text>
               <TextInput
                 style={styles.input}

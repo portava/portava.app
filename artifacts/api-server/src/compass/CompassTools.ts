@@ -41,6 +41,7 @@
 import { randomUUID } from "node:crypto";
 import { isTruthClass } from "../lib/truthClass.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { tripProposalDate } from "./CompassTripActionGate.js";
 import type { CompassItem, CompassProfile } from "./types.js";
 import { stripCoordinateFields, wrapUgc, buildStructuredCompassContext } from "./CompassStructuredContext.js";
 import { proposalContractPayload } from "../domain/trips/contracts/TripProposalContract.js";
@@ -996,7 +997,10 @@ async function toolSearchPlaces(
   if (typeof args["city"] === "string" && args["city"].trim()) {
     q = q.ilike("city", sqlPattern(args["city"] as string));
   }
-  const { data, error } = await q.limit(limit);
+  // Personalization must see more candidates than the requested display count.
+  // Bound the read, rank and apply all gates, then cut the final shortlist.
+  const poolLimit = Math.min(50, Math.max(20, limit * 5));
+  const { data, error } = await q.order("rating", { ascending: false, nullsFirst: false }).order("id", { ascending: true }).limit(poolLimit);
   if (error) return { candidates: [], info: "Place search unavailable right now." };
   const rows = (data ?? []) as any[];
 
@@ -1016,7 +1020,7 @@ async function toolSearchPlaces(
   // provider record confirms a catalog place only by D-67 (the anchors are read
   // only after the provider answered, and never returned).
   const live = await livePlaces(sc, userId, {
-    query: typeof args["query"] === "string" ? (args["query"] as string) : null,
+    query: [args["query"], args["category"]].filter((value): value is string => typeof value === "string" && value.trim().length > 0).map(value => value.trim()).join(" ") || null,
     city: typeof args["city"] === "string" ? (args["city"] as string) : null,
     limit,
     loadCatalog: async () => {
@@ -1057,7 +1061,7 @@ async function toolSearchPlaces(
   const liveKept = applySafetyAttention(applyAttentionSuppression(live.listings, attention, (l) => [l.category]).kept, safety, (l) => [l.category]).kept;
   const liveWire = live.status.reason === "flag_off" ? {} : { liveSearch: live.status, ...(liveKept.length > 0 ? { liveListings: liveKept } : {}) };
   return safeHeld.kept.length > 0 || liveKept.length > 0
-    ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire, ...liveWire }
+    ? { candidates: safeHeld.kept.slice(0, limit), ranked: ranking !== null, attention: wire, safetyAttention: safetyWire, ...liveWire }
     : { candidates: [], catalogEmpty: rows.length === 0 && !attention.suppressed && !safety.suppressed && !withheldTotal, attention: wire, safetyAttention: safetyWire, ...liveWire, info: withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching places found in the catalog." };
 }
 
@@ -1093,13 +1097,12 @@ async function toolSearchEvents(
   if (typeof args["city"] === "string" && args["city"].trim()) {
     q = q.ilike("city", sqlPattern(args["city"] as string));
   }
-  const { data, error } = await q.limit(limit * 2);
+  const { data, error } = await q.limit(Math.min(50, Math.max(20, limit * 5)));
   if (error) return { candidates: [], info: "Event search unavailable right now." };
 
   const hidden = hiddenUserIds(profile);
   const visible = ((data ?? []) as any[])
-    .filter((e) => !hidden.has(e.host_id as string))
-    .slice(0, limit);
+    .filter((e) => !hidden.has(e.host_id as string));
 
   // Phase 7 — rank through the single candidate-ranking authority
   const rankItems: CompassItem[] = visible.map((e) => ({
@@ -1145,7 +1148,7 @@ async function toolSearchEvents(
   const liveKept = applySafetyAttention(applyAttentionSuppression(live.listings, attention, (l) => [l.category]).kept, safety, (l) => [l.category]).kept;
   const liveWire = live.status.reason === "flag_off" ? {} : { liveSearch: live.status, ...(liveKept.length > 0 ? { liveListings: liveKept } : {}) };
   return safeHeld.kept.length > 0 || liveKept.length > 0
-    ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire, ...liveWire }
+    ? { candidates: safeHeld.kept.slice(0, limit), ranked: ranking !== null, attention: wire, safetyAttention: safetyWire, ...liveWire }
     : { candidates: [], attention: wire, safetyAttention: safetyWire, ...liveWire, info: withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching upcoming public events found." };
 }
 
@@ -1797,9 +1800,9 @@ async function toolAddToTrip(
   }
   if (!title) return { error: "A placeId or title is required." };
 
-  const dayDate = typeof args["dayDate"] === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args["dayDate"] as string)
-    ? (args["dayDate"] as string)
-    : null;
+  const scheduled = tripProposalDate(args["dayDate"], trip?.startDate, trip?.endDate);
+  if (!scheduled.ok) return { error: scheduled.error };
+  const dayDate = scheduled.dayDate;
 
   const proposal: AddToTripProposal = {
     proposalId: randomUUID(),

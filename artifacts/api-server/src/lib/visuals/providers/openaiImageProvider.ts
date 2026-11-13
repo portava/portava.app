@@ -1,3 +1,4 @@
+import { providerModel } from "../../providerVersions.js";
 /**
  * OpenAI image generation provider.
  *
@@ -17,7 +18,7 @@ import type {
 export const AI_IMAGE_MODEL =
   process.env.AI_IMAGE_MODEL?.trim() ||
   process.env.STAMP_IMAGE_MODEL?.trim() ||
-  "gpt-image-1";
+  providerModel("openai", "gpt-image-1");
 
 const AI_IMAGE_QUALITY = process.env.AI_IMAGE_QUALITY?.trim() || "high";
 

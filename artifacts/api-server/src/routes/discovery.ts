@@ -1,3 +1,4 @@
+import { discoveryOpenNow, refreshDiscoveryHours } from '../lib/discoveryOpeningHours.js';
 /**
  * GET /api/discovery
  *
@@ -606,28 +607,6 @@ function parseRating(tags: Record<string, string>): number | null {
   return Number.isFinite(n) ? Math.round(n * 10) / 10 : null;
 }
 
-/** Best-effort open-now check from an OSM opening_hours string. */
-function determineOpenNow(hours: string | null, lng: number | null): boolean | null {
-  if (!hours) return null;
-  // Evaluate open/closed in the VENUE's local time, not the server's. OSM has no
-  // timezone tag, so approximate the venue's UTC offset from its longitude (15°
-  // per hour). This is coarse — it ignores DST and political tz boundaries — but
-  // far better than the previous server-local computation, which was wrong by the
-  // whole server→venue offset (e.g. a Da Nang venue read against a UTC server was
-  // off by 7 hours). With no longitude we cannot place the venue in time, so
-  // return null (unknown) rather than assert a wrong open/closed.
-  if (lng == null) return null;
-  const offsetMs = Math.round(lng / 15) * 3_600_000;
-  const venueNow = new Date(Date.now() + offsetMs); // read via getUTC* for venue-local
-  const dayAbbr = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"][venueNow.getUTCDay()];
-  if (dayAbbr && !hours.includes(dayAbbr)) return false;
-  const match = hours.match(/(\d{2}):(\d{2})-(\d{2}):(\d{2})/);
-  if (!match) return null; // present but unparseable — unknown
-  const hh    = venueNow.getUTCHours() * 100 + venueNow.getUTCMinutes();
-  const open  = parseInt(match[1]!) * 100 + parseInt(match[2]!);
-  const close = parseInt(match[3]!) * 100 + parseInt(match[4]!);
-  return hh >= open && hh <= close;
-}
 
 function buildAddress(tags: Record<string, string>): string | null {
   const parts: string[] = [];
@@ -775,7 +754,7 @@ export function mapOsmElementToPlace(
     phone:        tags.phone ?? tags["contact:phone"] ?? null,
     openingHours: tags.opening_hours ?? null,
     rating:       parseRating(tags),
-    isOpenNow:    determineOpenNow(tags.opening_hours ?? null, elLng),
+    isOpenNow:    discoveryOpenNow(tags.opening_hours ?? null, elLat, elLng),
   };
 }
 
@@ -1744,16 +1723,16 @@ router.get("/discovery", async (req, res) => {
   const engineMode = await resolveDiscoveryEngineMode(getServiceClient());
   /** Apply openNow / minRating / age filters to a set of places */
   function applyFilters(raw: DiscoveryPlace[]): DiscoveryPlace[] {
-    let list = raw;
+    let list = raw.map((p) => refreshDiscoveryHours(p));
     if (openNow) {
       list = list.filter((p) => {
-        if (p.isOpenNow === null) return true; // no data → optimistic include
+        if (p.isOpenNow == null) return false;
         return p.isOpenNow === true;
       });
     }
     if (minRating !== null && Number.isFinite(minRating)) {
       list = list.filter((p) => {
-        if (p.rating === null) return true; // no rating data → include
+        if (p.rating == null || !Number.isFinite(p.rating)) return false;
         return p.rating >= minRating!;
       });
     }

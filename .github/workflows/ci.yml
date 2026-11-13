@@ -1429,6 +1429,9 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Provider release event gate
+        run: node --test scripts/provider-release-events.test.mjs
+
       - name: No soft-fail constructs in any workflow
         shell: bash
         run: |

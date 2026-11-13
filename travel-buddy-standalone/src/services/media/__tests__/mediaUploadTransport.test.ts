@@ -493,6 +493,63 @@ describe('MD284 — the queue owns the upload: it survives the screen, the app a
     return { storage, accountId: async () => account, newId: () => `job-${++id}`, now: () => 1_000 + id, deps: async () => deps };
   }
 
+  it('a failed storage read never erases an existing upload or starts a new one', async () => {
+    const file = new FakeFile(bytesOf(CHUNK));
+    const calls = freshCalls();
+    const existing = newPostcardUploadJob('saved', 'acct-A', input({}, file.size), 1000);
+    const saved = JSON.stringify([existing]); storage.map.set(queueKey('acct-A'), saved);
+    const rt = runtime(pipelineDeps(fakeServer(file.size), file, calls));
+    let readable = false;
+    rt.storage = { ...storage, getItem: async key => { if (!readable) throw new Error('device locked'); return storage.getItem(key); } };
+    const queue = new PostcardUploadQueue(rt);
+    await assert.rejects(queue.enqueue(input({}, file.size)), /device locked/);
+    await assert.rejects(queue.resumePending(), /device locked/);
+    assert.equal(storage.map.get(queueKey('acct-A')), saved);
+    assert.equal(calls.shells, 0);
+    readable = true;
+    await queue.resumePending();
+    assert.equal((await queue.list())[0]?.stage, 'done');
+    assert.equal(calls.shells, 1);
+  });
+
+  it('a storage write failure pauses the visible job and preserves its last durable journal', async () => {
+    const file = new FakeFile(bytesOf(CHUNK));
+    const saved = JSON.stringify([newPostcardUploadJob('saved', 'acct-A', input({}, file.size), 1000)]);
+    storage.map.set(queueKey('acct-A'), saved);
+    const rt = runtime(pipelineDeps(fakeServer(file.size), file, freshCalls()));
+    rt.storage = { ...storage, setItem: async () => { throw new Error('disk full'); } };
+    const queue = new PostcardUploadQueue(rt);
+    const events: PostcardUploadJob[] = [];
+    queue.subscribe(event => events.push(event.job));
+    await assert.rejects(queue.resumePending(), /disk full/);
+    assert.equal(storage.map.get(queueKey('acct-A')), saved);
+    assert.equal(events.at(-1)?.retryable, true);
+    assert.match(events.at(-1)?.lastError ?? '', /device storage/);
+  });
+
+  it('corrupt, truncated and cross-account journals are preserved without running or replacing them', async () => {
+    const file = new FakeFile(bytesOf(CHUNK));
+    const calls = freshCalls();
+    for (const saved of ['', '{broken', '{}', '[null]', JSON.stringify([{ accountId: 'acct-A' }]), JSON.stringify([newPostcardUploadJob('foreign', 'acct-B', input({}, file.size), 1000)])]) {
+      storage.map.set(queueKey('acct-A'), saved);
+      const queue = new PostcardUploadQueue(runtime(pipelineDeps(fakeServer(file.size), file, calls)));
+      await assert.rejects(queue.enqueue(input({}, file.size)));
+      await assert.rejects(queue.list());
+      assert.equal(storage.map.get(queueKey('acct-A')), saved);
+    }
+    assert.equal(calls.shells, 0);
+  });
+
+  it('an account switch during the storage read cannot reveal the previous account uploads', async () => {
+    const file = new FakeFile(bytesOf(CHUNK));
+    const rt = runtime(pipelineDeps(fakeServer(file.size), file, freshCalls()));
+    rt.storage = { ...storage, getItem: async () => {
+      account = 'acct-B';
+      return JSON.stringify([newPostcardUploadJob('private', 'acct-A', input({}, file.size), 1000)]);
+    } };
+    assert.deepEqual(await new PostcardUploadQueue(rt).list(), []);
+  });
+
   it('a job is DURABLE before its first request, and a NEW process resumes it to done without re-creating the post', async () => {
     const file = new FakeFile(bytesOf(CHUNK * 3));
     const srv = fakeServer(file.size);

@@ -24,6 +24,9 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { batchSignUrls, lastSignOutcome } from '../lib/batchSignMedia.ts';
+import { mediaSigningReference } from './playbackUri.ts';
+import { useMediaScopeKey } from '../hooks/useMediaScopeKey.ts';
+import { currentDiscoveryScope, isCurrentDiscoveryScope } from './discoveryViewerScope.ts';
 
 /** The two Supabase storage buckets that are private. */
 export const PRIVATE_BUCKETS: string[] = [...PRIVATE_MEDIA_BUCKETS]; // the list lives in ./playbackUri.ts (2026-10-24) so a player can ask without importing the sign client
@@ -90,16 +93,23 @@ export async function hydrateMediaUrls(
   // Call batchSignUrls (handles chunking ≤50 per request + LRU cache).
   // batchSignUrls returns the original URL when the server returns null or on
   // error; compare to detect those cases and surface them as null to the caller.
-  const signed = await batchSignUrls(privateBucketUrls, transform);
+  const scope = currentDiscoveryScope();
+  const refs = privateBucketUrls.map(mediaSigningReference);
+  const signed = await batchSignUrls([...new Set(refs)], transform);
   for (const url of privateBucketUrls) {
-    const signedUrl = signed.get(url);
-    // signedUrl === url  →  server returned null or a network error occurred
-    // signedUrl != url   →  a real signed URL was returned
-    result[url] = signedUrl && signedUrl !== url ? signedUrl : null;
+    const ref = mediaSigningReference(url);
+    const signedUrl = signed.get(ref);
+    // An unchanged ref means the signer refused or could not be reached.
+    result[url] = signedUrl && signedUrl !== ref ? signedUrl : null;
   }
 
+  if (!isCurrentDiscoveryScope(scope)) {
+    for (const url of privateBucketUrls) result[url] = null;
+    return result;
+  }
   const unsigned = privateBucketUrls.filter((u) => result[u] === null);
   if (unsigned.length > 0) await applyOfflineCopies(unsigned, result);
+  if (!isCurrentDiscoveryScope(scope)) for (const url of privateBucketUrls) result[url] = null;
 
   return result;
 }
@@ -122,11 +132,12 @@ async function applyOfflineCopies(refs: string[], result: Record<string, string 
     const { getMediaCache } = await import('./media/mediaCache.ts');
     const cache = await getMediaCache();
     for (const ref of refs) {
-      const outcome = lastSignOutcome(ref);
+      const storageRef = mediaSigningReference(ref);
+      const outcome = lastSignOutcome(storageRef);
       if (outcome === 'unreachable') {
-        result[ref] = await cache.localFileFor(ref);
+        result[ref] = await cache.localFileFor(storageRef);
       } else if (outcome === 'denied') {
-        void cache.forgetRef(ref);
+        void cache.forgetRef(storageRef);
       }
     }
   } catch {
@@ -160,8 +171,8 @@ export function useHydratedMedia(
   urls: (string | null | undefined)[],
   transform?: { width?: number; quality?: number },
 ): { resolved: Record<string, string | null>; loading: boolean } {
-  const [resolved, setResolved] = useState<Record<string, string | null>>({});
-  const [loading, setLoading] = useState(false);
+  const scopeKey = useMediaScopeKey();
+  const [answer, setAnswer] = useState<{ key: string; resolved: Record<string, string | null> } | null>(null);
 
   // Build a stable string key from the SORTED unique non-null URLs so the
   // effect only re-fires when the content changes, not on every render.
@@ -178,29 +189,32 @@ export function useHydratedMedia(
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [transform?.width, transform?.quality],
   );
+  const requestKey = JSON.stringify([scopeKey, stableKey, transformRef]);
 
   useEffect(() => {
     // Reconstruct the URL list from the stable key (avoids stale-closure issues).
     const unique = stableKey ? stableKey.split('\0') : [];
     if (unique.length === 0) {
-      setResolved({});
-      setLoading(false);
       return;
     }
 
     let cancelled = false;
-    setLoading(true);
     hydrateMediaUrls(unique, transformRef).then((result) => {
       if (!cancelled) {
-        setResolved(result);
-        setLoading(false);
+        setAnswer({ key: requestKey, resolved: result });
       }
+    }).catch(() => {
+      if (!cancelled) setAnswer({ key: requestKey, resolved: Object.fromEntries(unique.map(uri => [uri, null])) });
     });
     return () => {
       cancelled = true;
     };
-  }, [stableKey, transformRef]);
+  }, [stableKey, transformRef, requestKey]);
 
-  return { resolved, loading };
+  // Do not expose the previous viewer/source for even one render while the
+  // effect starts a new permission check.
+  return { resolved: answer?.key === requestKey ? answer.resolved : EMPTY_HYDRATED_MEDIA,
+    loading: stableKey.length > 0 && answer?.key !== requestKey };
 }
+const EMPTY_HYDRATED_MEDIA: Record<string, string | null> = Object.freeze({});
 import { PRIVATE_MEDIA_BUCKETS, storageBucketOf, isPrivateMediaRefOf } from './playbackUri.ts'; export { isLoadablePlaybackUri, playbackUriState, type PlaybackUriState } from './playbackUri.ts'; // 2026-10-24 video playback: the playback rule sits next to useHydratedMedia

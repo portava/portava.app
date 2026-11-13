@@ -1,7 +1,8 @@
 import { captureMessagingOwnerRequest, messagingOwnerToken } from '../messagingOwnerRequest.ts';
 
 export interface TimedCaptionCue { startMs: number; endMs: number; text: string }
-export interface CaptionAsrStatus { enabled: boolean; languages: string[]; sourceVersion: number; revisionKey: string; consentEpoch: string; state: string; canRevoke: boolean; current: boolean }
+export interface CaptionProcessingReceipt { provider: 'local' | 'deepgram'; modelVersion: string; configVersion: string; disclosureVersion: string }
+export interface CaptionAsrStatus { processing?: CaptionProcessingReceipt | null; enabled: boolean; languages: string[]; sourceVersion: number; revisionKey: string; consentEpoch: string; state: string; canRevoke: boolean; current: boolean }
 export interface CaptionSource { assetId: string; version: number; revisionKey: string; durationMs: number; canEdit: boolean }
 export interface CaptionTrackResult {
   assetId: string;
@@ -121,6 +122,11 @@ export async function publishCaptionDraft(source: CaptionSource, draftId: string
 
 function asrStatus(result: CaptionAsrStatus): CaptionAsrStatus {
   if (!result || typeof result.enabled !== 'boolean' || !Array.isArray(result.languages) || !result.languages.every((language: unknown) => typeof language === 'string') || !Number.isSafeInteger(result.sourceVersion) || !/^[a-f0-9]{64}$/.test(result.revisionKey) || typeof result.consentEpoch !== 'string' || !/^[a-f0-9]{64}$/.test(result.consentEpoch) || typeof result.state !== 'string' || typeof result.canRevoke !== 'boolean' || typeof result.current !== 'boolean') throw new Error('Invalid transcription state.');
+  if (result.processing) {
+    const receipt = result.processing;
+    if (!['local', 'deepgram'].includes(receipt.provider) || typeof receipt.modelVersion !== 'string' || !receipt.modelVersion || typeof receipt.configVersion !== 'string' || !receipt.configVersion
+      || receipt.disclosureVersion !== (receipt.provider === 'deepgram' ? 'deepgram-audio-opt-out-v1' : 'local-audio-v1')) throw new Error('Unrecognized transcription processing disclosure.');
+  } else if (result.processing === null && result.enabled) throw new Error('Missing transcription processing disclosure.');
   return result;
 }
 
@@ -128,9 +134,9 @@ export async function getCaptionAsrStatus(source: CaptionSource, signal?: AbortS
   return asrStatus(await call(`/${encodeURIComponent(source.assetId)}/asr`, 'GET', undefined, signal));
 }
 
-export async function requestCaptionAsr(source: CaptionSource, targetLanguage: string, consent: boolean, expectedConsentEpoch: string, signal?: AbortSignal): Promise<CaptionAsrStatus> {
+export async function requestCaptionAsr(source: CaptionSource, targetLanguage: string, consent: boolean, expectedConsentEpoch: string, signal?: AbortSignal, processing?: CaptionProcessingReceipt | null): Promise<CaptionAsrStatus> {
   if (typeof expectedConsentEpoch !== 'string' || !/^[a-f0-9]{64}$/.test(expectedConsentEpoch)) throw new Error('Refresh transcription consent status before requesting a draft.');
-  return asrStatus(await call(`/${encodeURIComponent(source.assetId)}/asr`, 'POST', { version: source.version, revisionKey: source.revisionKey, expectedConsentEpoch, targetLanguage, consent }, signal));
+  return asrStatus(await call(`/${encodeURIComponent(source.assetId)}/asr`, 'POST', { version: source.version, revisionKey: source.revisionKey, expectedConsentEpoch, targetLanguage, consent, ...(processing ? { processing } : {}) }, signal));
 }
 
 export async function revokeCaptionAsr(source: CaptionSource, signal?: AbortSignal): Promise<{ revoked: true; cleanupPending: boolean }> {

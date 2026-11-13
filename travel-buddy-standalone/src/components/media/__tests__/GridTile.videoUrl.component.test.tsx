@@ -2,7 +2,7 @@
  * GridTile.videoUrl.component.test.tsx
  *
  * Covers:
- *   1. When videoUrl is a relay URL, the Video component receives it as source.uri.
+ *   1. Protected video refs wait for authenticated signing before mounting.
  *   2. When videoUrl is null (image tile), no Video component is rendered.
  *
  * Run with: pnpm --dir travel-buddy-standalone run test:component
@@ -12,9 +12,12 @@ import React from 'react';
 import { screen, render, act } from '@testing-library/react-native';
 
 // ── expo-av — capture the source prop passed to Video ─────────────────────────
-// NOTE: intentional spy — test asserts Video receives the relay URL as its source.
+// NOTE: native player spy — the source must be loadable and authorized.
 // Variable prefixed 'mock' so Jest hoisting can see it from the factory closure.
 let mockCapturedVideoSource: { uri: string } | null = null;
+let mockResolved: Record<string, string | null> = {};
+// NOTE: controlled async signing boundary; player admission runs for real.
+jest.mock('../../../services/mediaUrl.ts', () => ({ useHydratedMedia: () => ({ resolved: mockResolved, loading: false }) }));
 jest.mock('expo-av', () => {
   const React = require('react');
   const { View } = require('react-native');
@@ -60,8 +63,8 @@ jest.mock('../../ui/DisplayMediaImage.tsx', () => ({
 
 import type { MediaGridItem } from '../../../types/media.ts';
 
-const RELAY_VIDEO_URL =
-  'https://relay.example.com/api/media/file/post-media/test-video.mp4';
+const RELAY_VIDEO_URL = '/api/media/file/post-media/test-video.mp4';
+const SIGNED_VIDEO_URL = 'https://storage.example.com/signed/test-video.mp4?token=checked';
 
 function makeVideoItem(overrides: Partial<MediaGridItem> = {}): MediaGridItem {
   return {
@@ -110,32 +113,23 @@ import { GridTile } from '../GridTile.tsx';
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('GridTile — relay video URL prop-wiring', () => {
+describe('GridTile — authenticated video playback', () => {
   beforeEach(() => {
     mockCapturedVideoSource = null;
+    mockResolved = {};
   });
 
-  it('Video receives the relay URL as source.uri when videoUrl is a relay URL', async () => {
+  it('waits for a signed URL before mounting the player', async () => {
     const item = makeVideoItem();
-
-    await act(async () => {
-      render(
-        <GridTile
-          item={item}
-          index={0}
-          cellWidth={120}
-          cellHeight={160}
-          onPress={() => {}}
-          isVisible={false}
-        />,
-      );
-    });
-
-    // Video component must be mounted
+    const ui = await render(<GridTile item={item} index={0} cellWidth={120} cellHeight={160} onPress={() => {}} />);
+    expect(screen.queryByTestId('expo-av-video')).toBeNull();
+    mockResolved = { [RELAY_VIDEO_URL]: SIGNED_VIDEO_URL };
+    await ui.rerender(<GridTile item={item} index={0} cellWidth={120} cellHeight={160} onPress={() => {}} />);
     expect(screen.getByTestId('expo-av-video')).toBeTruthy();
-    // Its source prop must carry the relay URL unchanged
-    expect(mockCapturedVideoSource).not.toBeNull();
-    expect(mockCapturedVideoSource!.uri).toBe(RELAY_VIDEO_URL);
+    expect(mockCapturedVideoSource!.uri).toBe(SIGNED_VIDEO_URL);
+    mockResolved = { [RELAY_VIDEO_URL]: null };
+    await ui.rerender(<GridTile item={item} index={0} cellWidth={120} cellHeight={160} onPress={() => {}} />);
+    expect(screen.queryByTestId('expo-av-video')).toBeNull();
   });
 
   it('no Video component is rendered for an image tile (videoUrl is null)', async () => {

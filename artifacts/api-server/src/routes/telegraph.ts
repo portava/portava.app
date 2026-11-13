@@ -1,3 +1,4 @@
+import { providerModel } from "../lib/providerVersions.js";
 /**
  * Telegraph — AI activity recommendation engine.
  *
@@ -169,7 +170,7 @@ ${weatherBrief ? "Important: factor in the weather forecast when writing 'reason
 
   try {
     const completion = await getOpenAI().chat.completions.create({
-      model: "gpt-5-mini",
+      model: providerModel("openai", "gpt-5-mini"),
       max_completion_tokens: 1024,
       messages: [
         { role: "system", content: systemPrompt },

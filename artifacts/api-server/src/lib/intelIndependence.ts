@@ -14,8 +14,8 @@
  *
  * UNITS, NOT ACTORS. The clustering runs over INDEPENDENCE UNITS: a non-null
  * group_key (a Trip Crew / party token, lib/intelGroupKey) is one unit; a solo
- * actor with no group_key is their own singleton unit. This preserves the prior
- * aggregator's group accounting exactly — distinctGroups counts group_key units,
+ * actor with no group_key is their own singleton unit. Before correlation,
+ * distinctGroups counts group_key units,
  * a null group_key earns zero group credit, and maxGroupShare is actor-based over
  * the distinct-actor union so overlapping crews that share members cannot dilute
  * the dominant share. The detectors below can only ever MERGE units on top of
@@ -24,6 +24,8 @@
  * THE DETECTOR SIGNALS (spec §11: actor relationship, shared media, common
  * source, unusually synchronized behaviour). Each MERGES the units behind two
  * observations:
+ *   0. SHARED REPORTER — units containing the same actor merge, including when
+ *      that actor changes crew or switches between solo and crew reports.
  *   1. SHARED EVIDENCE MEDIA — the same asset key or content hash attached to
  *      observations from different units. Two "different" witnesses posting the
  *      same photo are one source. Merges even across distinct group_keys.
@@ -127,11 +129,17 @@ export function clusterByIndependence(
   const uf = new UnionFind();
   const unitActors = new Map<string, Set<string>>(); // unitKey → actors seen under it
   const unitAttested = new Map<string, boolean>();
+  const actorUnit = new Map<string, string>();
 
   for (const o of observations) {
     if (!o.actorId) continue;
     const unit = unitKeyOf(o.groupKey, o.actorId);
     uf.add(unit);
+    // The same reporter cannot become independent corroboration by switching
+    // group keys. Join overlapping memberships before counting any evidence.
+    const priorUnit = actorUnit.get(o.actorId);
+    if (priorUnit !== undefined) uf.union(priorUnit, unit);
+    else actorUnit.set(o.actorId, unit);
     let set = unitActors.get(unit);
     if (!set) { set = new Set(); unitActors.set(unit, set); }
     set.add(o.actorId);
