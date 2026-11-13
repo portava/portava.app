@@ -42,7 +42,7 @@ import {
   maskForKeywordScan, maskNonCode, orderMigrations, readOrderOverrides, type OrderOverride,
 } from "./apply-migrations.js";
 import {
-  keyText, otherUniqueKeysInSql, scanChainSeeds,
+  keyText, otherUniqueKeysInSql, plainLiteralValue, scanChainSeeds,
   type ChainSeed,
   type SeedTableSpec,
 } from "./beta-chain-seeds.js";
@@ -1240,7 +1240,17 @@ function chainSeedsByTable(
   }
   for (const [id, seeds] of byTable) {
     const spec = specs.find((s) => `${s.schema}.${s.table}` === id)!;
-    const baselineText = model.statements.filter((s) => s.code.toLowerCase().includes(spec.table)).map((s) => s.code).join(";\n");
+    let baselineText = model.statements.filter((s) => s.code.toLowerCase().includes(spec.table)).map((s) => s.code).join(";\n");
+    if (id === "storage.buckets") {
+      // The baseline's bname index is equivalent to the primary key ONLY
+      // when name=id in every seed AND every imported row. Prove both: seeds
+      // here; snapshot export, validation and import in isChainSeededRow.
+      // All other unique constraints/expressions remain unsupported below.
+      if (seeds.some((s) => plainLiteralValue(s.values.name ?? "") !== s.key[0])) {
+        throw new Error("storage.buckets: chain seeds must have name equal to id; secondary-name collisions cannot be excluded otherwise");
+      }
+      baselineText = baselineText.replace(/\bCREATE UNIQUE INDEX bname ON storage\.buckets USING btree \(name\)(?=;|$)/g, "");
+    }
     const other = [
       ...otherUniqueKeysInSql(baselineText, spec).map((w) => `baseline: ${w.replace(/ at line \d+$/, "")}`),
       ...relevant.flatMap((f) => otherUniqueKeysInSql(chain.read(f), spec).map((w) => `${f}: ${w}`)),
@@ -1265,6 +1275,10 @@ function chainSeedsByTable(
 
 /** Is this row's primary key one the chain seeds itself? */
 export function isChainSeededRow(plan: ReferenceTablePlan, row: SnapshotRow): boolean {
+  if (plan.schema === "storage" && plan.table === "buckets" && Object.keys(plan.chainSeeded).length > 0
+    && (typeof row.id !== "string" || row.name !== row.id)) {
+    throw new Error("storage.buckets: snapshot name must equal id; refusing a possible secondary-name collision with a chain seed");
+  }
   const key = plan.primaryKey.map((c) => row[c]);
   if (key.some((v) => typeof v !== "string")) return false;
   return Object.prototype.hasOwnProperty.call(plan.chainSeeded, keyText(key as string[]));

@@ -72,12 +72,40 @@ async function deliver(sc: any, id: string) {
   scheduleExpiry(job);
 }
 let started = false;
+let connected = false;
+let booted = false;
+let stopped = false;
+let lastRunAt: string | null = null;
+let lastSuccessAt: string | null = null;
+let consecutiveFailures = 0;
+export function generationWorkerStatus(state: { ready: boolean; started: boolean; connected: boolean; booted: boolean; stopped: boolean; consecutiveFailures: number }) {
+  if (!state.ready) return "unknown" as const;
+  if (state.stopped || state.consecutiveFailures > 0) return "failing" as const;
+  if (!state.started) return "never_ran" as const;
+  if (!state.connected) return "failing" as const;
+  return state.booted ? "healthy" as const : "never_ran" as const;
+}
+export function generationWorkerReport() {
+  const ready = configuration().ready;
+  return {
+    status: generationWorkerStatus({ ready, started, connected, booted, stopped, consecutiveFailures }),
+    lastRunAt, lastSuccessAt, consecutiveFailures,
+    detail: !ready ? "Generation provider/queue configuration is incomplete; worker disabled."
+      : stopped ? "Consumer stopped; pending deliveries require restart or replay."
+      : consecutiveFailures > 0 ? "Delivery is retrying after a failure; successful processing has not recovered yet."
+      : !connected ? "Queue disconnected; delivery health is not established."
+      : "Event consumer connected. Idle time is not failure; no provider status polling. In-process state only.",
+  };
+}
 export function startHiggsfieldGenerationWorker() {
   if (started || !configuration().ready) return;
-  started = true;
+  started = true; stopped = false; booted = false;
   const boot = async () => {
-    const client = connection(true); await client.connect();
+    const client = connection(true);
+    client.on("ready", () => { connected = true; });
+    client.on("close", () => { connected = false; });
     try {
+      await client.connect();
       try { await client.xgroup("CREATE", STREAM, GROUP, "0", "MKSTREAM"); }
       catch (error) { if (!(error instanceof Error && error.message.startsWith("BUSYGROUP"))) throw error; }
       // Startup and connection events repair handoffs and restore expiry deadlines.
@@ -90,17 +118,20 @@ export function startHiggsfieldGenerationWorker() {
         claimCursor = claimed[0];
         for (const [messageId, fields] of claimed[1]) { await enqueueGeneration(fields[1]); await client.xack(STREAM, GROUP, messageId); await client.xdel(STREAM, messageId); }
       } while (claimCursor !== "0-0");
+      booted = true;
       for (;;) {
         const batches = await client.xreadgroup("GROUP", GROUP, consumer, "COUNT", 1, "BLOCK", 0, "STREAMS", STREAM, ">") as Array<[string, Array<[string, string[]]>]> | null;
         for (const [, messages] of batches ?? []) for (const [messageId, fields] of messages) {
           let delivered = false;
           for (let attempt = 0; attempt < 8; attempt++) {
             try {
+              lastRunAt = new Date().toISOString();
               const jobClient = getServiceClient(boundedServiceFetch(110000, 15000));
               if (!jobClient) throw new Error("generation_database_unavailable");
-              await deliver(jobClient, fields[1]); delivered = true; break;
+              await deliver(jobClient, fields[1]);
+              lastSuccessAt = new Date().toISOString(); consecutiveFailures = 0; delivered = true; break;
             }
-            catch { await delay(Math.min(30000, 1000 * 2 ** attempt)); }
+            catch { consecutiveFailures++; await delay(Math.min(30000, 1000 * 2 ** attempt)); }
           }
           if (!delivered) throw new Error("generation_delivery_exhausted"); // Preserve pending for restart/operator replay.
           await client.xack(STREAM, GROUP, messageId); await client.xdel(STREAM, messageId);
@@ -108,5 +139,5 @@ export function startHiggsfieldGenerationWorker() {
       }
     } finally { client.disconnect(); }
   };
-  void boot().catch(() => { started = false; console.error('{"event":"media_generation_consumer_stopped","recovery":"restart_or_replay"}'); });
+  void boot().catch(() => { started = false; stopped = true; connected = false; consecutiveFailures++; console.error('{"event":"media_generation_consumer_stopped","recovery":"restart_or_replay"}'); });
 }

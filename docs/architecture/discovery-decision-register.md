@@ -391,9 +391,9 @@ Each request is stated in full in `docs/ops/discovery-owner-approval-request.md`
 - **Where it is implemented.**
   - `artifacts/api-server/src/lib/discoveryOnePipeline.ts`
   - `artifacts/api-server/src/compass/CompassFeedBuilder.ts:938#export async function compassEligibleForDiscovery(`
-  - `artifacts/api-server/src/routes/discovery.ts:2100#const forYouM = await forYouCandidatesForServe(`
-  - `artifacts/api-server/src/routes/discovery.ts:2270#if (callerUserId) { const places = forYouM.places;`
-  - `artifacts/api-server/src/routes/discovery.ts:1832#const forYouA = await forYouCandidatesForServe(`
+  - `artifacts/api-server/src/routes/discovery.ts:2079#const forYouM = await forYouCandidatesForServe(`
+  - `artifacts/api-server/src/routes/discovery.ts:2249#if (callerUserId) { const places = forYouM.places;`
+  - `artifacts/api-server/src/routes/discovery.ts:1811#const forYouA = await forYouCandidatesForServe(`
   - migration 3455
   - Tests: `artifacts/api-server/src/test/discoveryOnePipeline.test.ts` P1–P4 and Z0.
 
@@ -417,7 +417,7 @@ Each request is stated in full in `docs/ops/discovery-owner-approval-request.md`
      - Read `discovery_shadow_serves` for serve points 1, 4 and 5: `overlap_count`, `top_changed` and `pde_stages->'phase9'`.
   3. **Gate 2**, after 14 days of shadow rows and the owner's reading of them:
      - `UPDATE public.feature_flags SET enabled = true WHERE flag IN ('discovery_for_you_pde_enabled','discovery_cache_a_ranked_enabled');`
-     - Then set `DISCOVERY_ENGINE_MODE` back to `{"mode":"legacy"}` or leave it in `shadow`. With both flags on, the shadow skips pages that PDE already served (`routes/discovery.ts:1954#shadowCohort`).
+     - Then set `DISCOVERY_ENGINE_MODE` back to `{"mode":"legacy"}` or leave it in `shadow`. With both flags on, the shadow skips pages that PDE already served (`routes/discovery.ts:1933#shadowCohort`).
 - **Consequence of approving.**
   - Signed-in `for_you` pages and every signed-in Cache A hit are ordered by the PDE pipeline.
   - `rank_events` gains a real impression row per served item on serve points 1, 2 and 3 (they wrote serve-log rows before).
@@ -469,7 +469,7 @@ Each request is stated in full in `docs/ops/discovery-owner-approval-request.md`
   - A ranker failure still serves the cached order, as the `pde` branch always has. It is recorded as a `cache_bypass` obligation by `recordRankObligation`, and the page is marked `rankedBy: "none"`.
 - **Reversibility.** Set the flag FALSE; it takes effect within 30 s.
 - **Where it is implemented.**
-  - `artifacts/api-server/src/routes/discovery.ts:1848#const cacheARanked = await cacheARankedEnabled(`
+  - `artifacts/api-server/src/routes/discovery.ts:1827#const cacheARanked = await cacheARankedEnabled(`
   - migration 3456
   - Tests: V1 and V2 (and Z0).
 
@@ -498,8 +498,8 @@ Each request is stated in full in `docs/ops/discovery-owner-approval-request.md`
 - **Grounds.** `06` §10: *"compute old ranking, compute PDE ranking, compare overlap … Feature flag must keep old user-visible output unchanged."*
 - **Reversibility.** The shadow runs only in `shadow` mode for a cohort, and production is `legacy`.
 - **Where it is implemented.**
-  - `artifacts/api-server/src/routes/discovery.ts:4467#async function observeForYouShadow(`
-  - `artifacts/api-server/src/routes/discovery.ts:1965#const shadowCands =`
+  - `artifacts/api-server/src/routes/discovery.ts:4446#async function observeForYouShadow(`
+  - `artifacts/api-server/src/routes/discovery.ts:1944#const shadowCands =`
   - Tests: S1–S3.
 
 ### D-W10R4-7 — retiring the old `for_you` path — **APPROVAL REQUIRED**
@@ -1398,7 +1398,7 @@ Lane W10-S1, 2026-09-28, branch `disc-w10-s1-search`. Census section: census-dis
 
 ### AR-W11A-2 — APPROVAL REQUIRED: which people-derived signals may count as independent convergence (DV-34; consent and data use)
 
-- **The question:** `03` §6 names five convergence signals: unrelated travellers, *"multiple circles visit independently"*, *"saves convert into visits"*, *"visitors post afterward"*, and *"activity occurs across multiple networks"*. §84 computes the first from `rank_events` through Sensing's clustering (D-W10-R1-4). That module refuses identity joins (`artifacts/api-server/src/lib/intelIndependence.ts:39#privacy-invasive identity joins`). The others need circle membership, crews, and visit records (`passport_stamps`, `circle_checkins`, `plan_checkins`). Using them to rank a public trend is a new use of that data. D-W10-R3-4 already treats "your circle" as consent for candidates, for the same reason.
+- **The question:** `03` §6 names five convergence signals: unrelated travellers, *"multiple circles visit independently"*, *"saves convert into visits"*, *"visitors post afterward"*, and *"activity occurs across multiple networks"*. §84 computes the first from `rank_events` through Sensing's clustering (D-W10-R1-4). That module refuses identity joins (`artifacts/api-server/src/lib/intelIndependence.ts:41#privacy-invasive identity joins`). The others need circle membership, crews, and visit records (`passport_stamps`, `circle_checkins`, `plan_checkins`). Using them to rank a public trend is a new use of that data. D-W10-R3-4 already treats "your circle" as consent for candidates, for the same reason.
 - **What is built up to the decision:** the unrelated-traveller leg, behind the §84 flags (FALSE).
 - **Buildable without this decision:** the "visitors post afterward" leg, read only from PUBLISHED, PUBLIC Memories. D-W10-R3-5 already uses that basis for candidates. It is work item W11A-B9 in §92.3.
 - **Recommended action (exact):**

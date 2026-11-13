@@ -486,7 +486,7 @@ Memory search of any kind, and no embedding of any kind anywhere in the repo (th
 
 | id | Requirement | Bucket | Evidence / divergence | Attr |
 |---|---|---|---|---|
-| H115–H122 | `getMemory`, `searchMemories`, `getSharedMemories`, `getPlaceHistory`, `getTripMemories`, `getMemoryEvidence`, `createMemoryDraft`, `suggestMemoryCorrection` | NB ×8 | `compass/CompassTools.ts:161#export const COMPASS_TOOL_DEFINITIONS = [` defined 11 tools (the array; L6b F4: the range `117-492` on main bracketed an import, not the array): `get_user_profile`, `get_current_trip`, `search_places`, `search_events`, `get_place_details`, `get_circle_activity`, `check_trip_conflicts`, `add_to_trip`, `get_whos_around`, `get_travel_compatibility`, `get_group_recommendation`. **None** is memory-facing | |
+| H115–H122 | `getMemory`, `searchMemories`, `getSharedMemories`, `getPlaceHistory`, `getTripMemories`, `getMemoryEvidence`, `createMemoryDraft`, `suggestMemoryCorrection` | NB ×8 | `compass/CompassTools.ts:162#export const COMPASS_TOOL_DEFINITIONS = [` defined 11 tools (the array; L6b F4: the range `117-492` on main bracketed an import, not the array): `get_user_profile`, `get_current_trip`, `search_places`, `search_events`, `get_place_details`, `get_circle_activity`, `check_trip_conflicts`, `add_to_trip`, `get_whos_around`, `get_travel_compatibility`, `get_group_recommendation`. **None** is memory-facing | |
 | H123–H128 | LLM boundary: may summarize supported evidence · may propose merge/split/correction · may ask a minimal clarifying question · may not invent states/participants/identity/attendance/outcomes · may not bypass privacy policy · may not use stale history as current truth | NB ×6 | No memory-facing LLM path exists to constrain; no boundary is encoded. (`2221_compass_ai_writing_default_off.sql` is the adjacent posture, for Compass prose generally) | |
 | H129 | Compass must not mutate canonical Memory facts through prose | **BAC** | The tool set at `compass/CompassTools.ts:125` contains no Memory mutation; the only write-shaped tool is `add_to_trip` (`compass/CompassTools.ts:442`). `routes/compass.ts:2359` `forgetMemory` writes `compass_memories` (a chat store), not `memories` | — |
 
@@ -988,7 +988,7 @@ not touched, queried or altered.
 | Four statuses | `artifacts/api-server/src/services/memoryCertification/chaos.ts:77#ChaosStatus` | `TOLERATED` / `BROKEN` / **`PARTIAL`** / `NO_SURFACE`. `PARTIAL` exists because two scenarios have one certifiable half and one absent half, and both "pass" and "skip" would be false. |
 | The deterministic world | `artifacts/api-server/src/services/memoryCertification/world.ts:97#CertificationWorld` and `:228#certificationClient` | No clock, no randomness, no network. `certificationClient` implements the narrow `ClientLike` slice `derivativeRegistry.ts` declares, resolving with `{ data, error }` exactly as supabase-js does, so the REAL `deriveProjection`, `rebuildProjection`, `projectionStaleness`, `revokeDerivativesForMemory` and `searchMemories` run against it. |
 | The report | `artifacts/api-server/src/services/memoryCertification/runCertification.ts:216#runCertification`, rendered at `:256#formatCertificationReport` | Byte-identical across runs, carrying the six engine versions §25 says a replay must be attributed to. A test asserts the rendering contains no timestamp and no duration, because a report that cannot be diffed is not a replay. |
-| The wiring | `artifacts/api-server/src/scripts/checkMemoryCertification.ts:42#async`, `artifacts/api-server/package.json:62#check:memory-certification`, `artifacts/api-server/scripts/run-all-checks.sh:192#run_check`, `artifacts/api-server/src/scripts/guardRegistry.ts:834#checker` | It runs in `check:all`. `run-all-checks.sh` goes from 25 passed to **26**; the five exit-2 checks are unchanged (they need live credentials this pass must not supply). |
+| The wiring | `artifacts/api-server/src/scripts/checkMemoryCertification.ts:42#async`, `artifacts/api-server/package.json:63#check:memory-certification`, `artifacts/api-server/scripts/run-all-checks.sh:192#run_check`, `artifacts/api-server/src/scripts/guardRegistry.ts:834#checker` | It runs in `check:all`. `run-all-checks.sh` goes from 25 passed to **26**; the five exit-2 checks are unchanged (they need live credentials this pass must not supply). |
 
 #### A real defect the suite found, and the production fix
 
@@ -1257,7 +1257,7 @@ production; the two that are present are name collisions with divergent schemas.
 | id | requirement | verdict | evidence |
 |---|---|---|---|
 | H107 | Do-again compiled through current-world / Temporal-Freedom engines | NB | A repository-wide grep for `doAgain`, `do_again`, `takeMeBack` and `take_me_back` across `artifacts/` and `travel-buddy-standalone/` in `.ts`, `.tsx` and `.sql` returns nothing at all — not a fixture, not a comment |
-| H108 | The eight executable actions | NB | Same grep. `add_to_trip` (`artifacts/api-server/src/compass/CompassTools.ts:480#add_to_trip`) adds a PLACE to a trip and knows nothing about a Memory |
+| H108 | The eight executable actions | NB | Same grep. `add_to_trip` (`artifacts/api-server/src/compass/CompassTools.ts:481#add_to_trip`) adds a PLACE to a trip and knows nothing about a Memory |
 | H109 | Historical / current fusion invariant | NB | No fusion path exists. The nearest artifact is the honesty note §25 now certifies (H243), which asserts the opposite direction: a historical fact must not be read as current |
 
 #### §15 Retrieval (H110–H114)
@@ -1272,7 +1272,7 @@ production; the two that are present are name collisions with divergent schemas.
 
 #### §16 Compass contract (H115–H128)
 
-`artifacts/api-server/src/compass/CompassTools.ts:165#get_user_profile` opens a list of **eleven** tools —
+`artifacts/api-server/src/compass/CompassTools.ts:166#get_user_profile` opens a list of **eleven** tools —
 `get_user_profile`, `get_current_trip`, `search_places`, `search_events`,
 `get_place_details`, `get_circle_activity`, `check_trip_conflicts`, `add_to_trip`,
 `get_whos_around`, `get_travel_compatibility`, `get_group_recommendation`. Not one is
@@ -1281,7 +1281,7 @@ constrain either.
 
 | id | requirement | verdict | evidence |
 |---|---|---|---|
-| H115 | `getMemory` | NB | Not in the eleven tools at `artifacts/api-server/src/compass/CompassTools.ts:165#get_user_profile` |
+| H115 | `getMemory` | NB | Not in the eleven tools at `artifacts/api-server/src/compass/CompassTools.ts:166#get_user_profile` |
 | H116 | `searchMemories` (Compass tool) | NB | Same. `services/memoryRetrieval/searchMemories.ts` exists and Compass cannot reach it |
 | H117 | `getSharedMemories` | NB | Same |
 | H118 | `getPlaceHistory` | NB | Same. `PlaceMemoryProjection` exists in the registry with `visit_index`; no tool reads it |
@@ -1438,7 +1438,7 @@ gives 22 BAC, 7 BBW, 1 NB.
 | H234 | Fixture: walk-past venue that must not become a visit | **BAC** | Entry 11. Certified: the day as a whole is eligible (a ticketed visit), 2 episodes, and the paired control — the 90-second proximity ALONE — is refused with `PASS_BY_NOT_VISIT` |
 | H235 | Fixture: downloaded screenshot that must not become experienced content | **BAC** | Entry 12. Certified refused with `MEDIA_NOT_CAPTURED`; the same image re-declared as a camera capture is eligible, so the gate reads provenance rather than counting media. Mutation 2 turned it red |
 | H236 | Invariant: PRIVATE memory cannot appear in public search | **BAC** | Two surfaces, both in CI. The derivative path: HELD, `PublicMemoryProjection` emits only the published-and-public row (only_me, custom-with-allow-list, draft and deleted all absent) and the PUBLIC namespace refuses an owner-private projection on the way in. The LIVE path: `artifacts/api-server/src/test/memoriesPublicFeedPrivacy.test.ts:234#describe` asserts the same property on the real `GET /memories`, including that a `custom` Memory whose allow-list contains the viewer stays out of the global feed. Mutations 1 and 3 each turned it red |
-| H237 | Invariant: deleted memory cannot remain in Compass retrieval | BBW | HELD on the only Compass-facing memory artifact that exists: the deleted Memory leaves `CompassMemoryProjection`, its registration is revoked with an emptied payload, and reading the revoked derivative refuses with `derivative_revoked` rather than returning an empty page. **BBW because the named surface does not exist** — `artifacts/api-server/src/compass/CompassTools.ts:165#get_user_profile` declares no memory tool |
+| H237 | Invariant: deleted memory cannot remain in Compass retrieval | BBW | HELD on the only Compass-facing memory artifact that exists: the deleted Memory leaves `CompassMemoryProjection`, its registration is revoked with an emptied payload, and reading the revoked derivative refuses with `derivative_revoked` rather than returning an empty page. **BBW because the named surface does not exist** — `artifacts/api-server/src/compass/CompassTools.ts:166#get_user_profile` declares no memory tool |
 | H238 | Invariant: rejected candidate cannot become a Highlight | NB | `NO_SURFACE`. The rejection half is real and asserted; the second half has nothing to assert against, because nothing turns a candidate into a Highlight — `highlight_sources` is 2722, unapplied, with no writer, and `POST /highlights` inserts a client-supplied `mediaUrl`. The suite asserts this exact status at `artifacts/api-server/src/test/memoryCertificationInvariants.test.ts:117#reports` so it can never drift into looking like a pass |
 | H239 | Invariant: planned activity without occurrence cannot earn a visit Memory/Stamp | BBW | HELD: PLANNED+SAVED alone is refused with `PLANNED_OR_SAVED_ONLY` and the same set plus one OCCURRED record is eligible, so the refusal is the intent rule and not a blanket deny. BBW because it is proved on `evidence.ts`, which no route imports; the live stamp path enforces the rule by requiring a real check-in (H4) and is not covered by this test |
 | H240 | Invariant: blocked person cannot be newly resurfaced through shared-memory recommendations | **BAC** | HELD on a module a route imports, and the live half was already covered: `HIDE_PERSON_FROM_RESURFACING` suppresses exactly its subject across proactive resurfacing and recap, does not leak to another participant, and an UNREADABLE preference set suppresses rather than serving. `artifacts/api-server/src/test/memoriesBlockFailClosed.test.ts:109#describe` covers the live feed's fail-closed block filter. **Ceiling: 2720 is unapplied, so in production the set is `absent` and suppresses nothing** |
@@ -1553,7 +1553,7 @@ edited none of them. Each was read, not skimmed:
 
 Section B's §16 paragraph said `CompassTools.ts` "opens a list of **eleven** tools" and named
 them. **That was true at `254e1876` and is false on the merged tree.** The literal array at
-`artifacts/api-server/src/compass/CompassTools.ts:161#COMPASS_TOOL_DEFINITIONS` now holds
+`artifacts/api-server/src/compass/CompassTools.ts:162#COMPASS_TOOL_DEFINITIONS` now holds
 **twenty-five** entries and spreads eight more at `:467#TELEGRAPH_COMPASS_TOOL_DEFINITIONS`,
 so the real figure is **thirty-three**. The twenty-two added since section B measured are
 `get_freedom_windows`, `get_route_chain`, `get_today_state`, `get_crew_state`,
@@ -1586,8 +1586,8 @@ row, and the wording each one supports was re-read at the new line before it was
 
 | citation | was | now | why |
 |---|---|---|---|
-| the eleven-tool list (×3 rows) | `CompassTools.ts:158#export const COMPASS_TOOL_COUNT_IN_HEADER` | `CompassTools.ts:165#get_user_profile` | `:87` had drifted onto a comment. **It was passing `check:doc-citations` anyway**, because the anchor was the single token `name` and line 83 reads "…the Telegraph spec names." A one-word anchor is a substring lottery; the replacement anchors on the tool name itself. |
-| `add_to_trip` | `CompassTools.ts:206#name` | `CompassTools.ts:480#add_to_trip` | Same defect, worse outcome: at that historical review, line 162 was `get_place_details`, and the single-token anchor matched it happily. This is a dated failure example, not a current source-line claim. |
+| the eleven-tool list (×3 rows) | `CompassTools.ts:159#export const COMPASS_TOOL_COUNT_IN_HEADER` | `CompassTools.ts:166#get_user_profile` | `:87` had drifted onto a comment. **It was passing `check:doc-citations` anyway**, because the anchor was the single token `name` and line 83 reads "…the Telegraph spec names." A one-word anchor is a substring lottery; the replacement anchors on the tool name itself. |
+| `add_to_trip` | `CompassTools.ts:207#name` | `CompassTools.ts:481#add_to_trip` | Same defect, worse outcome: at that historical review, line 162 was `get_place_details`, and the single-token anchor matched it happily. This is a dated failure example, not a current source-line claim. |
 | the tool array (§16 rows) | `CompassTools.ts:74-222` | `CompassTools.ts:106-480` | The array's real extent on the merged tree. |
 | H129's tool set | `CompassTools.ts:74` | `CompassTools.ts:106` | Same. |
 | H129's write-shaped tool | `:158` | `CompassTools.ts:427` | Bare `:166` also named no file; now fully qualified. |
@@ -1656,7 +1656,7 @@ section B records — re-declare at the squash when this lands — is unchanged 
 | The accessor that has to say "there is none" | `artifacts/api-server/src/compass/MemoryCompassTools.ts:736#evidence_store` | `getMemoryEvidence` answers `evidence_store: "absent"` first, then lists the artifacts attached to the Memory with a caveat that they are not §6-normalized evidence. |
 | The minimum clarifying question | `artifacts/api-server/src/compass/MemoryCompassTools.ts:841#clarifyingQuestion` | Three material facts, ONE question, in a fixed priority order. A draft missing all three produces one question, not an interrogation. |
 | Two write-shaped tools that write nothing | `artifacts/api-server/src/compass/MemoryCompassTools.ts:801#toolMemoryCreateDraft` and `:871#toolMemorySuggestCorrection` | Both return a proposal with `requires_confirmation` and a `confirm_via` naming the existing authenticated route, which re-authorizes. Field allow-lists at `:780#DRAFTABLE_FIELDS` and `:784#CORRECTABLE_FIELDS`, both deliberately SHORTER than `patchMemorySchema`: audience lists, visibility and lifecycle state cannot be proposed by prose. |
-| The wiring | `artifacts/api-server/src/compass/CompassTools.ts:631#MEMORY_COMPASS_TOOL_DEFINITIONS` (spread) and `artifacts/api-server/src/compass/CompassTools.ts:2514#MEMORY_COMPASS_TOOL_NAMES.has` (dispatch) | One import, one spread, one branch, one prompt block — the shape Telegraph's §18.3 block already established in this file. |
+| The wiring | `artifacts/api-server/src/compass/CompassTools.ts:632#MEMORY_COMPASS_TOOL_DEFINITIONS` (spread) and `artifacts/api-server/src/compass/CompassTools.ts:2517#MEMORY_COMPASS_TOOL_NAMES.has` (dispatch) | One import, one spread, one branch, one prompt block — the shape Telegraph's §18.3 block already established in this file. |
 | The §16 boundary as prompt text | `artifacts/api-server/src/compass/MemoryCompassTools.ts:1087#MEMORY_COMPASS_PROMPT_RULES` | Listed LAST on purpose. It is the weakest of the three layers, and it exists only for §16's "may" clauses, which cannot be expressed as a refusal. |
 | The suites | `artifacts/api-server/src/test/memoryCompassTools.test.ts:333#bypass` (35 tests) and `artifacts/api-server/src/test/memoryPublishPolicy.test.ts:195#refuses` (18 tests) | Both registered in `package.json`'s `test` script. |
 
@@ -1670,16 +1670,16 @@ out: `artifacts/api-server/src/test/memoryCompassTools.test.ts:280#offered`.
 ### C.2 Reachability, stated as a chain with its weak links named
 
 `POST /compass/ask` → `COMPASS_TOOL_DEFINITIONS` handed to the model
-(`artifacts/api-server/src/routes/compass.ts:1368#COMPASS_TOOL_DEFINITIONS`) → the model emits a
+(`artifacts/api-server/src/routes/compass.ts:1372#COMPASS_TOOL_DEFINITIONS`) → the model emits a
 tool call → `executeCompassTool` dispatches by name → `executeMemoryCompassTool`.
 
 Three things that chain depends on, each said rather than assumed:
 
 1. **`COMPASS_ENABLED`.** Read fail-closed at
-   `artifacts/api-server/src/routes/compass.ts:1496#isCompassEnabled`. The committed production
+   `artifacts/api-server/src/routes/compass.ts:1515#isCompassEnabled`. The committed production
    snapshot records it `true`. That is a repository artifact, not a live query — production was
    not touched.
-2. **An OpenAI credential.** `artifacts/api-server/src/lib/openai.ts:4#apiKey` reads
+2. **An OpenAI credential.** `artifacts/api-server/src/lib/openai.ts:11#apiKey` reads
    `AI_INTEGRATIONS_OPENAI_API_KEY` from the environment and falls back to the literal
    `"not-configured"`. **This repository cannot tell you whether production has that key.** If it
    does not, every Compass tool in the file — the eleven that were there and the eight added
@@ -2040,7 +2040,7 @@ through the Compass feed, the prompt context lines and `lib/discoveryModifiers.t
 tables are in the committed production schema snapshot. The rebuild is **not** on-demand: it
 runs daily from
 `artifacts/api-server/src/lib/intelligenceGraphScheduler.ts:30#REBUILD_INTERVAL_MS`, started at
-boot by `artifacts/api-server/src/index.ts:138#startIntelligenceGraphScheduler`.
+boot by `artifacts/api-server/src/index.ts:139#startIntelligenceGraphScheduler`.
 
 **Defect 1 — §28.10, eligibility.** The gate was `state = 'published' AND visibility <>
 'only_me'`. `memories.visibility` is a **six**-rung ladder, so `<> 'only_me'` admitted four
@@ -4345,8 +4345,8 @@ counted file this section changed, with the argument for why it cannot move a ve
 
 | **ID** | **was** | **now** | why |
 |---|---|---|---|
-| **H3** | **N** | **W** | the row's evidence — *"No AI path over Memories exists; no guard exists either"* — is FALSE at HEAD and has been since §C. The path is `artifacts/api-server/src/compass/MemoryCompassTools.ts:1096#executeMemoryCompassTool`, eight `memory_*` tools, reached from `artifacts/api-server/src/compass/CompassTools.ts:2519#executeMemoryCompassTool` inside `executeCompassTool`, reached from `artifacts/api-server/src/routes/compass.ts:1412#let result = repeatedCitySearch ?` inside the tool loop. The guard is `artifacts/api-server/src/compass/MemoryCompassTools.ts:1087#MEMORY_COMPASS_PROMPT_RULES` plus `truth_class`/`establishes_current_status` on every fact. `W` and not `C` on the two reasons this document has already recorded for the same object: there is no SUPPORTED EVIDENCE to summarize (H24, `memory_evidence` exists nowhere), and the "may not manufacture" half is mechanical for participants, attendance and identity and PROMPT TEXT ONLY for states and outcomes (H126) |
-| **H266** | **N** | **W** | the row's evidence — *"No AI presentation exists"* — is FALSE at HEAD, by the same three links. §28.17 asks for a deterministic fallback renderer when AI presentation fails. A deterministic fallback EXISTS: `artifacts/api-server/src/routes/compass.ts:2220#ai_error` returns `HONEST_FALLBACK_MESSAGE`, a module constant at `artifacts/api-server/src/routes/compass.ts:1092#HONEST_FALLBACK_MESSAGE`. It renders NO Memory fact — it is the sentence *"Compass AI assistant is temporarily unavailable."* So the fallback is built and it is not a renderer: half, which is `W` |
+| **H3** | **N** | **W** | the row's evidence — *"No AI path over Memories exists; no guard exists either"* — is FALSE at HEAD and has been since §C. The path is `artifacts/api-server/src/compass/MemoryCompassTools.ts:1096#executeMemoryCompassTool`, eight `memory_*` tools, reached from `artifacts/api-server/src/compass/CompassTools.ts:2522#executeMemoryCompassTool` inside `executeCompassTool`, reached from `artifacts/api-server/src/routes/compass.ts:1425#let result = repeatedCitySearch ?` inside the tool loop. The guard is `artifacts/api-server/src/compass/MemoryCompassTools.ts:1087#MEMORY_COMPASS_PROMPT_RULES` plus `truth_class`/`establishes_current_status` on every fact. `W` and not `C` on the two reasons this document has already recorded for the same object: there is no SUPPORTED EVIDENCE to summarize (H24, `memory_evidence` exists nowhere), and the "may not manufacture" half is mechanical for participants, attendance and identity and PROMPT TEXT ONLY for states and outcomes (H126) |
+| **H266** | **N** | **W** | the row's evidence — *"No AI presentation exists"* — is FALSE at HEAD, by the same three links. §28.17 asks for a deterministic fallback renderer when AI presentation fails. A deterministic fallback EXISTS: `artifacts/api-server/src/routes/compass.ts:2263#ai_error` returns `HONEST_FALLBACK_MESSAGE`, a module constant at `artifacts/api-server/src/routes/compass.ts:1095#HONEST_FALLBACK_MESSAGE`. It renders NO Memory fact — it is the sentence *"Compass AI assistant is temporarily unavailable."* So the fallback is built and it is not a renderer: half, which is `W` |
 | **H264** | **C** | **C** | unmoved, restated because this section repaired a second instance of the defect that produced its green. §28.11 is now enforced on `GET /memories/:id` as well as on the block-lookup branch, which strengthens an existing `C` rather than moving one |
 
 ### M.2 The 205 non-correct rows, partitioned
@@ -4379,7 +4379,7 @@ sections and is the most useful number in this document.
    guard). Both have been in the tree since §C, which moved fourteen rows onto them and never came
    back to H3.
 2. **H266, line 1485:** *"No AI presentation exists."* — disproved by the same dispatcher and by
-   `artifacts/api-server/src/routes/compass.ts:1412#let result = repeatedCitySearch ?`, the tool loop that feeds
+   `artifacts/api-server/src/routes/compass.ts:1425#let result = repeatedCitySearch ?`, the tool loop that feeds
    every `memory_*` result back to the model for narration.
 3. **H265, line 1484:** *"No summarization of Memories exists to preserve anything through."* —
    disproved by `artifacts/api-server/src/compass/MemoryCompassTools.ts:1087#MEMORY_COMPASS_PROMPT_RULES`,
@@ -4403,15 +4403,15 @@ and then answer, for each of the thirteen rows §E.7 enumerates, the only questi
 
 The chain, every link opened at HEAD:
 
-1. `artifacts/api-server/src/lib/openai.ts:4#AI_INTEGRATIONS_OPENAI_API_KEY` reads the credential
-   and `artifacts/api-server/src/lib/openai.ts:14#not-configured` constructs the client with the
-   literal `"not-configured"` when it is absent. Every model call then fails.
-2. `artifacts/api-server/src/routes/compass.ts:1382#chat.completions.create` is that call, and
-   `artifacts/api-server/src/routes/compass.ts:1379#tool_calls` binds `toolCalls` to `[]` when it
+1. `artifacts/api-server/src/lib/openai.ts:7#AI_INTEGRATIONS_OPENAI_API_KEY` reads the credential
+   and `artifacts/api-server/src/lib/openai.ts:11#not-configured` constructs the client with the
+   literal `"not-configured"` only when neither the integration key/base pair nor `OPENAI_API_KEY` is available. The current resolver supports both; successful live calls still require verification.
+2. `artifacts/api-server/src/routes/compass.ts:1386#chat.completions.create` is that call, and
+   `artifacts/api-server/src/routes/compass.ts:1383#tool_calls` binds `toolCalls` to `[]` when it
    throws or returns nothing.
-3. `artifacts/api-server/src/routes/compass.ts:1412#let result = repeatedCitySearch ?` runs **only inside
+3. `artifacts/api-server/src/routes/compass.ts:1425#let result = repeatedCitySearch ?` runs **only inside
    `for (const tc of toolCalls)`**. No `toolCalls`, no tool execution.
-4. `artifacts/api-server/src/compass/CompassTools.ts:2519#executeMemoryCompassTool` is the only
+4. `artifacts/api-server/src/compass/CompassTools.ts:2522#executeMemoryCompassTool` is the only
    production reference to the Memory dispatcher.
 5. `artifacts/api-server/src/compass/MemoryCompassTools.ts:1096#executeMemoryCompassTool` is the
    only production definition, and a repository-wide grep finds **no other production caller of
@@ -4443,7 +4443,7 @@ deployment and not of the code, and this lane may not read the deployment.
 anywhere in the path. §E.7 said so and this section re-checked it.
 
 **And one row runs BECAUSE the credential is absent.** H266's fallback branch —
-`artifacts/api-server/src/routes/compass.ts:2220#ai_error` — is the branch that fires on every
+`artifacts/api-server/src/routes/compass.ts:2263#ai_error` — is the branch that fires on every
 request when the model call fails. If D-C2 resolves to "not set", H266's `W` is the only verdict in
 this family that is describing production rather than describing a possibility.
 
@@ -5623,7 +5623,7 @@ capability, and none of it can run on any database yet.
 | id | was | now | why |
 |---|---|---|---|
 | H30 | W | **W** (unmoved — reason corrected) | Its reason — *"Written at 2710:191, unapplied, absent from the snapshot"* — is FALSE ON BOTH COUNTS. `production-applied-migrations.json` carries `2710_memory_command_kernel_tables` AND `2711_memory_kernel_execute`, and ALL FOUR tables 2710 creates are present in the 2026-09-22 production capture: `memory_domain_events`, `memory_event_outbox`, `memory_command_receipts`, `memory_command_audit`. The outbox table is deployed and `memory_kernel_execute` writes it inside the canonical transaction. It is not `C` because `memory_kernel_enabled` reads FALSE on production, so the kernel never runs and no outbox row has ever been written, and because the claim/ack/fail functions that drain it live in 2994, which is applied nowhere. |
-| H161 | NB | **W** | Its reason was *"There are no consumers."* There is one: `artifacts/api-server/src/services/memoryProjections/outboxConsumer.ts`, with a production caller at `artifacts/api-server/src/index.ts:203#startMemoryOutboxScheduler();`. Its idempotency is structural rather than careful — upsert rebuild, ack filtered on `published_at IS NULL`, lease plus `FOR UPDATE SKIP LOCKED` so two workers cannot claim one event — and the SQL half was rehearsed against a real PostgreSQL, where a second ack returned 0. Not `C`: those functions are 2994's and 2994 is unapplied, so the consumer claims nothing anywhere. |
+| H161 | NB | **W** | Its reason was *"There are no consumers."* There is one: `artifacts/api-server/src/services/memoryProjections/outboxConsumer.ts`, with a production caller at `artifacts/api-server/src/index.ts:204#startMemoryOutboxScheduler();`. Its idempotency is structural rather than careful — upsert rebuild, ack filtered on `published_at IS NULL`, lease plus `FOR UPDATE SKIP LOCKED` so two workers cannot claim one event — and the SQL half was rehearsed against a real PostgreSQL, where a second ack returned 0. Not `C`: those functions are 2994's and 2994 is unapplied, so the consumer claims nothing anywhere. |
 | H220 | NB | **W** | Its reason was that `projection_lag` is *"Named in one comment"* and that nothing emits a figure. It is emitted now, per event, at `artifacts/api-server/src/services/memoryProjections/outboxConsumer.ts:516#recordProjectionLag(`, measured enqueued-to-rebuild-finished — the slower clock — with `rebuildMs` beside it. Not `C`: the recorded runtime measurement had a zero-row drain and no cross-process exporter. This citation repair does not remeasure deployment, traffic or exporter availability; W is unchanged. |
 
 ### Two reasons corrected, with the verdict unmoved
@@ -6196,7 +6196,7 @@ was measured end to end, by following it rather than by grepping for a name:
 | layer | evidence |
 | --- | --- |
 | screen | `travel-buddy-standalone/app/highlights/archived.tsx:107#unarchiveHighlight(id);` — the owner's archive screen, `restore` handler |
-| client service | `travel-buddy-standalone/src/services/highlights.ts:510#unarchiveHighlight(`, which issues `:518#method:` `DELETE` against `/api/highlights/:id/archive` |
+| client service | `travel-buddy-standalone/src/services/highlights.ts:537#unarchiveHighlight(`, which issues `travel-buddy-standalone/src/services/highlights.ts:546#method:` `DELETE` against `/api/highlights/:id/archive` |
 | route | the dispatch §Y.4 built, `artifacts/api-server/src/routes/highlights.ts:2411#commandType: "UNHIDE_HIGHLIGHT"` |
 | applier | 3001, rehearsed and applied nowhere (§Y.3, §Y.6) |
 
@@ -6427,7 +6427,7 @@ dispatched at `artifacts/api-server/src/routes/memories.ts:518#commandType: "CRE
 - **The entry.** The hub routes Memory to the new screen
   (`travel-buddy-standalone/src/components/create/CreateHubSheet.tsx:76#route: '/memory/new'`),
   and `/memory/edit` without an id now redirects there instead of spinning
-  (`travel-buddy-standalone/app/memory/edit.tsx:149#if (!id) return <Redirect`),
+  (`travel-buddy-standalone/app/memory/edit.tsx:151#if (!id) return <Redirect`),
   line-neutral.
 - **Precision on the wire.** `createMemory` accepts `locationPrecision`
   (`travel-buddy-standalone/src/services/memories.ts:340#taggedUserIds?: string[];`,
@@ -6529,7 +6529,7 @@ faked network), not production.
 6. **The owner's failed read became the empty-state invitation** (post a Highlight).
    - The Passport dropped the hook's `unreadable` flag. Its Travel Highlights strip drew "Share travel moments as highlights" over Highlights the owner had posted.
    - The strip now says it could not load them and offers Try again (`travel-buddy-standalone/src/components/passport/PassportHighlightsStrip.tsx:129#passport-highlights-unreadable`).
-   - The Passport is wired line-neutrally (`travel-buddy-standalone/app/(tabs)/passport.tsx:301#highlightsUnreadable`).
+   - The Passport is wired line-neutrally (`travel-buddy-standalone/app/(tabs)/passport.tsx:302#highlightsUnreadable`).
 7. **A deleted or moderator-removed Story could be resurrected as a Highlight.**
    - `POST /stories/:id/save-to-highlight` selected `state` and never read it.
    - It now answers `not_found` before any write. The fix is one line, and line-neutral (`artifacts/api-server/src/routes/stories.ts:878#state === "deleted"`).
@@ -7168,7 +7168,7 @@ Same branch, same rules as §AF. `head_commit` is **NOT** re-declared. Controlle
 2. **Open dead letters are retried (H193).**
    - `artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:68#export async function runMemoryDeletionRedrivePass(` re-runs the §21 lifecycle hourly for open letters whose Memory is still deleted or gone.
    - A letter whose Memory is NOT deleted is closed as moot, and no step runs (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:112#if (!stillDeleted) {`).
-   - It is gated by `memory_deletion_redrive_enabled` (3670, seeded FALSE) and started at `artifacts/api-server/src/index.ts:203#startMemoryDeletionRedriveScheduler();`.
+   - It is gated by `memory_deletion_redrive_enabled` (3670, seeded FALSE) and started at `artifacts/api-server/src/index.ts:204#startMemoryDeletionRedriveScheduler();`.
    - It has the house loop shape plus a generation check (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:171#generation === _generation`). That check closes a two-loop leak that a stop() followed by start() during an in-flight pass produced.
    - The tests: `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:848#flag ON: a still-deleted Memory's deletion is re-run to completion`, `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:865#a letter whose Memory is NOT deleted is closed as moot` and `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:838#flag OFF (the seed)`. The lifecycle suite runs on real timers with only `Date` mocked: `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:72#stop() ends the loop, even when it lands while a pass is in flight` and `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:82#stop() then start() while a pass is in flight runs ONE loop`. 7 of 7 mutants were killed.
 
@@ -7182,7 +7182,7 @@ Same branch, same rules as §AF. `head_commit` is **NOT** re-declared. Controlle
 | H10 | BUILT-BUT-WRONG | "2720, unapplied" and "2721" are stale: both are applied, so resurfacing and publication policy are storable and enforced on the Highlights surface. W stands because no personalization path consults any of it (H210), and because the policies are Highlight-scoped: no Memory-level control exists (H36) |
 | H13 | BUILT-BUT-WRONG | "Test-only … 2730 is unapplied" is stale. The service has a production route (`artifacts/api-server/src/routes/memories.ts:1023#router.post("/memories/search"`), and that route registers before it reads (`artifacts/api-server/src/services/memory/memorySearchService.ts:363#export async function ensureDerivative(`), on 2730, which is applied. The one blocker left is semantic retrieval, which has no backend (`SearchEmbedding` NOT_CONFIGURED, H171) |
 | H223 | BUILT-BUT-WRONG | "Storage is 2730 — written, unapplied" is stale: 2730 is applied. W stands on the eighth field, as stated: `projectionName` is null on the command path, and nothing writes a projection log line that carries it |
-| H244 | BUILT-BUT-WRONG | "memory_event_outbox is 2710, unapplied" is stale: 2710 is applied, and a consumer is started (`artifacts/api-server/src/index.ts:203#startMemoryOutboxScheduler();`). W stands for two reasons. The consumer's claim and ack functions are 2994, which is unapplied (H161). And `memory_kernel_enabled` is FALSE in the 2026-09-22 snapshot, so no event is written for a consumer to tolerate |
+| H244 | BUILT-BUT-WRONG | "memory_event_outbox is 2710, unapplied" is stale: 2710 is applied, and a consumer is started (`artifacts/api-server/src/index.ts:204#startMemoryOutboxScheduler();`). W stands for two reasons. The consumer's claim and ack functions are 2994, which is unapplied (H161). And `memory_kernel_enabled` is FALSE in the 2026-09-22 snapshot, so no event is written for a consumer to tolerate |
 
 ### §AG.3 Headline
 
@@ -7817,14 +7817,14 @@ Same branch and rules as §AF. Where this section and §AF to §AU disagree, thi
 ### §AV.1 The five node:test failures (VERIFY-H7 H7-1)
 
 CI's `api-server · node:test suite` on `e52d333e8` (run 37743328488) failed five assertions, all this branch's. origin/main at the same base was green.
-- **The router mounts.** `routes/index.ts` is pinned at 439 lines because census-telegraph cites it by line. This branch had appended three router mounts after the last line (442). They are now on the file's last line, after `export default router;`, in the same order (`artifacts/api-server/src/routes/index.ts:444#export default router; import memoryResurfacingControlsRouter`). The file is 439 lines again and no cited line moved. No pin was changed.
+- **The router mounts.** `routes/index.ts` is pinned at 439 lines because census-telegraph cites it by line. This branch had appended three router mounts after the last line (442). They are now on the file's last line, after `export default router;`, in the same order (`artifacts/api-server/src/routes/index.ts:446#export default router; import memoryResurfacingControlsRouter`). The file is 439 lines again and no cited line moved. No pin was changed.
 - **The scheduler count.** The deletion redrive (§AF, H193) was a 60th scheduler with neither health field, so it would have joined the unobservable jobs (45 → 46). Instead it now reports, so the count holds at 45:
   - It reports at `GET /healthz/schedulers` as `memoryDeletionRedrive` (`artifacts/api-server/src/routes/health.ts:531#reports.push({ job: "memoryDeletionRedrive"`).
   - Every pass that runs writes its `job_health` row: the attempt always, and the success only when there was one (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:262#export async function runMemoryDeletionRedriveTick(`; `artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:291#await db.from("job_health").upsert(row, { onConflict: "job" })`).
   - A tick with the flag OFF still makes one flag read and writes nothing (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:285#if (result.reason !== "disabled" && result.reason !== "no_client") {`). OFF is not a failure.
   - These count as a failure: no service client, the letters table absent while the flag is ON, the open letters unreadable, and any letter the pass could not read or close (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:242#export function redriveFailuresOf(`).
   - A letter whose deletion step fails again is NOT a job failure. The lifecycle bumps that letter, and its count is in the detail. Otherwise one poisoned letter would hold the endpoint at 503.
-  - The registry row claims both fields (`artifacts/api-server/src/lib/schedulerCoverage.ts:113#{ start: "startMemoryDeletionRedriveScheduler", reportedAs: ["memoryDeletionRedrive"], persists: ["memoryDeletionRedrive"] }`).
+  - The registry row claims both fields (`artifacts/api-server/src/lib/schedulerCoverage.ts:114#{ start: "startMemoryDeletionRedriveScheduler", reportedAs: ["memoryDeletionRedrive"], persists: ["memoryDeletionRedrive"] }`).
   - The pins are recomputed, not bumped: 60 started, 13 reported, 7 durable, 45 unobservable; reported and durable overlap on 5 rows (`artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage:`). The reachability walk finds 60 owners. `EXPECTED_JOBS` names the new job (`artifacts/api-server/src/test/healthSchedulers.test.ts:76#"memoryDeletionRedrive", //`).
   - Tests: `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:151#flag OFF: one flag read, NO job_health write`, `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:170#flag ON, the open letters unreadable: a FAILURE`, `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:180#flag ON, a letter whose Memory cannot be read`, and the endpoint itself: never_ran, then healthy with "OFF", then failing with 503 (`artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:227#GET /healthz/schedulers reports it`).
 - **The media fixture.** `memoryMediaOrigin.test.ts` posted `http://sb.example.test/storage/…`. That is http on a host that is not the configured storage origin, and §AU's rule refuses it.
@@ -8617,7 +8617,7 @@ Branch `claude/b58-mem-canon`. Two migrations were WRITTEN and applied to no dat
 7. **The app.**
    - **The composer** offers the picker only when the server says enabled (`travel-buddy-standalone/src/features/memories/canonical/MemoryTypePicker.tsx:42#if (!enabled) return null;`).
    - **Create** sends the chosen type and the picked place's name (`travel-buddy-standalone/app/memory/new.tsx:148#...(memoryType ? { memoryType } : {})`).
-   - **Edit** sends a type only when it was changed, and a name only with a newly picked place (`travel-buddy-standalone/app/memory/edit.tsx:274#...(typeTouched.current ? { memoryType } : {})`).
+   - **Edit** sends a type only when it was changed, and a name only with a newly picked place (`travel-buddy-standalone/app/memory/edit.tsx:276#...(typeTouched.current ? { memoryType } : {})`).
    - **The Memory screen** leads its place line with the name the place had then (`travel-buddy-standalone/app/memory/[id].tsx:352#{memoryPlaceLine(memory)}`).
 
 ### §BH.3 The tests
@@ -9115,12 +9115,12 @@ watch registration, acknowledgement and application-wide progress.
 
 The public path is owned Memory detail → Options → Edit → When it happened →
 explicit Save. The existing editor loads saved bounds
-(`travel-buddy-standalone/app/memory/edit.tsx:223#setStartTime(memoryTimeDraft(m.startsAt))`),
+(`travel-buddy-standalone/app/memory/edit.tsx:225#setStartTime(memoryTimeDraft(m.startsAt))`),
 mounts separate start/end controls
-(`travel-buddy-standalone/app/memory/edit.tsx:386#<MemoryTimeInputs bound="start"`,
-`travel-buddy-standalone/app/memory/edit.tsx:387#<MemoryTimeInputs bound="end"`),
+(`travel-buddy-standalone/app/memory/edit.tsx:390#<MemoryTimeInputs bound="start"`,
+`travel-buddy-standalone/app/memory/edit.tsx:391#<MemoryTimeInputs bound="end"`),
 and includes only changed time keys in its existing PATCH
-(`travel-buddy-standalone/app/memory/edit.tsx:272#...(startResult.value !== undefined`,
+(`travel-buddy-standalone/app/memory/edit.tsx:274#...(startResult.value !== undefined`,
 `travel-buddy-standalone/src/services/memories.ts:655#export async function updateMemory(`).
 Clear sends explicit null; incomplete typed input is an error, not a clear.
 Offsets are explicit and labeled; neither an occurrence zone nor a time is
@@ -9132,7 +9132,7 @@ microsecond inversion even though the controls preserved those digits. The
 unchanged reviewer regression was rerun red before the repair and green after.
 The local comparison now validates explicit-offset instants, compares their
 whole-second UTC boundaries and then zero-padded fractional digit strings
-(`travel-buddy-standalone/app/memory/edit.tsx:99#function memoryTimeBefore(`).
+(`travel-buddy-standalone/app/memory/edit.tsx:101#function memoryTimeBefore(`).
 It rejects newly edited micro/nanosecond and longer-fraction inversions without
 rounding either payload. Equivalent offsets, trailing zeros and negative epochs
 have passing controls. Unrelated saves neither repair nor reject old inverted
@@ -9227,7 +9227,7 @@ These are local runs, on fakes, PGlite and a throwaway PostgreSQL. They are not 
 
 | id | standing | what is now true, and what still stops it |
 | --- | --- | --- |
-| H14 | BUILT-BUT-WRONG | The first reason in §BI.4 no longer holds. The owner editor now offers the deterministic draft: Preview, then Use draft, then edit, then the existing Save. Preview never writes (`travel-buddy-standalone/src/features/memories/MemoryNarrativeDraft.tsx:47#Nothing is saved automatically.`), and the draft is mounted in the editor (`travel-buddy-standalone/app/memory/edit.tsx:380#<MemoryNarrativeDraft request={request}`). The second reason stands: Q-NARR-5 (whether the deterministic renderer alone is §2's MemoryNarrativeService) is the lead's ruling, and no ruling exists |
+| H14 | BUILT-BUT-WRONG | The first reason in §BI.4 no longer holds. The owner editor now offers the deterministic draft: Preview, then Use draft, then edit, then the existing Save. Preview never writes (`travel-buddy-standalone/src/features/memories/MemoryNarrativeDraft.tsx:47#Nothing is saved automatically.`), and the draft is mounted in the editor (`travel-buddy-standalone/app/memory/edit.tsx:382#<MemoryNarrativeDraft request={request}`). The second reason stands: Q-NARR-5 (whether the deterministic renderer alone is §2's MemoryNarrativeService) is the lead's ruling, and no ruling exists |
 | H261 | BUILT-BUT-WRONG | Both halves now have code. The cross-trip half is H105, C since §BN. The backfill half is H37, W above. W, because H37's storage (3992) is unapplied and its flag is off |
 | H195 | BUILT-BUT-WRONG | Owner-selected import batches now drive the legacy mirror at 0.500 confidence (H37 above). W for §AZ.4's reason: 3674–3676 and now 3992 are unapplied |
 | H33 | NOT-BUILT | Nothing was added that stores an audience and location-precision policy per Memory. H146 adds a command over the existing control tables; it is not a policy store |
@@ -9388,7 +9388,7 @@ Measured on branch `claude/wave4-build-20261017` on 2026-10-17, against the work
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| H266 §28.17 deterministic fallback renderer when AI presentation fails | W | **C** | **The stated blocker is closed.** §BH and §W2.4 held H266 at W on one clause: *"Compass's fallback is still a sentence, not a renderer"*. The sentence is now the last resort, not the fallback. **The renderer.** `renderCompassMemoryFallback` (`artifacts/api-server/src/compass/compassMemoryFallback.ts:110#export function renderCompassMemoryFallback(`) renders the Memory facts the turn's own §16 accessors returned. It reads only the five fact-bearing tools (`artifacts/api-server/src/compass/compassMemoryFallback.ts:48#const FACT_KEYS`). Each fact is rendered by its `historical.claim`, the sentence `MemoryCompassTools.claimOf` composes from columns, so the fallback is app-stated, never model prose. Facts are deduplicated and capped. **Where it runs.** (1) A model call that throws after tools ran: the loop's tool log is now readable by its caller (`artifacts/api-server/src/routes/compass.ts:1325#trackPartialToolLog<ToolExecution>(messages)`), on both the non-streamed and the streamed failure branches (`artifacts/api-server/src/routes/compass.ts:2223#compassAiFailureFallbackWithRetrieval(partialToolLogOf(messages)`, `artifacts/api-server/src/routes/compass.ts:2151#compassAiFailureFallbackWithRetrieval(partialToolLogOf(messages)`). (2) A model that fails before reading any Memory, which is the common shape of an outage: the fallback reads the facts itself, once, through the same `memory_search` accessor, the same gates and the same sanitizer, with the person's own question as the query and no model asked (`artifacts/api-server/src/compass/compassMemoryFallback.ts:141#export async function compassAiFailureFallbackWithRetrieval(`). (3) A model that read Memories and then wrote nothing: the facts replace "I found some results but had trouble putting them into words" (`artifacts/api-server/src/routes/compass.ts:2164#compassAiFailureFallback(toolLog, SUMMARISE_EMPTY_FALLBACK_MESSAGE)`). **The honest sentence survives only where there are no facts:** no Memory matched, the history could not be read, or the retrieval threw. The Memory narrative surface already had its renderer (§BI.2 item 6), so §28.17 now holds on both AI presentations of Memory facts in this tree. The other model calls in `compass/` and `routes/` present no Memory: `CompassMemoryService` is Compass's conversational memory, not this domain. **Tested:** `artifacts/api-server/src/test/compassMemoryFallback.test.ts`, 17/17, including `artifacts/api-server/src/test/compassMemoryFallback.test.ts:219#the turn's OWN facts are rendered even when the question alone would find none`, `artifacts/api-server/src/test/compassMemoryFallback.test.ts:234#the model failed before reading any Memory`, `artifacts/api-server/src/test/compassMemoryFallback.test.ts:255#the fallback's own read honours the owner's controls` and `artifacts/api-server/src/test/compassMemoryFallback.test.ts:264#streaming: a model failure after memory_search`. Red at HEAD's `routes/compass.ts`: 11/17, 6 fail. `compass-ask.test.ts` is unchanged at 12/12: its outage case has no Memory, so it still gets the sentence. **Condition, stated:** this C holds once the lead registers `compassMemoryFallback.test.ts`. Unregistered, it returns to W. **What would turn it red:** a fallback branch that answers the sentence while the turn holds Memory facts, or a renderer that presents a fact its accessor did not return |
+| H266 §28.17 deterministic fallback renderer when AI presentation fails | W | **C** | **The stated blocker is closed.** §BH and §W2.4 held H266 at W on one clause: *"Compass's fallback is still a sentence, not a renderer"*. The sentence is now the last resort, not the fallback. **The renderer.** `renderCompassMemoryFallback` (`artifacts/api-server/src/compass/compassMemoryFallback.ts:110#export function renderCompassMemoryFallback(`) renders the Memory facts the turn's own §16 accessors returned. It reads only the five fact-bearing tools (`artifacts/api-server/src/compass/compassMemoryFallback.ts:48#const FACT_KEYS`). Each fact is rendered by its `historical.claim`, the sentence `MemoryCompassTools.claimOf` composes from columns, so the fallback is app-stated, never model prose. Facts are deduplicated and capped. **Where it runs.** (1) A model call that throws after tools ran: the loop's tool log is now readable by its caller (`artifacts/api-server/src/routes/compass.ts:1336#trackPartialToolLog<ToolExecution>(messages)`), on both the non-streamed and the streamed failure branches (`artifacts/api-server/src/routes/compass.ts:2267#compassAiFailureFallbackWithRetrieval(partialToolLogOf(messages)`, `artifacts/api-server/src/routes/compass.ts:2191#compassAiFailureFallbackWithRetrieval(partialToolLogOf(messages)`). (2) A model that fails before reading any Memory, which is the common shape of an outage: the fallback reads the facts itself, once, through the same `memory_search` accessor, the same gates and the same sanitizer, with the person's own question as the query and no model asked (`artifacts/api-server/src/compass/compassMemoryFallback.ts:141#export async function compassAiFailureFallbackWithRetrieval(`). (3) A model that read Memories and then wrote nothing: the facts replace "I found some results but had trouble putting them into words" (`artifacts/api-server/src/routes/compass.ts:2206#compassAiFailureFallback(toolLog, SUMMARISE_EMPTY_FALLBACK_MESSAGE)`). **The honest sentence survives only where there are no facts:** no Memory matched, the history could not be read, or the retrieval threw. The Memory narrative surface already had its renderer (§BI.2 item 6), so §28.17 now holds on both AI presentations of Memory facts in this tree. The other model calls in `compass/` and `routes/` present no Memory: `CompassMemoryService` is Compass's conversational memory, not this domain. **Tested:** `artifacts/api-server/src/test/compassMemoryFallback.test.ts`, 17/17, including `artifacts/api-server/src/test/compassMemoryFallback.test.ts:219#the turn's OWN facts are rendered even when the question alone would find none`, `artifacts/api-server/src/test/compassMemoryFallback.test.ts:234#the model failed before reading any Memory`, `artifacts/api-server/src/test/compassMemoryFallback.test.ts:255#the fallback's own read honours the owner's controls` and `artifacts/api-server/src/test/compassMemoryFallback.test.ts:264#streaming: a model failure after memory_search`. Red at HEAD's `routes/compass.ts`: 11/17, 6 fail. `compass-ask.test.ts` is unchanged at 12/12: its outage case has no Memory, so it still gets the sentence. **Condition, stated:** this C holds once the lead registers `compassMemoryFallback.test.ts`. Unregistered, it returns to W. **What would turn it red:** a fallback branch that answers the sentence while the turn holds Memory facts, or a renderer that presents a fact its accessor did not return |
 
 ### §W5.2 Rows worked in this pass and NOT moved
 
@@ -9933,7 +9933,7 @@ are recorded in `docs/migrations.md` (3911). The rollback restores 2711's defini
   No place edge exists, and no Memory has a place reference. No person edge exists, and no tag is approved. All 80
   Memories read `source_mode = LEGACY_IMPORTED`. `memory_graph_shadow_daily` holds **0** rows.
 - **The outbox drain is unobservable.** It starts at boot with no flag
-  (`artifacts/api-server/src/index.ts:203#startMemoryOutboxScheduler();`), but `/api/healthz/schedulers` lists
+  (`artifacts/api-server/src/index.ts:204#startMemoryOutboxScheduler();`), but `/api/healthz/schedulers` lists
   `startMemoryOutboxScheduler` under `coverage.unobservable`, and there is no `job_health` row. The outbox has had 0 rows
   (§CA.1), so nothing on production shows that it has ever drained.
 

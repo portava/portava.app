@@ -12,7 +12,7 @@ Installed 2026-11-13 on `travel-buddy`, project `ajrurzioarfkagpuxfnb`, under th
 - Admin notebook with six-system overview, detailed metrics, Input latency trend, state-change history and scheduler status. Refresh by running its cells. No external alerts or messages are sent.
 - Operational badges remain distinct from effectiveness: `observed`, `needs_attention`, `no_data`, `disabled`, `unreadable`. The dashboard also detects stale collection. Effectiveness is always `unverified`; traffic does not earn A++.
 
-The deployed migration ledger version is `20261113112713`, name `intelligence_system_monitor`. The identical local SQL is `supabase/migrations/20261113111829_intelligence_system_monitor.sql`, created with Supabase CLI 2.121.0; the management API assigned its apply timestamp. Do not replay it under the local timestamp. The saved notebook's source is `docs/ops/intelligence-monitor.notebook.json`.
+The deployed migration ledger version is `20261113112713`, name `intelligence_system_monitor`. The identical local SQL is `artifacts/api-server/src/migrations/4026_intelligence_system_monitor.sql`, created with Supabase CLI 2.121.0; the management API assigned its apply timestamp. Do not replay it under the local timestamp. The saved notebook's source is `docs/ops/intelligence-monitor.notebook.json`.
 
 ## Verification
 

@@ -823,7 +823,7 @@ portava-ci and never on production.
   aggregate is `observed` with an unlabelled ordinal and `few` coverage at k
   and `unknown` on every axis below it, and nothing the database returned
   appears in it (`test/db/sensingAnonStore.db.test.ts:260#privacy`;
-  `lib/sensingCoverageAggregate.ts:240#aggregateSensingCohort(`;
+  `lib/sensingCoverageAggregate.ts:295#aggregateSensingCohort(`;
   `lib/sensingPresenceState.ts:133#buildSensingPresenceState(`); one more
   contributor is not a new publication and the previous value is served
   (`test/db/sensingAnonStore.db.test.ts:316#evaluateDifferencing(agg,`); the
@@ -1077,7 +1077,7 @@ the undecided decision. **S21**, **S28**, **S29** and **S32** stay as they
 are: on-device reduction, the nine device features, acoustic capture and the
 signal ingest are decisions #1, #2 and #6, and this lane does not take them.
 **S26** stays W: the anonymous half is closed (72 h structural, the sweep
-registered at `src/index.ts:161#startSensingRetentionScheduler();`) and the
+registered at `src/index.ts:162#startSensingRetentionScheduler();`) and the
 intel raw purge is behind `intel_contribution_retention_enabled`, FALSE in
 production, at 180 days. **S3** and **S106** stay W: `src/presence/domain/`
 is unchanged since Phase 0 — types and a transport interface, no store, no
@@ -1189,7 +1189,7 @@ before its commit; the mutations are listed in §2.3.
   reads the candidate and the current experience through
   `readLiveClaimEnvelopes`, and answers the decision with its reasons,
   grounding, interception and switching-cost report; it writes nothing and
-  computes no truth of its own. Registered at the tail of `routes/index.ts:374#compassDecisionRouter`, so no line the other censuses cite in that file moved.
+  computes no truth of its own. Registered at the tail of `routes/index.ts:376#compassDecisionRouter`, so no line the other censuses cite in that file moved.
   2800 seeds the flag FALSE and refuses to commit a TRUE row
   (`migrations/2800_compass_decision_flag.sql:34#INSERT`;
   `migrations/2800_compass_decision_flag.sql:47#reads`); the rollback refuses
@@ -1399,7 +1399,7 @@ in §3.3.
   treated as the budget spent. It answers newest change first with a report
   per subject that tells "no moments" from "could not look" and "no versions
   to compare". It writes nothing and sends nothing. Registered at the tail
-  of `routes/index.ts:379#wallMomentsRouter`. 2801 seeds the flag FALSE and
+  of `routes/index.ts:381#wallMomentsRouter`. 2801 seeds the flag FALSE and
   refuses to commit a TRUE row (`migrations/2801_wall_moments_flag.sql:41#INSERT`;
   `migrations/2801_wall_moments_flag.sql:54#reads`); the rollback refuses
   over a TRUE row (`db/rollback/2026-09-12-2801-wall-moments-flag-rollback.sql:23#DELETE`)
@@ -1607,7 +1607,7 @@ listed in §4.3.
   `test/telegraphLiveReferencesRoute.test.ts:399#null`). The wire carries
   the current claims only through that gate; nothing person-shaped is on it
   (`test/telegraphLiveReferencesRoute.test.ts:282#forbidden`). Registered at
-  the tail of `routes/index.ts:384#telegraphLiveReferencesRouter`.
+  the tail of `routes/index.ts:386#telegraphLiveReferencesRouter`.
 
 - **2802 and its rollback** — `migrations/2802_telegraph_live_references_flag.sql:47#INSERT`
   seeds `telegraph_live_references_enabled` FALSE, one row, `ON CONFLICT DO
@@ -1843,7 +1843,7 @@ mutations are listed in §5.3.
   `test/adminSafetyCandidatesRoute.test.ts:341#not a person`). A non-admin
   is refused before the flag is read
   (`test/adminSafetyCandidatesRoute.test.ts:205#non-admin`). Registered at
-  the tail of `routes/index.ts:389#adminSafetyCandidatesRouter`;
+  the tail of `routes/index.ts:391#adminSafetyCandidatesRouter`;
   `routes/admin.ts` and `routes/moderation.ts` are untouched.
 
 - **2803 and its rollback** — `migrations/2803_intel_safety_candidates_flag.sql:70#INSERT`
@@ -2569,7 +2569,7 @@ makes (`:130#withDiscoveryLiveRank`), which with the flag off returns the very
 array it was handed (`:142`) having read no claim. It is wired into the REAL
 feed at both serve points, and **before the page slice** so it decides what page
 one contains rather than shuffling what page one already held:
-`routes/discovery.ts:1874#withDiscoveryLiveRank` (the cache-A path) and
+`routes/discovery.ts:1853#withDiscoveryLiveRank` (the cache-A path) and
 `:2194#withDiscoveryLiveRank` (the cold path). Migration 2850 seeds
 `discovery_live_rank_enabled` FALSE
 (`src/migrations/2850_discovery_live_rank_flag.sql:39`) and its postcondition
@@ -2650,7 +2650,7 @@ observation to a place 8 km away would attribute it to somewhere the contributor
 never was"* — the module knows the hazard and bounds it. But a 3 km bound on a
 mis-attribution is a smaller mis-attribution, not an absent one, and §14's
 sentence has no radius in it. The path is reachable: the router is mounted
-(`src/routes/index.ts:323#mapObservationsRouter`) behind
+(`src/routes/index.ts:325#mapObservationsRouter`) behind
 `map_contributions_enabled` (`routes/mapObservations.ts:741`).
 
 Why this lane does not fix it: the only two fixes are to refuse §22's zone
@@ -2712,7 +2712,7 @@ not the only resolver in the tree, and the row is about the tree.
 - **THE ROUTE-MOUNTING CHECK, applied to §2–§5's C rows rather than assumed.**
   A surface graded BUILT that no router mounts is not built, and this census
   has four new routes from the earlier batches. All four are mounted:
-  `src/routes/index.ts:374#compassDecisionRouter` (S78, S79, S80, S86),
+  `src/routes/index.ts:376#compassDecisionRouter` (S78, S79, S80, S86),
   `:339#wallMomentsRouter` (S73, S74, S76, S102),
   `:344#telegraphLiveReferencesRouter` (S87, S88, S89) and
   `:349#adminSafetyCandidatesRouter` (S103). Nothing moves; the check is
@@ -2722,12 +2722,12 @@ not the only resolver in the tree, and the row is about the tree.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| S68 Rank using live ExperienceState, forecast, travel time, friction, compatibility, freshness, safety and Opportunity value | N | **C** | All eight inputs are axes of one pure engine (`lib/discoveryLiveRank.ts:371#gradeLiveRow`) over the one gated live read, reusing Compass's own `summariseLiveState` / `experienceValue` rather than restating them; wired into the REAL `GET /discovery` at both serve points and before the page slice (`routes/discovery.ts:1874#withDiscoveryLiveRank`, `:2285#withDiscoveryLiveRank`) behind 2850's FALSE flag; influence bounded in positions, absence never scored, "could not look" distinguishable from "saw nothing". Mutations B7-M1 to B7-M10 and B7-R1 to B7-R5 each red. |
+| S68 Rank using live ExperienceState, forecast, travel time, friction, compatibility, freshness, safety and Opportunity value | N | **C** | All eight inputs are axes of one pure engine (`lib/discoveryLiveRank.ts:371#gradeLiveRow`) over the one gated live read, reusing Compass's own `summariseLiveState` / `experienceValue` rather than restating them; wired into the REAL `GET /discovery` at both serve points and before the page slice (`routes/discovery.ts:1853#withDiscoveryLiveRank`, `:2264#withDiscoveryLiveRank`) behind 2850's FALSE flag; influence bounded in positions, absence never scored, "could not look" distinguishable from "saw nothing". Mutations B7-M1 to B7-M10 and B7-R1 to B7-R5 each red. |
 | S66 Safety constraints outrank opportunity/vibe; a dangerous place is never simultaneously promoted as "best move now" | W | **W** | **Built on three more surfaces and still W, deliberately.** The gap the row named is closed in CODE: Discovery's ranker reads safety state now — a Live-qualified `unsafe_density` demotes behind every other row before any score is compared (`lib/discoveryLiveRank.ts:462`), asserted over all eight modes and from first position — and on the layover surface the same reading removes the card (`lib/layoverLiveIntersection.ts:179`). It does not move because of **this census's own stricter rule for prohibitions** (see *"The rule for prohibitions"*): a "must never" is C when an artifact makes the violation unrepresentable or refuses it, and on a DEFAULT deployment nothing refuses it. Discovery's demotion is behind 2850, seeded FALSE; the layover drop is behind 2851, seeded FALSE; Compass's exclusion is behind an env constant whose own comment reads *"Default OFF"* (`src/compass/CompassLiveConstraints.ts:79#liveConstraintsEnabled`). Only the Map's unconditional priority sort (`lib/mapObjects.ts:335#safety`) holds everywhere, and §1's promotion-stripping addition to it is itself behind 2350. Four surfaces can refuse; one does. B7-M1 and B7-L3 red. |
 | S70 Server-built DiscoveryCandidate with why-now, why-for-user, confidence, freshness and truth class | W | **C** | The one field the row is named for has a producer: `whyNow` carries grounded reasons in the claims' own vocabulary (`lib/discoveryCandidate.ts:431#whyNowOf`) and is null — never `[]` — when no grade was computed or no reading was found (`:325#whyNowOf`); route-tested with the candidate projection on, both arms. The other four fields were already carried. B7-R5 red. |
 | S72 Intent modes — Right Now, Tonight, Explore, Quiet, Social, High Energy, Nearby, Trip — on the same shared intelligence | W | **C** | The spec's eight, verbatim and in order (`lib/discoveryLiveRank.ts:103#DISCOVERY_INTENT_MODES`), each a weight vector over the SAME axes of the SAME engine (`:154#INTENT_MODE_PROFILES`) — the suite asserts no mode has an axis of its own — and the crowd preference they declare is Compass's `experienceValue`, so "the same shared intelligence" is literal. Reachable as `GET /discovery?intentMode=…`; an unknown string is not honoured as a mode (B7-R4 red). |
 | S85 Layover Temporal Freedom Engine intersects feasibility with live Experience value, forecast, friction and safe-return | W | **C** | The row's finding was `grep -rn liveClaimRead services/airport/` → nothing. It reads it now, and intersects rather than competing: a live queue becomes minutes the EXISTING `LayoverSafetyEngine` rates against the certified deadline (`services/airport/LayoverRecommendationService.ts:496`, `lib/layoverLiveIntersection.ts:195`), a live `unsafe_density` or refused walk-in removes the card, a decaying window demotes and never drops, and a card with no reading is untouched. Driven through the real `generateRecommendations` (90 → 180 minutes under a 90-minute queue). B7-L1 to B7-L4 red. |
-| S97 Temporary activity must not be forced onto the nearest place ID when ownership is unknown; never assign to the nearest place merely to satisfy a foreign key | C | **W** | **The C rested on a grep that is now false.** `resolveZoneAnchorSubject` (**deleted 2026-09-25**; the file now records its own removal at `routes/mapObservations.ts:42#WHAT`) resolved a §22 zone contribution by finding the **nearest** active place in the zone and storing the observation against it; **that resolver, its haversine, its bbox pre-filter and its 3 km ceiling were all DELETED on 2026-09-25**, and what stores the subject now is `:802#subjectKind` reading lib/sensingSubjectReconciliation, which answers `unknown` unless there is an ownership signal. The sentences below are kept as the record of what this row measured on the day it was written; its own header gives the motive as the FK — *"`intel_observations.subject_id` FKs `public.places`, and a zone is not a place"*. Mounted (`src/routes/index.ts:323#mapObservationsRouter`) behind `map_contributions_enabled` (`routes/mapObservations.ts:741`). The 3 km ceiling and the recorded `zone_id` bound the mis-attribution; they do not make it absent, and §14's sentence carries no radius. Not fixable in this lane: the alternatives are deleting a §22 Map feature or removing `subject_id NOT NULL REFERENCES places(id)` (`src/migrations/2130_intel_storage.sql:142`), both owner decisions. |
+| S97 Temporary activity must not be forced onto the nearest place ID when ownership is unknown; never assign to the nearest place merely to satisfy a foreign key | C | **W** | **The C rested on a grep that is now false.** `resolveZoneAnchorSubject` (**deleted 2026-09-25**; the file now records its own removal at `routes/mapObservations.ts:42#WHAT`) resolved a §22 zone contribution by finding the **nearest** active place in the zone and storing the observation against it; **that resolver, its haversine, its bbox pre-filter and its 3 km ceiling were all DELETED on 2026-09-25**, and what stores the subject now is `:802#subjectKind` reading lib/sensingSubjectReconciliation, which answers `unknown` unless there is an ownership signal. The sentences below are kept as the record of what this row measured on the day it was written; its own header gives the motive as the FK — *"`intel_observations.subject_id` FKs `public.places`, and a zone is not a place"*. Mounted (`src/routes/index.ts:325#mapObservationsRouter`) behind `map_contributions_enabled` (`routes/mapObservations.ts:741`). The 3 km ceiling and the recorded `zone_id` bound the mis-attribution; they do not make it absent, and §14's sentence carries no radius. Not fixable in this lane: the alternatives are deleting a §22 Map feature or removing `subject_id NOT NULL REFERENCES places(id)` (`src/migrations/2130_intel_storage.sql:142`), both owner decisions. |
 
 **Held, with the reason.** **S3** and **S106** stay W, unchanged from §1: the
 single presence architecture would have to be a store and a fusion layer that
@@ -4832,7 +4832,7 @@ S92 reads: *"the bridge is a graph-edge projection and `grep` over
 exists (+243) and its own first line calls itself *"S92's arrow, built from the
 session's OUTCOME"*. It is imported at
 `artifacts/api-server/src/lib/memoryProjectionScheduler.ts:52#}`, and the
-scheduler is started from `artifacts/api-server/src/index.ts:63#startMemoryProjectionScheduler` (its import) and called at `:192#startMemoryProjectionScheduler();` (corrected 2026-09-27; was `:58#import`, right when written, until dbf804b9f added a line above it on 2026-09-26; line 58 is now `registerScopedTrustApplier`'s import, which the one-word anchor still passed. The new anchor names the import rather than the word `import` because a snapshot copy under files/ ends in the same path, so this citation is checked on its first word only).
+scheduler is started from `artifacts/api-server/src/index.ts:64#startMemoryProjectionScheduler` (its import) and called at `:193#startMemoryProjectionScheduler();` (corrected 2026-09-27; was `:58#import`, right when written, until dbf804b9f added a line above it on 2026-09-26; line 58 is now `registerScopedTrustApplier`'s import, which the one-word anchor still passed. The new anchor names the import rather than the word `import` because a snapshot copy under files/ ends in the same path, so this citation is checked on its first word only).
 
 The row's RED WHEN — *S54 exists AND memory eligibility is computed from a
 session's OUTCOME rather than from a graph edge* — has **fired on the code**.
@@ -4976,7 +4976,7 @@ today, and what it could not:
   proxy refuses the host outright (`CONNECT tunnel failed, 403`). **This is a
   new fact and it bears on every "deployed" claim in this corpus, not only on
   S17.**
-* **HSTS is configured, not observed.** `` `artifacts/api-server/src/app.ts:28#app.use(helmet());` ``
+* **HSTS is configured, not observed.** `` `artifacts/api-server/src/app.ts:29#app.use(helmet());` ``
   with no options; helmet 8.3.0 applies its default
   `Strict-Transport-Security`. What the origin actually sends cannot be read
   from here, and a configured header on an origin whose last publish failed is
@@ -5045,12 +5045,12 @@ pass verified it, in the order the RED WHEN demands — claims into the context
 FIRST, checker over that context SECOND, *"because a checker over an empty
 context is vacuous"*:
 
-* The context half. `` `artifacts/api-server/src/routes/compass.ts:1918#liveClaimEvidence = live.evidence;` ``
+* The context half. `` `artifacts/api-server/src/routes/compass.ts:1953#liveClaimEvidence = live.evidence;` ``
   — `buildLiveClaimContext` pushes its lines onto the prompt and keeps the
   per-subject band it derived, on the request path, before any answer exists.
 * The checker half, on BOTH branches so streamed and non-streamed answers
-  cannot drift: `` `artifacts/api-server/src/routes/compass.ts:2092#groundCompassAnswer(venue.message, toolLog, liveClaimEvidence)` ``
-  and `` `artifacts/api-server/src/routes/compass.ts:2168#groundCompassAnswer(venue.message, toolLog, liveClaimEvidence)` ``.
+  cannot drift: `` `artifacts/api-server/src/routes/compass.ts:2131#groundCompassAnswer(venue.message, toolLog, liveClaimEvidence)` ``
+  and `` `artifacts/api-server/src/routes/compass.ts:2210#groundCompassAnswer(venue.message, toolLog, liveClaimEvidence)` ``.
   `groundCompassAnswer` merges the tool-log evidence with the context band
   and hands the union to `enforceCompassGroundingEnvelope`.
 * The proof is a REGISTERED suite, not a reading: `` `artifacts/api-server/src/test/compassGroundingLiveClaims.test.ts:99#describe("S79 part 1` ``
@@ -5087,7 +5087,7 @@ no world state, no opportunities, no disruptions, no sessions"*. Re-derived:
   `ExperienceSession` and the crew on the trip itself.
 * It is on the request path, handed the same kernel and the same admitted
   opportunities the prompt gets, so the trip world cannot show a different
-  world from the ranker: `` `artifacts/api-server/src/routes/compass.ts:2000#const tripWorld = await buildTripWorldContext(sc, user.id, {` ``.
+  world from the ranker: `` `artifacts/api-server/src/routes/compass.ts:2035#const tripWorld = await buildTripWorldContext(sc, user.id, {` ``.
 * The suite: `` `artifacts/api-server/src/test/sensingConsumersTripWorld.test.ts:88#describe("S83 — the projection carries all five named parts"` ``
   — builds all five from a stub client that FILTERS per table, asserts a
   closed session is not an open one, that the disruption claim types are the
@@ -5678,10 +5678,10 @@ so a pre-3312 database still inserts the legacy shape), reads nothing keyed
 by an actor (the ingest takes the DEVICE'S zone and features; it never
 touches `location_snapshots`), folds the features per contributor under the
 SAME k-gate that protects the count
-(`` `artifacts/api-server/src/lib/sensingCoverageAggregate.ts:145#export function cohortFeatures(latestRows: readonly SensingContributionFeatureColumns[]): SensingCohortFeatures {` ``;
+(`` `artifacts/api-server/src/lib/sensingCoverageAggregate.ts:146#export function cohortFeatures(latestRows: readonly SensingContributionFeatureColumns[]): SensingCohortFeatures {` ``;
 `features` is null unless the cohort is publishable), and the window now
 hands the engine the four inputs it used to leave null
-(`` `artifacts/api-server/src/lib/sensingWindowAggregate.ts:422#export function windowToVibeFeatures(` ``,
+(`` `artifacts/api-server/src/lib/sensingWindowAggregate.ts:432#export function windowToVibeFeatures(` ``,
 16 cases in `src/test/sensingReducedFeatures.test.ts`). `density` reaches the
 engine through a mapping from the device's bucket, not from the contributor
 count (`` `artifacts/api-server/src/lib/sensingWindowAggregate.ts:223#const DENSITY_TO_COVERAGE: Readonly<Record<SensingDensityBucket, CoverageBucket | null>> = Object.freeze({` ``),
@@ -5729,7 +5729,7 @@ owner's and is not.
 | # | §21.4 blocker | Now |
 |---|---|---|
 | 2 | *"Nothing publishes. `publishThroughDifferencingGate` has no caller outside tests."* | `lib/sensingPublicationScheduler` is that caller: on its own clock, per live cohort of the current and previous privacy bucket, `readSensingCohort` → `aggregateSensingCohort` → `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:226#    const decision = await publishThroughDifferencingGate(` ``. A cohort the k-gate withholds never reaches the gate or the store (`` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:220#    if (aggregate.publishable !== true) {` ``). Started at boot: `` `artifacts/api-server/src/index.ts:169#  startSensingPublicationScheduler();` ``. |
-| 3 | *"A Compass turn carries a city, not a sensing `zone_id`."* | The turn now carries the device's OWN coarse zone — the spatial bucket its capture stamps on its contributions, present only while capture runs (`` `travel-buddy-standalone/src/services/sensing/sensingCapture.ts:104#  currentZone(): string | null;` ``, registered by `` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:167#    registerSensingZoneSource(() => running.currentZone());` ``, sent on both ask paths per `` `travel-buddy-standalone/src/services/__tests__/compass.sensingZone.test.ts:68#describe('the wiring, by source: both ask paths apply the rule to the body they send', () => {` ``). The route accepts it (`` `artifacts/api-server/src/routes/compass.ts:1137#  sensingZoneIds:      z.array(z.string().min(1).max(64)).max(5).optional(),` ``), turns it into the cohort refs of the current and previous bucket (`` `artifacts/api-server/src/compass/CompassSensingPresenceProducer.ts:254#export function sensingCohortRefsForZones(` ``, pure, bounded by the zone cap on the READS) and hands them to the producer (`` `artifacts/api-server/src/routes/compass.ts:1940#        sensingCohortRefsForZones(sensingZoneIds, turnNowMs),` ``). |
+| 3 | *"A Compass turn carries a city, not a sensing `zone_id`."* | The turn now carries the device's OWN coarse zone — the spatial bucket its capture stamps on its contributions, present only while capture runs (`` `travel-buddy-standalone/src/services/sensing/sensingCapture.ts:104#  currentZone(): string | null;` ``, registered by `` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:167#    registerSensingZoneSource(() => running.currentZone());` ``, sent on both ask paths per `` `travel-buddy-standalone/src/services/__tests__/compass.sensingZone.test.ts:68#describe('the wiring, by source: both ask paths apply the rule to the body they send', () => {` ``). The route accepts it (`` `artifacts/api-server/src/routes/compass.ts:1142#  sensingZoneIds:      z.array(z.string().min(1).max(64)).max(5).optional(),` ``), turns it into the cohort refs of the current and previous bucket (`` `artifacts/api-server/src/compass/CompassSensingPresenceProducer.ts:254#export function sensingCohortRefsForZones(` ``, pure, bounded by the zone cap on the READS) and hands them to the producer (`` `artifacts/api-server/src/routes/compass.ts:1975#        sensingCohortRefsForZones(sensingZoneIds, turnNowMs),` ``). |
 | 1 | *"`surface` is not in `SENSING_ANON_GRANTED_SCOPES`"* | **Unchanged, deliberately.** Both the publisher and the producer test the scope BEFORE reading their flag and before any read: `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:153#  if (!sensingPublicationScopeGranted(opts.policy ?? SENSING_ANON_POLICY_V1)) {` `` precedes `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:161#  if (!(await isFlagEnabled(db, SENSING_PUBLICATION_FLAG))) return SKIPPED("capability_off");` ``. The frozen constant was not edited. |
 
 **Proven with the scope INJECTED through the seam, never granted.**
@@ -5975,7 +5975,7 @@ environment, pepper or no pepper.
 
 **Built:** `POST /v1/sensing/session`
 (sensingSession.ts line 98 at `76432df12a` (“const covered = sensingScopesForConsent(consent.state, SENSING_ANON_POLICY_V1);” — replaced in §33 by the split grants),
-mounted at `` `artifacts/api-server/src/routes/index.ts:430#router.use(sensingSessionRouter);` ``).
+mounted at `` `artifacts/api-server/src/routes/index.ts:432#router.use(sensingSessionRouter);` ``).
 It checks, in order: the pepper, the auth posture, the account, eligibility,
 a per-profile daily budget held nowhere durable, and consent. It then writes
 a row holding the credential's HMAC and the scopes, and no identity. Fourteen

@@ -37,6 +37,7 @@ jest.mock('../../../src/lib/supabase', () => ({
   authedClient: () => null,
   supabase: {
     auth: {
+      onAuthStateChange: () => ({ data: { subscription: { unsubscribe: jest.fn() } } }),
       getSession: async () => ({ data: { session: { access_token: 'tok', expires_at: Math.floor(Date.now() / 1000) + 3600 } } }),
       refreshSession: async () => ({ data: { session: { access_token: 'tok' } } }),
     },

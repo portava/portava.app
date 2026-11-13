@@ -18,11 +18,13 @@ import {
 import { forgetPlaybackSignature, recheckPlaybackAuthorization } from '../playbackAuthorization.ts';
 
 const REF = 'post-media/u-2/clip.mp4';
+const originalBase = process.env.EXPO_PUBLIC_API_BASE_URL;
 let origFetch: typeof globalThis.fetch;
 let server: 'allow' | 'deny' | 'down' = 'allow';
 let requests = 0;
 
 beforeEach(() => {
+  process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.test';
   origFetch = globalThis.fetch;
   _resetBatchSignCache();
   _setTestSignTokenProvider(async () => 'token');
@@ -38,6 +40,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (originalBase === undefined) delete process.env.EXPO_PUBLIC_API_BASE_URL;
+  else process.env.EXPO_PUBLIC_API_BASE_URL = originalBase;
   globalThis.fetch = origFetch;
   _setTestSignTokenProvider(null);
   _resetBatchSignCache();

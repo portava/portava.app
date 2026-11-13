@@ -928,6 +928,28 @@ jobs:
           fi
           psql --version
 
+      # The operational monitor migration uses the real pg_cron extension.
+      # Install from the PostgreSQL image's signed package repository, with the
+      # scheduler disabled during fixture tests (no hidden background writes).
+      - name: Prepare pg_cron for the disposable database
+        shell: bash
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          docker exec "$POSTGRES_CONTAINER" sh -c 'apt-get update -qq && apt-get install -y -qq postgresql-16-cron'
+          docker exec "$POSTGRES_CONTAINER" psql -U postgres -c "ALTER SYSTEM SET shared_preload_libraries = 'pg_cron'"
+          docker exec -i "$POSTGRES_CONTAINER" sh -c 'cat >> "$PGDATA/postgresql.auto.conf"' <<'CRON_CONFIG'
+          cron.database_name = 'portava_local'
+          cron.launch_active_jobs = off
+          CRON_CONFIG
+          docker restart "$POSTGRES_CONTAINER"
+          for attempt in $(seq 1 30); do
+            if docker exec "$POSTGRES_CONTAINER" pg_isready -U postgres; then break; fi
+            sleep 1
+          done
+          docker exec "$POSTGRES_CONTAINER" pg_isready -U postgres
+
       - name: Resolve pnpm store path
         id: pnpm-store
         shell: bash

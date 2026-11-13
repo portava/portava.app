@@ -233,7 +233,7 @@ the finding that most changes the shape of the question, so each is cited indivi
 
 | Scheduler | `start…()` defined | Registered at | Flag it reads |
 |---|---|---|---|
-| `intelRetentionScheduler` | `lib/intelRetentionScheduler.ts:597#export function startIntelRetentionScheduler` | **`src/index.ts:149#startIntelRetentionScheduler()`** | `intel_retention_sweep_enabled`, `intel_contribution_retention_enabled` (`:358`) |
+| `intelRetentionScheduler` | `lib/intelRetentionScheduler.ts:597#export function startIntelRetentionScheduler` | **`src/index.ts:150#startIntelRetentionScheduler()`** | `intel_retention_sweep_enabled`, `intel_contribution_retention_enabled` (`:358`) |
 | `intelPromotionScheduler` | `lib/intelPromotionScheduler.ts:80` | **`src/index.ts:136`** | `intel_claim_projection_crowd` (`:83`) |
 | `intelProjectionScheduler` | `lib/intelProjectionScheduler.ts:216` | **`src/index.ts:137`** | `intel_claim_projection_crowd` (`:219`) |
 | `intelCoverageScheduler` | `lib/intelCoverageScheduler.ts:262` | **`src/index.ts:145`** | `intel_coverage` (`:29`) |
@@ -262,7 +262,7 @@ without a read or a write. The eighth — reward — gets `true`, performs a rea
 `src/lib/intelRewardScheduler.ts:143`. That is the entire observed behaviour of the spine.
 
 **Routers, for completeness.** All six intel routers are mounted:
-`intelRouter` `routes/index.ts:351#router.use(intelRouter)`, `intelCoverageRouter` `:353#router.use(intelCoverageRouter)`, `intelApiRouter` `:354#router.use(intelApiRouter)`,
+`intelRouter` `routes/index.ts:353#router.use(intelRouter)`, `intelCoverageRouter` `:355#router.use(intelCoverageRouter)`, `intelApiRouter` `:356#router.use(intelApiRouter)`,
 `intelReadModelsRouter` `:338#router.use(intelReadModelsRouter)`, `intelOutcomesRouter` `:341#router.use(intelOutcomesRouter)`, `intelObservabilityRouter` `:343#router.use(intelObservabilityRouter)`.
 `src/test/intelRouterRegistrationGuard.test.ts` exists to keep them mounted. The three internal
 ones (`intelCoverage`, `intelObservability`, and the missions routes) are `requireAdmin`-gated

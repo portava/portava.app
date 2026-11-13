@@ -1,8 +1,5 @@
 import assert from 'node:assert/strict';
-import { before, after, beforeEach, describe, it } from 'node:test';
-const previousStorageOrigin = process.env.SUPABASE_URL;
-before(() => { process.env.SUPABASE_URL = 'https://storage.test'; });
-after(() => { if (previousStorageOrigin === undefined) delete process.env.SUPABASE_URL; else process.env.SUPABASE_URL = previousStorageOrigin; });
+import { beforeEach, describe, it } from 'node:test';
 import { POST_REFERENCE_MEDIA_TYPE, readPostReference, readReferenceSource } from '../services/postDestinations.js';
 const viewer='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',author='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const post='cccccccc-cccc-4ccc-8ccc-cccccccccccc',ref='dddddddd-dddd-4ddd-8ddd-dddddddddddd';

@@ -6,6 +6,18 @@ import { readFile } from "node:fs/promises";
 import sharp from "sharp";
 import { boundedResponse, configuration, generationInput, GENERATION_POLICY, GenerationError, HiggsfieldProvider, modelInput, models } from "../lib/media/generation/higgsfield.js";
 import { normalizeGeneratedOutput, processGenerationJob, previewGeneration } from "../lib/media/generation/service.js";
+import { generationWorkerStatus } from "../lib/media/generation/worker.js";
+
+test("generation health distinguishes disabled, idle, disconnected and failed delivery", () => {
+  const idle = { ready: true, started: true, connected: true, booted: true, stopped: false, consecutiveFailures: 0 };
+  assert.equal(generationWorkerStatus(idle), "healthy", "an idle event subscriber needs no heartbeat polling");
+  assert.equal(generationWorkerStatus({ ...idle, ready: false }), "unknown", "disabled is not proven healthy");
+  assert.equal(generationWorkerStatus({ ...idle, started: false }), "never_ran");
+  assert.equal(generationWorkerStatus({ ...idle, booted: false }), "never_ran");
+  assert.equal(generationWorkerStatus({ ...idle, connected: false }), "failing");
+  assert.equal(generationWorkerStatus({ ...idle, consecutiveFailures: 1 }), "failing", "a connected queue must not hide a failed delivery");
+  assert.equal(generationWorkerStatus({ ...idle, started: false, stopped: true }), "failing", "a stopped worker is not merely waiting to start");
+});
 
 const id = "11111111-1111-4111-8111-111111111111";
 const owner = "22222222-2222-4222-8222-222222222222";

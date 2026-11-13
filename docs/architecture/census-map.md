@@ -3602,7 +3602,7 @@ from movement history. Suppress precise location and route contributions inside 
 - **Consequence 2:** if that row is then refused (demo source, blocked or suspended submitter, wrong tab), the canonical
   place is not served either.
 - Separately, the feed merge drops a canonical place whose normalised name matches a curated row's
-  (`artifacts/api-server/src/routes/discovery.ts:1297#places: [...curatedRows, ...canonicalRows.filter(`).
+  (`artifacts/api-server/src/routes/discovery.ts:1276#places: [...curatedRows, ...canonicalRows.filter(`).
 - PR #790's 3920 copies the materialiser's precedence for the trend context.
 
 **Production, read 2026-10-24.**

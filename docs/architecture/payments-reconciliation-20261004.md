@@ -127,7 +127,7 @@ vocabulary admits three of `09` §3's eight states and can never produce `payabl
 | `lib/creatorLedgerRows.ts` | the one model→row mapping | reachable |
 | `lib/creatorShareCanonical.ts` | pure fold over the canonical relation | reachable |
 | `lib/creatorRuleEvaluation.ts` | refuses `{}` rule params rather than defaulting (`artifacts/api-server/src/lib/creatorRuleEvaluation.ts:68#p))`) | reachable |
-| `lib/creatorAttributionScheduler.ts` | hourly tick, started at `artifacts/api-server/src/index.ts:300#startPlaceCooccurrenceRebuildScheduler();` | reachable, **inert**: one flag read per tick |
+| `lib/creatorAttributionScheduler.ts` | hourly tick, started at `artifacts/api-server/src/index.ts:302#startPlaceCooccurrenceRebuildScheduler();` | reachable, **inert**: one flag read per tick |
 | `lib/rentBuddyEarningsLedger.ts` | writes the legacy estimate summary row | reachable |
 | `lib/rentBuddyFeeSchedule.ts` | the single fee resolver (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:85#FEE_SCHEDULE_TABLE`, `:292#resolveFeeSchedule(`) | reachable |
 | `lib/rentBuddyKycGate.ts` | hard-blocks booking creation (§1.4) | **reachable and closed** |
@@ -145,7 +145,7 @@ vocabulary admits three of `09` §3's eight states and can never produce `payabl
 ### 1.4 Routes and gates
 
 **Mounted.** Both creator routers are registered:
-`artifacts/api-server/src/routes/index.ts:249#router.use(rentABuddyMarketplaceRouter);`.
+`artifacts/api-server/src/routes/index.ts:251#router.use(rentABuddyMarketplaceRouter);`.
 
 | Route group | Endpoints | Authorization / gate |
 |---|---|---|
@@ -484,7 +484,7 @@ about §1 and §11's framing, not new defects:
    `09` already records this as closed; it is restated because §11 does not.)
 
 Also stale, and in the *unsafe* direction for a reader: `artifacts/api-server/src/lib/rentBuddyKycGate.ts:6#stubs` still calls the
-two real adapters "stubs", and `artifacts/api-server/src/app.ts:127#future` still calls webhook signature verification "future" —
+two real adapters "stubs", and `artifacts/api-server/src/app.ts:129#future` still calls webhook signature verification "future" —
 both are present and enforced today.
 
 ---
