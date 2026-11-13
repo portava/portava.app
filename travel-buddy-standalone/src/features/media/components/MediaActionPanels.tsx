@@ -146,10 +146,13 @@ function TripChoiceForPlan({
   plan,
   onBack,
   onApplied,
+  onCommitted,
 }: {
   plan: CompiledExperiencePlan;
   onBack: () => void;
   onApplied: (tripId: string) => void;
+  /** All proposed stops were acknowledged as newly created; never a review handoff. */
+  onCommitted?: (tripId: string) => void;
 }) {
   const request = usePanelRequest(plan);
   const locked = useRef(false);
@@ -195,9 +198,10 @@ function TripChoiceForPlan({
       }
       if (failed > 0) { setReviewTrip(tripId); setResult(`Added ${created} of ${created + failed} stops. Open the trip to review them before adding more.`); return; }
       setResult(null);
+      onCommitted?.(tripId);
       onApplied(tripId);
     },
-    [plan, onApplied, request.context, request.current],
+    [plan, onApplied, onCommitted, request.context, request.current],
   );
 
   return (

@@ -224,6 +224,8 @@ export const MEDIA_CLIENT_OUTCOME_SIGNAL_TYPES: readonly MediaEventType[] = [
  * and these are the events the funnel is supposed to be able to trust.
  */
 export const MEDIA_SERVER_OUTCOME_SIGNAL_TYPES: readonly MediaEventType[] = [
+  "media_arrival",
+  "media_contribution",
   "invite_sent",
   "experience_complete",
   "contribution_submit",

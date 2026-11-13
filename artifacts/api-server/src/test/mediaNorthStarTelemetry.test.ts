@@ -27,7 +27,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import mediaAnalyticsBatchRouter from "../routes/mediaAnalyticsBatch.js";
-import { MEDIA_NORTH_STAR_EVENT_TYPES } from "../lib/mediaAnalytics.js";
+import { MEDIA_NORTH_STAR_EVENT_TYPES, MEDIA_SERVER_OUTCOME_SIGNAL_TYPES } from "../lib/mediaAnalytics.js";
 
 const TOKEN = "north-star-token";
 const USER_ID = "d0000000-0000-4000-a000-0000000000a7";
@@ -133,7 +133,7 @@ beforeEach(() => {
 });
 
 describe("POST /api/media/analytics/batch — §45 north-star events", () => {
-  it("accepts every north-star event type and writes it to media_events", async () => {
+  it("accepts client north-star events but cannot forge server-confirmed arrival or contribution", async () => {
     assert.equal(MEDIA_NORTH_STAR_EVENT_TYPES.length, 8, "§45 defines eight transitions");
 
     const events = MEDIA_NORTH_STAR_EVENT_TYPES.map((type) => ({
@@ -144,14 +144,14 @@ describe("POST /api/media/analytics/batch — §45 north-star events", () => {
 
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(
-      r.body.accepted, 8,
+      r.body.accepted, 6,
       "the endpoint must ACCEPT these, not answer ok:true while dropping them",
     );
-    await waitForRecords(8);
+    await waitForRecords(6);
     assert.deepEqual(
       recorded.map((e) => e.event_type).sort(),
-      [...MEDIA_NORTH_STAR_EVENT_TYPES].sort(),
-      "every north-star type must reach media_events",
+      MEDIA_NORTH_STAR_EVENT_TYPES.filter(type => !MEDIA_SERVER_OUTCOME_SIGNAL_TYPES.includes(type)).sort(),
+      "only client-observable north-star events may arrive through the client batch",
     );
   });
 
@@ -180,8 +180,8 @@ describe("POST /api/media/analytics/batch — §45 north-star events", () => {
     assert.equal(p.viewer_id, USER_ID);
   });
 
-  it("still drops raw text and coordinate keys — hygiene is not relaxed", async () => {
-    await postBatch([{
+  it("rejects raw text and coordinate keys before recording any event", async () => {
+    const response = await postBatch([{
       type: "media_place_open",
       payload: {
         media_id: "m-1", action_id: "show_on_map", entity_kind: "place",
@@ -197,22 +197,21 @@ describe("POST /api/media/analytics/batch — §45 north-star events", () => {
         token: "secret-token",
       },
     }]);
-    await waitForRecords(1);
+    assert.equal(response.status, 400);
+    assert.equal(recorded.length, 0, "unknown fields reject the whole event");
+  });
 
-    assert.equal(recorded.length, 1, "the event itself is still recorded");
-    const p = recorded[0].payload as Record<string, unknown>;
-    for (const forbidden of [
-      "caption", "content", "lat", "lng", "latitude", "longitude",
-      "raw_coordinates", "ranking_vector", "token",
+  it("refuses raw errors, spoofed viewers, oversized identifiers and invalid numeric values", async () => {
+    for (const payload of [
+      { failure_reason: 'draft: meet me at my home address' },
+      { viewer_id: USER_ID }, { media_id: 'x'.repeat(129) },
+      { watched_ms: -1 }, { completion_fraction: 2 }, { position: 0.5 },
+      { place_id: { address: 'private address' } },
     ]) {
-      assert.equal(
-        Object.prototype.hasOwnProperty.call(p, forbidden), false,
-        `${forbidden} must never be written to media_events`,
-      );
+      const r = await postBatch([{ type: 'place_open', payload }]);
+      assert.equal(r.status, 400, JSON.stringify(payload));
     }
-    // The coarse dimensions still came through in the same row.
-    assert.equal(p.action_id, "show_on_map");
-    assert.equal(p.entity_kind, "place");
+    assert.equal(recorded.length, 0);
   });
 
   it("remains a CLOSED allow-list — an invented media_* type is not accepted", async () => {

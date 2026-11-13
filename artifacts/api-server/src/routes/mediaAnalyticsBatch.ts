@@ -4,8 +4,8 @@
  * Receives batched client-side media analytics events from useMediaAnalytics
  * and delegates each to recordMediaEvent (fire-and-forget, MEDIA_ANALYTICS_ENABLED gated).
  *
- * Requires auth. Payload is validated; forbidden fields are stripped server-side
- * by recordMediaEvent before any DB write.
+ * Requires auth. Unknown fields, raw text, malformed values and caller-supplied
+ * viewer identity are rejected before the recorder; server-only outcomes are refused.
  */
 import { Router } from "express";
 import { z } from "zod";
@@ -14,9 +14,11 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import {
   recordMediaEvent,
-  MEDIA_NORTH_STAR_EVENT_TYPES, MEDIA_CLIENT_OUTCOME_SIGNAL_TYPES,
+  MEDIA_NORTH_STAR_EVENT_TYPES, MEDIA_CLIENT_OUTCOME_SIGNAL_TYPES, MEDIA_SERVER_OUTCOME_SIGNAL_TYPES,
   type MediaEventType,
 } from "../lib/mediaAnalytics.js";
+
+import { mediaAnalyticsClientPayload } from "../lib/mediaAnalyticsClientPayload.js";
 
 const router = Router();
 
@@ -31,9 +33,9 @@ const router = Router();
  * to recordMediaEvent. Nothing failed anywhere, so nothing reported it — the
  * funnel simply read zero.
  *
- * They are spread from MEDIA_NORTH_STAR_EVENT_TYPES rather than retyped, so the
- * list cannot drift from the `MediaEventType` union again; the spread is still
- * an enumeration of eight fixed names, not an opening of the allow-list.
+ * Client-observable types are spread from MEDIA_NORTH_STAR_EVENT_TYPES, so the
+ * list cannot drift from the `MediaEventType` union again; server-confirmed
+ * arrivals/contributions are excluded and cannot be forged by the client.
  */
 const VALID_EVENT_TYPES = new Set<string>([
   "mode_switch", "impression", "qualified_view", "completion", "rewatch",
@@ -41,7 +43,7 @@ const VALID_EVENT_TYPES = new Set<string>([
   "event_open", "trip_open", "grid_tile_open", "gems_filter_change",
   "add_to_trip", "directions_tap", "wrong_place_report",
   "upload_start", "processing_complete", "processing_failure", "playback_failure",
-  ...MEDIA_NORTH_STAR_EVENT_TYPES,
+  ...MEDIA_NORTH_STAR_EVENT_TYPES.filter(type => !MEDIA_SERVER_OUTCOME_SIGNAL_TYPES.includes(type)),
   // §44 outcome signals a client surface emits (census-media §21). The SERVER-only
   // outcome signals (MEDIA_SERVER_OUTCOME_SIGNAL_TYPES) are deliberately absent.
   ...MEDIA_CLIENT_OUTCOME_SIGNAL_TYPES,
@@ -51,10 +53,10 @@ const batchSchema = z.object({
   events: z.array(
     z.object({
       type:    z.string(),
-      payload: z.record(z.unknown()).optional().default({}),
-    }),
+      payload: mediaAnalyticsClientPayload.optional().default({}),
+    }).strict(),
   ).max(50),
-});
+}).strict();
 
 router.post("/media/analytics/batch", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
