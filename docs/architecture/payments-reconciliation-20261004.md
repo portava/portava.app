@@ -436,7 +436,7 @@ privacy-language. The only tax artifact is the disclaimer string at `artifacts/a
 There is no cron and no scheduler registry. `pg_cron` is **not installed** — the only two mentions
 say so. The mechanism is that a `start…()` exported from `src/lib` is called from `src/index.ts`,
 and nothing else can start a worker; a test pins this
-(`artifacts/api-server/src/test/schedulerRegistration.test.ts:38#WORKER_SUFFIXES`). Enumerating all
+(`artifacts/api-server/src/test/schedulerRegistration.test.ts:40#WORKER_SUFFIXES`). Enumerating all
 **57** registered workers in `src/index.ts`, **none** concerns payouts, earnings finalization,
 monthly runs or balance carry-forward. The three money-adjacent ones are: `startFxRefreshLoop`
 (reference rates), `startCreatorAttributionScheduler` (attribution only, flag-gated FALSE), and

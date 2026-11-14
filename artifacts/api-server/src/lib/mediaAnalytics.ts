@@ -4,8 +4,8 @@
  *
  * Design constraints
  * ──────────────────
- * • Async, fire-and-forget: callers NEVER await this — it must not block any
- *   HTTP response.
+ * • Server side effects use the fire-and-forget wrapper; client ingestion
+ *   awaits persistence so its receipt is truthful.
  * • Safe payloads: private captions, raw coordinates, private entity details,
  *   ranking vectors, fraud internals, and secrets are stripped before write.
  * • Fail-silent: a DB write failure is logged but never surfaced to users.
@@ -24,6 +24,7 @@ const serverPayloadSchema = mediaAnalyticsClientPayload.extend({ viewer_id: z.st
 export type MediaEventType =
   // Feed / mode
   | "mode_switch"
+  | "feed_served"
   | "impression"
   | "qualified_view"
   | "completion"
@@ -160,6 +161,42 @@ function sanitisePayload(raw: Record<string, unknown>): Record<string, unknown> 
 }
 
 // ── recordMediaEvent ──────────────────────────────────────────────────────────
+
+/** Awaited ingress receipt. `accepted` counts returned database rows, not queued
+ * work. A privacy trigger may suppress individual rows without a SQL error.
+ * No retry is performed here: legacy batches do not carry stable event IDs.
+ */
+export async function persistMediaEventBatch(
+  events: Array<{ type: MediaEventType; payload: Record<string, unknown> }>, sc: any,
+): Promise<{ accepted: number; discarded: number; failed: number; disabled: boolean }> {
+  const result = { accepted: 0, discarded: 0, failed: 0, disabled: false };
+  if (!events.length) return result;
+  try {
+    const flag = await sc.from('feature_flags').select('enabled').eq('flag', 'MEDIA_ANALYTICS_ENABLED').maybeSingle();
+    if (flag.error || typeof flag.data?.enabled !== 'boolean') return { ...result, failed: events.length };
+    if (!flag.data.enabled) return { ...result, discarded: events.length, disabled: true };
+    const rows: Array<{ event_type: MediaEventType; payload: Record<string, unknown> }> = [];
+    for (const event of events) {
+      const safe = sanitisePayload(event.payload);
+      const parsed = serverPayloadSchema.safeParse(Object.fromEntries(Object.entries(safe).filter(([, value]) => value != null)));
+      if (!parsed.success) { result.discarded++; continue; }
+      rows.push({ event_type: event.type, payload: parsed.data });
+    }
+    if (!rows.length) return result;
+    const inserted = await sc.from('media_events').insert(rows).select('id');
+    if (inserted.error || !Array.isArray(inserted.data)
+      || inserted.data.length > rows.length
+      || inserted.data.some((row: any) => typeof row?.id !== 'string' || !row.id)
+      || new Set(inserted.data.map((row: any) => row.id)).size !== inserted.data.length) {
+      return { ...result, failed: rows.length };
+    }
+    result.accepted = inserted.data.length;
+    result.discarded += rows.length - inserted.data.length;
+    return result;
+  } catch {
+    return { ...result, failed: events.length - result.discarded };
+  }
+}
 
 /**
  * Record a media analytics event to the `media_events` table.

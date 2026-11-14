@@ -1,3 +1,5 @@
+import { dwellRowFor } from "../../lib/discoveryDwell.js";
+
 /**
  * fakeDiscoveryTelemetryDb — an in-memory stand-in for the parts of PostgREST +
  * Postgres the Discovery telemetry path depends on, with the SEMANTICS that
@@ -289,6 +291,34 @@ export function makeTelemetryDb(opts: FakeTelemetryDbOptions = {}) {
       }
       const custom = opts.rpc?.[name];
       if (custom) return custom(params);
+      if (name === "admit_discovery_dwell") {
+        // RPC boundary model for route/report suites only. Actual SQL role,
+        // locking prerequisites and transaction rollback are covered separately
+        // in discoveryDwellAtomicReceipt.pglite.test.ts; this is not lock proof.
+        if (!opts.flags?.discovery_dwell_telemetry_enabled?.enabled) return { data: { ok: false, reason: "disabled" }, error: null };
+        const exposure = tables.rank_events!.find(row => row.id === params.p_exposure_id && row.user_id === params.p_user_id
+          && row.item_id === params.p_item_id && row.surface === "discovery" && row.event_type == null && row.outcome !== "analytics"
+          && (row.recommendation_id === params.p_recommendation_id || row.features?.recommendationId === params.p_recommendation_id));
+        if (!exposure) return { data: { ok: false, reason: "not_found" }, error: null };
+        const rows = params.p_measurements.map((d: any) => ({
+          ...dwellRowFor(params.p_user_id, exposure, params.p_recommendation_id, "00000000-0000-4000-8000-000000000000", d, new Date().toISOString()),
+          recommendation_id: d.token,
+        }));
+        const before = structuredClone(tables.rank_events);
+        const attempt = await from("rank_events").upsert(rows, { onConflict: "recommendation_id,outcome", ignoreDuplicates: true }).select("id");
+        if (attempt.error) return { data: null, error: attempt.error };
+        for (const expected of rows) {
+          const hit = tables.rank_events!.find(row => row.recommendation_id === expected.recommendation_id && row.outcome === "analytics");
+          if (!hit || ["user_id", "item_id", "item_kind", "position", "surface", "event_type", "session_id", "dwell_kind", "dwell_ms", "schema_version", "privacy_class"].some(key => hit[key] !== expected[key])
+            || Date.parse(hit.served_at) !== Date.parse(expected.served_at)
+            || JSON.stringify(hit.features) !== JSON.stringify(expected.features)) {
+            tables.rank_events = before!;
+            return { data: null, error: { message: "dwell_receipt_conflict" } };
+          }
+        }
+        const recorded = Array.isArray(attempt.data) ? attempt.data.length : 0;
+        return { data: { ok: true, recorded, duplicates: rows.length - recorded }, error: null };
+      }
       if (KNOWN_VOID_RPCS.has(name)) return { data: null, error: null };
       return { data: null, error: { code: "PGRST202", message: `Could not find the function public.${name} in the schema cache` } };
     },

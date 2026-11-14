@@ -663,8 +663,10 @@ Xcode 27.2 ships no Simulator.app (it is a separate download), and `expo run:ios
 refuses to start without it ("Can't determine id of Simulator app"). Build and install with
 Apple's own tools instead; this is the path that put the app on an iPhone 17 Pro Max on
 2026-11-04. Your team ID is the ten-character code shown next to your Personal Team in Xcode →
-Settings → Accounts, or in `security find-identity -v -p codesigning` ("Apple Development: …
-(XXXXXXXXXX)"); the phone's identifier comes from the first command.
+Settings → Accounts, or the `OU` field of the Apple Development certificate subject
+(`security find-certificate -c "Apple Development" -p | openssl x509 -noout -subject`).
+The identifier in the certificate common name is not necessarily the team ID. The phone's
+identifier comes from the first command.
 
 ```bash
 cd travel-buddy-standalone

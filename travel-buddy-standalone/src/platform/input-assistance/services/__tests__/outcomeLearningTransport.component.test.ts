@@ -1,6 +1,6 @@
-// Intentionally exhaustive: only the token lookup crosses the native auth bridge.
+// NOTE: intentionally exhaustive: only the token lookup crosses the native auth bridge.
 jest.mock('../../../../services/apiToken.ts', () => ({ freshToken: jest.fn() }));
-// Intentionally exhaustive: this file exercises the transport, not native auth subscriptions.
+// NOTE: intentionally exhaustive: this file exercises the transport, not native auth subscriptions.
 jest.mock('../../../../services/auth.ts', () => ({ onAuthChange: jest.fn(() => () => {}), getSessionUserId: jest.fn() }));
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { freshToken } from '../../../../services/apiToken.ts';

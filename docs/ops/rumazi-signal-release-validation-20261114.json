@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-14T07:10:45.235610+00:00",
+  "baseCommit": "b280d4309a7afed6d1ff1107628abe5c49884b7f",
+  "scope": "Media/Discovery durable telemetry receipts, account boundaries and release validation",
+  "verification": [
+    {
+      "name": "media-focused",
+      "passed": 212,
+      "artifact": "/private/tmp/rumazi-media-view-frozen-manifest.json",
+      "sha256": "13bc7c7e36aa875e76010d58a54de3c43ae135de72b87ad5214eed02abdd6c0d"
+    },
+    {
+      "name": "discovery-focused",
+      "passed": 111,
+      "artifact": "/private/tmp/rumazi-discovery-4033-frozen-manifest.json",
+      "sha256": "1f23c995221a8a1e4e43339ac19ce83dd1f9ceaf530f76571fd792712547bd08"
+    },
+    {
+      "name": "root-media-integration",
+      "passed": 33,
+      "artifact": "/private/tmp/rumazi-media-integration-followup.log",
+      "sha256": "33b70251a31cb45e126b81fef7f070491b1b23b2eae6e7446cca45b3587f5cfa"
+    },
+    {
+      "name": "CI-and-schema-guards",
+      "passed": 271,
+      "artifact": "/private/tmp/rumazi-ci-audit-guards-followup.log",
+      "sha256": "6e937d0798216d7e2806325bf7195e368a2e609aa6a412870ebfd4c1192fec08"
+    },
+    {
+      "name": "schema-namespace-regressions",
+      "passed": 42,
+      "artifact": "/private/tmp/rumazi-schema-namespace-guards-final.log",
+      "sha256": "f12e08ed8ebc3a84658a64a61e4004d8268b91988b0829c767c411970f4e35f8"
+    },
+    {
+      "name": "beta-bootstrap",
+      "passed": 83,
+      "artifact": "/private/tmp/rumazi-beta-bootstrap-final.log",
+      "sha256": "554f2284452d0c92ad782d8218a99f7fbbae7b65953d82fc5898f29acaa0dd0e"
+    },
+    {
+      "name": "beta-configure",
+      "passed": 83,
+      "artifact": "/private/tmp/rumazi-beta-configure-final.log",
+      "sha256": "bc624f3c43f8b26fcf031d2bd8ccb01dd819a143744239bb2e55a9e923656725"
+    },
+    {
+      "name": "client-node",
+      "passed": 9005,
+      "artifact": "/private/tmp/rumazi-client-node-final.log",
+      "sha256": "6674960523cef0a372112c9d281fe9e74f3b97e574e09223997d139b8f7e0884"
+    },
+    {
+      "name": "client-http-fixtures",
+      "passed": 12,
+      "artifact": "/private/tmp/rumazi-client-http-fixtures-final.log",
+      "sha256": "2e13696a283873c478c6deef56dd3f25dd0263a4f684d14d8a3dbe57909d0696"
+    },
+    {
+      "name": "stamp-publication-with-drafts",
+      "passed": 3,
+      "artifact": "/private/tmp/rumazi-recording-stamp-draft-final.log",
+      "sha256": "a71f3e3678fc02d8f75aa1e2186f14d3eed76ed7de74dee573975d0768575674"
+    },
+    {
+      "name": "disposable-pgdg-source",
+      "passed": 4,
+      "artifact": "/private/tmp/rumazi-disposable-pgdg-source-tests.log",
+      "sha256": "83dd282ab1ca1441ccb8183fed1ff4bab6b7992162c53f38ecfbf684ae3dd4c1"
+    }
+  ],
+  "schemaAudit": {
+    "project": "hwokxgbmezheskbzskfr",
+    "migrations": 885,
+    "claims": 9547,
+    "status": "passed captured live catalog replay; missing private index and Realtime policy mutations independently fail",
+    "catalogSha256": "7138e525f4d0d9ac2a6c412299a3e224a68e6048827ec7011bb4a66f83ae8910",
+    "log": "/private/tmp/rumazi-ci-schema-audit-final.log"
+  },
+  "limitations": [
+    "Focused checks overlap; their counts are not an aggregate of unique tests.",
+    "Full prior-commit API main run:42516 tests,42500 passed,16 failed. Known fixes, pending production schema activation and remaining fixture investigations are not a full green release certification.",
+    "Client node rerun passed after restoring existing lockfile-matched local dependency symlinks; full component/remaining checks still running at snapshot.",
+    "Native two-connection privacy suites for final4029-4032 implementation await hosted CI.",
+    "4029-4033 are applied only to CI; production activation and matching API deployment remain pending.",
+    "Higgsfield credentials remain deferred by owner.",
+    "iPhone build/install requested, not yet verified.",
+    "All original888 acceptance items remain open; unit evidence does not close physical-device or policy requirements."
+  ]
+}

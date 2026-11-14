@@ -39,11 +39,13 @@ let flagEnabled = true;
 
 function makeClient() {
   function builder(table: string) {
+    let inserted: any[] | null = null;
     const b: any = {
       select() { return b; },
       insert(row: any) {
-        if (table === "media_events") recorded.push(row as RecordedEvent);
-        return Promise.resolve({ data: row, error: null });
+        inserted = (Array.isArray(row) ? row : [row]).map((value, index) => ({ id: `event-${recorded.length}-${index}`, ...value }));
+        if (table === "media_events") recorded.push(...inserted as RecordedEvent[]);
+        return b;
       },
       update() { return b; },
       eq() { return b; },
@@ -53,7 +55,7 @@ function makeClient() {
         }
         return Promise.resolve({ data: null, error: null });
       },
-      then(onF: any, onR: any) { return Promise.resolve({ data: [], error: null }).then(onF, onR); },
+      then(onF: any, onR: any) { return Promise.resolve({ data: inserted ?? [], error: null }).then(onF, onR); },
     };
     return b;
   }
@@ -222,6 +224,13 @@ describe("POST /api/media/analytics/batch — §45 north-star events", () => {
     assert.equal(r.body.accepted, 1, "only the enumerated type may be accepted");
     await waitForRecords(1);
     assert.deepEqual(recorded.map((e) => e.event_type), ["media_place_open"]);
+  });
+
+  it("does not let generic batches bypass bound view admission", async () => {
+    const response = await postBatch(["impression", "qualified_view", "completion", "rewatch"].map(type => ({ type, payload: { media_id: "m-1", watched_ms: 20000 } })));
+    assert.equal(response.body.accepted, 0);
+    assert.equal(response.body.rejected, 4);
+    assert.equal(recorded.length, 0);
   });
 
   it("legacy event types keep working", async () => {

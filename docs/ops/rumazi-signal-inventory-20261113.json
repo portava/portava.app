@@ -31,8 +31,8 @@
         "artifacts/api-server/src/lib/deletionDispositions.ts",
         "docs/ops/owner-decisions-20261004.md"
       ],
-      "observed": "MEDIA_ANALYTICS_ENABLED gates the existing service-only media_events store. Client batches now bind to the initiating observed login session, cancel on flag disable, and validate bounded identifiers/codes before transport and ingestion. Server viewer identity is authoritative. Arrival/contribution are server-only. Picker taps no longer claim committed Trip Add/Plan. Create Plan records its actual Compass handoff. Not-interested reports no longer count useful correction. Compiled experience plans emit media_plan only when all proposed stops receive successful create acknowledgements; partial/failure/review handoffs do not.",
-      "retention": "media_events stores viewer/creator identifiers inside payload JSON. No expiry column, retention worker, or explicit account deletion of these JSON identities was found. This blocks expanding collection. Q11(a) in docs/ops/owner-decisions-20261004.md:231 remains a proposed default pending legal review; D6 in deletionDispositions.ts remains open. No unsupported retention or deletion decision was implemented.",
+      "observed": "MEDIA_ANALYTICS_ENABLED gates the existing service-only media_events store. Client batches now bind to the initiating observed login session, cancel on flag disable, and validate bounded identifiers/codes before transport and ingestion. Server viewer identity is authoritative. Arrival/contribution are server-only. Picker taps no longer claim committed Trip Add/Plan. Create Plan records its actual Compass handoff. Not-interested reports no longer count useful correction. Compiled experience plans emit media_plan only when all proposed stops receive successful create acknowledgements; partial/failure/review handoffs do not. Follow-up: Watch now emits observed-forward-playback callbacks through owner/item/session-bound durable receipts; feed delivery is labeled feed_served. Generic batches await actual inserted IDs and cannot bypass the Watch observation endpoint. No production/client rollout claimed.",
+      "retention": "Code now fences account erasure and removes identified viewer/creator/content references before canonical IDs are destroyed (4031). CI migration and serial service-role fixture passed; native concurrency and production activation remain pending. The proposed 30-day retention is disabled and still requires Q11(a) legal review. Legacy unlinked composer outcomes and D6 governance remain unresolved.",
       "ranking": "MediaRankingSignalLoader.ts reads selected media_events north-star outcomes for utility. Suppressing premature outcomes prevents those taps from inflating utility. No new ranking term is enabled."
     },
     "wall": {
@@ -302,7 +302,7 @@
       "domains": [
         "media"
       ],
-      "observed_and_remaining": "Watch playback state exists; declared completion/rewatch types are not proof of a playback-summary producer.",
+      "observed_and_remaining": "Watch now produces impression, qualified_view, completion and rewatch from eligible foreground forward-playback samples; native callback wiring, served-session binding and durable exact receipts have focused tests. Buffer/seek/preload are excluded. Remaining: legacy 10s completion floor excludes short clips; no full manual-play/pause/seek summary or offline delivery guarantee; current audience read/write race, bounded ranking-population query, deployed/device/performance proof remain open.",
       "complete": false
     },
     {
@@ -421,7 +421,7 @@
     {
       "id": "SIG-016",
       "group": "Saves, trips, and collaboration",
-      "candidate": "Save → revisit → add to itinerary → directions or partner click",
+      "candidate": "Save \u2192 revisit \u2192 add to itinerary \u2192 directions or partner click",
       "proposed_use": "Measure the move from inspiration to planning. Label outbound clicks as handoffs. Confirm a visit or purchase only from a separate qualifying action.",
       "proposed_scope": "Core",
       "classification": "requires instrumentation",
@@ -605,7 +605,7 @@
         "media",
         "dwell"
       ],
-      "observed_and_remaining": "Place-open and recommendation-bound dwell exist; guide and return-to-results coverage is partial.",
+      "observed_and_remaining": "Place-open and recommendation-bound dwell exist. The follow-up binds the initiating account/session, validates save receipts and uses4033 atomic exact retry admission;35 client+70 API+6 PGlite cases pass and CI serial rollback receipt proof passes. Production/API/device rollout, two-connection proof, active-window calibration, guides and return-to-results coverage remain pending.",
       "complete": false
     },
     {
@@ -741,7 +741,7 @@
       "id": "SIG-038",
       "group": "Search, maps, places, and transactions",
       "candidate": "Merchant wishlist, cart, lead form, purchases on unrelated sites",
-      "proposed_use": "Advertising systems can collect these through partner integrations. Rumazi’s initial scope has no dependency on them.",
+      "proposed_use": "Advertising systems can collect these through partner integrations. Rumazi\u2019s initial scope has no dependency on them.",
       "proposed_scope": "Exclude from analytics",
       "classification": "out of scope",
       "coverage": "partial; code audit only, not acceptance-complete",
@@ -886,7 +886,7 @@
       "id": "SIG-048",
       "group": "Creation, communication, and community",
       "candidate": "Message send, delivered, read, typing, reaction, unsend",
-      "proposed_use": "Use metadata where necessary to deliver the user-facing feature. Typing can be ephemeral. Read receipts and presence need the product’s visibility rules. Avoid using private communications for general recommendations.",
+      "proposed_use": "Use metadata where necessary to deliver the user-facing feature. Typing can be ephemeral. Read receipts and presence need the product\u2019s visibility rules. Avoid using private communications for general recommendations.",
       "proposed_scope": "Feature only",
       "classification": "available from a product record",
       "coverage": "partial; code audit only, not acceptance-complete",
@@ -916,7 +916,7 @@
       "id": "SIG-050",
       "group": "Creation, communication, and community",
       "candidate": "Address-book sync, contact matching, inferred social graph",
-      "proposed_use": "Prefer explicit invite links and allow direct invites without importing an address book. Other people’s contact uploads can reveal non-users’ information.",
+      "proposed_use": "Prefer explicit invite links and allow direct invites without importing an address book. Other people\u2019s contact uploads can reveal non-users\u2019 information.",
       "proposed_scope": "Exclude from analytics",
       "classification": "out of scope",
       "coverage": "partial; code audit only, not acceptance-complete",
@@ -1005,7 +1005,7 @@
       "id": "SIG-056",
       "group": "App lifecycle, devices, sensors, and inference",
       "candidate": "Audio mute, headphones, connected audio route, system ringer, Focus mode",
-      "proposed_use": "Use Rumazi’s own audio toggle for preference. A connected headset or silent phone is weak evidence about a person’s intent or surroundings.",
+      "proposed_use": "Use Rumazi\u2019s own audio toggle for preference. A connected headset or silent phone is weak evidence about a person\u2019s intent or surroundings.",
       "proposed_scope": "Exclude from analytics for device-wide states",
       "classification": "out of scope",
       "coverage": "partial; code audit only, not acceptance-complete",
@@ -1121,7 +1121,7 @@
       "id": "SIG-064",
       "group": "App lifecycle, devices, sensors, and inference",
       "candidate": "Predicted interest, destination affinity, travel stage, group fit",
-      "proposed_use": "Prefer explicit saves, categories, and trip actions. Track provenance and expiry. “Saved Lisbon cafes” supports a content preference. It cannot establish current residence, location, or planned travel dates.",
+      "proposed_use": "Prefer explicit saves, categories, and trip actions. Track provenance and expiry. \u201cSaved Lisbon cafes\u201d supports a content preference. It cannot establish current residence, location, or planned travel dates.",
       "proposed_scope": "Later",
       "classification": "available from a product record",
       "coverage": "partial; code audit only, not acceptance-complete",
@@ -1165,12 +1165,15 @@
       "complete": false
     }
   ],
-  "updatedAt": "2026-11-14",
+  "updatedAt": "2026-11-14T07:02:12.499995+00:00",
   "integrationEvidence": [
     "docs/ops/rumazi-draft-recovery-20261113.json",
     "docs/ops/rumazi-input-consent-boundary-20261114.json",
     "docs/ops/rumazi-wall-consent-boundary-20261113.json",
     "docs/ops/rumazi-media-event-privacy-20261114.json",
-    "docs/ops/rumazi-signal-ci-privacy-20261114.json"
+    "docs/ops/rumazi-signal-ci-privacy-20261114.json",
+    "docs/ops/rumazi-media-view-receipts-20261114.json",
+    "docs/ops/rumazi-discovery-dwell-receipts-20261114.json",
+    "docs/ops/rumazi-discovery-ci-receipts-20261114.json"
   ]
 }
