@@ -45,11 +45,15 @@ router.post('/media/analytics/composer-outcomes', asyncHandler(async (req, res) 
                 payload: { version: event.version, surface: event.surface, outcome: event.outcome,
                     ...(event.failure_code ? { failure_code: event.failure_code } : {}) },
             }])).values()];
-    const { error } = await sc.from('media_events').upsert(rows.map(row => ({ id: row.id, event_type: row.event_type, payload: row.payload })), { onConflict: 'id', ignoreDuplicates: true });
-    if (error) {
+    // Admission locks current account state through insertion; the actor is not
+    // retained in the event. Missing migration/unknown receipt stays retryable.
+    const { data, error } = await sc.rpc('admit_composer_outcomes', { p_actor: auth.user.id, p_rows: rows });
+    if (error || typeof data !== 'boolean') {
         res.status(503).json({ error: 'unavailable' });
         return;
     }
-    res.json({ accepted: parsed.data.events.length });
+    // Match the existing collection-disabled acknowledgement: consume queued
+    // IDs on terminal refusal; disabled explicitly means no durable event.
+    res.json(data ? { accepted: parsed.data.events.length } : { accepted: parsed.data.events.length, disabled: true });
 }));
 export default router;

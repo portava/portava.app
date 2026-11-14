@@ -4667,13 +4667,27 @@
         "sha256": "9d2b727a512c3d2ba547fa65cd9779881ab30133b15d8ea2ee4be90277fe28fb",
         "verdictRow": "| G5, G14, G322, G323 | W | All four need an OUTCOME signal to weigh against the acceptance boost. G322 moved N→W this pass because three of its four arms now exist; the fourth is G320 and the calibration step is still absent. |"
       },
-      "auditStatus": "pending",
-      "acceptanceCriteria": [],
-      "implementationEvidence": [],
-      "verificationEvidence": [],
-      "dependencies": [],
-      "externalBlockers": [],
-      "closedAt": null
+      "auditStatus": "in_progress",
+      "acceptanceCriteria": [
+        "Preserve the complete original criterion and await clauses in source.verdictRow; this shared-dependency audit does not replace that criterion.",
+        "Outcome learning requires current explicit disclosure/consent; withdrawal and account transitions must prevent delayed optional learning.",
+        "Deploy and verify required real-session/device behavior; retain calibration or population measurement requirements where the source row calls for them."
+      ],
+      "implementationEvidence": [
+        "docs/ops/rumazi-input-consent-boundary-20261114.json"
+      ],
+      "verificationEvidence": [
+        "docs/ops/rumazi-signal-ci-privacy-20261114.json"
+      ],
+      "dependencies": [
+        "API/client rollout",
+        "Final-byte CI native race gate"
+      ],
+      "externalBlockers": [
+        "Replit deployment origin access was declined; no alternate access attempted."
+      ],
+      "closedAt": null,
+      "auditedAt": "2026-11-14"
     },
     {
       "key": "input-intelligence:G6",
@@ -4705,13 +4719,27 @@
         "sha256": "9d2b727a512c3d2ba547fa65cd9779881ab30133b15d8ea2ee4be90277fe28fb",
         "verdictRow": "| G5, G14, G322, G323 | W | All four need an OUTCOME signal to weigh against the acceptance boost. G322 moved N→W this pass because three of its four arms now exist; the fourth is G320 and the calibration step is still absent. |"
       },
-      "auditStatus": "pending",
-      "acceptanceCriteria": [],
-      "implementationEvidence": [],
-      "verificationEvidence": [],
-      "dependencies": [],
-      "externalBlockers": [],
-      "closedAt": null
+      "auditStatus": "in_progress",
+      "acceptanceCriteria": [
+        "Preserve the complete original criterion and await clauses in source.verdictRow; this shared-dependency audit does not replace that criterion.",
+        "Outcome learning requires current explicit disclosure/consent; withdrawal and account transitions must prevent delayed optional learning.",
+        "Deploy and verify required real-session/device behavior; retain calibration or population measurement requirements where the source row calls for them."
+      ],
+      "implementationEvidence": [
+        "docs/ops/rumazi-input-consent-boundary-20261114.json"
+      ],
+      "verificationEvidence": [
+        "docs/ops/rumazi-signal-ci-privacy-20261114.json"
+      ],
+      "dependencies": [
+        "API/client rollout",
+        "Final-byte CI native race gate"
+      ],
+      "externalBlockers": [
+        "Replit deployment origin access was declined; no alternate access attempted."
+      ],
+      "closedAt": null,
+      "auditedAt": "2026-11-14"
     },
     {
       "key": "input-intelligence:G16",
@@ -5332,13 +5360,27 @@
         "sha256": "9d2b727a512c3d2ba547fa65cd9779881ab30133b15d8ea2ee4be90277fe28fb",
         "verdictRow": "| G320 `downstream_task_completed` | W | **W** | **The Telegraph composer's call is now made.** \"The Telegraph composer's call belongs to another lane and is not made\" is no longer true. A person picked from `telegraph.recipient` in New Telegraph is held for the thread it opened (`travel-buddy-standalone/app/telegraph/new.tsx:74#holdRecipientPick(res.data.threadId, recipientServed(r.userId));`) and reported when that thread's send answers — `message_sent`, the person credited on success only, a refused send reported `ok: false` with the hold kept for the retry, an old hold (30 min) dropped unreported (`travel-buddy-standalone/src/features/telegraph/composer/composerTaskOutcome.ts:74#export function reportThreadSend(`, wired at `travel-buddy-standalone/app/messages/[id].tsx:1753#if (!res?.ok) setSendFailed(true); reportThreadSend(id, !!res?.ok);`). A location sheet the composer's \"meet at\" bar pre-filled reports `telegraph.message` with no credit (`travel-buddy-standalone/app/messages/[id].tsx:2447#if (servedByMeetAt) reportMeetAtSend(res.ok);`). Proven through the real reporter, the real consent gate and a sink spy: `travel-buddy-standalone/src/features/telegraph/__tests__/composerTaskOutcome.component.test.tsx:153#it('N1 picking a person` and `travel-buddy-standalone/src/features/telegraph/__tests__/composerTaskOutcome.component.test.tsx:97#it('O2 a held pick`; nothing without consent (`travel-buddy-standalone/src/features/telegraph/__tests__/composerTaskOutcome.component.test.tsx:119#it('O4 without consent`). **Not reported:** the bar's `share_entity` candidate — its confirmed share runs inside `confirmShareObject`, whose answer the screen does not see, and its mount is source-fenced by meetAtActions.component.test.tsx (input lane). **Still W:** 3780 is not in the production ledger, the disclosure awaits approval and `input_outcome_learning_enabled` is seeded FALSE. |"
       },
-      "auditStatus": "pending",
-      "acceptanceCriteria": [],
-      "implementationEvidence": [],
-      "verificationEvidence": [],
-      "dependencies": [],
-      "externalBlockers": [],
-      "closedAt": null
+      "auditStatus": "in_progress",
+      "acceptanceCriteria": [
+        "Preserve the complete original criterion and await clauses in source.verdictRow; this shared-dependency audit does not replace that criterion.",
+        "Outcome learning requires current explicit disclosure/consent; withdrawal and account transitions must prevent delayed optional learning.",
+        "Deploy and verify required real-session/device behavior; retain calibration or population measurement requirements where the source row calls for them."
+      ],
+      "implementationEvidence": [
+        "docs/ops/rumazi-input-consent-boundary-20261114.json"
+      ],
+      "verificationEvidence": [
+        "docs/ops/rumazi-signal-ci-privacy-20261114.json"
+      ],
+      "dependencies": [
+        "API/client rollout",
+        "Final-byte CI native race gate"
+      ],
+      "externalBlockers": [
+        "Replit deployment origin access was declined; no alternate access attempted."
+      ],
+      "closedAt": null,
+      "auditedAt": "2026-11-14"
     },
     {
       "key": "input-intelligence:G322",
@@ -5351,13 +5393,27 @@
         "sha256": "9d2b727a512c3d2ba547fa65cd9779881ab30133b15d8ea2ee4be90277fe28fb",
         "verdictRow": "| G5, G14, G322, G323 | W | All four need an OUTCOME signal to weigh against the acceptance boost. G322 moved N→W this pass because three of its four arms now exist; the fourth is G320 and the calibration step is still absent. |"
       },
-      "auditStatus": "pending",
-      "acceptanceCriteria": [],
-      "implementationEvidence": [],
-      "verificationEvidence": [],
-      "dependencies": [],
-      "externalBlockers": [],
-      "closedAt": null
+      "auditStatus": "in_progress",
+      "acceptanceCriteria": [
+        "Preserve the complete original criterion and await clauses in source.verdictRow; this shared-dependency audit does not replace that criterion.",
+        "Outcome learning requires current explicit disclosure/consent; withdrawal and account transitions must prevent delayed optional learning.",
+        "Deploy and verify required real-session/device behavior; retain calibration or population measurement requirements where the source row calls for them."
+      ],
+      "implementationEvidence": [
+        "docs/ops/rumazi-input-consent-boundary-20261114.json"
+      ],
+      "verificationEvidence": [
+        "docs/ops/rumazi-signal-ci-privacy-20261114.json"
+      ],
+      "dependencies": [
+        "API/client rollout",
+        "Final-byte CI native race gate"
+      ],
+      "externalBlockers": [
+        "Replit deployment origin access was declined; no alternate access attempted."
+      ],
+      "closedAt": null,
+      "auditedAt": "2026-11-14"
     },
     {
       "key": "input-intelligence:G323",
@@ -5370,13 +5426,27 @@
         "sha256": "9d2b727a512c3d2ba547fa65cd9779881ab30133b15d8ea2ee4be90277fe28fb",
         "verdictRow": "| G5, G14, G322, G323 | W | All four need an OUTCOME signal to weigh against the acceptance boost. G322 moved N→W this pass because three of its four arms now exist; the fourth is G320 and the calibration step is still absent. |"
       },
-      "auditStatus": "pending",
-      "acceptanceCriteria": [],
-      "implementationEvidence": [],
-      "verificationEvidence": [],
-      "dependencies": [],
-      "externalBlockers": [],
-      "closedAt": null
+      "auditStatus": "in_progress",
+      "acceptanceCriteria": [
+        "Preserve the complete original criterion and await clauses in source.verdictRow; this shared-dependency audit does not replace that criterion.",
+        "Outcome learning requires current explicit disclosure/consent; withdrawal and account transitions must prevent delayed optional learning.",
+        "Deploy and verify required real-session/device behavior; retain calibration or population measurement requirements where the source row calls for them."
+      ],
+      "implementationEvidence": [
+        "docs/ops/rumazi-input-consent-boundary-20261114.json"
+      ],
+      "verificationEvidence": [
+        "docs/ops/rumazi-signal-ci-privacy-20261114.json"
+      ],
+      "dependencies": [
+        "API/client rollout",
+        "Final-byte CI native race gate"
+      ],
+      "externalBlockers": [
+        "Replit deployment origin access was declined; no alternate access attempted."
+      ],
+      "closedAt": null,
+      "auditedAt": "2026-11-14"
     },
     {
       "key": "input-intelligence:G327",
@@ -5465,13 +5535,27 @@
         "sha256": "9d2b727a512c3d2ba547fa65cd9779881ab30133b15d8ea2ee4be90277fe28fb",
         "verdictRow": "| G355 Telemetry — no prohibited raw private-text capture; action/result linkage works | W | **W** | The linkage half now has an assertion against stored rows, on CI only. The impression and the selection that followed it carry the same serve `request_id` in the table (`artifacts/api-server/src/test/db/inputAssistanceTelemetryLive.db.test.ts:139#it(\"TL-2 — the selection that followed shares the serve's request id: the §44 join holds in the stored rows\"`). It has not run here (see G306). `action_completed` has its caller (G319), and `downstream_task_completed` now has three (G320). **Still `W`:** no production row exists to join. |"
       },
-      "auditStatus": "pending",
-      "acceptanceCriteria": [],
-      "implementationEvidence": [],
-      "verificationEvidence": [],
-      "dependencies": [],
-      "externalBlockers": [],
-      "closedAt": null
+      "auditStatus": "in_progress",
+      "acceptanceCriteria": [
+        "Preserve the complete original criterion and await clauses in source.verdictRow; this shared-dependency audit does not replace that criterion.",
+        "Outcome learning requires current explicit disclosure/consent; withdrawal and account transitions must prevent delayed optional learning.",
+        "Deploy and verify required real-session/device behavior; retain calibration or population measurement requirements where the source row calls for them."
+      ],
+      "implementationEvidence": [
+        "docs/ops/rumazi-input-consent-boundary-20261114.json"
+      ],
+      "verificationEvidence": [
+        "docs/ops/rumazi-signal-ci-privacy-20261114.json"
+      ],
+      "dependencies": [
+        "API/client rollout",
+        "Final-byte CI native race gate"
+      ],
+      "externalBlockers": [
+        "Replit deployment origin access was declined; no alternate access attempted."
+      ],
+      "closedAt": null,
+      "auditedAt": "2026-11-14"
     },
     {
       "key": "input-intelligence:G361",
@@ -5598,13 +5682,27 @@
         "sha256": "9d2b727a512c3d2ba547fa65cd9779881ab30133b15d8ea2ee4be90277fe28fb",
         "verdictRow": "| G370 | N | **W** | Computed; awaits a number. Successful downstream tasks over reported ones (`artifacts/api-server/src/lib/inputAssistance/metrics.ts:402#downstreamTaskCompletionRate: rate(tasksSucceeded, tasksReported)`), only a literal bool counting either way (`artifacts/api-server/src/test/inputAssistanceMetrics.test.ts:458#is successful tasks over reported tasks, summed over the aggregate's cells` *(repointed 2026-10-05: the per-row test was replaced when verifier fix 5 moved the source to the 3783 aggregate, §38)*). Its population is consenting users only, and the module says so; reporting it as an all-users rate would be wrong. |"
       },
-      "auditStatus": "pending",
-      "acceptanceCriteria": [],
-      "implementationEvidence": [],
-      "verificationEvidence": [],
-      "dependencies": [],
-      "externalBlockers": [],
-      "closedAt": null
+      "auditStatus": "in_progress",
+      "acceptanceCriteria": [
+        "Preserve the complete original criterion and await clauses in source.verdictRow; this shared-dependency audit does not replace that criterion.",
+        "Outcome learning requires current explicit disclosure/consent; withdrawal and account transitions must prevent delayed optional learning.",
+        "Deploy and verify required real-session/device behavior; retain calibration or population measurement requirements where the source row calls for them."
+      ],
+      "implementationEvidence": [
+        "docs/ops/rumazi-input-consent-boundary-20261114.json"
+      ],
+      "verificationEvidence": [
+        "docs/ops/rumazi-signal-ci-privacy-20261114.json"
+      ],
+      "dependencies": [
+        "API/client rollout",
+        "Final-byte CI native race gate"
+      ],
+      "externalBlockers": [
+        "Replit deployment origin access was declined; no alternate access attempted."
+      ],
+      "closedAt": null,
+      "auditedAt": "2026-11-14"
     },
     {
       "key": "input-intelligence:G371",

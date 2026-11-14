@@ -70,12 +70,7 @@ import { useCryptoInit } from '../src/hooks/useCryptoInit';
 import { supabase } from '../src/lib/supabase';
 import { recoveryLinkAction } from '../src/lib/recoveryLink';
 import { freshToken } from '../src/services/apiToken';
-import { getIntelConsent, hasValidConsent } from '../src/services/intelConsent';
-import {
-  setWallAnalyticsSink,
-  setRealWorldOutcomeConsent,
-} from '../src/features/wall/services/wallAnalytics';
-import { createWallAnalyticsTransport } from '../src/features/wall/services/wallAnalyticsTransport';
+import { installWallAnalytics } from '../src/features/wall/services/installWallAnalytics';
 import { installPassportTelemetry } from '../src/features/passport/installPassportTelemetry';
 import { installInputTelemetry } from '../src/platform/input-assistance/services/installInputTelemetry';
 import { installInputPolicySync } from '../src/platform/input-assistance/services/installInputPolicySync';
@@ -122,13 +117,8 @@ function CryptoSetup() {
  */
 function WallAnalyticsSetup() {
   useEffect(() => {
-    setWallAnalyticsSink(
-      createWallAnalyticsTransport({
-        baseUrl: process.env.EXPO_PUBLIC_API_BASE_URL ?? '',
-        getToken: freshToken,
-      }),
-    );
-    void getIntelConsent().then((state) => setRealWorldOutcomeConsent(hasValidConsent(state)));
+    const analytics = installWallAnalytics();
+    return () => analytics.dispose();
   }, []);
   return null;
 }

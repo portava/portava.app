@@ -387,7 +387,7 @@ function bridgeClient(opts: { rows?: Record<string, any[]>; tokens?: Record<stri
       }
       if (fn === CONSENTED_CONTRIBUTORS_RPC) return { data: [], error: null };
       if (fn === CONTRIBUTOR_TOKENS_FOR_ACTOR_RPC) return { data: opts.tokens?.[String(args.p_actor_id)] ?? [], error: null };
-      return { data: null, error: null };
+      return { data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null };
     },
     storage: {
       from: (bucket: string) => ({

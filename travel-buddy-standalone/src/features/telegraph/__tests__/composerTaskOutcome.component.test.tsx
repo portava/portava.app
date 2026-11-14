@@ -69,7 +69,7 @@ const outcomes = () => events.filter((e) => e.name === 'downstream_task_complete
 
 function consent(granted: boolean) {
   beginOutcomeAccount('user-1');
-  if (granted) applyOutcomeConsent('user-1', true);
+  if (granted) applyOutcomeConsent('user-1', true, '2026-10-05T00:00:00.000Z');
 }
 
 beforeEach(() => {
@@ -101,7 +101,7 @@ describe('G320 — the composer\'s outcome rules', () => {
     expect(outcomes()).toHaveLength(1);
     expect(outcomes()[0]).toMatchObject({ fieldId: 'telegraph.recipient', context: 'telegraph_recipient' });
     expect(JSON.stringify(outcomes()[0])).toContain('message_sent');
-    expect(posts).toEqual([{ context: 'telegraph_recipient', fieldId: 'telegraph.recipient', task: 'message_sent', ok: true, entities: [{ entityType: 'user', entityId: 'u-ana' }] }]);
+    expect(posts).toEqual([{ outcomeConsentedAt: '2026-10-05T00:00:00.000Z', context: 'telegraph_recipient', fieldId: 'telegraph.recipient', task: 'message_sent', ok: true, entities: [{ entityType: 'user', entityId: 'u-ana' }] }]);
     expect(reportThreadSend(THREAD, true, 3_000)).toBe(0); // the hold ended with the task
     expect(outcomes()).toHaveLength(1);
   });
@@ -159,7 +159,7 @@ describe('G320 — the real New Telegraph screen', () => {
     expect(mockOpenDirect).toHaveBeenCalledWith('u-ana');
     expect(mockReplace).toHaveBeenCalled();
     expect(reportThreadSend(THREAD, true)).toBe(1);
-    expect(posts).toEqual([{ context: 'telegraph_recipient', fieldId: 'telegraph.recipient', task: 'message_sent', ok: true, entities: [{ entityType: 'user', entityId: 'u-ana' }] }]);
+    expect(posts).toEqual([{ outcomeConsentedAt: '2026-10-05T00:00:00.000Z', context: 'telegraph_recipient', fieldId: 'telegraph.recipient', task: 'message_sent', ok: true, entities: [{ entityType: 'user', entityId: 'u-ana' }] }]);
   });
 
   it('N2 a pick that could not open a thread holds nothing', async () => {

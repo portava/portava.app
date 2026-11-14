@@ -131,7 +131,7 @@
 >
 > **L163's evidence was false.** It said `layover_events` and `layover_sessions`
 > are "at least covered by the erasure cascade (`lib/deletionDispositions.ts:582-583`)".
-> Those lines are inside **`UNCLASSIFIED_BACKLOG`** (`artifacts/api-server/src/lib/deletionDispositions.ts:507#export const UNCLASSIFIED_BACKLOG`,
+> Those lines are inside **`UNCLASSIFIED_BACKLOG`** (`artifacts/api-server/src/lib/deletionDispositions.ts:508#export const UNCLASSIFIED_BACKLOG`,
 > entries at `:378-379`), whose own header says "the data survives deletion and no
 > one has said whether it should" (`:35-38`). `layover_plan_stops` and
 > `layover_recommendations` are in `DENOMINATOR_CORRECTION_BACKLOG` (`:552`,
@@ -1402,7 +1402,7 @@ the end of this section.
 | L240 | N | W | A deterministic replay test exists (`test/layoverFeasibilityRecord.test.ts`) but over synthesised inputs. No session is recorded, so there is nothing to replay *from* (2700 unapplied). |
 | L262 | W | **C** | Both halves now exist. The ladder is explicit and a **failed read is now distinguished from a missing row and refuses** rather than silently substituting generic buffers (`routes/airport.ts:147-172` — `error` is bound, logged, and returns `ok:false`). Confidence is reduced on the fallback: a fallback profile is `STATIC_DEFAULT` at fallback level 3, a real row is `AIRPORT_PROFILE` at level 2, and an unverified airport is `LOW` (`LayoverFeasibility.ts:414-421`) — which, at 0 verified production airports, is every session. |
 | L293 | N | W | The three substitutions are all still there — `estimateTravelTime` 15/25 (`LayoverRecommendationService.ts:212-216`), `estimateActivityTime` 30/60/90, and the fictitious `travelTimeMin: 20 / activityTimeMin: 30` probe on `GET /:id/safety` (`routes/airport.ts:804-809`). What changed is that they no longer *pretend*: the probe is a named input of the certified record and covered by its `inputHash`, and its provenance is published (`travelTimeSource`, `routes/airport.ts:1120#travelTimeSource: "unmeasured" as TravelTimeSource,` — was line 807, which is now a bare `}`; note the published value is `"unmeasured"`, not `"category_default"`) and classified `STATIC_DEFAULT` / `LOW` / fallback level 3 (`LayoverFeasibility.ts:399-412`). Substitution disclosed, not removed. |
-| L163 | W | W | **Evidence corrected, verdict unchanged.** `layover_events` and `layover_sessions` are in `UNCLASSIFIED_BACKLOG` (`lib/deletionDispositions.ts:305#layover_events`), not the erasure cascade; `layover_plan_stops` and `layover_recommendations` were then in `DENOMINATOR_CORRECTION_BACKLOG` (both moved into the session cascade by §55.7); `airport_profiles` is in `UNCLASSIFIED_BACKLOG` (`:507`). `AccountDeletionService.ts` names no layover table. No layover row is erased by account deletion. |
+| L163 | W | W | **Evidence corrected, verdict unchanged.** `layover_events` and `layover_sessions` are in `UNCLASSIFIED_BACKLOG` (`lib/deletionDispositions.ts:306#layover_events`), not the erasure cascade; `layover_plan_stops` and `layover_recommendations` were then in `DENOMINATOR_CORRECTION_BACKLOG` (both moved into the session cascade by §55.7); `airport_profiles` is in `UNCLASSIFIED_BACKLOG` (`artifacts/api-server/src/lib/deletionDispositions.ts:519#"airport_profiles",`). `AccountDeletionService.ts` names no layover table. No layover row is erased by account deletion. |
 
 ### Rows I looked at and deliberately did NOT move
 
@@ -9353,12 +9353,12 @@ Tests:
 
 **L163, built under the lead's ruling adopting OD-MAP-4** (`docs/ops/owner-decisions-20261004.md`, OD-MAP-4: a pseudonymised, access-restricted audit record kept for up to 12 months, then deleted).
 
-Account deletion now runs a FATAL layover block (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1390#const layoverEventsOk = await step(steps, "pseudonymise_layover_events"`). It does three things, in this order:
+Account deletion now runs a FATAL layover block (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1397#const layoverEventsOk = await step(steps, "pseudonymise_layover_events"`). It does three things, in this order:
 1. **Pseudonymises the events.** Each loses its user and session, gets one random pseudonym for this deletion, has its metadata emptied, and gets a `retain_until` 365 days out.
 2. **Deletes the traveller's crew memberships.**
-3. **Deletes the sessions** (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1412#const layoverSessionsOk`). Every other layover table goes with them through the session cascade.
+3. **Deletes the sessions** (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1419#const layoverSessionsOk`). Every other layover table goes with them through the session cascade.
 
-Migration 3621 makes that representable: a nullable user and session, the session FK set to SET NULL, and the `layover_events_identity_or_pseudonym` CHECK (`artifacts/api-server/src/migrations/3621_layover_erasure_audit_pseudonym.sql:87#layover_events_identity_or_pseudonym CHECK`). That CHECK refuses a pseudonym next to a user id, and any retention past 12 months. `artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:302#export function runLayoverAuditRetentionSweep(` deletes each row at `retain_until`. The dispositions manifest records `layover_events` as RETAINED_WITH_REASON (`artifacts/api-server/src/lib/deletionDispositions.ts:305#table: "layover_events",`) and the rest as erased.
+Migration 3621 makes that representable: a nullable user and session, the session FK set to SET NULL, and the `layover_events_identity_or_pseudonym` CHECK (`artifacts/api-server/src/migrations/3621_layover_erasure_audit_pseudonym.sql:87#layover_events_identity_or_pseudonym CHECK`). That CHECK refuses a pseudonym next to a user id, and any retention past 12 months. `artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:302#export function runLayoverAuditRetentionSweep(` deletes each row at `retain_until`. The dispositions manifest records `layover_events` as RETAINED_WITH_REASON (`artifacts/api-server/src/lib/deletionDispositions.ts:306#table: "layover_events",`) and the rest as erased.
 
 Tests:
 - `artifacts/api-server/src/test/accountDeletionLayover.test.ts:93#pseudonymises the events, then deletes the crew memberships, then the sessions` and `artifacts/api-server/src/test/accountDeletionLayover.test.ts:134#a FAILED pseudonymisation deletes no session`, eight cases;

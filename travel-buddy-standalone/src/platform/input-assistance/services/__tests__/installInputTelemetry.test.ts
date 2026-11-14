@@ -348,7 +348,7 @@ test('OD-INPUT-1: the installed sink drops downstream_task_completed unless this
     emitOne('suggestion_selected');
     assert.equal(handle.batcher.pending(), 1, 'without consent only the ordinary event was buffered');
 
-    applyOutcomeConsent('u1', true);
+    applyOutcomeConsent('u1', true, '2026-10-05T00:00:00.000Z');
     emitOne('downstream_task_completed');
     assert.equal(handle.batcher.pending(), 2, 'with consent the outcome event is buffered too');
 

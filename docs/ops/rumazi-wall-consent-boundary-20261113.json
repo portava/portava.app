@@ -1,0 +1,159 @@
+{
+  "schemaVersion": 1,
+  "auditedAt": "2026-11-13T23:53:00.962089+00:00",
+  "status": "local_code_verified_not_activated",
+  "scope": "Wall real-world outcome consent and account boundary; no whole-system grade change",
+  "behavior": [
+    "Wall events capture owner/session before token work; owned API rechecks identity and a bounded lifetime after awaits. Withdrawal, logout, account change, background, and disposal invalidate pending transport work.",
+    "Outcome permission starts closed and is refreshed by lifecycle/consent/auth events, without application polling. A stale consent response cannot grant another session permission.",
+    "A durable account-local withdrawal hold is written before network work and remains after offline failure/restart. Only a successful current explicit grant clears it. Storage failure still attempts server withdrawal; memory stays closed.",
+    "Settings immediately shows local withdrawal, disables duplicate writes, exposes explicit withdrawal retry, and rejects prior-account read/write results.",
+    "4030 takes FOR SHARE on the authoritative consent row inside outcome insertion; existing consent UPDATE/upsert conflicts with that lock. Exact grant timestamp rejects old-grant delayed events after regrant.",
+    "The service-only RPC forces the authenticated actor and returns admitted count; absent, stale, withdrawn, unreadable and legacy missing-provenance outcomes are refused. Direct INSERT is guarded as well.",
+    "Ordinary Wall product telemetry keeps existing policy. Existing 30-day expiry and account-deletion cascade remain; this migration does not invent historical erasure policy."
+  ],
+  "verification": [
+    {
+      "kind": "client regression",
+      "result": "34/34 passed in 7 suites; final Settings rerun adds one passing account-switch case (35 distinct client tests across the runs)",
+      "log": "/private/tmp/rumazi-wall-client-tests.log",
+      "logSha256": "fc396d7a708c03dabddd276f12186a8131650a7033d1830310842ffde1997290"
+    },
+    {
+      "kind": "final Settings regression",
+      "result": "6/6 passed, including failed-withdrawal retry and old-account grant response",
+      "log": "/private/tmp/rumazi-wall-settings-final.log",
+      "logSha256": "a6e4b91a1cd4970b8718882d949461baafe5dbc7237f0846675aa4637d8d2600"
+    },
+    {
+      "kind": "API route and actual SQL migrations in PGlite",
+      "result": "23/23 passed",
+      "log": "/private/tmp/rumazi-wall-api-tests.log",
+      "logSha256": "56aaded26fbc7535d6b913786ec6fe5061fc9a7dd481338ebb3e5a75fe48c65a"
+    },
+    {
+      "kind": "real PostgreSQL 17 two-connection races",
+      "result": "3/3 passed; distinct PIDs and pg_blocking_pids prove blocking in both admission/withdrawal orders and regrant order",
+      "log": "/private/tmp/rumazi-wall-postgres-tests.log",
+      "command": "WALL_OUTCOME_POSTGRES_BIN=/opt/homebrew/opt/postgresql@17/bin node --import tsx --test src/test/wallOutcomeConsent.postgres.test.ts",
+      "environment": "fresh socket-only minimal fixture with actual 2172/2308/3702/4030 SQL; no hosted database touched; cluster stopped/removed",
+      "logSha256": "66bf8660b28589cc49becaf0bdc4384abf1a4d30be6014f9cb99b9484e285477"
+    },
+    {
+      "kind": "API typecheck",
+      "result": "passed",
+      "log": "/private/tmp/rumazi-wall-api-tsc.log",
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "kind": "client typecheck",
+      "result": "passed",
+      "log": "/private/tmp/rumazi-wall-client-tsc.log",
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "kind": "client mock guard",
+      "result": "passed",
+      "log": "/private/tmp/rumazi-wall-client-mocks.log",
+      "logSha256": "797288bff58b420e846a492ec76a317f2064a4668c099f03d0be2c91da8f33eb"
+    }
+  ],
+  "activation": {
+    "migrationAppliedToCI": false,
+    "migrationAppliedToProduction": false,
+    "apiDeployed": false,
+    "clientDeployed": false,
+    "iphoneBuildRun": false
+  },
+  "limitations": [
+    "4030 and this API/client patch are not activated. Parent owns full-chain CI/catalog validation and rollout; Replit origin access was declined and no workaround was used.",
+    "Native physical-device background/resume, network abort and storage-failure behavior remain unverified; native Jest is controlled lifecycle evidence, not device proof.",
+    "Another device withdrawing while this device stays foreground is enforced by the database admission boundary. This patch does not add a Realtime consent publication; local cached permission refreshes on existing auth/foreground/local consent events.",
+    "If device persistence and network withdrawal both fail, the in-memory hold remains until restart but durable restart protection cannot be guaranteed. The UI exposes retry; no successful remote withdrawal is claimed.",
+    "No change to outcome canonical-success attribution, exposure denominators, playback summaries, or other systems; those independent audit findings remain open.",
+    "Native PostgreSQL tests prove source migration behavior on a minimal schema, not every production trigger interaction. Full-chain CI remains necessary before activation."
+  ],
+  "files": [
+    {
+      "path": "artifacts/api-server/src/migrations/4030_wall_outcome_consent_boundary.sql",
+      "sha256": "24dc10dafcb271b472a0e9902763dbad55a178b27f9cff39baf6149c4b8cdc5f"
+    },
+    {
+      "path": "artifacts/api-server/src/routes/wallTelemetry.ts",
+      "sha256": "8922137dfcb3dfa15757f2ae0800bb4116dc59393a7cae46d1965279c7b6d0c0"
+    },
+    {
+      "path": "artifacts/api-server/src/test/wallTelemetryRoute.test.ts",
+      "sha256": "f37c1a9fb843887b336449d4cbd3fb9e5f59e8b55a5ebb8cd3b1f6f20bf7077c"
+    },
+    {
+      "path": "artifacts/api-server/src/test/wallOutcomeConsent.pglite.test.ts",
+      "sha256": "c1dfdde3d919382dd1b9a23f2fae7f286b317d7ce90c50b5d9cc255f7b028b3c"
+    },
+    {
+      "path": "artifacts/api-server/src/test/wallOutcomeConsent.postgres.test.ts",
+      "sha256": "04311a32cce38b33443870bbee84f109b1d20628ecf45b4757bdbe2f521aa957"
+    },
+    {
+      "path": "travel-buddy-standalone/app/_layout.tsx",
+      "sha256": "652e7424a0263b82d85650d5495e845288fbd0881a45cb33bf3e7bdc1d3ff097"
+    },
+    {
+      "path": "travel-buddy-standalone/app/settings/intel-prompts.tsx",
+      "sha256": "00382181e89abfa4f50c0710c0be5a73e5c084d4e2e31aef9e999ed031505e84"
+    },
+    {
+      "path": "travel-buddy-standalone/app/settings/__tests__/intelPrompts.consentHonesty.component.test.tsx",
+      "sha256": "506576d3e22a4f794731fa9dc32cf14661abd5728d2b19167479a1c20c748a1a"
+    },
+    {
+      "path": "travel-buddy-standalone/src/features/wall/services/wallAnalytics.ts",
+      "sha256": "a113f68f34d02aa10659c4804b7a5ab552226e0d7a102f11cf4c9676ab2aec75"
+    },
+    {
+      "path": "travel-buddy-standalone/src/features/wall/services/wallAnalyticsTransport.ts",
+      "sha256": "18cdb6aa6d6c855af80d98e082ef3d526723d44f37f83d4ba6fba1450ef5ed09"
+    },
+    {
+      "path": "travel-buddy-standalone/src/features/wall/services/installWallAnalytics.ts",
+      "sha256": "1aad304cc2a7df59ae0dc70a7b455e044c1b496c6c74c0ac5d7b6fce3336e544"
+    },
+    {
+      "path": "travel-buddy-standalone/src/features/wall/services/__tests__/wallAnalyticsTransport.component.test.ts",
+      "sha256": "82d3fa4ea80da0f078950ce9481e1b631f7232c16481c9c7d54d4e844d318bca"
+    },
+    {
+      "path": "travel-buddy-standalone/src/features/wall/services/__tests__/installWallAnalytics.component.test.ts",
+      "sha256": "f184646215b08355f32bfcca83dad4c14d4f600f9f647fcf269d4598b9c063c8"
+    },
+    {
+      "path": "travel-buddy-standalone/src/services/intelConsent.ts",
+      "sha256": "1513c350559f48dbf516c8ce703c460bbf5dee8a35a852087902a67020cbefed"
+    },
+    {
+      "path": "travel-buddy-standalone/src/services/intelConsentLifecycle.ts",
+      "sha256": "9133d222bcdcd207a170924574a534e94b3eb752da82f10f48a64f200853ce40"
+    },
+    {
+      "path": "travel-buddy-standalone/src/services/__tests__/intelConsent.read.component.test.ts",
+      "sha256": "9561671160de73dc18c2147e8e0ae2177e54b179decf9c3d54079fc2e81f04f7"
+    },
+    {
+      "path": "travel-buddy-standalone/src/services/__tests__/intelConsent.write.component.test.ts",
+      "sha256": "6c5ab8277f5f293b49c9d8b47e91436f9e3c9289fbcacaf382d1dc289e2e5a5e"
+    },
+    {
+      "path": "travel-buddy-standalone/src/services/__tests__/intelConsentLifecycle.component.test.ts",
+      "sha256": "5858aa2a85206d90bcacbde3844c592dc89d626022f4d634df69fc7efa0470a0"
+    }
+  ],
+  "rootIntegration": {
+    "updatedAt": "2026-11-14",
+    "migrationAppliedToCI": true,
+    "migrationAppliedToProduction": false,
+    "evidence": "docs/ops/rumazi-signal-ci-privacy-20261114.json",
+    "nativeCIGate": "Required exact native suite/count; cannot skip or mask failure",
+    "deletionAndSchedulerIntegration": "Generated graph updated and retention registration reconciled;132 integration tests passed",
+    "codeActivation": "Pending PR and deployment. No iPhone build."
+  }
+}

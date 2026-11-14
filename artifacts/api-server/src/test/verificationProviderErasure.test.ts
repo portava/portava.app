@@ -175,7 +175,7 @@ function cascadeClient(rows: Record<string, any[]>) {
   return {
     _ops: ops,
     from: (t: string) => builder(t),
-    rpc: async () => ({ data: null, error: null }),
+    rpc: async (fn: string) => ({ data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null }),
     storage: { from: () => ({ remove: async (p: string[]) => ({ data: p.map((n) => ({ name: n })), error: null }) }) },
     auth: { admin: { deleteUser: async () => ({ data: {}, error: null }) } },
   } as any;

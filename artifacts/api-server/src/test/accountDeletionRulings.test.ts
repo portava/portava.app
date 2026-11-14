@@ -90,7 +90,7 @@ function fakeClient(fx: Fixture) {
         upsert: async () => ({ data: null, error: null }),
       };
     },
-    rpc: async (fn: string, args: any) => { rpcCalls.push({ fn, args }); return { data: null, error: null }; },
+    rpc: async (fn: string, args: any) => { rpcCalls.push({ fn, args }); return { data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null }; },
     storage: { from: () => ({ remove: async () => ({ data: null, error: null }) }) },
     auth: { admin: { deleteUser: async () => ({ data: null, error: null }) } },
   };
@@ -165,7 +165,7 @@ describe("ruling 3 — a completed receipt stops naming a person", () => {
     assert.equal(receipt.values.policy_version, DELETION_POLICY_VERSION);
     assert.equal(receipt.values.worker_version, DELETION_WORKER_VERSION);
     assert.deepEqual(receipt.values.tombstoned_counts, { posts: 1 });
-    assert.deepEqual(receipt.values.deleted_counts, { posts: 0 });
+    assert.deepEqual(receipt.values.deleted_counts, { media_events: 0, posts: 0 });
 
     // The WHERE still targets the user — it is evaluated before the SET. Doing
     // this in two statements would leave a window in which a completed receipt

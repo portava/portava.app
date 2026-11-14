@@ -262,7 +262,7 @@ of what the user typed (`2271_wall_session_intents.sql:40-42`,
 Fix: an explicit, audited, user-scoped delete step `delete_wall_session_intent`
 (`services/accountDeletion/AccountDeletionService.ts:1045`), classified in
 `lib/deletionDispositions.ts:151,659`. Test:
-`test/accountDeletionCascade.test.ts:427`. (The same PR fixed two Passport tables
+`artifacts/api-server/src/test/accountDeletionCascade.test.ts:471#["wall_session_intents", "delete_wall_session_intent"],`. (The same PR fixed two Passport tables
 the same way; out of scope here.)
 
 ### 5.4 `#343` (D12) — `useWallFeed` in-flight guard released by a stale request — FIXED (client)

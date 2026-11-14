@@ -212,6 +212,8 @@ const RAW_TEXT_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 export interface RawTelemetryEvent {
+  /** Checked for admission only; excluded from the rebuilt row and props. */
+  outcomeConsentedAt?: unknown;
   name?: unknown;
   context?: unknown;
   fieldId?: unknown;

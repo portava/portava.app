@@ -64,7 +64,7 @@ it('read failure keeps the saved copy and reports a local recovery error', async
     expect(stored.get(composerDraftKey('a', 'comment:post-a'))).toBe('unreadable');
 });
 it('leave is one structured callback per nonempty visit and has no input arguments', async () => {
-    const h = await renderHook(({ active }) => useDraftFixture('a', 'comment:post-a', active), { initialProps: { active: true } });
+    const h = await renderHook<ReturnType<typeof useDraftFixture>, { active: boolean }>(({ active }) => useDraftFixture('a', 'comment:post-a', active), { initialProps: { active: true } });
     await act(async () => h.result.current.setValue({ ...empty, text: 'private' }));
     await h.rerender({ active: false });
     await h.unmount();

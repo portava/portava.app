@@ -1,0 +1,235 @@
+{
+  "schemaVersion": 1,
+  "verifiedDate": "2026-11-14",
+  "baseCommit": "3df417cbf",
+  "scope": "Final migration bytes checked against the hosted CI schema using service_role. Single-connection behavior/access assertions; not a substitute for the required separate-backend race gates. No production or client rollout is claimed.",
+  "migrations": [
+    {
+      "migration": "4029_input_outcome_consent_fence.sql",
+      "sha256": "c913a363d1fd4f6bd5a926ea4a40884da823683aeada3167605150676a715765",
+      "project": "portava-ci",
+      "projectRef": "hwokxgbmezheskbzskfr",
+      "application": "applied",
+      "productionApplication": "not_applied",
+      "assertions": [
+        {
+          "result": "4029 final migration service-role assertions passed; all fixtures and flag changes rolled back",
+          "verified_at": "2026-11-14 05:35:41.372521+00"
+        }
+      ],
+      "verificationSql": "BEGIN;\nSET LOCAL statement_timeout='10s';\nDO $verify$\nDECLARE actor uuid := gen_random_uuid(); grant_at timestamptz := clock_timestamp();\nBEGIN\n  INSERT INTO auth.users(id) VALUES(actor);\n  UPDATE public.feature_flags SET enabled=true WHERE flag='input_outcome_learning_enabled';\n  INSERT INTO public.input_outcome_consent(user_id,enabled,consent_version,consented_at)\n    VALUES(actor,true,'input_outcome_learning_v1',grant_at);\n  SET LOCAL ROLE service_role;\n  IF public.input_record_outcome(actor,'city_picker','city','ci-synthetic',grant_at) IS DISTINCT FROM true\n     OR public.input_record_task_outcome(actor,grant_at,'city_picker','trip_created',true) IS DISTINCT FROM true THEN\n    RAISE EXCEPTION 'current service grant was not admitted';\n  END IF;\n  IF public.input_record_outcome(actor,'city_picker','city','ci-synthetic') IS DISTINCT FROM false\n     OR public.input_record_task_outcome('city_picker','trip_created',true) IS DISTINCT FROM false THEN\n    RAISE EXCEPTION 'legacy writer remained active';\n  END IF;\n  UPDATE public.input_outcome_consent SET enabled=false,withdrawn_at=now() WHERE user_id=actor;\n  DELETE FROM public.input_outcome_counters WHERE user_id=actor;\n  IF public.input_record_outcome(actor,'city_picker','city','ci-synthetic',grant_at) IS DISTINCT FROM false\n     OR public.input_record_task_outcome(actor,grant_at,'city_picker','trip_created',true) IS DISTINCT FROM false THEN\n    RAISE EXCEPTION 'withdrawn grant was admitted';\n  END IF;\n  UPDATE public.input_outcome_consent SET enabled=true,withdrawn_at=null,consented_at=grant_at+interval '1 second' WHERE user_id=actor;\n  IF public.input_record_outcome(actor,'city_picker','city','ci-synthetic',grant_at) IS DISTINCT FROM false\n     OR public.input_record_task_outcome(actor,grant_at,'city_picker','trip_created',true) IS DISTINCT FROM false THEN\n    RAISE EXCEPTION 'previous grant was admitted';\n  END IF;\n  IF EXISTS(SELECT 1 FROM public.input_outcome_counters WHERE user_id=actor) THEN\n    RAISE EXCEPTION 'erased counters reappeared';\n  END IF;\n  IF public.input_record_outcome(actor,'city_picker','city','ci-synthetic',grant_at+interval '1 second') IS DISTINCT FROM true\n     OR public.input_record_task_outcome(actor,grant_at+interval '1 second','city_picker','trip_created',true) IS DISTINCT FROM true THEN\n    RAISE EXCEPTION 'new current grant was not admitted';\n  END IF;\n  UPDATE public.feature_flags SET enabled=false WHERE flag='input_outcome_learning_enabled';\n  IF public.input_record_outcome(actor,'city_picker','city','ci-synthetic',grant_at+interval '1 second') IS DISTINCT FROM false\n     OR public.input_record_task_outcome(actor,grant_at+interval '1 second','city_picker','trip_created',true) IS DISTINCT FROM false THEN\n    RAISE EXCEPTION 'disabled feature admitted a write';\n  END IF;\n  RESET ROLE;\nEND $verify$;\nROLLBACK;\nSELECT '4029 final migration service-role assertions passed; all fixtures and flag changes rolled back' AS result, now() AS verified_at;"
+    },
+    {
+      "migration": "4030_wall_outcome_consent_boundary.sql",
+      "sha256": "24dc10dafcb271b472a0e9902763dbad55a178b27f9cff39baf6149c4b8cdc5f",
+      "project": "portava-ci",
+      "projectRef": "hwokxgbmezheskbzskfr",
+      "application": "applied",
+      "productionApplication": "not_applied",
+      "assertions": [
+        {
+          "result": "4030 final migration service-role grant/refusal and ordinary-event assertions passed; fixture rolled back",
+          "verified_at": "2026-11-14 05:36:49.315254+00"
+        }
+      ],
+      "verificationSql": "BEGIN;\nSET LOCAL statement_timeout='10s';\nDO $verify$\nDECLARE actor uuid:=gen_random_uuid(); grant_at timestamptz:=clock_timestamp();\n rows jsonb:='[{\"schema_version\":\"1.0\",\"payload\":{\"objectId\":\"ci-synthetic\",\"objectType\":\"place\",\"outcome\":\"see_place\"}}]';\nBEGIN\n INSERT INTO auth.users(id) VALUES(actor);\n INSERT INTO public.profiles(id,handle,name) VALUES(actor,'ciw_'||replace(actor::text,'-',''),'CI signal verification');\n INSERT INTO public.intel_contribution_consent(user_id,enabled,consent_version,consented_at)\n VALUES(actor,true,'intel_contributions_v1',grant_at);\n SET LOCAL ROLE service_role;\n IF public.insert_wall_telemetry_outcomes(actor,rows,NULL)<>0 THEN RAISE EXCEPTION 'missing grant admitted'; END IF;\n IF public.insert_wall_telemetry_outcomes(actor,rows,grant_at)<>1 THEN RAISE EXCEPTION 'current grant refused'; END IF;\n UPDATE public.intel_contribution_consent SET enabled=false,withdrawn_at=now() WHERE user_id=actor;\n IF public.insert_wall_telemetry_outcomes(actor,rows,grant_at)<>0 THEN RAISE EXCEPTION 'withdrawal admitted'; END IF;\n UPDATE public.intel_contribution_consent SET enabled=true,withdrawn_at=null,consented_at=grant_at+interval '1 second' WHERE user_id=actor;\n IF public.insert_wall_telemetry_outcomes(actor,rows,grant_at)<>0 THEN RAISE EXCEPTION 'stale grant admitted'; END IF;\n IF public.insert_wall_telemetry_outcomes(actor,rows,grant_at+interval '1 second')<>1 THEN RAISE EXCEPTION 'new grant refused'; END IF;\n INSERT INTO public.wall_telemetry_events(viewer_id,event_name,payload) VALUES(actor,'wall_real_world_outcome','{}');\n IF (SELECT count(*) FROM public.wall_telemetry_events WHERE viewer_id=actor)<>2 THEN RAISE EXCEPTION 'legacy direct insert admitted'; END IF;\n INSERT INTO public.wall_telemetry_events(viewer_id,event_name,payload) VALUES(actor,'wall_feed_open','{\"mode\":\"for_you\"}');\n IF (SELECT count(*) FROM public.wall_telemetry_events WHERE viewer_id=actor)<>3 THEN RAISE EXCEPTION 'ordinary event changed'; END IF;\n RESET ROLE;\n IF has_function_privilege('anon','public.insert_wall_telemetry_outcomes(uuid,jsonb,timestamptz)','EXECUTE')\n OR has_function_privilege('authenticated','public.insert_wall_telemetry_outcomes(uuid,jsonb,timestamptz)','EXECUTE') THEN RAISE EXCEPTION 'client authority expanded'; END IF;\nEND $verify$;\nROLLBACK;\nSELECT '4030 final migration service-role grant/refusal and ordinary-event assertions passed; fixture rolled back' AS result,now() AS verified_at;"
+    },
+    {
+      "migration": "4031_media_event_erasure_and_retention.sql",
+      "sha256": "ba213911ecf1d3b863378dbddc249dff15a42351a3d98e907a7bfccb58380be2",
+      "project": "portava-ci",
+      "projectRef": "hwokxgbmezheskbzskfr",
+      "application": "applied",
+      "productionApplication": "not_applied",
+      "assertions": [
+        {
+          "result": "4031 service-role admission, idempotency, erasure, payload, retention hold and access assertions passed; all fixtures rolled back",
+          "verified_at": "2026-11-14 05:38:09.23794+00"
+        }
+      ],
+      "verificationSql": "BEGIN;\nSET LOCAL statement_timeout='20s';\nDO $verify$\nDECLARE actor uuid:=gen_random_uuid(); viewer uuid:=gen_random_uuid(); post uuid:=gen_random_uuid();\n composer_id uuid:=gen_random_uuid(); reject_id uuid:=gen_random_uuid(); n integer; receipt jsonb; rows jsonb;\nBEGIN\n INSERT INTO auth.users(id) VALUES(actor),(viewer);\n INSERT INTO public.profiles(id,handle,name) VALUES(actor,'cim_'||replace(actor::text,'-',''),'CI signal verification'),(viewer,'cim_'||replace(viewer::text,'-',''),'CI signal verification');\n INSERT INTO public.posts(id,author_id,created_by,visibility,post_status,add_to_passport) VALUES(post,actor,actor,'private','draft',false);\n rows:=jsonb_build_array(jsonb_build_object('id',composer_id,'event_type','composer_outcome','payload',jsonb_build_object('version',1,'surface','post','outcome','published')));\n SET LOCAL ROLE service_role;\n IF public.admit_composer_outcomes(actor,rows) IS DISTINCT FROM true OR public.admit_composer_outcomes(actor,rows) IS DISTINCT FROM true THEN RAISE EXCEPTION 'valid idempotent composer admission failed'; END IF;\n IF (SELECT count(*) FROM public.media_events WHERE id=composer_id)<>1 THEN RAISE EXCEPTION 'duplicate composer outcome'; END IF;\n BEGIN\n  PERFORM public.admit_composer_outcomes(actor,jsonb_build_array(jsonb_build_object('id',composer_id,'event_type','composer_outcome','payload',jsonb_build_object('version',1,'surface','post','outcome','discarded_draft'))));\n  RAISE EXCEPTION 'conflicting duplicate accepted';\n EXCEPTION WHEN raise_exception THEN\n  IF SQLERRM<>'composer_admission_conflict' THEN RAISE; END IF;\n END;\n INSERT INTO public.media_events(event_type,payload) VALUES('impression',jsonb_build_object('viewer_id',actor)),('impression',jsonb_build_object('viewer_id',viewer,'creator_id',actor)),('impression',jsonb_build_object('viewer_id',viewer,'media_id',post));\n GET DIAGNOSTICS n=ROW_COUNT;\n IF n<>3 THEN RAISE EXCEPTION 'valid media events refused'; END IF;\n INSERT INTO public.media_events(id,event_type,payload) VALUES(reject_id,'impression',jsonb_build_object('viewer_id',actor,'text','synthetic forbidden input'));\n IF EXISTS(SELECT 1 FROM public.media_events WHERE id=reject_id) THEN RAISE EXCEPTION 'unexpected payload accepted'; END IF;\n receipt:=public.erase_media_events_for_actor(actor,2);\n IF receipt IS DISTINCT FROM '{\"deleted\":2,\"more\":true}'::jsonb THEN RAISE EXCEPTION 'first bounded erase receipt unexpected'; END IF;\n receipt:=public.erase_media_events_for_actor(actor,2);\n IF receipt IS DISTINCT FROM '{\"deleted\":1,\"more\":false}'::jsonb THEN RAISE EXCEPTION 'final erase receipt unexpected'; END IF;\n IF public.erase_media_events_for_actor(actor,2) IS DISTINCT FROM '{\"deleted\":0,\"more\":false}'::jsonb THEN RAISE EXCEPTION 'erase retry not idempotent'; END IF;\n IF public.admit_composer_outcomes(actor,rows) IS DISTINCT FROM false THEN RAISE EXCEPTION 'fenced actor composer admission succeeded'; END IF;\n INSERT INTO public.media_events(id,event_type,payload) VALUES(reject_id,'impression',jsonb_build_object('viewer_id',viewer,'media_id',post));\n IF EXISTS(SELECT 1 FROM public.media_events WHERE id=reject_id) THEN RAISE EXCEPTION 'fenced creator reference admitted'; END IF;\n IF NOT EXISTS(SELECT 1 FROM public.media_events WHERE id=composer_id AND NOT(payload ? 'viewer_id')) THEN RAISE EXCEPTION 'unlinked historical composer treatment changed'; END IF;\n IF public.purge_expired_media_events(1) IS DISTINCT FROM '{\"enabled\":false,\"deleted\":0,\"more\":false}'::jsonb THEN RAISE EXCEPTION 'unapproved retention activated'; END IF;\n RESET ROLE;\n IF has_function_privilege('authenticated','public.erase_media_events_for_actor(uuid,integer)','EXECUTE')\n OR has_function_privilege('anon','public.admit_composer_outcomes(uuid,jsonb)','EXECUTE')\n OR has_table_privilege('authenticated','public.media_event_erasure_fences','SELECT') THEN RAISE EXCEPTION 'client authority expanded'; END IF;\nEND $verify$;\nROLLBACK;\nSELECT '4031 service-role admission, idempotency, erasure, payload, retention hold and access assertions passed; all fixtures rolled back' AS result,now() AS verified_at;"
+    },
+    {
+      "migration": "4032_input_outcome_memory_current_consent.sql",
+      "sha256": "707f6b9302bc5b4b369f29803482bf6aa85a5312fb3f719ed6e57c5b90305079",
+      "project": "portava-ci",
+      "projectRef": "hwokxgbmezheskbzskfr",
+      "application": "applied",
+      "productionApplication": "not_applied",
+      "assertions": [
+        {
+          "result": "4032 current-disclosure, withdrawal and service-only reader assertions passed; fixtures and flags rolled back",
+          "verified_at": "2026-11-14 05:40:28.399669+00"
+        }
+      ],
+      "verificationSql": "BEGIN;\nSET LOCAL statement_timeout='10s';\nDO $verify$\nDECLARE actor uuid:=gen_random_uuid(); grant_at timestamptz:=clock_timestamp(); receipt jsonb;\nBEGIN\n INSERT INTO auth.users(id) VALUES(actor);\n UPDATE public.feature_flags SET enabled=true WHERE flag='input_outcome_learning_enabled';\n INSERT INTO public.input_outcome_consent(user_id,enabled,consent_version,consented_at) VALUES(actor,true,'input_outcome_learning_v1',grant_at);\n INSERT INTO public.input_outcome_counters(user_id,context,entity_type,entity_id) VALUES(actor,'city_picker','city','ci-synthetic');\n SET LOCAL ROLE service_role;\n receipt:=public.input_outcome_memory(actor,'city_picker',current_date-29);\n IF receipt->'active' IS DISTINCT FROM 'true'::jsonb OR jsonb_array_length(receipt->'counts')<>1 THEN RAISE EXCEPTION 'current grant read failed'; END IF;\n UPDATE public.input_outcome_consent SET consent_version='old_disclosure' WHERE user_id=actor;\n IF public.input_outcome_memory(actor,'city_picker',current_date-29) IS DISTINCT FROM '{\"active\":false}'::jsonb THEN RAISE EXCEPTION 'old disclosure influenced memory'; END IF;\n UPDATE public.input_outcome_consent SET consent_version='input_outcome_learning_v1',enabled=false,withdrawn_at=now() WHERE user_id=actor;\n IF public.input_outcome_memory(actor,'city_picker',current_date-29) IS DISTINCT FROM '{\"active\":false}'::jsonb THEN RAISE EXCEPTION 'withdrawn memory read succeeded'; END IF;\n RESET ROLE;\n IF has_function_privilege('anon','public.input_outcome_memory(uuid,text,date)','EXECUTE') OR has_function_privilege('authenticated','public.input_outcome_memory(uuid,text,date)','EXECUTE') OR (SELECT prosecdef FROM pg_proc WHERE oid='public.input_outcome_memory(uuid,text,date)'::regprocedure) THEN RAISE EXCEPTION 'reader authority mismatch'; END IF;\nEND $verify$;\nROLLBACK;\nSELECT '4032 current-disclosure, withdrawal and service-only reader assertions passed; fixtures and flags rolled back' AS result,now() AS verified_at;"
+    }
+  ],
+  "ledger": [
+    {
+      "filename": "4029_input_outcome_consent_fence.sql",
+      "checksum": "c913a363d1fd4f6bd5a926ea4a40884da823683aeada3167605150676a715765",
+      "applied_at": "2026-11-14 05:39:06.382621+00"
+    },
+    {
+      "filename": "4030_wall_outcome_consent_boundary.sql",
+      "checksum": "24dc10dafcb271b472a0e9902763dbad55a178b27f9cff39baf6149c4b8cdc5f",
+      "applied_at": "2026-11-14 05:39:06.382621+00"
+    },
+    {
+      "filename": "4031_media_event_erasure_and_retention.sql",
+      "checksum": "ba213911ecf1d3b863378dbddc249dff15a42351a3d98e907a7bfccb58380be2",
+      "applied_at": "2026-11-14 05:39:06.382621+00"
+    },
+    {
+      "filename": "4032_input_outcome_memory_current_consent.sql",
+      "checksum": "707f6b9302bc5b4b369f29803482bf6aa85a5312fb3f719ed6e57c5b90305079",
+      "applied_at": "2026-11-14 05:40:29.596675+00"
+    }
+  ],
+  "permissions4029": [
+    {
+      "proname": "input_record_outcome",
+      "args": "p_user_id uuid, p_context text, p_entity_type text, p_entity_id text",
+      "prosecdef": false,
+      "service_exec": true,
+      "authenticated_exec": false,
+      "anon_exec": false
+    },
+    {
+      "proname": "input_record_outcome",
+      "args": "p_user_id uuid, p_context text, p_entity_type text, p_entity_id text, p_consented_at timestamp with time zone",
+      "prosecdef": false,
+      "service_exec": true,
+      "authenticated_exec": false,
+      "anon_exec": false
+    },
+    {
+      "proname": "input_record_task_outcome",
+      "args": "p_context text, p_task text, p_ok boolean",
+      "prosecdef": false,
+      "service_exec": true,
+      "authenticated_exec": false,
+      "anon_exec": false
+    },
+    {
+      "proname": "input_record_task_outcome",
+      "args": "p_user_id uuid, p_consented_at timestamp with time zone, p_context text, p_task text, p_ok boolean",
+      "prosecdef": false,
+      "service_exec": true,
+      "authenticated_exec": false,
+      "anon_exec": false
+    }
+  ],
+  "advisors": {
+    "security": {
+      "before": 235,
+      "after": 236,
+      "new": [
+        {
+          "name": "rls_enabled_no_policy",
+          "level": "INFO",
+          "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy",
+          "detail": "Table \\`public.media_event_erasure_fences\\` has RLS enabled, but no policies exist",
+          "metadata": {
+            "name": "media_event_erasure_fences",
+            "type": "table",
+            "schema": "public"
+          }
+        }
+      ]
+    },
+    "performance": {
+      "before": 2631,
+      "after": 2636,
+      "new": [
+        {
+          "name": "unused_index",
+          "level": "INFO",
+          "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0005_unused_index",
+          "detail": "Index \\`media_events_expiry_idx\\` on table \\`public.media_events\\` has not been used",
+          "metadata": {
+            "name": "media_events",
+            "type": "table",
+            "schema": "public"
+          }
+        },
+        {
+          "name": "unused_index",
+          "level": "INFO",
+          "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0005_unused_index",
+          "detail": "Index \\`posts_created_by_media_event_erasure_idx\\` on table \\`public.posts\\` has not been used",
+          "metadata": {
+            "name": "posts",
+            "type": "table",
+            "schema": "public"
+          }
+        },
+        {
+          "name": "unused_index",
+          "level": "INFO",
+          "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0005_unused_index",
+          "detail": "Index \\`media_events_viewer_id_erasure_idx\\` on table \\`public.media_events\\` has not been used",
+          "metadata": {
+            "name": "media_events",
+            "type": "table",
+            "schema": "public"
+          }
+        },
+        {
+          "name": "unused_index",
+          "level": "INFO",
+          "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0005_unused_index",
+          "detail": "Index \\`media_events_creator_id_erasure_idx\\` on table \\`public.media_events\\` has not been used",
+          "metadata": {
+            "name": "media_events",
+            "type": "table",
+            "schema": "public"
+          }
+        },
+        {
+          "name": "unused_index",
+          "level": "INFO",
+          "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0005_unused_index",
+          "detail": "Index \\`media_events_media_id_erasure_idx\\` on table \\`public.media_events\\` has not been used",
+          "metadata": {
+            "name": "media_events",
+            "type": "table",
+            "schema": "public"
+          }
+        },
+        {
+          "name": "unused_index",
+          "level": "INFO",
+          "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0005_unused_index",
+          "detail": "Index \\`media_events_post_id_erasure_idx\\` on table \\`public.media_events\\` has not been used",
+          "metadata": {
+            "name": "media_events",
+            "type": "table",
+            "schema": "public"
+          }
+        },
+        {
+          "name": "unused_index",
+          "level": "INFO",
+          "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0005_unused_index",
+          "detail": "Index \\`media_events_gem_id_erasure_idx\\` on table \\`public.media_events\\` has not been used",
+          "metadata": {
+            "name": "media_events",
+            "type": "table",
+            "schema": "public"
+          }
+        }
+      ]
+    }
+  },
+  "advisorInterpretation": "The new RLS-with-no-policy INFO is intentional: media_event_erasure_fences is service-only and ordinary clients hold no privileges. New index-usage INFOs are expected on newly created CI indexes. Existing unrelated findings remain; this is not a clean-database certificate.",
+  "retentionActivation": "Disabled. Q11(a) still requires legal review; no approved marker or flag activation was performed.",
+  "dataCleanup": "Each fixture transaction ended with ROLLBACK. No synthetic actors, media, grants, counters or feature changes persisted. Ledger rows record actual applied migration checksums.",
+  "unresolved": [
+    "Required final-byte separate-backend race gates on CI; local PostgreSQL initialization was exhausted at the host IPC limit for final media cases. Existing earlier native results retain their exact scope.",
+    "Production migration application and application deployment are not covered by this artifact.",
+    "New code cannot erase historical unlinked composer outcomes or prove them irreversibly anonymous; already-orphaned creator references remain a legacy gap.",
+    "Physical-device and downstream crash/export verification remain unperformed."
+  ]
+}

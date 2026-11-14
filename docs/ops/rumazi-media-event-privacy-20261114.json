@@ -1,0 +1,228 @@
+{
+  "schemaVersion": 1,
+  "auditedAt": "2026-11-14T05:24:24.125670+00:00",
+  "status": "code_reviewable_final_native_and_activation_unverified",
+  "scope": "media_events account erasure and proposed retention; no D6 closure or system-grade promotion",
+  "policy": {
+    "source": "docs/ops/owner-decisions-20261004.md:235",
+    "default": "30-day raw-event ceiling is proposed pending the explicitly required legal review.",
+    "activation": "Migration seeds media_event_retention_enabled=false. The purge additionally requires metadata.policy_status=approved_after_legal_review. No evidence of legal review or activation is claimed.",
+    "accountErasure": "Independent security fix removes currently attributable actor/creator events before canonical ownership links are destroyed; it does not approve a retention policy.",
+    "composerPrivacy": "Outcome UUIDs are SHA-256-derived from account ID plus a random client event ID. No server-side operation record maps the random event IDs back to an account after acknowledgement. These rows are not currently enumerable by account, but are not certified irreversibly anonymous. Their erasure is not claimed."
+  },
+  "schemaAudit": {
+    "table": "2039_media_events.sql: id UUID, event_type text, payload JSONB, occurred_at timestamptz. No actor FK or prior expiry.",
+    "writers": [
+      "lib/mediaAnalytics.ts recordMediaEvent and its helpers, including memory_create; now strict server payload validation, no raw DB exception logging, and database actor/creator fencing.",
+      "routes/composerOutcomes.ts; now service-only admit_composer_outcomes RPC with transient actor authorization and unchanged unlinked enum-only stored payload."
+    ],
+    "ownership": [
+      "payload.viewer_id",
+      "payload.creator_id",
+      "payload.media_id/post_id/gem_id resolving posts.author_id or created_by, media_assets.owner_user_id or uploader_user_id, hidden_gems.submitted_by"
+    ],
+    "operationalRecord": "media_event_erasure_fences: existing tombstone profile UUID plus erasure start time; service-only, RLS enabled, no event mapping; removed if profile physically erased. Registered only as DELETION_FLOW_TABLES / POST_BASELINE_TABLES.",
+    "downstream": "MediaRankingSignalLoader consumes media-id utility/impression counts; mediaAnalytics attribution reads viewer events. Composer outcomes remain outside media ranking."
+  },
+  "behavior": [
+    "AccountDeletionService completes media-event erasure before any canonical media/content removal. Missing migration, unreadable receipts, no progress or bounded backlog leave deletion pending and retryable.",
+    "SQL deletes at most 500 identified rows per RPC; API attempts at most 40 batches. Every batch returns an explicit more bit, including zero-match idempotent retries. Creator ownership and JSON-reference lookups have indexes.",
+    "New direct identified inserts/updates take ordered profile FOR SHARE locks and check deleted status plus erasure fences. Erasure takes FOR UPDATE on the same profile and publishes the fence before deleting. Unresolvable canonical UUID references are refused.",
+    "Composer admission takes the same profile lock and refuses erased/deleted accounts without storing the actor. One shared SQL validator enforces payloads for trigger and RPC. Every requested id/type/payload must be present exactly; malformed or conflicting mixed batches roll back, exact duplicates succeed. Missing/unknown RPC receipts return retryable 503. Fenced-account disabled:true explicitly acknowledges handled/discarded queued IDs, not persisted rows, using the existing disabled-collection transport convention.",
+    "Strict database payload validation covers both writer families. Free-form text fields, nested values, malformed identifiers, invalid numeric ranges and extra composer fields are refused. Stored-row updates cannot extend their original server-ingestion expiry window; new writes cannot future-date it.",
+    "Proposed purge uses the existing retention-pass scheduler, 500 rows per RPC and at most 10 batches per pass, independent of the collection flag. SKIP LOCKED deletion plus a separate remaining-row check never calls a locked backlog complete. No new timer or app polling.",
+    "Retention remains disabled absent both explicit activation and the legal-review marker. The migration performs no bulk purge. Deletion worker receipt version is 2026-11-14.1; policy version remains d6-2026-08-23."
+  ],
+  "verification": [
+    {
+      "kind": "Final API regression",
+      "result": "294/294 passed, 0 skipped; includes 9 focused privacy tests and 4 composer HTTP tests, do not add overlapping counts.",
+      "log": "/private/tmp/rumazi-media-privacy-regression-final.log",
+      "logSha256": "27e957c6a075c777cf00c7f1e0fc49c780700e1bfca6b98a80cca47645561175",
+      "command": "node --import tsx --test --test-concurrency=4 src/test/accountDeletion*.test.ts src/test/failOpenAccountDeletionReads.test.ts src/test/failedReadFabricatesSafety.test.ts src/test/intelEvidenceReference.test.ts src/test/memoryImportBatches.pglite.test.ts src/test/verificationProviderErasure.test.ts src/test/mediaEventPrivacy.test.ts src/test/mediaEventPrivacy.pglite.test.ts src/test/mediaNorthStarTelemetry.test.ts src/test/mediaOutcomeSignals.test.ts src/test/composerOutcomes.test.ts"
+    },
+    {
+      "kind": "Focused final privacy unit/actual SQL",
+      "result": "9/9 passed: four unit and five PGlite cases against actual 2039 + 4031 SQL on a minimal schema; includes malformed single/mixed batches, exact duplicates and conflicting duplicate rollback.",
+      "log": "/private/tmp/rumazi-media-privacy-focused-final.log",
+      "logSha256": "06071f06cb7f66507884ade33f083438a41c7800541893ceb3ca8892021c2185"
+    },
+    {
+      "kind": "Deletion policy/graph gates",
+      "result": "88/89 passed. Sole failure is generated graph snapshot missing the newly registered operational fence; parent owns regeneration. No D6 backlog was reclassified.",
+      "log": "/private/tmp/rumazi-media-privacy-policy.log",
+      "logSha256": "cfc3c1f0f25b68f2083625ba515227e5b776801a4581a3a2bac6cd89cc7bc415"
+    },
+    {
+      "kind": "Final API production typecheck",
+      "result": "passed",
+      "log": "/private/tmp/rumazi-media-privacy-tsc-final.log",
+      "logSha256": "61345e683c8ce2f7727258ab4a3198b4e0aea015d92001561b028058550069e1",
+      "command": "pnpm typecheck"
+    },
+    {
+      "kind": "Final six-case PostgreSQL two-connection suite",
+      "result": "BLOCKED before migration loading/cases: initdb shmget(size=56) failed ENOSPC at the host IPC limit. The final source, including later atomic-admission hardening, has no native pass. Sandbox-only attempt also refused IPC with EPERM.",
+      "log": "/private/tmp/rumazi-media-privacy-postgres-final.log",
+      "logSha256": "d8a0749840aea13d715d9ab83bffe52d971fb305ad11aca22212bb0827fc2e64",
+      "command": "MEDIA_EVENT_POSTGRES_BIN=/opt/homebrew/opt/postgresql@17/bin node --import tsx --test src/test/mediaEventPrivacy.postgres.test.ts",
+      "fixture": "Private socket-only temporary PostgreSQL; all owned temporary directories removed; no unattributed IPC touched."
+    },
+    {
+      "kind": "Earlier development native result",
+      "result": "4/4 earlier actor/creator/locked-retention cases passed before final composer RPC changes. The rerun replaced the temporary earlier log; this historical tool-observed result is not final-source release proof. Final 6-case suite remains required."
+    },
+    {
+      "kind": "Whitespace check",
+      "result": "git diff --check passed"
+    }
+  ],
+  "activation": {
+    "migrationAppliedToCI": false,
+    "migrationAppliedToProduction": false,
+    "apiDeployed": false,
+    "retentionActivated": false,
+    "iphoneBuildRun": false
+  },
+  "remaining": [
+    "Final-source native six-case concurrency validation is required; host IPC exhaustion prevented it. Full canonical-chain CI and actual production-trigger interaction are also unverified.",
+    "Parent must regenerate deletionGraph.snapshot.json and reconcile the new scheduler pass/function count and CI/test registration before integration.",
+    "Retention legal review remains explicitly outstanding. No retention deadline can be claimed while its activation gate is disabled; D6 remains open.",
+    "Historical unlinked composer outcomes are not erased by account request; adding an actor mapping would weaken their existing privacy boundary and is not done. The proposed retention purge is their pending bounded-deletion path.",
+    "Legacy events whose only creator reference is opaque/noncanonical, or whose canonical owner row had already been removed before this boundary existed, cannot be exhaustively attributed from current records. Identifiable viewer_id/creator_id rows still erase. No retrospective all-account cleanup or complete historical erasure is claimed.",
+    "Bounded mutation counts and indexed candidate lookup are proven in SQL; production-scale query latency/index-build lock duration are unmeasured. Very large histories require retries; the service refuses to finalize on backlog.",
+    "This patch does not add a new Media consent model, repair remaining exposure/playback attribution findings, or change user collection permissions. Replit access remains denied and no deployment workaround was used.",
+    "The proposed server retention window starts at ingestion. Existing local composer retry queues have a size cap and session boundary but no age TTL; a replay after an expired row has been purged can be ingested again. No 30-day maximum from the original on-device action is claimed."
+  ],
+  "files": [
+    {
+      "path": "artifacts/api-server/src/lib/deletionDispositions.ts",
+      "sha256": "7246187e56db08ac231823b1f10a5cdc8cf11c0ac6b88deb970bacded0bbb1a4"
+    },
+    {
+      "path": "artifacts/api-server/src/lib/intelRetentionScheduler.ts",
+      "sha256": "72856c5354866d1f6964b56958875e738dc6b1c690f24fd50e29b7965a34ce2b"
+    },
+    {
+      "path": "artifacts/api-server/src/lib/mediaAnalytics.ts",
+      "sha256": "e06114b7d1eb424c694d17b6aa2acfc4301bf7d6bde9be473c6ddd9d9135b884"
+    },
+    {
+      "path": "artifacts/api-server/src/lib/mediaEventRetention.ts",
+      "sha256": "c13cc2ac383e8c6b1826e99ef52d0ece2c50b357fa3ddce96b9141eb381e3453"
+    },
+    {
+      "path": "artifacts/api-server/src/migrations/4031_media_event_erasure_and_retention.sql",
+      "sha256": "ba213911ecf1d3b863378dbddc249dff15a42351a3d98e907a7bfccb58380be2"
+    },
+    {
+      "path": "artifacts/api-server/src/routes/composerOutcomes.ts",
+      "sha256": "0aacb1340a72dfb397e54b37fe5a873e801aef979596f170981000fc4575a3c2"
+    },
+    {
+      "path": "artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts",
+      "sha256": "862ffb11d2ea0c0eafe02ce5ca792c8f2a7a1044554be2e0a2591d462519bae0"
+    },
+    {
+      "path": "artifacts/api-server/src/services/accountDeletion/mediaEvents.ts",
+      "sha256": "c89f827dd52a757d211d1a9b0297eb9dcca036e36b49887ecf4aab0de57c4638"
+    },
+    {
+      "path": "artifacts/api-server/src/test/accountDeletionAcceptedBy.test.ts",
+      "sha256": "ecc43ed8c6f074a267ffd69e1084ce453108b5fcc0e4b5bc774eb8127529a10b"
+    },
+    {
+      "path": "artifacts/api-server/src/test/accountDeletionCascade.test.ts",
+      "sha256": "cf077749e733b21c27dad24789c77cbad0832c81aaba48c9e38046ab47bbe3c5"
+    },
+    {
+      "path": "artifacts/api-server/src/test/accountDeletionEvidenceMedia.test.ts",
+      "sha256": "d0372836af9e32b3bc1b1ee6515d861c6eac53da20bca46448a06f3f3436a6f0"
+    },
+    {
+      "path": "artifacts/api-server/src/test/accountDeletionLayover.test.ts",
+      "sha256": "7bcc9fc788217d4fd2998f38fe2d51810b0eca1ec8621c89274e7c6f6b5c9b46"
+    },
+    {
+      "path": "artifacts/api-server/src/test/accountDeletionOrphanedMedia.test.ts",
+      "sha256": "eab424a9b3d67e2f582347093814c9c18479abaa61d3ec0ccb6e0a5b724f7c27"
+    },
+    {
+      "path": "artifacts/api-server/src/test/accountDeletionPagination.test.ts",
+      "sha256": "b42eb8c2f5f3d8e3d81682225f06af3214cb5a9aaa0e523277d3f1f20861b83d"
+    },
+    {
+      "path": "artifacts/api-server/src/test/accountDeletionPostMediaUrls.test.ts",
+      "sha256": "39bface6088616be4b956cf8014794d300737487dcba3ec1eb14dac7d2847076"
+    },
+    {
+      "path": "artifacts/api-server/src/test/accountDeletionRowPagination.test.ts",
+      "sha256": "c6eefd9ee433c06f20346960ef964f6f362f2a19eeacbb2897da7cdf2c596aac"
+    },
+    {
+      "path": "artifacts/api-server/src/test/accountDeletionRpcFailure.test.ts",
+      "sha256": "994b80aa472677c76211a699046d08c7a4427927d9591dc306d7138573edaa26"
+    },
+    {
+      "path": "artifacts/api-server/src/test/accountDeletionRulings.test.ts",
+      "sha256": "35d37c2afca57051a89a3b19f81ce131d32bdd3498c62c5033825925cb40385c"
+    },
+    {
+      "path": "artifacts/api-server/src/test/accountDeletionSensingCapability.test.ts",
+      "sha256": "6867d712fff86bca9a464f3980bdaff2510f015ad5add13ce799a03f475a8ea1"
+    },
+    {
+      "path": "artifacts/api-server/src/test/accountDeletionSensingRevocationReach.test.ts",
+      "sha256": "ef25e3b1fb1cad14be747c99cc1185aa77387508933f7096bed2f53c6bae075e"
+    },
+    {
+      "path": "artifacts/api-server/src/test/composerOutcomes.test.ts",
+      "sha256": "9e5dc9e191c8faf708c37148c30d8db02b03abf8f7ed2638942a9ec541710e6f"
+    },
+    {
+      "path": "artifacts/api-server/src/test/failOpenAccountDeletionReads.test.ts",
+      "sha256": "c7f2c8975df6daec9c286d6e759c5e0e914aa6c8e4bd20c7fb6d3998e15f09c3"
+    },
+    {
+      "path": "artifacts/api-server/src/test/failedReadFabricatesSafety.test.ts",
+      "sha256": "52d66e532aabd3482bc6aae56ec80ce35ad5db7c4231a20622fdf3c43a8b8fee"
+    },
+    {
+      "path": "artifacts/api-server/src/test/helpers/accountMediaDeletionFixture.ts",
+      "sha256": "1fb8618f5101af6905f8b06d8477cc6858eb654a8fa8444fa1b8d1695267815a"
+    },
+    {
+      "path": "artifacts/api-server/src/test/intelEvidenceReference.test.ts",
+      "sha256": "a9fe287de04fd671eb5c33e0631cd1b3b91ccbce12c6351f6165cdfff3536edd"
+    },
+    {
+      "path": "artifacts/api-server/src/test/mediaEventPrivacy.pglite.test.ts",
+      "sha256": "c27a25e4d008873c6eaaf3e756a2f7010f9374f93e050d0b468c7abaac13f55f"
+    },
+    {
+      "path": "artifacts/api-server/src/test/mediaEventPrivacy.postgres.test.ts",
+      "sha256": "8c13301220fdb2a3a1839f70ae9d181e7a9d1650467ac5e9356179511c38d8db"
+    },
+    {
+      "path": "artifacts/api-server/src/test/mediaEventPrivacy.test.ts",
+      "sha256": "d1a271da2de54a63241943d4155c84a8d970c284bea733ee824fc81db6ba09c5"
+    },
+    {
+      "path": "artifacts/api-server/src/test/memoryImportBatches.pglite.test.ts",
+      "sha256": "cf6b56243ac3d99b01a724197ec05a1d4c6e53bd0fb397f470d3ac2b32e90b7f"
+    },
+    {
+      "path": "artifacts/api-server/src/test/verificationProviderErasure.test.ts",
+      "sha256": "a2776020e11d684238ff1927f23fb52e34c666e9fe39f208ffeeb4cd068d47aa"
+    }
+  ],
+  "rootIntegration": {
+    "updatedAt": "2026-11-14",
+    "migrationAppliedToCI": true,
+    "migrationAppliedToProduction": false,
+    "evidence": "docs/ops/rumazi-signal-ci-privacy-20261114.json",
+    "nativeCIGate": "Required exact native suite/count; cannot skip or mask failure",
+    "deletionAndSchedulerIntegration": "Generated graph updated and retention registration reconciled;132 integration tests passed",
+    "codeActivation": "Pending PR and deployment. No iPhone build."
+  }
+}

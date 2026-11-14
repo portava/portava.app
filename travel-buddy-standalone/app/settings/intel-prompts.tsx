@@ -26,6 +26,8 @@ import { VENUE_CATEGORIES, VENUE_LABELS } from '../../src/lib/intel/contracts';
 import { isCategoryPaused } from '../../src/lib/intel/promptPauseStorage';
 import { readIntelConsent, setIntelConsent, hasValidConsent, type IntelConsentRead, type IntelConsentState } from '../../src/services/intelConsent';
 import { disclosureFor, needsReconsent } from '../../src/lib/sensing/consentDisclosure';
+import { captureMessagingOwnerRequest, type MessagingOwnerRequest } from '../../src/services/messagingOwnerRequest';
+import { onDiscoveryScopeChange } from '../../src/services/discoveryViewerScope';
 export default function IntelPromptsSettingsScreen() {
   const {
     captureEnabled,
@@ -47,20 +49,31 @@ export default function IntelPromptsSettingsScreen() {
   // "on" re-stamped a consent they may already have given.
   const [consentRead, setConsentRead] = React.useState<IntelConsentRead | undefined>(undefined);
   const [consentAttempt, setConsentAttempt] = React.useState(0);
-  // A toggle whose write was refused stays where it was AND says so; before, the
-  // switch snapped back with no word about why.
+  // Withdrawal stops local contributions immediately; failed synchronization
+  // stays visible and retryable rather than restoring the prior permission.
   const [consentWriteFailed, setConsentWriteFailed] = React.useState(false);
+  const [consentWriting, setConsentWriting] = React.useState(false);
+  const loadedOwner = React.useRef<MessagingOwnerRequest | null>(null);
+  const writePending = React.useRef(false);
+  React.useEffect(() => onDiscoveryScopeChange(() => setConsentAttempt(n => n + 1)), []);
   React.useEffect(() => {
     let alive = true;
     setConsentRead(undefined);
-    readIntelConsent()
-      .then((r) => { if (alive) setConsentRead(r); })
+    setConsentWriteFailed(false);
+    setConsentWriting(false);
+    writePending.current = false;
+    const owner = captureMessagingOwnerRequest();
+    loadedOwner.current = owner;
+    if (!owner?.isCurrent()) { setConsentRead({ status: 'unreadable', reason: 'network' }); return; }
+    readIntelConsent(owner)
+      .then((r) => { if (alive && owner.isCurrent()) setConsentRead(r); })
       .catch(() => { if (alive) setConsentRead({ status: 'unreadable', reason: 'network' }); });
-    return () => { alive = false; };
+    return () => { alive = false; if (loadedOwner.current === owner) loadedOwner.current = null; };
   }, [consentAttempt]);
-  const consent: IntelConsentState | undefined = consentRead?.status === 'ok' ? consentRead.state : undefined;
+  const consent: IntelConsentState | undefined = consentRead?.status === 'ok' && loadedOwner.current?.isCurrent() ? consentRead.state : undefined;
   const consentUnreadable = consentRead?.status === 'unreadable';
   const consentOn = hasValidConsent(consent);
+  const withdrawalPending = consent?.localWithdrawalPending && consent.enabled;
   // The words shown are the words of a VERSION: what the person agreed to when
   // on, what a grant would record when off. A version this build has no text
   // for offers no grant — it never shows older words (lib/sensing/consentDisclosure).
@@ -68,11 +81,19 @@ export default function IntelPromptsSettingsScreen() {
   const offered = disclosureFor(consent?.currentDisclosureVersion);
   const reconsent = needsReconsent(consent);
   const toggleConsent = React.useCallback(async (v: boolean) => {
+    const owner = loadedOwner.current;
+    if (writePending.current || !owner?.isCurrent()) { if (!owner?.isCurrent()) setConsentAttempt(n => n + 1); return; }
     setConsentWriteFailed(false);
+    writePending.current = true;
+    setConsentWriting(true);
+    if (!v && consent) setConsentRead({ status: 'ok', state: { ...consent, localWithdrawalPending: true } });
     const next = await setIntelConsent(v, v ? offered?.version : undefined);
+    if (!owner.isCurrent() || loadedOwner.current !== owner) return;
+    writePending.current = false;
+    setConsentWriting(false);
     if (next) setConsentRead({ status: 'ok', state: next });
     else setConsentWriteFailed(true);
-  }, [offered]);
+  }, [offered, consent]);
 
 
   return (
@@ -86,6 +107,8 @@ export default function IntelPromptsSettingsScreen() {
           subtitle={
             consentUnreadable
               ? "Couldn't load this setting, so it can't be changed right now. Your choice hasn't been changed."
+              : withdrawalPending
+              ? "Off on this device. Your withdrawal still needs to reach the server; retry to update your other devices."
               : consentOn
               ? `On — ${recorded?.summary ?? offered?.summary ?? 'your signals count toward aggregated intelligence.'}${
                   reconsent ? ' The terms have changed since you agreed; turn this off and on again to review them.' : ''
@@ -96,7 +119,7 @@ export default function IntelPromptsSettingsScreen() {
           }
           value={consentOn}
           onValueChange={toggleConsent}
-          disabled={consent === undefined || (!consentOn && !offered)}
+          disabled={consentWriting || withdrawalPending || consent === undefined || (!consentOn && !offered)}
           switchTestID="intel-consent-switch"
         />
         {consentUnreadable ? (
@@ -108,8 +131,11 @@ export default function IntelPromptsSettingsScreen() {
             testID="intel-consent-retry"
           />
         ) : null}
-        {consentWriteFailed ? (
-          <FieldHint tone="error">Couldn&apos;t save that change — your setting is unchanged. Please try again.</FieldHint>
+        {withdrawalPending ? (
+          <SettingsRow title="Retry withdrawal" disabled={consentWriting} onPress={() => { if (!consentWriting) void toggleConsent(false); }} chevron={false} testID="intel-withdrawal-retry" />
+        ) : null}
+        {consentWriteFailed && !withdrawalPending ? (
+          <FieldHint tone="error">Couldn&apos;t save that change. Please try again.</FieldHint>
         ) : null}
       </SettingsSection>
 

@@ -137,7 +137,7 @@ function makeFake(opts: FakeOpts = {}) {
       if (fn === "intel_contributor_tokens_for_actor") {
         return shape === "bridge" ? { data: opts.tokens ?? [TOKEN], error: null } : absent;
       }
-      return { data: null, error: null };
+      return { data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null };
     },
     storage: { from: () => ({ remove: async () => ({ data: null, error: null }) }) },
     auth: { admin: { deleteUser: async () => ({ data: null, error: null }) } },

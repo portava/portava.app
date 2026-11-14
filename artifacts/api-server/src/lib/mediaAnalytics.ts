@@ -15,6 +15,9 @@
 
 import { isFlagEnabled } from "./featureFlags.js";
 import { logger } from "./logger.js";
+import { mediaAnalyticsClientPayload } from "./mediaAnalyticsClientPayload.js";
+import { z } from "zod";
+const serverPayloadSchema = mediaAnalyticsClientPayload.extend({ viewer_id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._\/-]{0,127}$/), route_plan_id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._\/-]{0,127}$/).optional(), contribution_type: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/).optional() });
 
 // ── Event type taxonomy ────────────────────────────────────────────────────────
 
@@ -89,8 +92,8 @@ export const MEDIA_NORTH_STAR_EVENT_TYPES: readonly MediaEventType[] = [
 const ALLOWED_PAYLOAD_KEYS = new Set([
   "media_id",
   "post_id",
-  "creator_id",        // pseudonymous user_id — no PII
-  "viewer_id",         // pseudonymous user_id — no PII
+  "creator_id",        // pseudonymous account ID — still personal data
+  "viewer_id",         // pseudonymous account ID — still personal data
   "session_id",
   "feed_type",         // "for_you" | "following"
   "mode",              // "watch" | "grid" | "gems"
@@ -180,7 +183,10 @@ export function recordMediaEvent(
       const enabled = await isFlagEnabled(sc, "MEDIA_ANALYTICS_ENABLED");
       if (!enabled) return;
 
-      const safePayload = sanitisePayload(payload);
+      const safe = sanitisePayload(payload);
+      const checked = serverPayloadSchema.safeParse(Object.fromEntries(Object.entries(safe).filter(([, value]) => value != null)));
+      if (!checked.success) { logger.warn({ type }, "recordMediaEvent: invalid structured payload"); return; }
+      const safePayload = checked.data;
 
       // supabase-js resolves rather than throws on a DB error — unchecked, a
       // missing/broken media_events table silently dropped every analytics
@@ -192,11 +198,11 @@ export function recordMediaEvent(
         occurred_at: new Date().toISOString(),
       });
       if (error) {
-        logger.warn({ err: error, type }, "recordMediaEvent: media_events insert failed");
+        logger.warn({ type }, "recordMediaEvent: media_events insert failed");
       }
     } catch (err) {
       // Fail silent toward users — analytics must never surface errors to them.
-      logger.warn({ err, type }, "recordMediaEvent: unexpected error");
+      logger.warn({ type }, "recordMediaEvent: unexpected error");
     }
   })();
 }

@@ -89,13 +89,21 @@
     "staticChecks": "14 of 15 initially passed; one new test callback type error fixed; test typecheck now passes. Existing baseline860 test diagnostics remain.",
     "censusScope": "13 measured, all cited code within declared scope; not acceptance validation.",
     "schedulerInventory": "74 started,26reported,13durable,46unobservable; static inventory matches, not runtime health.",
-    "noNativeBuild": true
+    "noNativeBuild": true,
+    "isolatedSecurityFollowup": {
+      "passed": 17,
+      "failed": 0,
+      "commit": "3df417cbf",
+      "log": "/private/tmp/portava-security-isolated.log",
+      "note": "Immutable checkout eliminated concurrent file mutation fixture failures; not a new full-suite pass."
+    }
   },
   "masterChecklist": {
     "path": "docs/ops/remaining-items-20261113.json",
     "remaining": 888,
     "newlyClosed": 0,
-    "note": "Historical verdicts preserved. Underlying acceptance audit remains required."
+    "note": "888 original requirements preserved;7 Input rows partially audited with new shared-dependency evidence. None closed; the other881 remain pending audit.",
+    "inProgress": 7
   },
   "remainingValidation": [
     "Republish the validated API/client code when Replit access is restored",
@@ -103,5 +111,19 @@
     "Verify hosted Sentry export payloads",
     "Physical-device restart, termination, background upload, account-switch, offline and accessibility tests; no iPhone build authorized",
     "Higgsfield provider activation deferred by owner"
-  ]
+  ],
+  "updatedAt": "2026-11-14",
+  "signalPrivacyBatch": {
+    "migrations": [
+      4029,
+      4030,
+      4031,
+      4032
+    ],
+    "ci": "applied; rollback service-role assertions passed",
+    "production": "not applied",
+    "evidence": "docs/ops/rumazi-signal-ci-privacy-20261114.json",
+    "application": "pending",
+    "mediaRetention": "disabled pending explicit legal-review requirement"
+  }
 }

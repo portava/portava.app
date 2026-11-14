@@ -109,7 +109,8 @@ export type OutcomeConsentRead = InputConsentRead;
 
 /** Valid = enabled, not withdrawn, and stamped with a version. Fail-closed on anything else. */
 export function hasValidOutcomeConsent(state: OutcomeConsentState | null | undefined): boolean {
-  return hasValidInputConsent(state);
+  return hasValidInputConsent(state) && state?.consentVersion === INPUT_OUTCOME_DISCLOSURE_VERSION
+    && parseOutcomeGrant(state.consentedAt) !== null;
 }
 
 /** May a grant whose client displayed `seen` be recorded under the current version? */
@@ -192,19 +193,28 @@ export function outcomeWindowStartDay(now: Date = new Date()): string {
   return utcDay(new Date(now.getTime() - (INPUT_OUTCOME_RETENTION_DAYS - 1) * DAY_MS));
 }
 
+/** Admission metadata only; never a telemetry prop or stored aggregate field. */
+export function parseOutcomeGrant(value: unknown): string | null {
+  return typeof value === 'string' && value.length <= 40
+    && /^\d{4}-\d{2}-\d{2}T.+(?:Z|[+-]\d{2}:\d{2})$/.test(value)
+    && Number.isFinite(Date.parse(value)) ? value : null;
+}
+
 export type RecordOutcomeResult = 'recorded' | 'no_consent' | 'failed';
 
 /** One completed task credited to one entity. The database re-checks consent. */
 export async function recordOutcome(
   db: SupabaseClient,
-  o: { userId: string; context: string; entityType: string; entityId: string },
+  o: { userId: string; context: string; entityType: string; entityId: string; consentedAt: string },
 ): Promise<RecordOutcomeResult> {
+  if (!parseOutcomeGrant(o.consentedAt)) return 'no_consent';
   try {
     const { data, error } = await db.rpc('input_record_outcome', {
       p_user_id: o.userId,
       p_context: o.context,
       p_entity_type: o.entityType,
       p_entity_id: o.entityId,
+      p_consented_at: o.consentedAt,
     });
     if (error) return 'failed';
     if (data === true) return 'recorded';
@@ -215,22 +225,19 @@ export async function recordOutcome(
   }
 }
 
-/**
- * G370's ONLY write (3783): one consented downstream task, counted per (UTC
- * day, context, task, ok). It takes no user, session or request id, so it
- * cannot store one. Only the closed task vocabulary and a literal bool count.
- * The CALLER (the §44 ingest) has already checked this caller's consent; the
- * database re-checks the flag.
- */
+/** A consent-fenced task aggregate. The actor/grant authorize the transaction;
+ * neither is stored in the aggregate, which still holds only day/context/task/ok. */
 export async function recordTaskOutcomeAggregate(
   db: SupabaseClient,
-  o: { context: string; task: unknown; ok: unknown },
+  o: { userId: string; consentedAt: unknown; context: string; task: unknown; ok: unknown },
 ): Promise<'recorded' | 'refused' | 'failed'> {
-  if (!isOutcomeTask(o.task) || typeof o.ok !== 'boolean') return 'refused';
+  if (!isOutcomeTask(o.task) || typeof o.ok !== 'boolean' || !parseOutcomeGrant(o.consentedAt)) return 'refused';
   try {
-    const { data, error } = await db.rpc('input_record_task_outcome', { p_context: o.context, p_task: o.task, p_ok: o.ok });
+    const { data, error } = await db.rpc('input_record_task_outcome', { p_user_id: o.userId, p_consented_at: o.consentedAt, p_context: o.context, p_task: o.task, p_ok: o.ok });
     if (error) return 'failed';
-    return data === true ? 'recorded' : 'refused';
+    if (data === true) return 'recorded';
+    if (data === false) return 'refused';
+    return 'failed'; // Unknown receipts are not evidence of a policy refusal.
   } catch {
     return 'failed';
   }
@@ -267,12 +274,15 @@ export async function readOutcomeMemory(
     if (error || !data || typeof data !== 'object') return { ok: false };
     const d = data as { active?: unknown; counts?: unknown };
     if (d.active === false) return { ok: true, active: false };
-    if (d.active !== true || !Array.isArray(d.counts)) return { ok: false };
+    if (d.active !== true || !Array.isArray(d.counts) || d.counts.length > 500) return { ok: false };
     const counts = new Map<string, number>();
     for (const r of d.counts as Array<Record<string, unknown>>) {
-      if (!r || typeof r.entity_type !== 'string' || typeof r.entity_id !== 'string') continue;
-      const n = typeof r.completed === 'number' && r.completed > 0 ? r.completed : 0;
-      if (n > 0) counts.set(outcomeKey(r.entity_type, r.entity_id), n);
+      if (!r || typeof r.entity_type !== 'string' || !r.entity_type || r.entity_type.length > 40
+          || typeof r.entity_id !== 'string' || !r.entity_id || r.entity_id.length > 200
+          || typeof r.completed !== 'number' || !Number.isSafeInteger(r.completed) || r.completed <= 0) return { ok: false };
+      const key = outcomeKey(r.entity_type, r.entity_id);
+      if (counts.has(key)) return { ok: false };
+      counts.set(key, r.completed);
     }
     return { ok: true, active: true, counts };
   } catch {

@@ -3,11 +3,13 @@
 jest.mock('../../../../services/apiToken.ts', () => ({ freshToken: () => mockToken() }));
 jest.mock('../../../../services/auth.ts', () => ({ onAuthChange: jest.fn(), getSessionUserId: jest.fn() }));
 const mockToken = jest.fn();
+const ownerToken = `header.${Buffer.from(JSON.stringify({sub:'privacy-test'})).toString('base64url')}.signature`;
 import { requestSuggestions, requestMapSearchPage } from '../inputAssistance.ts';
 import { fetchInputPolicies } from '../policyClient.ts';
 import { readMemoryContext, writeMemoryContextConsent } from '../memoryContextTransport.ts';
 import { readOutcomeConsent, writeOutcomeConsent, postTaskOutcome } from '../outcomeLearningTransport.ts';
 import { extractPastedEntities } from '../../paste/pasteExtraction.ts';
+import { beginOutcomeAccount, clearOutcomeWithdrawal } from '../outcomeLearning.ts';
 import { withInputApiResponse } from '../inputApiRequest.ts';
 import { recordSelectionWith } from '../selectBody.ts';
 import { _resetDiscoveryViewerScopeForTests, setDiscoveryViewerFromSession } from '../../../../services/discoveryViewerScope.ts';
@@ -20,10 +22,12 @@ const originalBase = process.env.EXPO_PUBLIC_API_BASE_URL;
 beforeEach(() => {
   jest.useFakeTimers();
   _resetDiscoveryViewerScopeForTests();
-  mockToken.mockReset().mockResolvedValue('token');
+  clearOutcomeWithdrawal('privacy-test'); beginOutcomeAccount('privacy-test');
+  mockToken.mockReset().mockResolvedValue(ownerToken);
   process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
 });
 afterEach(() => {
+  beginOutcomeAccount(null); clearOutcomeWithdrawal('privacy-test');
   expect(jest.getTimerCount()).toBe(0);
   jest.useRealTimers(); global.fetch = originalFetch;
   if (originalBase === undefined) delete process.env.EXPO_PUBLIC_API_BASE_URL;
@@ -59,7 +63,7 @@ test('memory consent and learning writes preserve status semantics without follo
   expect(await writeOutcomeConsent(true)).toEqual({ status: 'stale_disclosure' });
   global.fetch = jest.fn(async () => response(null, { url: 'https://unexpected.test' })) as unknown as typeof fetch;
   expect(await writeMemoryContextConsent(false)).toEqual({ status: 'failed' });
-  expect(await postTaskOutcome({ context: 'city_picker', fieldId: 'trip.destination', task: 'trip_created', ok: true, entities: [] })).toBe(false);
+  expect(await postTaskOutcome({ outcomeConsentedAt: '2026-10-05T00:00:00.000Z', context: 'city_picker', fieldId: 'trip.destination', task: 'trip_created', ok: true, entities: [] })).toBe(false);
 });
 
 test('token stalls time out every private input path without sending a late draft or consent', async () => {

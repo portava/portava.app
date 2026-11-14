@@ -2067,7 +2067,7 @@ still the moderation and visibility decision the module reserves, and lane I's
 MD65 Question 5.
 
 **C. Account deletion finds the bytes again.** The collection step now calls
-`` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:668#collectOwnEvidenceObjectKeys(sc, userId, readAll)` ``.
+`` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:675#collectOwnEvidenceObjectKeys(sc, userId, readAll)` ``.
 That function reads the rows under every identity the account's rows may carry
 (`` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:642#for (const identity of identities.identities) {` ``)
 and opens each reference.
@@ -2078,7 +2078,7 @@ and opens each reference.
   orphaned.
 - A reference that does not open fails the step, and the receipt carries the
   warning:
-  `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:679#if (unopenable > 0) throw new Error(` ``.
+  `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:686#if (unopenable > 0) throw new Error(` ``.
 
 The edit is line-neutral. Every citation into the file below line 682 still
 lands on its line.
@@ -2645,7 +2645,7 @@ This supersedes §45.9 item 5 and the client clause in §45.5's option D.
   (`` `travel-buddy-standalone/src/components/map/MapContributionSheet.tsx:199#const mediaOffered = onRequestMedia != null` ``),
   so nothing is uploaded and no orphan object is created.
 - **The client type** gains the optional field:
-  `` `travel-buddy-standalone/src/services/intelConsent.ts:25#coversPhotoEvidence?: boolean;` ``.
+  `` `travel-buddy-standalone/src/services/intelConsent.ts:29#coversPhotoEvidence?: boolean;` ``.
 - **FAIL-CLOSED.** The step is withheld when the bit is false, absent (an
   older server), not a boolean, when the read returns nothing or throws, and
   when the grant is disabled or withdrawn. Until the read lands, it is hidden.

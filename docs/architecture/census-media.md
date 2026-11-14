@@ -1703,7 +1703,7 @@ graded C on evidence identical in kind.
 Settled by enumeration, not by grep-and-stop:
 
 - `media_events` has exactly one writer in the tree —
-  `artifacts/api-server/src/lib/mediaAnalytics.ts:189#const { error } = await sc.from("media_events").insert({`
+  `artifacts/api-server/src/lib/mediaAnalytics.ts:195#const { error } = await sc.from("media_events").insert({`
   — and `recordMediaEvent` had five call sites: two `impression`, one branching
   over `rewatch`/`completion`/`qualified_view`/`impression`, one `share`, and
   the batch endpoint.
@@ -3863,20 +3863,20 @@ id. Client test: `travel-buddy-standalone/src/features/media/__tests__/mediaActi
 (29 cases), plus the extended `mediaActions.test.ts`.
 
 **D. Producers for the §44/§45 names that had none.** Server-only outcome signals,
-deliberately NOT forwardable by the client batch `artifacts/api-server/src/lib/mediaAnalytics.ts:226#export const MEDIA_SERVER_OUTCOME_SIGNAL_TYPES`: Contribution
+deliberately NOT forwardable by the client batch `artifacts/api-server/src/lib/mediaAnalytics.ts:232#export const MEDIA_SERVER_OUTCOME_SIGNAL_TYPES`: Contribution
 submitted at the gem submission and observation routes `artifacts/api-server/src/routes/hiddenGems.ts:406#recordGemContributionSignal(sc` (and at
 `routes/hiddenGems.ts` line 1144), attributed Media → Contribution only when the
-media is AT the gem's place `artifacts/api-server/src/lib/mediaAnalytics.ts:318#export function recordGemContributionSignal(`; Contribution accepted, credited to the
-SUBMITTER `artifacts/api-server/src/lib/mediaAnalytics.ts:346#export function recordGemAcceptedSignal(`, at `artifacts/api-server/src/routes/hiddenGems.ts:1572#recordGemAcceptedSignal(sc`; Invite sent, only for a media item that is
-an approved contribution to that very Moment `artifacts/api-server/src/lib/mediaAnalytics.ts:372#export function recordMediaInviteIfAttributable(`, at `artifacts/api-server/src/routes/sharedMoments.ts:135#recordMediaInviteIfAttributable(`;
-Postcard created `artifacts/api-server/src/lib/mediaAnalytics.ts:398#export function recordPostcardCreatedSignal(`, at the Postcard write `artifacts/api-server/src/routes/postcards.ts:1152#recordPostcardCreatedSignal(sc, { userId: user.id, postId });`; Experience
-completed for a route saved from media `artifacts/api-server/src/lib/mediaAnalytics.ts:406#export function recordExperienceCompletionIfAttributable(`, at `artifacts/api-server/src/routes/routePlan.ts:571#recordExperienceCompletionIfAttributable(`. Arrival
+media is AT the gem's place `artifacts/api-server/src/lib/mediaAnalytics.ts:324#export function recordGemContributionSignal(`; Contribution accepted, credited to the
+SUBMITTER `artifacts/api-server/src/lib/mediaAnalytics.ts:352#export function recordGemAcceptedSignal(`, at `artifacts/api-server/src/routes/hiddenGems.ts:1572#recordGemAcceptedSignal(sc`; Invite sent, only for a media item that is
+an approved contribution to that very Moment `artifacts/api-server/src/lib/mediaAnalytics.ts:378#export function recordMediaInviteIfAttributable(`, at `artifacts/api-server/src/routes/sharedMoments.ts:135#recordMediaInviteIfAttributable(`;
+Postcard created `artifacts/api-server/src/lib/mediaAnalytics.ts:404#export function recordPostcardCreatedSignal(`, at the Postcard write `artifacts/api-server/src/routes/postcards.ts:1152#recordPostcardCreatedSignal(sc, { userId: user.id, postId });`; Experience
+completed for a route saved from media `artifacts/api-server/src/lib/mediaAnalytics.ts:412#export function recordExperienceCompletionIfAttributable(`, at `artifacts/api-server/src/routes/routePlan.ts:571#recordExperienceCompletionIfAttributable(`. Arrival
 "where safely measurable" is a check-in the traveller made themselves — a route
 stop marked arrived `artifacts/api-server/src/routes/routePlan.ts:649#recordMediaArrivalIfAttributable(` or a GPS-verified, non-suspicious gem visit
 `artifacts/api-server/src/routes/hiddenGems.ts:977#recordGemArrivalIfAttributable(sc` — recorded only when the traveller's OWN media-originated action
-explains it `artifacts/api-server/src/lib/mediaAnalytics.ts:292#export function recordMediaArrivalIfAttributable(`, `artifacts/api-server/src/lib/mediaAnalytics.ts:260#export async function findMediaOrigin(`. Media → Route is recorded when a route is
+explains it `artifacts/api-server/src/lib/mediaAnalytics.ts:298#export function recordMediaArrivalIfAttributable(`, `artifacts/api-server/src/lib/mediaAnalytics.ts:266#export async function findMediaOrigin(`. Media → Route is recorded when a route is
 saved from media `artifacts/api-server/src/routes/routePlan.ts:304#recordMediaEvent("media_route"`. The two client signals are allow-listed by spreading
-`artifacts/api-server/src/lib/mediaAnalytics.ts:214#export const MEDIA_CLIENT_OUTCOME_SIGNAL_TYPES` into the batch at `artifacts/api-server/src/routes/mediaAnalyticsBatch.ts:51#...MEDIA_CLIENT_OUTCOME_SIGNAL_TYPES,`. On the client, each §44 signal is
+`artifacts/api-server/src/lib/mediaAnalytics.ts:220#export const MEDIA_CLIENT_OUTCOME_SIGNAL_TYPES` into the batch at `artifacts/api-server/src/routes/mediaAnalyticsBatch.ts:51#...MEDIA_CLIENT_OUTCOME_SIGNAL_TYPES,`. On the client, each §44 signal is
 emitted where the viewer did the thing, through `travel-buddy-standalone/src/features/media/telemetry/mediaTelemetry.ts:316#export function emitMediaSignal(` (forbidden-key
 guard included) and a non-hook sender `travel-buddy-standalone/src/services/mediaInteractions.ts:123#export async function recordMediaSignal(`: Comment only on a comment the
 server ACCEPTED, and only from the media comment sheet `travel-buddy-standalone/src/components/media/MediaCommentSheet.tsx:38#onCommentPosted={() => emitMediaSignal(mediaSignalRecorder, 'comment'`; Profile open
@@ -4280,7 +4280,7 @@ OS background transfer of exactly its byte range
 (`travel-buddy-standalone/src/services/media/backgroundTransfer.ts:163#sessionType: mod.FileSystemSessionType.BACKGROUND,`),
 and the queue is resumed on every foreground
 (`travel-buddy-standalone/src/services/media/postcardUploadDevice.ts:183#export function installPostcardUploadResume`,
-mounted at `travel-buddy-standalone/app/_layout.tsx:416#<MediaUploadResumeSetup />`).
+mounted at `travel-buddy-standalone/app/_layout.tsx:406#<MediaUploadResumeSetup />`).
 The whole path is gated by a client constant that is FALSE
 (`travel-buddy-standalone/src/services/media/uploadTransportFlag.ts:19#DEFAULT_ENABLED = false`).
 With it off, the composer takes the pre-existing signed-PUT path. The only
@@ -4322,7 +4322,7 @@ Saved places and current or upcoming trips are cached BEFORE they are needed
 (`travel-buddy-standalone/src/services/media/mediaOffline.ts:269#export async function prepareOfflineMedia`,
 `travel-buddy-standalone/src/services/media/mediaOfflineDevice.ts:72#export function installMediaOfflineWarmup(`).
 That warm-up is mounted only while `MEDIA_WORLD_SHELL_ENABLED` is on
-(`travel-buddy-standalone/app/_layout.tsx:417#<MediaOfflineWarmupSetup />`).
+(`travel-buddy-standalone/app/_layout.tsx:407#<MediaOfflineWarmupSetup />`).
 
 **§40 services, under `travel-buddy-standalone/src/services/media/`.** They sit
 beside `features/media/services/`, not inside it, because the file ownership
@@ -12262,7 +12262,7 @@ No action makes one. A Memory item is added by URL (`travel-buddy-standalone/src
     - `memory_items.source_post_id` (the Memory lane's table).
     - `POST /memories/:id/items` verifying the viewer owns the source.
     - The action, and the §44 producer (like
-      `artifacts/api-server/src/lib/mediaAnalytics.ts:398#export function recordPostcardCreatedSignal(`).
+      `artifacts/api-server/src/lib/mediaAnalytics.ts:404#export function recordPostcardCreatedSignal(`).
 - *(b) From any media the viewer can see.*
   - **To a real person:** someone else's photo lives in your Memory.
   - **This needs decisions first:** consent, credit, and what happens when the
@@ -17355,7 +17355,7 @@ verdict does not move: the migration it needs is written and applied nowhere, so
   write, or removes it and refuses. An unlinked copy is never left behind
   (`artifacts/api-server/src/routes/memories.ts:3945#if (row?.source_post_id !== postId) {`).
 - **The §44 producer.** `memory_create` is recorded at the moment the item is written, keyed by the post id, as
-  `postcard_create` is (`artifacts/api-server/src/lib/mediaAnalytics.ts:430#export function recordMemoryCreatedFromMediaSignal(`).
+  `postcard_create` is (`artifacts/api-server/src/lib/mediaAnalytics.ts:436#export function recordMemoryCreatedFromMediaSignal(`).
   It is server-only, on `MEDIA_SERVER_OUTCOME_SIGNAL_TYPES`, and carries no Memory id, title or place.
 - **Withdrawal, stated rather than decided.** Erasing the source post row erases the copies made from it. A post
   its author soft-deletes keeps its copies in that author's own Memories. Whether a soft delete or a moderation

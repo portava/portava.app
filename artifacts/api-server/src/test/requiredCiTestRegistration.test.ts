@@ -20,10 +20,13 @@ describe("required CI test registration cannot substitute optional or missing ex
       "src/test/mediaCaptionTranslationHardDelete.native.test.ts",
       "src/test/accountDeletionMediaBoundary.native.test.ts",
       "src/test/mediaAdaptiveEncoding.real.test.ts",
+      "src/test/inputOutcomeConsent.postgres.test.ts",
+      "src/test/wallOutcomeConsent.postgres.test.ts",
+      "src/test/mediaEventPrivacy.postgres.test.ts",
     ]);
   });
 
-  for (const script of ["test:account-media-native", "test:media-encoding"]) {
+  for (const script of ["test:account-media-native", "test:media-encoding", "test:input-outcome-native", "test:wall-outcome-native", "test:media-events-native"]) {
     for (const [label, change] of [
       ["missing", () => ""],
       ["filtered", (command: string) => command + " --test-only"],
@@ -31,7 +34,7 @@ describe("required CI test registration cannot substitute optional or missing ex
       ["masked failure", (command: string) => command + " || true"],
     ] as const) it(`refuses ${label} ${script}`, async () => {
       const { requiredCiTestFiles, scripts, workflow } = await load();
-      assert.throws(() => requiredCiTestFiles({ ...scripts, [script]: change(scripts[script]!) }, workflow), /Mandatory account Media or encoding command/);
+      assert.throws(() => requiredCiTestFiles({ ...scripts, [script]: change(scripts[script]!) }, workflow), /Mandatory (?:account Media or encoding|signal privacy) command/);
     });
   }
 
@@ -171,6 +174,9 @@ describe("required CI test registration cannot substitute optional or missing ex
       "src/test/mediaCaptionTranslationHardDelete.native.test.ts",
       "src/test/accountDeletionMediaBoundary.native.test.ts",
       "src/test/mediaAdaptiveEncoding.real.test.ts",
+      "src/test/inputOutcomeConsent.postgres.test.ts",
+      "src/test/wallOutcomeConsent.postgres.test.ts",
+      "src/test/mediaEventPrivacy.postgres.test.ts",
     ]);
   });
 });

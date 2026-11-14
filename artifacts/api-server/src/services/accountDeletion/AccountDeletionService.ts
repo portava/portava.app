@@ -1,3 +1,4 @@
+import { eraseAccountMediaEvents } from './mediaEvents.js';
 import { eraseAccountComposerUploads } from './composerUploads.js';
 /**
  * AccountDeletionService
@@ -159,7 +160,7 @@ const REFERENCE_BUCKETS: readonly string[] = [POST_MEDIA_BUCKET, PROFILE_MEDIA_B
  * the STEPS change; bump the policy version when the RULES do.
  */
 export const DELETION_POLICY_VERSION = "d6-2026-08-23";
-export const DELETION_WORKER_VERSION = "2026-10-16.1";
+export const DELETION_WORKER_VERSION = "2026-11-14.1";
 
 /** Per-step outcome. Steps are independent so one failure cannot hide another. */
 export interface DeletionStepResult {
@@ -502,6 +503,12 @@ export async function executeAccountDeletion(
   const warnings: string[] = [];
   const tombstonedCounts: Record<string, number> = {};
   const deletedCounts: Record<string, number> = {};
+  if (!opts.contentOnly) {
+    const eventsOk = await step(steps, 'erase_account_media_events', async () => {
+      const deleted = await eraseAccountMediaEvents(sc, userId); deletedCounts.media_events = deleted; return deleted;
+    });
+    if (!eventsOk) { warnings.push('Media event erasure unconfirmed — deletion remains pending before content removal'); return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts }; }
+  }
   const mediaOk = await step(steps, "erase_canonical_account_media", async () => {
     const count = await eraseAccountMedia(sc, userId);
     if (count > 0) deletedCounts.media_assets = count;

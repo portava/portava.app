@@ -14162,7 +14162,7 @@ re-checked, when, and what is not.
   (`travel-buddy-standalone/src/components/MessageMediaBubble.tsx:128#openMessageVideo({ mediaRef: mediaUrl`).
   `travel-buddy-standalone/src/features/telegraph/media/CompactPlaybackHost.tsx:187#<SharedVideoPlayer` renders it,
   and the root layout mounts the host once, AFTER the Stack and outside every screen and list
-  (`travel-buddy-standalone/app/_layout.tsx:443#<CallSurface /><CompactPlaybackHost />` — line-neutral, import at the
+  (`travel-buddy-standalone/app/_layout.tsx:433#<CallSurface /><CompactPlaybackHost />` — line-neutral, import at the
   foot), the pattern the shipped call pill already uses. §82 declared the root layout NOT-GRADED for this census, and
   that declaration is left standing: T62's verdict is pinned instead by a scoped suite that READS the layout and fails
   if the mount is removed or moved inside the Stack (90.3), so a change that breaks the mount fails CI rather than

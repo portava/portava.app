@@ -4268,8 +4268,8 @@ scenario or replay test existed.
   **tampered** snapshot fails to verify (`:149#snapshot`); RLS hides a private
   trip and its events from a non-member (`:163#RLS`).
 - A CI job runs it on a `postgis/postgis:16-3.4` service container
-  (`.github/workflows/ci.yml:876#api-server-local-db:`); the verdict job requires
-  it (`.github/workflows/ci.yml:1657-1666#ci-verdict:`). The same files sit in the ordinary `test` list and skip there without a
+  (`.github/workflows/ci.yml:906#api-server-local-db:`); the verdict job requires
+  it (`.github/workflows/ci.yml:1687-1696#ci-verdict:`). The same files sit in the ordinary `test` list and skip there without a
   database, exactly as `tripKernelLive.test.ts` skips without credentials.
 
 **What it does not prove.** Drift. `docs/ci/BOOTSTRAP.md` §1's argument
@@ -10920,7 +10920,7 @@ Who reaches it, measured on a PGlite full-chain replica:
   conversation are the canonical durable class "until deletion/retention policy" (Trips spec v4 §5.3; TR96).
 - **Not decided.** What a trip's conversation and its messages become when the trip row itself is destroyed. `trips`,
   `message_threads` and `message_thread_members` are all in `UNCLASSIFIED_BACKLOG`
-  (`artifacts/api-server/src/lib/deletionDispositions.ts:507#export const UNCLASSIFIED_BACKLOG: readonly string[] = [`).
+  (`artifacts/api-server/src/lib/deletionDispositions.ts:508#export const UNCLASSIFIED_BACKLOG: readonly string[] = [`).
   No retention period exists for trips or chat. So this section does not pick an answer (§95.5).
 
 ### §95.3 What changed

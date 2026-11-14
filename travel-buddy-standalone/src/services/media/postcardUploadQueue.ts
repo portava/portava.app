@@ -30,7 +30,7 @@ import {
   type PostcardUploadInput,
   type PostcardUploadJob,
 } from './postcardUploadPipeline.ts';
-import { newClientEventId } from '../clientEventId';
+import { newClientEventId } from '../clientEventId.ts';
 
 export interface QueueStorage {
   getItem(key: string): Promise<string | null>;

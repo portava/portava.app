@@ -209,7 +209,7 @@ function makeClient(opts: {
     rpc: async (fn: string, args: Record<string, unknown>) => {
       ops.push({ table: `rpc:${fn}`, op: "rpc" });
       void args;
-      return { data: null, error: null };
+      return { data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null };
     },
     storage: {
       from: (bucket: string) => ({

@@ -20,6 +20,7 @@ import {
   runIntelContributionRetentionSweep,
   runInputTelemetryRetentionSweep,
 } from "../lib/intelRetentionScheduler.js";
+import { runMediaEventRetentionSweep } from "../lib/mediaEventRetention.js";
 import { runInputOutcomeRetentionSweep } from "../lib/inputAssistance/outcomeLearning.js";
 import { runWallTelemetryRetentionSweep, WALL_TELEMETRY_RETENTION_DAYS } from "../lib/wallTelemetryRetention.js";
 
@@ -48,6 +49,7 @@ test("every retention pass is registered on the scheduler's timer", () => {
     // above — the feature flag decides whether counters are written, never
     // whether expired ones are deleted.
     input_outcome_retention: runInputOutcomeRetentionSweep,
+    media_event_retention: runMediaEventRetentionSweep,
     // ADDED 2026-10-06 (lane L, wave 6) with migration 3702. OD-INPUT-2 (Q11(a) the analogue): Wall
     // telemetry rows are deleted 30 days after the event; before this nothing
     // deleted a wall_telemetry_events row at all. FLAGLESS, as above.
@@ -58,7 +60,7 @@ test("every retention pass is registered on the scheduler's timer", () => {
   }
   // The count is asserted so a pass cannot be added or dropped silently; the map
   // above is what says WHICH, so bumping this number alone will not satisfy it.
-  assert.equal(RETENTION_PASSES.length, 9);
+  assert.equal(RETENTION_PASSES.length, 10);
 });
 
 test("a registered pass survives its own rejection — one broken sweep cannot starve the others", async () => {

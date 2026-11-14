@@ -236,7 +236,7 @@ beforeEach(() => {
   setTelemetrySink((e) => { events.push(e); });
   setOutcomePoster(async (b) => { posts.push(b); return true; });
   beginOutcomeAccount('owner-a');
-  applyOutcomeConsent('owner-a', true);
+  applyOutcomeConsent('owner-a', true, '2026-10-05T00:00:00.000Z');
 });
 afterEach(() => {
   resetTelemetrySink();

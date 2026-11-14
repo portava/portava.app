@@ -196,10 +196,11 @@
   ],
   "unblockedFollowup": [
     "Continuous qualified feed exposure should be integrated only after the consent/retention contract is explicit; serving/mounting is not exposure.",
-    "Add explicit media_events JSON identity erasure and bounded retention under an approved policy; audit queued events and derived/exported copies.",
-    "Close remaining account/lifetime parity for Discovery dwell and Wall telemetry transports.",
     "Central diagnostic scrubbing at Sentry startup and downstream export verification.",
-    "Wire generic Add to Trip and legacy experience-picker committed media attribution through canonical mutation provenance; no event is emitted merely for opening those pickers. Factual correction acknowledgement needs its own producer; not_interested is not that outcome."
+    "Wire generic Add to Trip and legacy experience-picker committed media attribution through canonical mutation provenance; no event is emitted merely for opening those pickers. Factual correction acknowledgement needs its own producer; not_interested is not that outcome.",
+    "Media view admission/access/session binding, durable idempotency and persisted receipts are under implementation; playback summaries and qualified exposure remain separate open work.",
+    "Discovery dwell still needs account/lifetime parity audit.",
+    "Media identity erasure boundary and disabled retention proposal are implemented; finalize exact-byte native race gates and full rollout. Legal review for retention and legacy unlinked/orphaned data gaps remain open."
   ],
   "candidates": [
     {
@@ -757,11 +758,11 @@
       "proposed_use": "If a completion problem justifies measurement, emit at most one outcome per composer session with a surface enum and outcome. The text itself, exact length, edit history, and typing rhythm provide no necessary input to that funnel.",
       "proposed_scope": "Later",
       "classification": "requires instrumentation",
-      "coverage": "partial; code audit only, not acceptance-complete",
+      "coverage": "implemented and controlled-test verified for the named flows; deployment/device/export acceptance pending",
       "domains": [
         "creation"
       ],
-      "observed_and_remaining": "Later-only; no raw text, exact length, edit history or recipient capture.",
+      "observed_and_remaining": "User explicitly requested structured abandoned-action outcomes. Six composer_outcome values now distinguish leaving, discard, upload cancellation/failure, post discard after upload and publication. No content/length/recipient payload. Code and controlled tests pass; deployed/device/export validation still open.",
       "complete": false
     },
     {
@@ -771,11 +772,11 @@
       "proposed_use": "Store locally by default where compatible with product behavior. Distinguish draft state from submission and server receipt.",
       "proposed_scope": "Feature only",
       "classification": "available from a product record",
-      "coverage": "partial; code audit only, not acceptance-complete",
+      "coverage": "implemented and controlled-test verified for the named flows; deployment/device/export acceptance pending",
       "domains": [
         "creation"
       ],
-      "observed_and_remaining": "Draft behavior is feature state; do not infer server submission from local edit state.",
+      "observed_and_remaining": "Account/composer-scoped local comment and supported post draft recovery implemented. Success/discard clears; failed submission preserves. Controlled restart, browser IndexedDB and account-switch checks documented; physical restart/termination and deployed access still open.",
       "complete": false
     },
     {
@@ -799,13 +800,13 @@
       "proposed_use": "Keep raw input out of events, session replay, crash breadcrumbs, remote debug logs, and third-party analytics. Analyze abandonment through the minimal outcome above.",
       "proposed_scope": "Exclude from analytics",
       "classification": "out of scope",
-      "coverage": "partial; code audit only, not acceptance-complete",
+      "coverage": "implemented and controlled-test verified for the named flows; deployment/device/export acceptance pending",
       "domains": [
         "input",
         "telegraph",
         "diagnostics"
       ],
-      "observed_and_remaining": "Raw unsent content excluded. Telemetry field validation improved here; crash/export paths still need a dedicated privacy pass.",
+      "observed_and_remaining": "Raw unsent content remains excluded; composer/client/server schemas and central Sentry scrubber are tested. Hosted crash/export capture is not yet verified.",
       "complete": false
     },
     {
@@ -830,11 +831,11 @@
       "proposed_use": "Treat permission, import, on-device transform, temporary server upload, and publish as separate steps. A provider failure should appear as a redacted code.",
       "proposed_scope": "Feature only",
       "classification": "available from a product record",
-      "coverage": "partial; code audit only, not acceptance-complete",
+      "coverage": "implemented and controlled-test verified for the named flows; deployment/device/export acceptance pending",
       "domains": [
         "creation"
       ],
-      "observed_and_remaining": "Owner-bound upload stages exist. Permission/import/transform/server receipt/publish remain distinct.",
+      "observed_and_remaining": "Private pre-publication upload state, idempotent cancellation/finalization and cleanup races implemented in4028, applied CI/production; client/API deployment pending. Structured failure codes only; saved drafts preserve media.",
       "complete": false
     },
     {
@@ -1163,5 +1164,13 @@
       "observed_and_remaining": "Feature prompts/outputs stay in intended stores; analytics uses allowlisted result/latency/outcome metadata.",
       "complete": false
     }
+  ],
+  "updatedAt": "2026-11-14",
+  "integrationEvidence": [
+    "docs/ops/rumazi-draft-recovery-20261113.json",
+    "docs/ops/rumazi-input-consent-boundary-20261114.json",
+    "docs/ops/rumazi-wall-consent-boundary-20261113.json",
+    "docs/ops/rumazi-media-event-privacy-20261114.json",
+    "docs/ops/rumazi-signal-ci-privacy-20261114.json"
   ]
 }

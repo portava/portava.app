@@ -816,6 +816,36 @@ jobs:
           set -euo pipefail
           bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:official-media-native 2>&1 | tee "$RUNNER_TEMP/official-media-native.log"
 
+      - name: Require native input-outcome privacy suite
+        timeout-minutes: 5
+        shell: bash
+        env:
+          INPUT_OUTCOME_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}
+          TMPDIR: /tmp
+        run: |
+          set -euo pipefail
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:input-outcome-native 2>&1 | tee "$RUNNER_TEMP/input-outcome-native.log"
+
+      - name: Require native wall-outcome privacy suite
+        timeout-minutes: 5
+        shell: bash
+        env:
+          WALL_OUTCOME_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}
+          TMPDIR: /tmp
+        run: |
+          set -euo pipefail
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:wall-outcome-native 2>&1 | tee "$RUNNER_TEMP/wall-outcome-native.log"
+
+      - name: Require native media-events privacy suite
+        timeout-minutes: 5
+        shell: bash
+        env:
+          MEDIA_EVENT_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}
+          TMPDIR: /tmp
+        run: |
+          set -euo pipefail
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:media-events-native 2>&1 | tee "$RUNNER_TEMP/media-events-native.log"
+
       - name: Require native media translation deletion suite
         timeout-minutes: 5
         shell: bash

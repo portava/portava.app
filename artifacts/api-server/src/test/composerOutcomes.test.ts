@@ -7,13 +7,25 @@ import { _setTestServiceClient } from '../lib/supabase.js';
 import router, { composerOutcomeRowId } from '../routes/composerOutcomes.js';
 let server: Server, base: string, enabled = true, fail = false, actor = '10000000-0000-4000-8000-000000000001';
 const rows = new Map<string, any>();
-function client() { return { auth: { getUser: async (token: string) => ({ data: { user: token === 'token' ? { id: actor } : null }, error: null }) }, from(table: string) { const b: any = { select: () => b, eq: () => b, maybeSingle: async () => ({ data: table === 'feature_flags' ? { enabled } : null, error: null }), upsert: async (values: any[], options: any) => { assert.equal(options.ignoreDuplicates, true); if (fail)
-            return { error: { code: 'outage' } }; for (const r of values)
-            if (!rows.has(r.id))
-                rows.set(r.id, r); return { error: null }; }, then: (ok: any, bad: any) => Promise.resolve({ data: [], error: null }).then(ok, bad) }; return b; } } as any; }
+let admission: boolean | null = true;
+function client() {
+ return {
+  auth: { getUser: async (token: string) => ({ data: { user: token === 'token' ? { id: actor } : null }, error: null }) },
+  from(table: string) {
+   const b: any = { select: () => b, eq: () => b, maybeSingle: async () => ({ data: table === 'feature_flags' ? { enabled } : null, error: null }), then: (ok: any, bad: any) => Promise.resolve({ data: [], error: null }).then(ok, bad) };
+   return b;
+  },
+  rpc: async (name: string, args: any) => {
+   assert.equal(name, 'admit_composer_outcomes'); assert.equal(args.p_actor, actor);
+   if (fail) return { data: null, error: { code: 'outage' } };
+   if (admission === true) for (const row of args.p_rows) if (!rows.has(row.id)) rows.set(row.id, row);
+   return { data: admission, error: null };
+  },
+ } as any;
+}
 before(async () => { const app = express(); app.use(express.json()); app.use('/api', router); await new Promise<void>((resolve, reject) => { server = app.listen(0, '127.0.0.1', () => resolve()); server.on('error', reject); }); base = `http://127.0.0.1:${(server.address() as any).port}`; });
 after(async () => { await new Promise<void>(done => server.close(() => done())); });
-beforeEach(() => { rows.clear(); enabled = true; fail = false; actor = '10000000-0000-4000-8000-000000000001'; const c = client(); _setTestClient(c, true); _setTestServiceClient(c); });
+beforeEach(() => { rows.clear(); enabled = true; fail = false; admission = true; actor = '10000000-0000-4000-8000-000000000001'; const c = client(); _setTestClient(c, true); _setTestServiceClient(c); });
 const event = { event_id: '20000000-0000-4000-8000-000000000001', version: 1, surface: 'postcard', outcome: 'upload_failed', failure_code: 'network' };
 async function send(value: unknown, token = 'token') { return fetch(`${base}/api/media/analytics/composer-outcomes`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(value) }); }
 test('strict outcomes reject text/media/filenames and unapproved failure codes without echoing input', async () => {
@@ -49,4 +61,13 @@ test('auth, collection gate and durable acknowledgement fail closed', async () =
     fail = true;
     assert.equal((await send({ events: [event] })).status, 503);
     assert.equal(rows.size, 0);
+});
+
+test('deleted actor admission is acknowledged without storing, and unknown admission remains retryable', async () => {
+ admission = false;
+ const refused = await send({ events: [event] });
+ assert.equal(refused.status, 200); assert.deepEqual(await refused.json(), { accepted: 1, disabled: true });
+ assert.equal(rows.size, 0);
+ admission = null;
+ assert.equal((await send({ events: [event] })).status, 503); assert.equal(rows.size, 0);
 });
