@@ -88,5 +88,36 @@
     "Higgsfield credentials remain deferred by owner.",
     "iPhone build/install requested, not yet verified.",
     "All original888 acceptance items remain open; unit evidence does not close physical-device or policy requirements."
-  ]
+  ],
+  "followup": {
+    "sourceCommit": "328a9768c2765a1bef48961e58f5bfe68c5a8afd",
+    "clientComponents": {
+      "fullRun": {
+        "tests": 10100,
+        "passed": 10099,
+        "failed": 1,
+        "suites": 1309,
+        "log": "/private/tmp/rumazi-client-check-all-final.log",
+        "sha256": "ba3bcd1dbd53d5b89e8e7337cd30e5e051d43ef6e6e32e1fe8d6b396e07b12a0"
+      },
+      "failedFixtureCorrection": "recordingStampPublish now seeds the real authenticated owner observer and isolates native disk boundary; focused3/3 passed. No component tests skipped.",
+      "otherPhases": "Production typecheck, test-typecheck ratchet, bare-image, avatar sizing, avatar guard tests, dev-proxy shipping and orphan-test guards all passed."
+    },
+    "productionActivation": "docs/ops/rumazi-signal-production-activation-20261114.json",
+    "iphoneBuild": "Immutable328a9768c source archive, native package registration and SQLCipher preflight passed; build/install still in progress.",
+    "clientFullCi": {
+      "runId": 43569968405,
+      "jobId": 132372062794,
+      "sourceCommit": "328a9768c2765a1bef48961e58f5bfe68c5a8afd",
+      "status": "completed",
+      "conclusion": "success",
+      "checkedStep": {
+        "name": "check:all and report totals",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 8
+      },
+      "url": "https://github.com/portava/portava.app/actions/runs/43569968405"
+    }
+  }
 }

@@ -54,7 +54,7 @@
   },
   "applicationDeployment": {
     "republished": false,
-    "blocker": "Browser origin permission for replit.com explicitly declined. No alternate surface or indirect workaround attempted. User is away for four hours; resume only with restored authorized access.",
+    "blocker": "Browser origin permission for replit.com explicitly declined earlier. No alternate surface or indirect workaround attempted. Matching server deployment requires restored authorized access.",
     "runningBuildBeforeActivation": "49288c03bd4424409f6cae032d66447a995180559adc7d0b0ce9c8fbe58294f4"
   },
   "higgsfield": {
@@ -89,13 +89,17 @@
     "staticChecks": "14 of 15 initially passed; one new test callback type error fixed; test typecheck now passes. Existing baseline860 test diagnostics remain.",
     "censusScope": "13 measured, all cited code within declared scope; not acceptance validation.",
     "schedulerInventory": "74 started,26reported,13durable,46unobservable; static inventory matches, not runtime health.",
-    "noNativeBuild": true,
+    "noNativeBuild": false,
     "isolatedSecurityFollowup": {
       "passed": 17,
       "failed": 0,
       "commit": "3df417cbf",
       "log": "/private/tmp/portava-security-isolated.log",
       "note": "Immutable checkout eliminated concurrent file mutation fixture failures; not a new full-suite pass."
+    },
+    "nativeBuild": {
+      "sourceCommit": "328a9768c2765a1bef48961e58f5bfe68c5a8afd",
+      "status": "Local Personal Team Release build in progress; user requested latest build and connected iPhone. Native package preflight and CocoaPods complete; no device behavior certification yet."
     }
   },
   "masterChecklist": {
@@ -109,7 +113,7 @@
     "Republish the validated API/client code when Replit access is restored",
     "Verify actual private media object access and cancellation cleanup through deployed endpoints",
     "Verify hosted Sentry export payloads",
-    "Physical-device restart, termination, background upload, account-switch, offline and accessibility tests; no iPhone build authorized",
+    "Physical-device restart, termination, background upload, account-switch, offline and accessibility tests; iPhone build now requested and in progress",
     "Higgsfield provider activation deferred by owner"
   ],
   "updatedAt": "2026-11-14",
@@ -118,12 +122,14 @@
       4029,
       4030,
       4031,
-      4032
+      4032,
+      4033
     ],
     "ci": "applied; rollback service-role assertions passed",
-    "production": "not applied",
-    "evidence": "docs/ops/rumazi-signal-ci-privacy-20261114.json",
+    "production": "applied; all five service-role rollback proofs passed; exact checksums recorded",
+    "evidence": "docs/ops/rumazi-signal-production-activation-20261114.json",
     "application": "pending",
-    "mediaRetention": "disabled pending explicit legal-review requirement"
+    "mediaRetention": "disabled pending explicit legal-review requirement",
+    "nativeConcurrency": "Hosted CI43569968405 job132372062743 Input/Wall/Media privacy suites passed"
   }
 }

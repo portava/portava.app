@@ -3268,7 +3268,7 @@ header and constant together (`artifacts/api-server/src/compass/CompassTools.ts:
 `artifacts/api-server/src/test/compassToolCountContract.test.ts:18#COMPASS_TOOL_COUNT_IN_HEADER`). The trails schema (2910) is on CI
 and not on production, so the Trail branch probes before naming a column — since V-M5 F1 through lib/capability, which also covers 3977's `review_state`
 (`artifacts/api-server/src/services/media/MediaActionResolver.ts:869#const review = await probeTrailReviewState(sc)`) and the ratchet's KNOWN entry
-lists the ten objects (`artifacts/api-server/src/scripts/checkFlagSchemaPrerequisites.ts:317#content_trails`).
+lists the ten objects (`artifacts/api-server/src/scripts/checkFlagSchemaPrerequisites.ts:321#content_trails`).
 `artifacts/api-server/src/test/compassPlanCompiler.test.ts` 6 cases; M1–M5 red. **Moves N → W**: the compiler is built and its unit
 behaviour is right, and "executable" is not yet true on production (the Trail source refuses
 there) nor routed anywhere (feasibility is declared unverified, by design).
@@ -3380,7 +3380,7 @@ events 9, and a row-count fingerprint identical across every pre-existing table.
 
 The repo's production snapshot was refreshed to match (493 tables, 160 functions, 198 flags), and
 the flag-schema ratchet's `COMPASS_ENABLED` entry was struck under the file's own STALE rule rather
-than narrowed — `artifacts/api-server/src/scripts/checkFlagSchemaPrerequisites.ts:317#content_trails` keeps the history as a comment, the way
+than narrowed — `artifacts/api-server/src/scripts/checkFlagSchemaPrerequisites.ts:321#content_trails` keeps the history as a comment, the way
 the `media_canonical_enabled` strike did. Five entries left the PENDING LIVE APPLY allowlist for the
 same reason (`artifacts/api-server/src/scripts/checkMissingLiveColumns.ts:113#compass_conversations.trip_id`), because the columns are
 present now — not because they are excused.

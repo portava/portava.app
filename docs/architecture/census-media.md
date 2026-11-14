@@ -289,7 +289,7 @@ list of what **Media** must not be, not a list of what the newest shell must not
 the surface a user reaches is `app/(tabs)/media.tsx:55-58` with `defaultMode = 'watch'`
 (`src/stores/mediaStore.ts:104,145`) — `WatchFeed.tsx:1-8` *"full-screen vertical video
 feed … renders a paging list"*, autoplaying on viewability (`WatchVideoCell.tsx:99#shouldPlay = isActive`
-`shouldPlay={isActive}`; `WatchFeedList.tsx:529` drives `isActive` from viewability
+`shouldPlay={isActive}`; `WatchFeedList.tsx:547#const onViewableItemsChanged = useRef(` drives `isActive` from viewability
 tracking), with a Stamp / comment / save counter rail (`WatchItemOverlay.tsx:403-437`,
 `formatCompactCount` at `:134`). That is four §46.2 anti-patterns implemented and working:
 *TikTok-style endless vertical video feed*, *Heart/Like as primary hierarchy*, *Autoplay as
@@ -782,15 +782,15 @@ over `travel-buddy-standalone/src`, `travel-buddy-standalone/app` and
 | MD275 | Thumbnail generation | **W** | Server-side thumbnails exist for **images only**: `lib/mediaProcessing.ts:15-16,18-22` — *"Dimensions, thumbnails and pHash remain image-only."* `media_assets.thumbnail_path` exists for video and no writer fills it; `WatchVideoCell.tsx:207#buffering` shows a poster *"while buffering"* from a client-supplied URL. |
 | MD276 | Duration metadata | **W** | `0191:23` `duration_ms` exists and is client-declared — the server never probes a video (no ffmpeg, `mediaProcessing.ts:18-19`), so duration is whatever the uploader said. `2089_media_assets_ready_requires_dimensions.sql` constrains dimensions, not duration. |
 | MD277 | Adaptive playback | **N** | No HLS/DASH anywhere. `WatchVideoCell.tsx:184#<Video` plays a single progressive `videoUrl` through `expo-av`. |
-| MD278 | Mute state | **C** | `WatchFeedList.tsx:467` holds `isMuted` (defaulting muted), passed to `WatchVideoCell.tsx:200#isMuted={isMuted`; `SharedVideoPlayer.tsx:205-207#const next = !isMuted;` `setStatusAsync({ isMuted })` with an accessible label at `:326`. |
-| MD279 | Seek | **C** | `WatchFeedList.tsx:10` progress bar with pan-to-seek; `:299` throttles seeks to ≈12 fps and `:311` issues a final exact seek. |
+| MD278 | Mute state | **C** | `WatchFeedList.tsx:508#const [isMuted, setIsMuted] = useState(Platform.OS === 'web');` holds `isMuted` (initially muted on web, sound on in the native app, then restored from saved preference), passed to `WatchVideoCell.tsx:200#isMuted={isMuted`; `SharedVideoPlayer.tsx:205-207#const next = !isMuted;` `setStatusAsync({ isMuted })` with an accessible label at `:326`. |
+| MD279 | Seek | **C** | `WatchFeedList.tsx:312#const scrubGesture = useMemo(` supplies pan-to-seek; `WatchFeedList.tsx:330#if (now - lastSeekRef.current >= 80 && durationMsRef.current)` throttles seeks to ≈12 fps and `WatchFeedList.tsx:343#?.setPositionAsync(scrubProgressRef.current * durationMsRef.current)` issues a final exact seek. |
 | MD280 | Captions | **N** | No caption/subtitle/`textTrack` anywhere in the client. |
 | MD281 | Upload resume / retry | **N** | `src/services/media.ts:153` `uploadMedia` is a single `fetch` POST to `/api/media/upload` (`:197`) with no chunking, no range, no resume token and no retry loop. The postcard transport (`lib/mediaPipeline.ts:12-17`) gives progress and cancellation, not resume. |
 | MD282 | Compression / transcoding | **N** | `lib/mediaProcessing.ts:18-19` — *"Videos are NOT transcoded here (no ffmpeg in this tier) — they are sniffed and size-capped only; that limitation is documented, not hidden."* Images are re-encoded and capped; video is not. |
 | MD283 | Moderation | **C** | `media_assets.moderation_status`, `post_media_moderation_ledger`, `routes/adminMedia.ts` — the same pipeline for video as for images. |
 | MD284 | Background upload | **N** | No background task, no `expo-task-manager` upload registration, no queue. `uploadMedia` runs in the foreground and dies with the screen. |
 | MD285 | Playback recovery | **C** | `WatchVideoCell.tsx:119#React to isActive changes` reacts to activity changes and holds a `hasHardFailed` latch so a permanently broken source stops retrying; `:220#isBuffering` distinguishes buffering from failure. |
-| MD286 | Do not make endless vertical autoplay the primary Media IA | **W** | It is the primary Media IA. `src/stores/mediaStore.ts:104,145` `defaultMode='watch'`; `2037_media_tab_flags.sql:17-20` seeds `MEDIA_VIEW_MODE_FULLSCREEN_ENABLED = true`; `WatchFeedList.tsx:529` drives autoplay from viewability. The compliant alternative exists and is dark. |
+| MD286 | Do not make endless vertical autoplay the primary Media IA | **W** | It is the primary Media IA. `src/stores/mediaStore.ts:104,145` `defaultMode='watch'`; `2037_media_tab_flags.sql:17-20` seeds `MEDIA_VIEW_MODE_FULLSCREEN_ENABLED = true`; `WatchFeedList.tsx:547#const onViewableItemsChanged = useRef(` drives autoplay from viewability. The compliant alternative exists and is dark. |
 
 ### §38 Search
 
@@ -898,7 +898,7 @@ Judged by responsibility, not by name — the divergence is recorded in each row
 | MD360 | `GET /media/gems` | **N** | Not registered. The gems lens falls back to the pre-existing `GET /media/gems-feed` (`routes/mediaFeed.ts:795`), which is a ranked social feed, not a §16 gem-state projection. |
 | MD361 | `GET /media/people` | **C** | `routes/mediaWorld.ts:196` |
 | MD362 | `GET /media/me` | **C** | `routes/mediaWorld.ts:221` |
-| MD363 | `GET /media/:mediaId` | **C** | `routes/mediaFeed.ts:1669` (pre-existing). |
+| MD363 | `GET /media/:mediaId` | **C** | `routes/mediaFeed.ts:1785#router.get("/media/:id", asyncHandler(async (req, res) => {` (pre-existing). |
 | MD364 | `GET /media/:mediaId/actions` | **C** | `routes/mediaActions.ts:43` |
 | MD365 | `GET /media/map` | **C** | `routes/mediaWorld.ts:271` |
 | MD366 | `GET /media/timeline` | **C** | `routes/mediaWorld.ts:245` |
@@ -964,7 +964,7 @@ and this line dropped every one of them … the funnel simply read zero."*
 | MD399 | Media → Real-World Arrival | **N** | `mediaTelemetry.ts:78` — reserved, no emitter, and no arrival detection exists anywhere on a media path. |
 | MD400 | Media → Contribution | **N** | Reserved, no emitter. |
 | MD401 | Media → Useful Correction | **C** | `mediaTelemetry.ts:76` `media_correction`. |
-| MD402 | Do not optimise primarily for minutes watched, infinite scroll depth or forced autoplay completion | **W** | All three are optimised for on the live surface: `MediaFeedRankingService.ts:60-70` multiplies by `watchCompletionRate`, `qualifiedViewCount` and `rewatchRate`; `WatchFeed.tsx:1-8` is an infinite paging feed; `WatchFeedList.tsx:529` autoplays on viewability. The prohibition is not merely unenforced — the forbidden objective is wired into the ranker. |
+| MD402 | Do not optimise primarily for minutes watched, infinite scroll depth or forced autoplay completion | **W** | All three are optimised for on the live surface: `MediaFeedRankingService.ts:60-70` multiplies by `watchCompletionRate`, `qualifiedViewCount` and `rewatchRate`; `WatchFeed.tsx:1-8` is an infinite paging feed; `WatchFeedList.tsx:547#const onViewableItemsChanged = useRef(` autoplays on viewability. The prohibition is not merely unenforced — the forbidden objective is wired into the ranker. |
 
 ### §46 Visual Design Specification
 
@@ -1002,7 +1002,7 @@ and this line dropped every one of them … the funnel simply read zero."*
 | MD422 | No Facebook-style newsfeed cards | **C** | The newsfeed card pattern lives in the Wall, not Media; the media surfaces are feed/mosaic/mosaic. |
 | MD423 | No follower/view counts dominating Media | **C** | Follower and view counts are absent from the media overlays — `WatchItemOverlay.tsx` shows stamp/comment/save, not followers or views. |
 | MD424 | No Heart/Like as primary hierarchy | **W** | Built. `WatchItemOverlay.tsx:403-411` — the Stamp control sits in `s.heartGroup`, is the first and largest item in the action rail, and carries a compact count. It is the primary hierarchy on the default surface. |
-| MD425 | No autoplay as primary navigation | **W** | Built. `WatchFeedList.tsx:529` sets `isActive` from viewability and `WatchVideoCell.tsx:99#shouldPlay = isActive` `shouldPlay={isActive}` — advancing the feed *is* the play control. |
+| MD425 | No autoplay as primary navigation | **W** | Built. `WatchFeedList.tsx:547#const onViewableItemsChanged = useRef(` sets `isActive` from viewability and `WatchVideoCell.tsx:99#shouldPlay = isActive` `shouldPlay={isActive}` — advancing the feed *is* the play control. |
 | MD426 | No random engagement-ranked viral feed | **C** | Ranking is not random and not virality-driven: `portavaRank.ts:182-201` weights recency, geo, taste and actionability above `socialProof 0.25`, and `LOCAL_MOMENTUM_MAX_CONTRIBUTION` is capped by ruling (`:143-150`) so momentum *"cannot lift a place over one the viewer's taste prefers by even a single interest tag."* This one the tree gets right on purpose. |
 | MD427 | No full-screen stranger video immediately on Media open | **W** | Built. Opening the Media tab with the seeded flags lands directly in `WatchFeed`, full-screen, autoplaying, with no place or context first. |
 

@@ -4677,7 +4677,8 @@
         "docs/ops/rumazi-input-consent-boundary-20261114.json"
       ],
       "verificationEvidence": [
-        "docs/ops/rumazi-signal-ci-privacy-20261114.json"
+        "docs/ops/rumazi-signal-ci-privacy-20261114.json",
+        "docs/ops/rumazi-signal-production-activation-20261114.json"
       ],
       "dependencies": [
         "API/client rollout",
@@ -4729,7 +4730,8 @@
         "docs/ops/rumazi-input-consent-boundary-20261114.json"
       ],
       "verificationEvidence": [
-        "docs/ops/rumazi-signal-ci-privacy-20261114.json"
+        "docs/ops/rumazi-signal-ci-privacy-20261114.json",
+        "docs/ops/rumazi-signal-production-activation-20261114.json"
       ],
       "dependencies": [
         "API/client rollout",
@@ -5370,7 +5372,8 @@
         "docs/ops/rumazi-input-consent-boundary-20261114.json"
       ],
       "verificationEvidence": [
-        "docs/ops/rumazi-signal-ci-privacy-20261114.json"
+        "docs/ops/rumazi-signal-ci-privacy-20261114.json",
+        "docs/ops/rumazi-signal-production-activation-20261114.json"
       ],
       "dependencies": [
         "API/client rollout",
@@ -5403,7 +5406,8 @@
         "docs/ops/rumazi-input-consent-boundary-20261114.json"
       ],
       "verificationEvidence": [
-        "docs/ops/rumazi-signal-ci-privacy-20261114.json"
+        "docs/ops/rumazi-signal-ci-privacy-20261114.json",
+        "docs/ops/rumazi-signal-production-activation-20261114.json"
       ],
       "dependencies": [
         "API/client rollout",
@@ -5436,7 +5440,8 @@
         "docs/ops/rumazi-input-consent-boundary-20261114.json"
       ],
       "verificationEvidence": [
-        "docs/ops/rumazi-signal-ci-privacy-20261114.json"
+        "docs/ops/rumazi-signal-ci-privacy-20261114.json",
+        "docs/ops/rumazi-signal-production-activation-20261114.json"
       ],
       "dependencies": [
         "API/client rollout",
@@ -5545,7 +5550,8 @@
         "docs/ops/rumazi-input-consent-boundary-20261114.json"
       ],
       "verificationEvidence": [
-        "docs/ops/rumazi-signal-ci-privacy-20261114.json"
+        "docs/ops/rumazi-signal-ci-privacy-20261114.json",
+        "docs/ops/rumazi-signal-production-activation-20261114.json"
       ],
       "dependencies": [
         "API/client rollout",
@@ -5692,7 +5698,8 @@
         "docs/ops/rumazi-input-consent-boundary-20261114.json"
       ],
       "verificationEvidence": [
-        "docs/ops/rumazi-signal-ci-privacy-20261114.json"
+        "docs/ops/rumazi-signal-ci-privacy-20261114.json",
+        "docs/ops/rumazi-signal-production-activation-20261114.json"
       ],
       "dependencies": [
         "API/client rollout",

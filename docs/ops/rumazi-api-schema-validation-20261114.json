@@ -1,0 +1,65 @@
+{
+  "status": "source frozen; remaining verification running",
+  "paths": [
+    {
+      "path": "artifacts/api-server/src/scripts/checkFlagSchemaPrerequisites.ts",
+      "sha256": "614103527373a8196a0e82d219cfe0f973cd5a0844f03d08cf91b69b48194db0"
+    },
+    {
+      "path": "artifacts/api-server/src/test/snapshotFreshnessGuard.test.ts",
+      "sha256": "4c62a601c2c2e58bf386b1f779c9be52971235749ea98b7544d8f15477b8f532"
+    },
+    {
+      "path": "artifacts/api-server/src/test/wallLiveStripRoute.test.ts",
+      "sha256": "ba8aa6c76dc50883452380a0ec0feafec65796a2d254f895e7496767d830d71c"
+    },
+    {
+      "path": "artifacts/api-server/src/lib/capability/production-applied-migrations.json",
+      "sha256": "15da13a460b8e9969aad8d789bb57e7c024cdf5a8e8b41116e8e53db4429c448"
+    },
+    {
+      "path": "artifacts/api-server/src/lib/capability/snapshots/current.ts",
+      "sha256": "04eb825ff51a671f15a97127ab1433bf4b8404444f348bdcf9b10e5432942252"
+    },
+    {
+      "path": "artifacts/api-server/src/lib/capability/snapshots/20261114-post-4033-production-schema.json",
+      "sha256": "b43c0dfc803b5eebd4e379371d76033979f35f630ab41b1847718ae7e5f0885b"
+    },
+    {
+      "path": "artifacts/api-server/baseline/20261114_post_4033_production_tables.txt",
+      "sha256": "1179444c2adcb8cc9e413b234bc0a91683a6044b6503e1bd5d66f02c01d2e374"
+    },
+    {
+      "path": "artifacts/api-server/src/scripts/checkProductionDrift.ts",
+      "sha256": "cb675aa122e6e794d0ebbd306c1b2a60b014f937d67a8d1de36b7fc4e0072916"
+    },
+    {
+      "path": "artifacts/api-server/scripts/check-citation-targets.mjs",
+      "sha256": "7131b5f897dabf9f9ea6abcca230886ddb51854df3ab641f00c0029c53d99725"
+    },
+    {
+      "path": "docs/architecture/census-compass.md",
+      "sha256": "e491c8c89e00aa4104a61dc6445f3ded529f129ff33986e08be70f3d9c92e207"
+    },
+    {
+      "path": "docs/architecture/census-discovery.md",
+      "sha256": "3c494a8672164d5af2538b9425ad5dffe94e0a0b08a90d48815e5f70b139ccd2"
+    },
+    {
+      "path": "docs/architecture/census-trips.md",
+      "sha256": "ba32b8eed003e677ecb1412cd36e3003203f7fd3511c2461942db83633b8b30e"
+    },
+    {
+      "path": "docs/architecture/census-media.md",
+      "sha256": "be0c07720c6b0833ef99346c2b29cc4295fcf405fc6a96d48d380719ea19682e"
+    },
+    {
+      "path": "docs/architecture/manual-production-migration-runbook.md",
+      "sha256": "cddbe3c5e6cc1d76fd30f01aff6415c98a229f385d60df750f875b99f8d6a380"
+    },
+    {
+      "path": "docs/architecture/layover-certification.md",
+      "sha256": "d4c64ed461a1ff8b530aa6741cc1fd4427a39f1838bbb6223a063920003a1141"
+    }
+  ]
+}
