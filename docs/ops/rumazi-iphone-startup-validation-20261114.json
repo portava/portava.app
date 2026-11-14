@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-14",
+  "baseCommit": "328a9768c2765a1bef48961e58f5bfe68c5a8afd",
+  "deviceClass": "iPhone17ProMax",
+  "buildConfiguration": "Local Personal Team Release",
+  "initialBuild": {
+    "result": "succeeded after using SENTRY_DISABLE_AUTO_UPLOAD=true (literal true required)",
+    "version": "1.0.1",
+    "buildNumber": "7",
+    "nativeExecutableSha256": "6f681f3f23b0494457bc9a27c9da86e650ff47c81fde47ad30790ab8dbea195e",
+    "jsBundleSha256": "76cf2ff72dca4a32499e04658cd3adc0deeef9efb09b2b39e6ccf5d1b4647e65",
+    "signatureVerification": "codesign --verify --deep --strict passed with signing keychain access",
+    "embeddedConfig": {
+      "personalTeam": true,
+      "signInWithApple": false
+    },
+    "installation": "succeeded; launch request accepted but process exited"
+  },
+  "startupFailure": {
+    "nativeSignal": "SIGSEGV",
+    "originalException": "Invariant Violation: new NativeEventEmitter() requires a non-null argument.",
+    "confirmedBy": "Device LLDB objc_exception_throw breakpoint before secondary Hermes exception-conversion crash",
+    "symbolicatedSource": "travel-buddy-standalone/src/services/media/backgroundTransfer.ts:132",
+    "cause": "Metro dynamic-import namespace enumeration eagerly reads React Native PushNotificationIOS getter; absent native emitter throws during startup",
+    "samePatternElsewhere": [
+      "travel-buddy-standalone/src/services/calendar.ts",
+      "travel-buddy-standalone/src/features/trips/crew/tripNavigationHandoff.ts"
+    ],
+    "status": "Code repaired;94 focused regression checks passed, including actual Metro poisoned-export negative controls; corrected device launch still pending"
+  },
+  "privacy": "Only code exception and artifact identities recorded. Raw device crash report and debugger files remain local; no draft content or user telemetry copied here.",
+  "repair": {
+    "sourceSha256": {
+      "travel-buddy-standalone/src/services/media/backgroundTransfer.ts": "24cdfe3b34a6624fabd09240f4f12065a808352628f0b5276b186c738cb0f147",
+      "travel-buddy-standalone/src/services/calendar.ts": "e6235adec9080b02693f2687219bda9a5f39674f42bc668ae8e129bde27523ce",
+      "travel-buddy-standalone/src/features/trips/crew/tripNavigationHandoff.ts": "80e7b8dc711bf2873272ca41dd9ffacca6ee6fb25c2168fe5e9cf28aa17b90d4",
+      "travel-buddy-standalone/src/services/__tests__/nativeLazyProperties.test.ts": "e4a7ec733ad5ff9f64ffbc70aa4cd0ae7f6bb0fcfd52ed6f80fcc03bf49aafba"
+    },
+    "passed": 94,
+    "log": "/private/tmp/rumazi-native-lazy-import-regressions.log",
+    "logSha256": "1e55a1ba89fda5337627bcc2a9822f08b695735d08714a7624f69084394e1ae9"
+  }
+}

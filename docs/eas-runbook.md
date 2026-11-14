@@ -641,7 +641,7 @@ pnpm install
 bash scripts/eas-install-rust.sh
 cp .env.example .env            # fill in the EXPO_PUBLIC_* values for the backend you test against
 PORTAVA_PERSONAL_TEAM=1 npx expo prebuild --platform ios --clean
-PORTAVA_PERSONAL_TEAM=1 npx expo run:ios --device --configuration Release
+PORTAVA_PERSONAL_TEAM=1 SENTRY_DISABLE_AUTO_UPLOAD=true npx expo run:ios --device --configuration Release
 ```
 
 If the build stops at "requires a development team" or "No Accounts", add your Apple ID under
@@ -671,7 +671,7 @@ identifier comes from the first command.
 ```bash
 cd travel-buddy-standalone
 xcrun devicectl list devices                     # the iPhone's Identifier (plugged in, unlocked, trusted)
-xcodebuild -workspace ios/Portava.xcworkspace -scheme Portava -configuration Release \
+PORTAVA_PERSONAL_TEAM=1 SENTRY_DISABLE_AUTO_UPLOAD=true xcodebuild -workspace ios/Portava.xcworkspace -scheme Portava -configuration Release \
   -destination "id=<IDENTIFIER>" -derivedDataPath ios/build \
   -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
   CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=<TEAM_ID> build
@@ -689,3 +689,8 @@ RNSVG, AsyncStorage and react-native-maps still declare older floors). The confi
 target (15.1) to it at `pod install`, so the generated project builds as is; a project generated
 before that plugin existed needs `IPHONEOS_DEPLOYMENT_TARGET=15.1` appended to the `xcodebuild`
 command instead.
+
+For these local Personal Team commands, `SENTRY_DISABLE_AUTO_UPLOAD=true` skips
+Sentry source-map and debug-symbol uploads when an organization is not configured.
+The installed Sentry build scripts require the literal value `true`; `1` does not
+disable uploads. Keep this local preview setting out of store-release configuration.
