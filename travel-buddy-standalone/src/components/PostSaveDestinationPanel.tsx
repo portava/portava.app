@@ -10,10 +10,11 @@ import { color, radius, space } from '../theme/tokens.ts';
 
 export interface PostSaveDestinationPanelProps {
   postId: string; destination: PostDestination; active: boolean;
+  showTitle?: boolean;
   onCancel: () => void; onSaved: (result: PostDestinationResult) => void;
 }
 
-export function PostSaveDestinationPanel({ postId, destination, active, onCancel, onSaved }: PostSaveDestinationPanelProps) {
+export function PostSaveDestinationPanel({ postId, destination, active, showTitle = true, onCancel, onSaved }: PostSaveDestinationPanelProps) {
   const { userId } = useSession();
   const ownerRef = useRef<MessagingOwnerRequest | null>(null);
   const busyRef = useRef(false);
@@ -68,7 +69,7 @@ export function PostSaveDestinationPanel({ postId, destination, active, onCancel
   if (!active) return null;
   const memory = memories.find(m => m.id === selected);
   return <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.container} testID="post-save-destination-panel">
-    <Text style={s.title}>{destination === 'memory' ? 'Save to Memories' : destination === 'profile' ? 'Share to my profile' : 'Share to Highlights'}</Text>
+    {showTitle && <Text style={s.title}>{destination === 'memory' ? 'Save to Memories' : destination === 'profile' ? 'Share to my profile' : 'Share to Highlights'}</Text>}
     <Text style={s.description}>The original author controls who can see this post.</Text>
     {destination === 'profile' && <PostSharePreview target={{ legacyPostId: postId }} />}
     {destination === 'memory' && <>

@@ -1,3 +1,13 @@
+import { getPostcardUploadQueue } from '../services/media/postcardUploadQueue.ts';
+import { useFeatureFlags } from '../context/FeatureFlagsContext.tsx';
+import { composerDraftKey } from '../services/localComposerDraft.ts';
+import { usePrivateSurfaceKey } from '../hooks/usePrivateSurfaceKey.ts';
+import { useSession } from '../context/SessionContext.tsx';
+import { useLocalComposerDraft } from '../hooks/useLocalComposerDraft.ts';
+import { useComposerOutcome } from '../hooks/useComposerOutcome.ts';
+import { captureMessagingOwnerRequest } from '../services/messagingOwnerRequest.ts';
+import { preserveDraftAsset, discardDraftAsset, restoreDraftAsset, releaseDraftPreview } from '../services/composerDraftAsset.ts';
+import { isPostcardDraft, postcardDraftNonempty, type PostcardDraft } from '../services/postcardDraft.ts';
 /**
  * PostcardComposer — full-screen modal for creating a video/photo Postcard.
  *
@@ -8,29 +18,25 @@
  *   'pick'     — media picker + preview + caption/location/visibility form
  *   'uploading' — progress bar, cancel button
  */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, Modal, Pressable, StyleSheet,
   ActivityIndicator, Alert, Image, ScrollView, PanResponder,
 } from 'react-native';
 import { MentionInput, type MentionInputHandle } from './MentionInput.tsx';
 import { MentionSuggestionList } from './MentionSuggestionList.tsx';
+import { WritingAssistControl } from '../platform/input-assistance/compass/WritingAssistControl.tsx';
+import { AI_WRITING_FIELD_IDS } from '../platform/input-assistance/compass/compassFields.ts';
 import type { AnyMentionSuggestion } from '../services/tagging.ts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { X, Camera, ImageIcon, PlayCircle, ChevronDown, MapPin, Minus, Plus, Stamp as StampIcon } from 'lucide-react-native';
 import {
-  createPostcard,
-  discardPostcardShell,
-  getUploadUrl,
-  uploadToSignedUrl,
-  completeUpload,
   validatePostcardMedia,
   type PostcardVisibility,
-  type UploadCancelRef,
 } from '../services/postcards.ts';
 import { validateMedia } from '../services/media.ts';
-import { readFileBlob, uploadVideoPoster } from '../services/media/uploadHttp.ts';
+import { readFileBlob } from '../services/media/uploadHttp.ts';
 import { normalizePickedAsset, prepareImageForUpload } from '../services/media/mediaProcessing.ts';
 import { isResumableMediaUploadEnabled } from '../services/media/uploadTransportFlag.ts';
 import { color, space, radius, type as t, shadow, avatar } from '../theme/tokens.ts';
@@ -60,6 +66,7 @@ type Phase = 'pick' | 'uploading';
 
 interface PickedAsset {
   uri: string;
+  recoveryUri?: string;
   mimeType: string;
   fileName: string;
   fileSizeBytes: number;
@@ -81,14 +88,36 @@ interface Props {
   onSuccess: () => void; /** census-layover L275: a postcard of this COMPLETED layover. The place comes from the layover, the picker is off, and it starts as Only me. */ layover?: LayoverPostcardSource | null; /** The trip this postcard is posted to (sent as `tripId`). Without one there is no crew to show it to, so "Trip crew only" is not offered. */ tripId?: string | null;
 }
 
-export function PostcardComposer({ visible, onClose, onSuccess, layover = null, tripId = null }: Props) {
+export function PostcardComposer(props: Props) {
+  const scope = usePrivateSurfaceKey();
+  const { userId } = useSession();
+  return <PostcardComposerContent key={`${scope}:${userId ?? ''}:${props.tripId ?? ''}:${props.layover?.sessionId ?? ''}`} {...props} />;
+}
+function PostcardComposerContent({ visible, onClose, onSuccess, layover = null, tripId = null }: Props) {
+  const { userId } = useSession();
+  const [owner] = useState(captureMessagingOwnerRequest);
+  const record = useComposerOutcome('postcard');
+  const publicationRequested = useRef(false);
+  const { isEnabled } = useFeatureFlags();
+  const [initial] = useState<PostcardDraft>(() => ({ caption: '', asset: null, place: null, visibility: layover ? 'private' : 'public', stampOverlay: null }));
+  const draft = useLocalComposerDraft({ accountId: owner?.ownerId === userId ? userId : null, composer: `postcard:${tripId ?? ''}:${layover?.sessionId ?? ''}`,
+    initial, validate: isPostcardDraft, nonempty: postcardDraftNonempty, active: visible,
+    onLeave: () => { if (!publicationRequested.current) record('left_with_unsent'); } });
+  const { asset, caption, place, visibility, stampOverlay } = draft.value;
+  const patch = useCallback(<K extends keyof PostcardDraft,>(field: K, value: PostcardDraft[K] | ((previous: PostcardDraft[K]) => PostcardDraft[K])) => {
+    draft.setValue(previous => ({ ...previous, uploadJobId: undefined, [field]: typeof value === 'function' ? value(previous[field]) : value }));
+  }, [draft.setValue]);
+  const setAsset = (value: PickedAsset | null) => patch('asset', value);
+  const setCaption = (value: string) => patch('caption', value);
+  const setPlace = (value: Place | null) => patch('place', value);
+  const setVisibility = (value: PostcardVisibility) => patch('visibility', value);
+  const setStampOverlay = useCallback((value: StampOverlayDraft | null | ((previous: StampOverlayDraft | null) => StampOverlayDraft | null)) => patch('stampOverlay', value), [patch]);
+
   // "Trip crew only" used to be offered with no trip: the postcard was stored
   // trip_only with trip_id null, which nobody but its author could ever see.
   const visibilities = tripId ? VISIBILITIES : VISIBILITIES.filter((v) => v.key !== 'trip_only'); const tripFields = tripId ? { tripId } : {};
   const insets = useSafeAreaInsets();
   const [phase, setPhase] = useState<Phase>('pick');
-  const [asset, setAsset] = useState<PickedAsset | null>(null);
-  const [caption, setCaption] = useState('');
   // @mention / #hashtag tokenization in the caption (§26) — parity with the
   // Pulse/Comment composers, which the audit flagged this field lacked.
   const mentionRef = useRef<MentionInputHandle>(null);
@@ -97,13 +126,11 @@ export function PostcardComposer({ visible, onClose, onSuccess, layover = null, 
   const [mentionVisible, setMentionVisible] = useState(false);
   // Canonical location from the universal picker (replaces the old free-text
   // city field). Null = no location tagged; the postcard still posts.
-  const [place, setPlace] = useState<Place | null>(null);
   const [cityPickerOpen, setCityPickerOpen] = useState(false);
-  const [visibility, setVisibility] = useState<PostcardVisibility>(layover ? 'private' : 'public'); // census-layover L275: a layover postcard starts private (least exposure); the traveller can change it
+  // // census-layover L275: a layover postcard starts private (least exposure); the traveller can change it
   const [showVis, setShowVis] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const cancelRef = useRef<UploadCancelRef>({});
   const abortedRef = useRef(false);
   // §37 background upload (uploadTransportFlag; ships OFF): the job id this
   // composer is watching, and its queue subscription. Closing the composer
@@ -112,19 +139,63 @@ export function PostcardComposer({ visible, onClose, onSuccess, layover = null, 
   const queueUnsubRef = useRef<(() => void) | null>(null);
   useEffect(() => () => queueUnsubRef.current?.(), []);
   const { pickMedia } = useMediaPicker();
+  const recoveryChecked = useRef(false);
+  const [recoveringUpload, setRecoveringUpload] = useState(true);
+  useEffect(() => {
+    if (!visible) { recoveryChecked.current = false; return; }
+    if (!draft.ready || recoveryChecked.current) return;
+    recoveryChecked.current = true;
+    const jobId = draft.value.uploadJobId;
+    if (!jobId) { setRecoveringUpload(false); return; }
+    let active = true;
+    void getPostcardUploadQueue().then(async queue => {
+      const job = (await queue.list()).find(value => value.id === jobId);
+      if (!active || !owner?.isCurrent()) return;
+      if (!job || ['failed','cancelled'].includes(job.stage)) { setRecoveringUpload(false); return; }
+      if (job.stage === 'done') { await draft.clear(initial, draft.value); setRecoveringUpload(false); return; }
+      publicationRequested.current = true; setPhase('uploading'); queuedJobRef.current = jobId; setRecoveringUpload(false);
+      queueUnsubRef.current = queue.subscribe(event => {
+        if (!active || !owner.isCurrent() || event.job.id !== jobId) return;
+        if (typeof event.progress === 'number') setProgress(event.progress);
+        if (event.job.stage === 'done') { void draft.clear(initial, draft.value); stopWatchingQueue(); resetUpload(); onSuccess(); }
+        else if (['failed','cancelled'].includes(event.job.stage)) { publicationRequested.current = false; stopWatchingQueue(); resetUpload(); }
+        else if (event.job.retryable) setError('Upload paused. Close and reopen to retry.');
+      });
+      await queue.resumePending();
+    }).catch(() => { if (active) { setError('Saved upload could not be read. Reopen this draft to retry.'); } });
+    return () => { active = false; stopWatchingQueue(); };
+    // Reconcile once per visible visit; editing the recovered draft must not restart its upload.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.ready, visible]);
+
+  const restoredPreview = useRef<string | null>(null);
+  const assetRecoveryActive = useRef(true);
+  const selectionVersion = useRef(0);
+  useEffect(() => { assetRecoveryActive.current = true; return () => { assetRecoveryActive.current = false; releaseDraftPreview(restoredPreview.current); }; }, []);
+  const restored = useRef(false);
+  useEffect(() => { if (!visible) { selectionVersion.current++; restored.current = false; releaseDraftPreview(restoredPreview.current); restoredPreview.current = null; } }, [visible]);
+  useEffect(() => {
+    if (!visible || !draft.ready || restored.current) return; restored.current = true;
+    const saved = draft.value.asset;
+    if (saved && userId) void restoreDraftAsset(saved.recoveryUri ?? saved.uri, userId).then(uri => {
+      if (!assetRecoveryActive.current || !owner?.isCurrent()) { releaseDraftPreview(uri); return; }
+      restoredPreview.current = uri;
+      draft.setValue(previous => previous.asset === saved ? { ...previous, asset: { ...saved, uri } } : previous);
+    }).catch(() => setError('Saved media could not be restored. Your caption is kept; select the media again.'));
+  }, [draft.ready, draft.value.asset, draft.setValue, userId, owner, visible]);
 
   async function pickPostcardMedia() {
+    const version = ++selectionVersion.current;
     const assets = await pickMedia({
       title: asset ? 'Replace media' : 'Add media',
       mediaTypes: ['images', 'videos'],
       videoMaxDuration: 60,
     });
-    if (assets?.[0]) applyAsset(assets[0]);
+    if (assets?.[0] && version === selectionVersion.current && assetRecoveryActive.current && owner?.isCurrent()) void applyAsset(assets[0], version);
   }
 
 
   // ── Stamp overlay editing state (images only; optional) ─────────────────
-  const [stampOverlay, setStampOverlay] = useState<StampOverlayDraft | null>(null);
   const [stampPickerOpen, setStampPickerOpen] = useState(false);
   const [previewSize, setPreviewSize] = useState<{ w: number; h: number } | null>(null);
   const stampOverlayRef = useRef<StampOverlayDraft | null>(null);
@@ -171,54 +242,50 @@ export function PostcardComposer({ visible, onClose, onSuccess, layover = null, 
     );
   }
 
-  function reset() {
-    setPhase('pick');
-    setAsset(null);
-    setCaption('');
-    setPlace(null);
-    setCityPickerOpen(false);
-    setVisibility(layover ? 'private' : 'public');
-    setShowVis(false);
-    setProgress(0);
-    setError(null);
-    setStampOverlay(null);
-    setStampPickerOpen(false);
-    setPreviewSize(null);
-    abortedRef.current = false;
+  function resetUpload() {
+    setPhase('pick'); setProgress(0); setError(null);
+    // Do not reset cancellation while an async continuation may still run.
+  }
+  async function cancelUpload() {
+    publicationRequested.current = false; abortedRef.current = true;
+    const jobId = queuedJobRef.current;
+    if (jobId) await cancelQueuedJob(jobId);
+    resetUpload();
+  }
+  const discarding = useRef(false);
+  async function discardDraft() {
+    if (discarding.current) return; discarding.current = true;
+    selectionVersion.current++;
+    try {
+    if (phase === 'uploading') await cancelUpload();
+    const discarded = draft.value;
+    if (!await draft.clear(initial, discarded)) return;
+    const uploadJob = discarded.uploadJobId ? (await (await getPostcardUploadQueue()).list()).find(job => job.id === discarded.uploadJobId) : null;
+    record(uploadJob?.bytesUploaded ? 'post_discarded_after_upload' : 'discarded_draft');
+    if (owner) await discardDraftAsset(discarded.asset?.recoveryUri ?? discarded.asset?.uri, owner.ownerId).catch(() => {
+      setError('Draft text was discarded. Its local media could not be removed yet.');
+    });
+    resetUpload(); onClose();
+    } catch { setError('Draft could not be discarded. Your saved copy is kept; try again.'); }
+    finally { discarding.current = false; }
+  }
+  function handleClose() {
+    selectionVersion.current++;
+    if (phase === 'uploading') {
+      Alert.alert('Upload in progress', 'Keep your draft or continue posting.', [
+        { text: 'Keep uploading', style: 'cancel' },
+        ...(isResumableMediaUploadEnabled() ? [{ text: 'Continue in background', onPress: () => { draft.leave(); stopWatchingQueue(); onClose(); } }] : []),
+        { text: 'Cancel upload and keep draft', onPress: () => { void cancelUpload().then(() => { draft.leave(); onClose(); }); } },
+      ]);
+      return;
+    }
+    void draft.persist().then(saved => { if (saved) { draft.leave(); onClose(); } });
   }
 
-  function handleClose() {
-    if (phase === 'uploading' && queuedJobRef.current) {
-      const jobId = queuedJobRef.current;
-      Alert.alert('Upload in progress', 'Your postcard keeps uploading if you close this.', [
-        { text: 'Continue in background', style: 'cancel', onPress: () => { stopWatchingQueue(); reset(); onClose(); } },
-        { text: 'Cancel upload', style: 'destructive', onPress: () => { void cancelQueuedJob(jobId); reset(); onClose(); } },
-      ]);
-      return;
-    }
-    if (phase === 'uploading') {
-      Alert.alert('Cancel upload?', 'Your upload is in progress. Cancel it?', [
-        { text: 'Keep uploading', style: 'cancel' },
-        {
-          text: 'Cancel upload',
-          style: 'destructive',
-          onPress: () => {
-            abortedRef.current = true;
-            cancelRef.current.cancel?.();
-            reset();
-            onClose();
-          },
-        },
-      ]);
-      return;
-    }
-    reset();
-    onClose();
-  }
 
   // applyAsset validates and stores the picked asset. Called directly from
   // pickPostcardMedia after the useMediaPicker chooser resolves.
-  function applyAsset(picked: ImagePicker.ImagePickerAsset) {
+  async function applyAsset(picked: ImagePicker.ImagePickerAsset, version: number) {
     const mimeType =
       picked.mimeType ??
       (picked.type === 'video' ? 'video/mp4' : 'image/jpeg');
@@ -259,8 +326,16 @@ export function PostcardComposer({ visible, onClose, onSuccess, layover = null, 
       }
     }
 
+    if (!owner?.isCurrent()) return;
+    let localUri: string;
+    try { localUri = await preserveDraftAsset(picked.uri, owner); } catch { setError('Media could not be saved on this device. Free some storage and try again.'); return; }
+    if (version !== selectionVersion.current || !assetRecoveryActive.current || !owner.isCurrent()) {
+      await discardDraftAsset(localUri, owner.ownerId).catch(() => {});
+      return;
+    }
+    const previousAsset = draft.value.asset;
     setAsset({
-      uri: picked.uri,
+      uri: localUri, recoveryUri: localUri,
       mimeType,
       fileName: picked.fileName ?? `postcard.${mimeType.split('/')[1] ?? 'jpg'}`,
       fileSizeBytes,
@@ -271,129 +346,27 @@ export function PostcardComposer({ visible, onClose, onSuccess, layover = null, 
     });
     // Stamps only apply to photos — drop any draft overlay for videos.
     if (picked.type === 'video') setStampOverlay(null);
+    if (await draft.persist() && previousAsset && (previousAsset.recoveryUri ?? previousAsset.uri) !== localUri) {
+      await discardDraftAsset(previousAsset.recoveryUri ?? previousAsset.uri, owner.ownerId).catch(() => {});
+    }
     setError(null);
   }
 
   async function handlePost() {
-    if (!asset) return;
-    setError(null);
-    setPhase('uploading');
-    setProgress(0);
-    abortedRef.current = false;
-
-    // §40 mediaProcessing — a photo OUTSIDE the server's envelope (longest edge
-    // over 4096 px, or over 15 MB) is resized on this device, so it neither
-    // travels whole only to be resampled nor is refused on arrival. A photo
-    // inside the envelope, and every video, is uploaded untouched.
-    const upload = await withinServerEnvelope(asset);
-    if (!upload) return;
-
-    if (isResumableMediaUploadEnabled()) {
-      await postThroughQueue(upload);
-      return;
-    }
-
-    // Structured canonical location via the shared Place → payload mapping
-    // (same one the Memory composer uses): city/country strings for display
-    // and stamps, place-level coordinates, placeId for the provider
-    // reference, canonicalId linking to the universal location registry.
-    // All optional — posting works without one.
-    const postRes = await createPostcard({
-      caption: caption.trim() || undefined,
-      visibility,
-      ...postcardLocationFields(place, layover), ...tripFields, // census-layover L275: a layover postcard sends only its layover id
-      addToPassport: true,
-    });
-
-    if (!postRes.ok || abortedRef.current) {
-      // The shell is a real, publicly-visible posts row created before any bytes
-      // exist. Whenever we bail after it was created, discard it — otherwise the
-      // attempt leaves an empty active post on the author's profile that nothing
-      // reaps (sweep-orphans collects post_media rows only, never the posts row).
-      if (postRes.ok) void discardPostcardShell(postRes.data.id);
-      if (!abortedRef.current) {
-        setError(postRes.ok ? 'Upload cancelled' : postRes.message);
-        setPhase('pick');
+    if (!asset || !draft.ready || recoveringUpload || !owner?.isCurrent() || owner.ownerId !== userId || phase === 'uploading') return;
+    publicationRequested.current = true; setError(null); setPhase('uploading'); setProgress(0); abortedRef.current = false;
+    try {
+      const upload = await withinServerEnvelope(asset);
+      if (!upload || abortedRef.current || !owner.isCurrent()) { publicationRequested.current = false; return; }
+      // Encoders return cache files; queue recovery needs its own durable copy.
+      const uploadUri = await preserveDraftAsset(upload.uri, owner);
+      if (abortedRef.current || !owner.isCurrent()) {
+        if (uploadUri !== (asset.recoveryUri ?? asset.uri)) await discardDraftAsset(uploadUri, owner.ownerId);
+        return;
       }
-      return;
+      await postThroughQueue({ ...upload, uri: uploadUri });
     }
-
-    const postId = postRes.data.id;
-
-    const urlRes = await getUploadUrl(postId, {
-      mimeType: upload.mimeType,
-      fileSizeBytes: upload.fileSizeBytes > 0 ? upload.fileSizeBytes : 1,
-    });
-
-    if (!urlRes.ok || abortedRef.current) {
-      void discardPostcardShell(postId);
-      if (!abortedRef.current) {
-        setError(urlRes.ok ? 'Upload cancelled' : urlRes.message);
-        setPhase('pick');
-      }
-      return;
-    }
-
-    const { mediaId, uploadUrl } = urlRes.data;
-
-    const uploadRes = await uploadToSignedUrl(
-      uploadUrl,
-      upload.uri,
-      upload.mimeType,
-      (p) => setProgress(p),
-      cancelRef.current,
-    );
-
-    if (!uploadRes.ok || abortedRef.current) {
-      void discardPostcardShell(postId);
-      if (!abortedRef.current) {
-        setError(uploadRes.message ?? 'Upload failed');
-        setPhase('pick');
-      }
-      return;
-    }
-
-    // §37 "Thumbnail generation": a video postcard gets a real poster frame,
-    // extracted on this device and stored by the server beside the video (the
-    // server has no decoder). Fail-soft — a video without one still posts.
-    const thumbnailPath = upload.isVideo ? await uploadVideoPoster(postId, mediaId, upload.uri) : null;
-    if (abortedRef.current) {
-      void discardPostcardShell(postId);
-      return;
-    }
-
-    const completeRes = await completeUpload(postId, mediaId, {
-      mimeType: upload.mimeType,
-      fileSizeBytes: upload.fileSizeBytes > 0 ? upload.fileSizeBytes : 1,
-      durationSeconds: upload.durationSeconds,
-      width: upload.width,
-      height: upload.height,
-      thumbnailPath: thumbnailPath ?? undefined,
-      stampOverlay:
-        stampOverlay && !upload.isVideo ? completePayloadFromDraft(stampOverlay) : undefined,
-    });
-
-    if (!completeRes.ok) {
-      // Completion is rejected as retryable (e.g. the server's fail-closed byte
-      // verification), and the composer resets to 'pick' — so a retry creates a
-      // fresh shell. Discard this one rather than stranding it.
-      void discardPostcardShell(postId);
-      setError(completeRes.message);
-      setPhase('pick');
-      return;
-    }
-
-    // A stamp problem never blocks the post — surface it quietly after success.
-    const overlayWarning =
-      completeRes.data.stampOverlayApplied === false
-        ? stampOverlayErrorMessage(completeRes.data.stampOverlayError)
-        : null;
-
-    reset();
-    onSuccess();
-    if (overlayWarning) {
-      Alert.alert('Posted without stamp', overlayWarning);
-    }
+    catch { publicationRequested.current = false; record('upload_failed', 'storage'); setError('Your upload could not be saved on this device. Check available storage and try again.'); setPhase('pick'); }
   }
 
   /** The picked asset, brought inside the server's envelope — or null (error already shown). */
@@ -437,8 +410,7 @@ export function PostcardComposer({ visible, onClose, onSuccess, layover = null, 
 
   async function cancelQueuedJob(jobId: string) {
     stopWatchingQueue();
-    const { getPostcardUploadQueue } = await import('../services/media/postcardUploadQueue.ts');
-    (await getPostcardUploadQueue()).cancel(jobId);
+    await (await getPostcardUploadQueue()).cancel(jobId);
   }
 
   /**
@@ -447,9 +419,12 @@ export function PostcardComposer({ visible, onClose, onSuccess, layover = null, 
    * a backgrounded app or a relaunch. This composer only WATCHES the job.
    */
   async function postThroughQueue(upload: PickedAsset) {
-    const { getPostcardUploadQueue } = await import('../services/media/postcardUploadQueue.ts');
     const queue = await getPostcardUploadQueue();
+    const submitted = draft.value;
     const job = await queue.enqueue({
+      draftKey: userId ? composerDraftKey(userId, `postcard:${tripId ?? ''}:${layover?.sessionId ?? ''}`) : undefined,
+      trackOutcomes: isEnabled('MEDIA_ANALYTICS_ENABLED'),
+      retainedDraftAssetUri: submitted.asset?.recoveryUri ?? submitted.asset?.uri,
       asset: normalizePickedAsset({
         uri: upload.uri,
         mimeType: upload.mimeType,
@@ -465,32 +440,41 @@ export function PostcardComposer({ visible, onClose, onSuccess, layover = null, 
       location: { ...postcardLocationFields(place, layover), ...tripFields },
       addToPassport: true,
       stampOverlay: stampOverlay && !upload.isVideo ? completePayloadFromDraft(stampOverlay) : undefined,
-    });
+    }, { start: false });
     if (!job) {
       setError('Please sign in to continue');
       setPhase('pick');
       return;
     }
+    if (abortedRef.current || !owner?.isCurrent()) { await queue.cancel(job.id); return; }
+    draft.setValue(previous => ({ ...previous, uploadJobId: job.id }));
+    if (!await draft.persist()) { await queue.cancel(job.id); throw new Error('Draft save failed'); }
     queuedJobRef.current = job.id;
     queueUnsubRef.current?.();
-    queueUnsubRef.current = queue.subscribe((e) => {
+    const receive = (e: import('../services/media/postcardUploadQueue.ts').QueueEvent) => {
       if (e.job.id !== job.id) return;
       if (typeof e.progress === 'number') setProgress(e.progress);
       if (e.job.stage === 'done') {
         stopWatchingQueue();
         const warning =
           e.job.result?.stampOverlayApplied === false ? stampOverlayErrorMessage(e.job.result.stampOverlayError) : null;
-        reset();
+        void draft.clear(initial, { ...submitted, uploadJobId: job.id }).then(cleared => { if (cleared && owner) void discardDraftAsset(submitted.asset?.recoveryUri ?? submitted.asset?.uri, owner.ownerId); });
+        resetUpload();
         onSuccess();
         if (warning) Alert.alert('Posted without stamp', warning);
-      } else if (e.job.stage === 'failed') {
-        stopWatchingQueue();
+      } else if (e.job.stage === 'failed' || e.job.stage === 'cancelled') {
+        publicationRequested.current = false; stopWatchingQueue();
         setError(e.job.lastError ?? 'Upload failed');
         setPhase('pick');
       } else if (e.job.retryable) {
-        setError('Waiting for a connection — your upload will continue.');
+        setError(e.job.lastError ?? 'Waiting for a connection — your upload will continue.');
       }
-    });
+    };
+    queueUnsubRef.current = queue.subscribe(receive);
+    // A fast job may have finished between enqueue's durable acknowledgement and subscription.
+    const latest = (await queue.list()).find(row => row.id === job.id);
+    if (latest) receive({ job: latest });
+    void queue.resumePending().catch(() => { if (owner?.isCurrent()) setError('Upload paused. Reopen this draft to retry.'); });
   }
 
   const visLabel = VISIBILITIES.find((v) => v.key === visibility)?.label ?? 'Public';
@@ -510,15 +494,17 @@ export function PostcardComposer({ visible, onClose, onSuccess, layover = null, 
       <View style={[s.root, { paddingTop: insets.top }]}>
         {/* Header */}
         <View style={s.header}>
-          <Pressable style={s.headerBtn} onPress={handleClose} hitSlop={8}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close postcard composer" style={s.headerBtn} onPress={handleClose} hitSlop={8}>
             <X size={22} color={color.ink} />
           </Pressable>
           <Text style={s.headerTitle}>New Postcard</Text>
           {phase === 'pick' && asset ? (
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Publish postcard"
               style={s.postBtn}
               onPress={handlePost}
-              disabled={!asset}
+              disabled={!asset || !draft.ready || recoveringUpload}
             >
               <Text style={s.postBtnText}>Post</Text>
             </Pressable>
@@ -527,6 +513,8 @@ export function PostcardComposer({ visible, onClose, onSuccess, layover = null, 
           )}
         </View>
 
+        {draft.error ? <Text accessibilityRole="alert">{draft.error}</Text> : null}
+        {phase === 'pick' && draft.ready && postcardDraftNonempty(draft.value) ? <Pressable accessibilityRole="button" accessibilityLabel="Discard postcard draft" onPress={() => void discardDraft()}><Text>Discard draft</Text></Pressable> : null}
         {phase === 'pick' && (
           <KeyboardSafeView
             offset={insets.top}
@@ -632,6 +620,9 @@ export function PostcardComposer({ visible, onClose, onSuccess, layover = null, 
                     setMentionVisible(!!trigger && (items.length > 0 || isLoading));
                   }}
                 />
+
+                <WritingAssistControl context="caption" fieldId={AI_WRITING_FIELD_IDS.caption}
+                  text={caption} onInsert={setCaption} maxLength={2000} disabled={!visible || phase !== 'pick'} />
 
                 {/* City — universal canonical location picker */}
                 <Text style={s.label}>City</Text>
@@ -765,12 +756,7 @@ export function PostcardComposer({ visible, onClose, onSuccess, layover = null, 
 
             <Pressable
               style={s.cancelUploadBtn}
-              onPress={() => {
-                abortedRef.current = true;
-                cancelRef.current.cancel?.();
-                if (queuedJobRef.current) void cancelQueuedJob(queuedJobRef.current);
-                reset();
-              }}
+              onPress={() => { void cancelUpload(); }}
             >
               <Text style={s.cancelUploadText}>Cancel</Text>
             </Pressable>

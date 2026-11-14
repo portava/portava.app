@@ -1,17 +1,27 @@
 import OpenAI from "openai";
 
-const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+/** Keep each provider's URL and key together. Deployments outside Replit can
+ * use the standard OpenAI variables instead of sending "not-configured". */
+export function resolveOpenAIConfig(env: NodeJS.ProcessEnv) {
+  const integrationBase = env.AI_INTEGRATIONS_OPENAI_BASE_URL?.trim();
+  const integrationKey = env.AI_INTEGRATIONS_OPENAI_API_KEY?.trim();
+  if (integrationBase && integrationKey) return { baseURL: integrationBase, apiKey: integrationKey };
+  return {
+    baseURL: env.OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1',
+    apiKey: env.OPENAI_API_KEY?.trim() || 'not-configured',
+  };
+}
+const { baseURL, apiKey } = resolveOpenAIConfig(process.env);
 
-if (!baseURL || !apiKey) {
+if (apiKey === 'not-configured') {
   console.warn(
-    "[telegraph] OpenAI integration env vars not set — recommendations will be unavailable",
+    "[telegraph] OpenAI credentials not set — recommendations will be unavailable",
   );
 }
 
 export const openai = new OpenAI({
-  baseURL: baseURL ?? "https://api.openai.com/v1",
-  apiKey: apiKey ?? "not-configured",
+  baseURL,
+  apiKey,
 });
 
 // ── Test injection ────────────────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+import { withInputDeadline } from '../lib/inputAssistance/requestDeadline.js';
 /**
  * POST /api/input-assistance/suggest — Global Input Intelligence gateway (§41).
  *
@@ -53,6 +54,7 @@ import {
   readOutcomeConsent,
   recordOutcome,
   recordTaskOutcomeAggregate,
+  parseOutcomeGrant,
   writeOutcomeConsent,
   type OutcomeConsentState,
 } from '../lib/inputAssistance/outcomeLearning';
@@ -283,9 +285,13 @@ router.post(
     // hands it back on `suggestion_request_completed`, where it lands in the
     // serve log beside the round trip the device actually saw.
     const startedAt = Date.now();
+    const disconnect = new AbortController();
+    const onClose = () => disconnect.abort();
+    res.once('close', onClose);
 
     try {
-      const { suggestions: generated, refusal, laneRefusals } = await generateSuggestionsWithCoverage(sc, {
+      const { suggestions: generated, refusal, laneRefusals } = await withInputDeadline((signal) => generateSuggestionsWithCoverage(sc, {
+        signal,
         context,
         policy: servePolicy,
         text,
@@ -299,7 +305,7 @@ router.post(
         tz,
         aiAssist,
         outcomeLearning,
-      });
+      }), undefined, disconnect.signal);
 
       // The second half of the handshake: a row the client has told us it
       // cannot resolve is withheld rather than sent to be dropped on arrival.
@@ -331,6 +337,7 @@ router.post(
       );
       res.status(200).json(payload);
     } catch (err) {
+      if (res.destroyed) return;
       // Typeahead must never surface an error mid-keystroke — fail soft to an
       // empty, well-formed envelope (still carries policyVersion + requestId).
       logger.warn({ err, context, serverMs: Date.now() - startedAt }, 'input-assistance/suggest failed');
@@ -347,7 +354,7 @@ router.post(
         serverMs: Date.now() - startedAt,
       };
       res.status(200).json(payload);
-    }
+    } finally { res.off('close', onClose); }
   }),
 );
 
@@ -530,6 +537,7 @@ router.post(
     const rows: TelemetryRow[] = [];
     let rejected = 0;
     let aggregated = 0;
+    let failedOutcomes = 0;
     for (const raw of events as RawTelemetryEvent[]) {
       if (
         !outcomeAdmitted &&
@@ -557,12 +565,14 @@ router.post(
       // about it outlives the person's withdrawal or the 30-day promise.
       if (outcome.row.event_name === 'downstream_task_completed') {
         const agg = await recordTaskOutcomeAggregate(sc, {
+          userId: user.id, consentedAt: raw.outcomeConsentedAt,
           context: outcome.row.context,
           task: outcome.row.props.task,
           ok: outcome.row.props.ok,
         });
         if (agg === 'recorded') aggregated += 1;
-        else rejected += 1;
+        else if (agg === 'refused') rejected += 1;
+        else failedOutcomes += 1;
         continue;
       }
       rows.push(outcome.row);
@@ -582,8 +592,9 @@ router.post(
           ok: false,
           retryable: false,
           reason: result.refusal.reason,
-          accepted: 0,
+          accepted: aggregated,
           rejected,
+          failed: rows.length + failedOutcomes,
         });
         return;
       }
@@ -592,12 +603,21 @@ router.post(
         ok: false,
         retryable: true,
         reason: result.refusal.reason,
-        accepted: 0,
+        accepted: aggregated,
         rejected,
+        failed: rows.length + failedOutcomes,
       });
       return;
     }
 
+    if (failedOutcomes > 0) {
+      // A storage outage/missing RPC is not a consent refusal or an empty
+      // successful ingest. Report already-committed work honestly; the client
+      // drops failed batches and does not start a retry loop.
+      res.status(503).json({ ok: false, retryable: true, reason: 'outcome_write_failed',
+        accepted: result.recorded + aggregated, rejected, failed: failedOutcomes });
+      return;
+    }
     res.status(200).json({ ok: true, accepted: result.recorded + aggregated, rejected });
   }),
 );
@@ -772,6 +792,11 @@ router.post(
       sendError(res, 'forbidden', 'Outcome learning is off for this account.');
       return;
     }
+    const consentedAt = parseOutcomeGrant(body.outcomeConsentedAt);
+    if (!consentedAt || Date.parse(consentedAt) !== Date.parse(consent.state!.consentedAt!)) {
+      sendError(res, 'forbidden', 'This outcome does not belong to the current consent grant.');
+      return;
+    }
     // A task that did not succeed credits nothing: the counters are completions.
     if (!body.ok || entities.length === 0) {
       res.status(200).json({ ok: true, recorded: 0, failed: 0, refused: 0 });
@@ -781,7 +806,7 @@ router.post(
     let failed = 0;
     let refused = 0;
     for (const e of entities) {
-      const r = await recordOutcome(sc, { userId: user.id, context, entityType: e.entityType, entityId: e.entityId });
+      const r = await recordOutcome(sc, { userId: user.id, context, entityType: e.entityType, entityId: e.entityId, consentedAt });
       if (r === 'recorded') recorded += 1;
       else if (r === 'no_consent') refused += 1;
       else failed += 1;

@@ -359,7 +359,7 @@ export function toMediaProjection(row: MediaCandidateRow, nowMs: number): MediaP
  */
 export function classifyFreshness(capturedAt: string, nowMs: number): "fresh" | "recent" | "historical" {
   const ageMs = nowMs - new Date(capturedAt).getTime();
-  if (!Number.isFinite(ageMs)) return "historical";
+  if (!Number.isFinite(ageMs) || ageMs < 0) return "historical";
   if (isFreshEnoughForLabel(ageMs)) return "fresh"; // < 1h
   if (ageMs < 24 * 60 * 60 * 1000) return "recent"; // < 24h
   return "historical";

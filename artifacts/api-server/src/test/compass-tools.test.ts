@@ -16,7 +16,7 @@
  * Runtime: node:test. Run: node --import tsx/esm --test src/test/compass-tools.test.ts
  */
 
-import { describe, it, before, after, beforeEach, afterEach } from "node:test";
+import { describe, it, before, after, beforeEach, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { failPlanPrivacyRead } from "./helpers/failPlanPrivacyRead.js";
 import { createServer, type Server } from "node:http";
@@ -160,6 +160,16 @@ describe("A. Privacy guard — sanitizeToolResult", () => {
 // ── B–F. Tool executor ────────────────────────────────────────────────────────
 
 describe("B. search_places", () => {
+  it("ranks a wider candidate pool before applying the requested result limit", async () => {
+    const db = makeDb({ discovery_places: [
+      ...Array.from({ length: 10 }, (_, i) => ({ id: `p-misfit-${i}`, name: `Golf ${i}`, category: "golf", city: "Oslo", rating: 3.0 })),
+      { id: PLACE_ID, name: "Reef Dive Shop", category: "diving", city: "Cebu", rating: 4.5, saved_count: 40 },
+    ] });
+    const profile = profileFor({ travelStyles: ["diving"], currentCity: "Cebu" });
+    const result = await executeCompassTool(makeClient(db), ALICE_ID, profile, "search_places", { limit: 1 }) as { candidates: Array<{ id: string }> };
+    assert.deepEqual(result.candidates.map(c => c.id), [PLACE_ID], "a better match after the first result must still compete");
+  });
+
   it("returns DB-backed candidates with no coordinates", async () => {
     const db = makeDb({
       discovery_places: [
@@ -216,6 +226,18 @@ describe("B. search_places", () => {
 });
 
 describe("C. search_events", () => {
+  it("finds relevant visible events beyond the early rows and caps the ranked result", async () => {
+    const future = new Date(Date.now() + 86400_000).toISOString();
+    const event = { starts_at: future, state: "published", visibility: "public", country: "PH" };
+    const db = makeDb({ events: [
+      ...Array.from({ length: 10 }, (_, i) => ({ ...event, id: `blocked-${i}`, title: `Blocked ${i}`, city: "Cebu", category: "food", host_id: BOB_ID })),
+      { ...event, id: "misfit", title: "Chess", city: "Oslo", category: "games", host_id: "safe-host" },
+      { ...event, id: "fit", title: "Food crawl", city: "Cebu", category: "food", host_id: "safe-host" },
+    ], blocks: [{ blocker_id: ALICE_ID, blocked_id: BOB_ID }] });
+    const result = await executeCompassTool(makeClient(db), ALICE_ID, profileFor({ travelStyles: ["food"], currentCity: "Cebu" }), "search_events", { limit: 1 }) as { candidates: Array<{ id: string }> };
+    assert.deepEqual(result.candidates.map(c => c.id), ["fit"]);
+  });
+
   it("filters out events hosted by blocked users", async () => {
     const future = new Date(Date.now() + 86400_000).toISOString();
     const db = makeDb({
@@ -370,6 +392,22 @@ describe("F. add_to_trip — proposal only", () => {
     });
   }
 
+  it("rejects impossible and out-of-trip dates without dropping the requested day or writing", async () => {
+    const db = tripDb();
+    Object.assign(db.trips[0], { start_date: "2028-02-28", end_date: "2028-03-02" });
+    const client = makeClient(db);
+    for (const dayDate of ["2028-02-30", "2028-02-27", "2028-03-03", "tomorrow", ""]) {
+      const result = await executeCompassTool(client, ALICE_ID, profileFor(), "add_to_trip", { tripId: TRIP_ID, placeId: PLACE_ID, dayDate }) as { error?: string; proposal?: unknown };
+      assert.ok(result.error, `invalid scheduling request ${dayDate} must be refused`);
+      assert.equal(result.proposal, undefined);
+    }
+    for (const dayDate of ["2028-02-28", "2028-02-29", "2028-03-02"]) {
+      const result = await executeCompassTool(client, ALICE_ID, profileFor(), "add_to_trip", { tripId: TRIP_ID, placeId: PLACE_ID, dayDate }) as { proposal?: { dayDate: string } };
+      assert.equal(result.proposal?.dayDate, dayDate, "real dates within the trip must remain unchanged");
+    }
+    assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], []);
+  });
+
   it("returns a pending proposal and writes nothing", async () => {
     const db = tripDb();
     const client = makeClient(db);
@@ -472,6 +510,75 @@ function makeToolLoopOpenAI(onMainCall?: (opts: any, mainCalls: number) => void)
 }
 
 describe("G. /compass/ask tool loop", () => {
+  it("uses the remaining turn budget to finish instead of starting another tool round", async () => {
+    const db = makeDb();
+    _setTestClient(makeClient(db), true);
+    let now = Date.now();
+    const clock = mock.method(Date, "now", () => now);
+    let calls = 0;
+    _setTestOpenAI({ chat: { completions: { create: async (opts: any, request: any) => {
+      if (opts.max_completion_tokens === 256) return { choices: [{ message: { content: '{"intent":"question","confidence":0.9}' } }] };
+      calls++;
+      if (calls === 1) {
+        now += 40_000;
+        return { choices: [{ message: { role: "assistant", content: null, tool_calls: [
+          { id: "profile", type: "function", function: { name: "get_user_profile", arguments: "{}" } },
+        ] } }] };
+      }
+      assert.equal(opts.tools, undefined, "reserve the remaining time for the answer");
+      assert.ok(request.timeout <= 25_000);
+      return { choices: [{ message: { role: "assistant", content: '{"message":"What would you like to plan?"}' } }] };
+    } } } } as any);
+    try {
+      const { body } = await post("/api/compass/ask", { prompt: "Help me with my preferences" });
+      assert.equal(body.message, "What would you like to plan?");
+      assert.equal(calls, 2);
+    } finally { clock.mock.restore(); }
+  });
+
+  it("returns a retryable timeout without persisting a partial answer when the budget expires", async () => {
+    const db = makeDb();
+    _setTestClient(makeClient(db), true);
+    let now = Date.now();
+    const clock = mock.method(Date, "now", () => now);
+    let calls = 0;
+    _setTestOpenAI({ chat: { completions: { create: async (opts: any) => {
+      if (opts.max_completion_tokens === 256) return { choices: [{ message: { content: '{"intent":"question","confidence":0.9}' } }] };
+      calls++;
+      now += 66_000;
+      return { choices: [{ message: { role: "assistant", content: null, tool_calls: [
+        { id: "profile", type: "function", function: { name: "get_user_profile", arguments: "{}" } },
+      ] } }] };
+    } } } } as any);
+    try {
+      const { body } = await post("/api/compass/ask", { prompt: "Help me with my preferences" });
+      assert.equal(body.fallbackReason, "reasoning_timeout");
+      assert.equal(body.retryable, true);
+      assert.equal(calls, 1);
+      assert.equal(db.compass_conversation_messages.filter(m => m.role === "assistant").length, 0);
+    } finally { clock.mock.restore(); }
+  });
+
+  it("asks the model to repair non-object tool arguments without executing them", async () => {
+    const db = makeDb();
+    _setTestClient(makeClient(db), true);
+    let calls = 0;
+    _setTestOpenAI({ chat: { completions: { create: async (opts: any) => {
+      if (opts.max_completion_tokens === 256) return { choices: [{ message: { content: '{"intent":"question","confidence":0.9}' } }] };
+      if (calls++ === 0) return { choices: [{ message: { role: "assistant", content: null, tool_calls:
+        ["null", "[]", "bad json"].map((args, i) => ({ id: `bad_${i}`, type: "function", function: { name: "add_to_trip", arguments: args } })),
+      } }] };
+      const errors = opts.messages.filter((m: any) => m.role === "tool");
+      assert.equal(errors.length, 3);
+      assert.ok(errors.every((m: any) => JSON.parse(m.content).error.includes("valid JSON object")));
+      return { choices: [{ message: { role: "assistant", content: '{"message":"Which trip should I use?"}' } }] };
+    } } } } as any);
+    const { body } = await post("/api/compass/ask", { prompt: "Help me plan" });
+    assert.equal(body.message, "Which trip should I use?");
+    assert.deepEqual(body.pendingProposals, []);
+    assert.deepEqual((body.meta as any).toolsUsed, []);
+  });
+
   it("executes tools, answers from DB-backed candidates, and persists toolCalls in the message payload", async () => {
     const db = makeDb({
       discovery_places: [{ id: PLACE_ID, name: "Lantaw Cafe", category: "cafe", city: "Cebu", rating: 4.6, verified: true, blurb: "views", lat: 10.35, lng: 123.87 }],
@@ -585,6 +692,32 @@ describe("G. /compass/ask tool loop", () => {
     assert.ok(body.message && body.message.length > 0, "reply must be non-empty after summarise re-prompt");
     assert.ok(String(body.message).includes("Lantaw"), "summarise reply must reference tool results");
     assert.equal(mainCalls, 3, "three model calls: tool round, silent forced-final, summarise re-prompt");
+  });
+
+  it("reuses confirmation identity for repeated suggestions while preserving different days", async () => {
+    const db = makeDb({
+      trips: [{ id: TRIP_ID, owner_id: ALICE_ID, title: "Cebu trip", plan_edit_permission: "all_members", status: "upcoming", start_date: "2028-02-28", end_date: "2028-03-02" }],
+      trip_members: [{ trip_id: TRIP_ID, user_id: ALICE_ID, role: "owner", status: "accepted" }],
+      discovery_places: [{ id: PLACE_ID, name: "Lantaw Cafe", category: "cafe", city: "Cebu" }],
+    });
+    const client = makeClient(db);
+    _setTestClient(client, true);
+    let calls = 0;
+    _setTestOpenAI({ chat: { completions: { create: async (opts: { max_completion_tokens: number }) => {
+      if (opts.max_completion_tokens === 256) return { choices: [{ message: { content: '{"intent":"action","confidence":0.95}' } }] };
+      if (calls++ === 0) return { choices: [{ message: { role: "assistant", content: null,
+        tool_calls: ["2028-02-28", "2028-02-28", "2028-02-29"].map((dayDate, i) => ({ id: `tc_${i}`, type: "function", function: { name: "add_to_trip", arguments: JSON.stringify({ tripId: TRIP_ID, placeId: PLACE_ID, dayDate }) } })),
+      } }] };
+      return { choices: [{ message: { role: "assistant", content: '{"message":"Confirm the suggested days below.","payload":null,"quickActions":[]}' } }] };
+    } } } } as unknown as Parameters<typeof _setTestOpenAI>[0]);
+    const { status, body } = await post<{ pendingProposals: Array<{ proposalId: string; dayDate: string }> }>("/api/compass/ask", { prompt: "Suggest this cafe for my first two trip days" });
+    assert.equal(status, 200);
+    assert.deepEqual(body.pendingProposals.map(p => p.dayDate), ["2028-02-28", "2028-02-29"]);
+    assert.notEqual(body.pendingProposals[0].proposalId, body.pendingProposals[1].proposalId);
+    const saved = db.compass_conversation_messages.find(m => m.role === "assistant")!.payload as { toolCalls: Array<{ result: { proposal: { proposalId: string } } }>; pendingProposals: unknown[] };
+    assert.equal(saved.toolCalls[0].result.proposal.proposalId, saved.toolCalls[1].result.proposal.proposalId);
+    assert.equal(saved.pendingProposals.length, 2);
+    assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], []);
   });
 
   it("surfaces add_to_trip pendingProposals on the response and persists them", async () => {
@@ -1183,6 +1316,19 @@ describe("Compass venue prices, hours and itineraries on the published path", ()
     assert.equal(itineraryOutline("Plan dos días en Da Nang.", "Da Nang"), null);
     assert.equal(requestedItineraryCity("Plan two days.", "Da Nang", "Da Nang"), undefined);
     assert.equal(requestedItineraryCity("Plan two days near me.", undefined, "Da Nang"), "Da Nang");
+  });
+
+  it("uses currentCity for an explicitly local itinerary without replacing a named destination", async () => {
+    _setTestClient(makeClient(makeDb()), true);
+    _setTestOpenAI({ chat: { completions: { async create(opts: { max_completion_tokens: number }) {
+      assert.equal(opts.max_completion_tokens, 256, "a simple empty-catalog outline needs only classification");
+      return { choices: [{ message: { content: '{"intent":"itinerary","confidence":0.99}' } }] };
+    } } } } as unknown as Parameters<typeof _setTestOpenAI>[0]);
+    for (const [prompt, expected] of [["Plan two days near me.", "Da Nang"], ["Plan two days in Kyoto.", "Kyoto"]]) {
+      const { status, body } = await post<AuditedItineraryResponse>("/api/compass/ask", { prompt, currentCity: "Da Nang" });
+      assert.equal(status, 200);
+      assert.equal(body.payload?.destination, expected);
+    }
   });
 
   it("builds the requested indoor second day with a budget after a city-wide empty search", async () => {

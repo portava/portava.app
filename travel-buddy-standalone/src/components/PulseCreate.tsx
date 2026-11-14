@@ -1,5 +1,14 @@
+import { useLocalComposerDraft } from '../hooks/useLocalComposerDraft.ts';
+import { useComposerOutcome } from '../hooks/useComposerOutcome.ts';
+import { captureMessagingOwnerRequest } from '../services/messagingOwnerRequest.ts';
+import { preserveDraftAsset, discardDraftAsset, restoreDraftAsset, releaseDraftPreview } from '../services/composerDraftAsset.ts';
+import { retryComposerUploadCleanup } from '../services/composerUploadCleanup.ts';
+import { newClientEventId } from '../services/clientEventId.ts';
+import { isPostComposerDraft, postComposerNonempty, type PostComposerDraft } from '../services/postComposerDraft.ts';
 import { usePrivateSurfaceKey } from '../hooks/usePrivateSurfaceKey.ts';
 import { useRecordingStampDraft } from '../features/capture-stamps/useRecordingStampDraft.ts';
+import { WritingAssistControl } from '../platform/input-assistance/compass/WritingAssistControl.tsx';
+import { AI_WRITING_FIELD_IDS } from '../platform/input-assistance/compass/compassFields.ts';
 import { RecordingStampOption } from '../features/capture-stamps/RecordingStamp.tsx';
 import { beginCaptureSession, bindCameraRecording } from '../features/capture-stamps/recordingStamp.ts';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -181,7 +190,8 @@ type UnifiedPostComposerProps = {
 };
 export function UnifiedPostComposer(props: UnifiedPostComposerProps) {
   const scope = usePrivateSurfaceKey();
-  return <PostDraft key={scope} {...props} />;
+  const { userId } = useSession();
+  return <PostDraft key={`${scope}:${userId ?? ''}:${props.tripId ?? ''}:${props.initialPlace?.id ?? ''}:${props.initialBucket ?? ''}`} {...props} />;
 }
 function PostDraft({
   onClose,
@@ -193,7 +203,72 @@ function PostDraft({
 }: UnifiedPostComposerProps) {
   const insets = useSafeAreaInsets();
   const { create, submitting } = usePostActions();
-  const { signOut } = useSession();
+  const { signOut, userId } = useSession();
+  const [owner] = useState(captureMessagingOwnerRequest);
+  const record = useComposerOutcome('post');
+  const closed = useRef(false);
+  const publishing = useRef(false);
+  const [initial] = useState<PostComposerDraft>(() => ({ selectedType: initialText ? 'post_update' : null,
+    selectedCategory: initialText ? resolveDefaultCategory('post_update') : null, text: initialText, placeName: '',
+    media: null, vis: 'public', selectedPlace: initialPlace, addToPassport: false, filterId: 'original', filterIntensity: 100,
+    locationPrivacyMode: 'none', scheduledTime: null }));
+  const draft = useLocalComposerDraft({ accountId: owner?.ownerId === userId ? userId : null, composer: `post:${tripId ?? ''}:${initialPlace?.id ?? ''}:${initialBucket ?? ''}`,
+    initial, validate: isPostComposerDraft, nonempty: postComposerNonempty, onLeave: () => record('left_with_unsent') });
+  const { selectedCategory, text, placeName, media, vis, selectedPlace, addToPassport, filterId, filterIntensity, locationPrivacyMode } = draft.value;
+  const selectedType = draft.value.selectedType as PostTypeId | null;
+  const scheduledTime = draft.value.scheduledTime ? new Date(draft.value.scheduledTime) : null;
+  const field = useCallback(<K extends keyof PostComposerDraft,>(key: K, value: PostComposerDraft[K]) => draft.setValue(previous => {
+    if (Object.is(previous[key], value)) return previous;
+    const operationField = key === 'uploadOperation' || key === 'publicationOperation' || key === 'uploadCompleted' || key === 'uploadedMedia';
+    if (!operationField && previous.uploadOperation && owner) void retryComposerUploadCleanup(owner, previous.uploadOperation).catch(() => {});
+    return { ...previous, ...(!operationField ? { uploadOperation: undefined, uploadCompleted: undefined, uploadedMedia: undefined, publicationOperation: undefined } : {}), [key]: value };
+  }), [draft.setValue, owner]);
+  const setSelectedType = (v: PostTypeId | null) => field('selectedType', v);
+  const setSelectedCategory = useCallback((v: PostCategory | null) => field('selectedCategory', v), [field]);
+  const setText = (v: string) => field('text', v);
+  const setPlaceName = (v: string) => field('placeName', v);
+  const [mediaRecoveryBusy, setMediaRecoveryBusy] = useState(false);
+  const setMedia = (v: PickedMedia | null) => {
+    if (closed.current || !owner?.isCurrent()) return;
+    const previous = draft.value.media as (PickedMedia & { recoveryUri?: string }) | null;
+    field('media', v);
+    const cleanupPrevious = async (replacement?: string) => {
+      const old = previous?.recoveryUri ?? previous?.uri;
+      if (owner && old && old !== replacement && await draft.persist()) await discardDraftAsset(old, owner.ownerId);
+    };
+    if (v && owner?.isCurrent()) { setMediaRecoveryBusy(true); void preserveDraftAsset(v.uri, owner).then(async uri => {
+      if (!owner.isCurrent()) return;
+      // Keep the camera's live recording proof bound to its original URI; save
+      // a durable recovery copy only. Reopening does not restore that proof.
+      let accepted = false;
+      draft.setValue(previous => {
+        if (closed.current || previous.media?.uri !== v.uri) return previous;
+        accepted = true;
+        return { ...previous, media: { ...previous.media, recoveryUri: uri } as PickedMedia };
+      });
+      if (!accepted) { await discardDraftAsset(uri, owner.ownerId); return; }
+      await cleanupPrevious(uri);
+    }).catch(() => setError('Media could not be saved for recovery. Keep this screen open and try again.')).finally(() => setMediaRecoveryBusy(false)); }
+    else void cleanupPrevious().catch(() => setError('The previous draft media could not be removed yet.'));
+  };
+  const setVis = (v: PostVisibility) => field('vis', v);
+  const setSelectedPlace = (v: Place | null) => field('selectedPlace', v);
+  const setAddToPassport = (v: boolean) => field('addToPassport', v);
+  const setFilterId = (v: string) => field('filterId', v);
+  const setFilterIntensity = (v: number) => field('filterIntensity', v);
+  const setLocationPrivacyMode = (v: LocationPrivacyMode) => field('locationPrivacyMode', v);
+  const setScheduledTime = (v: Date | null) => field('scheduledTime', v?.toISOString() ?? null);
+  const restoredPreview = useRef<string | null>(null);
+  const assetRecoveryActive = useRef(true);
+  useEffect(() => { assetRecoveryActive.current = true; return () => { assetRecoveryActive.current = false; releaseDraftPreview(restoredPreview.current); }; }, []);
+  const savedMediaRestored = useRef(false);
+  useEffect(() => {
+    if (!draft.ready || savedMediaRestored.current) return;
+    savedMediaRestored.current = true;
+    const recovered = draft.value.media as (PickedMedia & { recoveryUri?: string }) | null;
+    if (recovered?.recoveryUri && userId) void restoreDraftAsset(recovered.recoveryUri, userId).then(uri => { if (!assetRecoveryActive.current || !owner?.isCurrent()) { releaseDraftPreview(uri); return; } restoredPreview.current = uri; draft.setValue(previous => previous.media === recovered ? { ...previous, media: { ...recovered, uri } } : previous); }).catch(() => setError('Saved media could not be restored. Your text is kept; select the media again.'));
+  }, [draft.ready, draft.setValue, draft.value.media]);
+  useEffect(() => { if (owner) void retryComposerUploadCleanup(owner).catch(() => {}); return () => { closed.current = true; }; }, [owner]);
 
   // True from the moment the submit lock is acquired until the finally block
   // releases it. Covers the upload phase where `submitting` (from usePostActions)
@@ -201,10 +276,10 @@ function PostDraft({
   // upload → create lifecycle, not just the create phase.
   const [inFlight, setInFlight] = useState(false);
 
-  const [selectedType, setSelectedType] = useState<PostTypeId | null>(initialText ? 'post_update' : null);
-  const [selectedCategory, setSelectedCategory] = useState<PostCategory | null>(initialText ? resolveDefaultCategory('post_update') : null);
-  const [text, setText] = useState(initialText);
-  const [placeName, setPlaceName] = useState('');
+
+
+
+
   const mentionRef = useRef<MentionInputHandle>(null);
   // Shared lock across concurrent handleSubmit() calls — prevents double-close
   // on the upload unauthenticated path where `submitting` is still false.
@@ -213,52 +288,54 @@ function PostDraft({
   const [mentionLoading, setMentionLoading] = useState(false);
   const [mentionVisible, setMentionVisible] = useState(false);
   const [postTags, setPostTags] = useState<TagSpan[]>([]);
-  const [media, setMedia] = useState<PickedMedia | null>(null);
-  const [vis, setVis] = useState<PostVisibility>('public');
-  const [selectedPlace, setSelectedPlace] = useState<Place | null>(initialPlace ?? null);
+
+
+
   const [locationPickerOpen, setLocationPickerOpen] = useState(false);
-  const [addToPassport, setAddToPassport] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
   const [highlightComposerOpen, setHighlightComposerOpen] = useState(false);
   const [filterEditorOpen, setFilterEditorOpen] = useState(false);
   const [filterEditorPending, setFilterEditorPending] = useState<PickedMedia | null>(null);
-  const [filterId, setFilterId] = useState<string>('original');
-  const [filterIntensity, setFilterIntensity] = useState<number>(100);
-  const [locationPrivacyMode, setLocationPrivacyMode] = useState<LocationPrivacyMode>('none'); const { isEnabled } = useFeatureFlags(); const LOCATION_CHOICES = locationChoices({ neighborhoodOnly: isEnabled(NEIGHBORHOOD_ONLY_MODE_FLAG) }); // §34 "Show neighborhood only" is offered only while the server accepts it (census-media §36); with the flag off this is the same list as before
-  const [scheduledTime, setScheduledTime] = useState<Date | null>(null);
+
+
+ const { isEnabled } = useFeatureFlags(); const LOCATION_CHOICES = locationChoices({ neighborhoodOnly: isEnabled(NEIGHBORHOOD_ONLY_MODE_FLAG) }); // §34 "Show neighborhood only" is offered only while the server accepts it (census-media §36); with the flag off this is the same list as before
+
 
   // Restore the last-used category for the selected post type, falling back to
   // the type default when no preference has been saved yet.
   // The cancellation flag prevents a slow earlier load from overwriting the
   // result of a later load when the user switches types quickly.
   useEffect(() => {
-    if (!selectedType) return;
+    if (!draft.ready || !selectedType || selectedCategory) return;
     let cancelled = false;
     loadLastCategory(AsyncStorage, selectedType).then((saved) => {
       if (cancelled) return;
       setSelectedCategory(saved ?? resolveDefaultCategory(selectedType));
     });
     return () => { cancelled = true; };
-  }, [selectedType]);
+  }, [selectedType, draft.ready, selectedCategory, setSelectedCategory]);
 
   // Auto-select delayed_until_exit when the user attaches a location
   useEffect(() => {
+    if (!draft.ready) return;
     if (!selectedPlace) {
       setLocationPrivacyMode('none');
     } else if (locationPrivacyMode === 'none') {
       setLocationPrivacyMode('delayed_until_exit');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPlace]);
+  }, [selectedPlace, draft.ready]);
 
   // Pre-fill scheduledTime when switching to "At a time" so the submit
   // always has a value even if the user never touches the spinner.
   useEffect(() => {
+    if (!draft.ready) return;
     if (locationPrivacyMode === 'delayed_until_time' && scheduledTime === null) {
       setScheduledTime(new Date(Date.now() + 60 * 60 * 1_000));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locationPrivacyMode]);
+  }, [locationPrivacyMode, draft.ready]);
 
   // No reset-on-open effect: the composer is a full-screen /create page, so
   // every navigation mounts a fresh instance whose useState initializers
@@ -328,7 +405,7 @@ function PostDraft({
       mediaTypes: ['images', 'videos'],
       videoMaxDuration: maxDuration,
     }).then((assets) => {
-      if (assets?.[0]) handlePickResult(assets[0]);
+      if (assets?.[0] && !closed.current && assetRecoveryActive.current && owner?.isCurrent()) handlePickResult(assets[0]);
     });
   }
 
@@ -386,7 +463,10 @@ function PostDraft({
     : null;
 
   async function handleSubmit() {
-    if (!selectedType || submitting || inFlight) return;
+    if (!selectedType || submitting || inFlight || !draft.ready || mediaRecoveryBusy || !owner?.isCurrent() || owner.ownerId !== userId || closed.current) return;
+    const submitted = draft.value;
+    const publicationOperation = submitted.publicationOperation ?? newClientEventId();
+    let operation: string | undefined = submitted.uploadOperation;
     if (stamp.pending) {
       if (await stamp.finish(stamp.pending)) { onSuccess?.(); onClose(); }
       return;
@@ -411,12 +491,22 @@ function PostDraft({
     const closeOnce = createOnceGuard(onClose);
 
     try {
+      field('publicationOperation', publicationOperation);
+      if (!await draft.persist()) { setError('Your draft could not be saved. Free device storage and try again.'); return; }
+      let uploadedMedia = submitted.uploadedMedia;
       let mediaUrl: string | null = null; let mediaThumbnailUrl: string | null = null;
       let mediaType: string | undefined = undefined;
-      if (media) {
+      if (media && submitted.uploadCompleted && operation && submitted.uploadedMedia) {
+        mediaUrl = submitted.uploadedMedia.url; mediaThumbnailUrl = submitted.uploadedMedia.thumbnailUrl ?? null; mediaType = submitted.uploadedMedia.mediaType;
+      } else if (media) {
         const stamped = stamp.selected;
         if (stamp.enabled && (!stamped || stamped.uri !== media.uri)) { setError('Recording stamp unavailable. Turn it off to post this video.'); return; }
-        const up = await uploadMedia(media, stamped ? { recording: stamped, maxVideoDurationSeconds: 60 } : { maxVideoDurationSeconds: 60 }, stamped?.session.owner);
+        operation = operation ?? newClientEventId();
+        field('uploadOperation', operation);
+        if (!await draft.persist()) { setError('Your upload could not be saved for recovery. Free device storage and try again.'); return; }
+        const up = await uploadMedia(media, { ...(stamped ? { recording: stamped } : {}), maxVideoDurationSeconds: 60, composerOperationId: operation }, stamped?.session.owner ?? owner);
+        if (closed.current || !owner.isCurrent()) { void retryComposerUploadCleanup(owner, operation).catch(() => {}); return; }
+        if (!up.ok) record('upload_failed', up.errorKind === 'invalid_type' || up.errorKind === 'too_large' ? 'unsupported_media' : up.errorKind === 'read_failed' ? 'storage' : up.errorKind === 'unauthenticated' ? 'rejected' : 'network');
         if (stamped && (!up.captureAccepted || !stamped.session.owner.isCurrent())) {
           setError(up.message || 'Recording stamp upload was not accepted. Try again or turn off the stamp.'); return;
         }
@@ -427,6 +517,10 @@ function PostDraft({
           setError,
         });
         if (!outcome.continue) return;
+        field('uploadCompleted', true);
+        uploadedMedia = { url: outcome.url!, thumbnailUrl: outcome.thumbnailUrl ?? null, mediaType: outcome.mediaType ?? undefined };
+        field('uploadedMedia', uploadedMedia);
+        if (!await draft.persist()) { setError('Your upload is private, but this device could not save recovery information. Free storage and try again.'); return; }
         mediaUrl = outcome.url; mediaThumbnailUrl = outcome.thumbnailUrl;
         mediaType = outcome.mediaType ?? undefined;
       }
@@ -449,7 +543,11 @@ function PostDraft({
       }
 
       const autoPassport = selectedType === 'share_postcard';
+      if (closed.current || !owner.isCurrent()) { if (operation) void retryComposerUploadCleanup(owner, operation).catch(() => {}); return; }
+      publishing.current = true;
       const res = await create({
+        composerUploadOperationId: operation,
+        composerPublicationOperationId: publicationOperation,
         content,
         visibility: vis,
         mediaUrls: mediaUrl ? [mediaUrl] : [], ...(mediaThumbnailUrl ? { mediaThumbnailUrl } : {}), ...(tripId ? { tripId } : {}), // the video's poster, so the post has a still to show; the trip it was posted to (members only — the server refuses anyone else)
@@ -460,8 +558,13 @@ function PostDraft({
         filterIntensity,
         ...locationRequestFields(locationPrivacyMode, scheduledTime),
         category: resolveCreateCategory(selectedCategory),
-      }, stamp.selected?.session.owner);
+      }, stamp.selected?.session.owner ?? owner);
 
+      if (res.ok) {
+        record('published', undefined, publicationOperation);
+        const cleared = await draft.clear(initial, { ...submitted, publicationOperation, ...(operation ? { uploadOperation: operation, uploadCompleted: true, uploadedMedia } : {}) });
+        if (cleared && submitted.media) void discardDraftAsset((submitted.media as PickedMedia & { recoveryUri?: string }).recoveryUri ?? submitted.media.uri, owner.ownerId);
+      }
       if (res.ok && res.data?.id && stamp.selected) {
         if (!(await stamp.finish({ recording: stamp.selected, type: 'post', id: res.data.id }))) return;
       }
@@ -473,6 +576,7 @@ function PostDraft({
         setError,
       });
     } finally {
+      publishing.current = false;
       submitLock.current.release();
       setInFlight(false);
     }
@@ -480,7 +584,7 @@ function PostDraft({
 
   // Highlight type: open dedicated composer immediately on type select
   function handleTypeSelect(id: PostTypeId) {
-    setSelectedType(id);
+    setSelectedType(id); setSelectedCategory(null);
     setError(null);
     if (DEDICATED_COMPOSERS[id]) {
       setHighlightComposerOpen(true);
@@ -489,14 +593,46 @@ function PostDraft({
 
   // inFlight covers the upload phase; submitting covers the create() call.
   // Both must be false for the button to be interactive.
-  const canSubmit = !!selectedType && !submitting && !inFlight &&
+  const canSubmit = draft.ready && !mediaRecoveryBusy && !!selectedType && !submitting && !inFlight &&
     !DEDICATED_COMPOSERS[selectedType as PostTypeId] &&
     validate(selectedType, text, placeName, media, selectedCategory) === null;
 
-  const dismiss = createComposerDismissHandlers(onClose);
+  const leaveComposer = () => {
+    if (publishing.current) { setError('Your post is being published. Please wait for confirmation.'); return; }
+    if (mediaRecoveryBusy) { setError('Your media is being saved on this device. Please wait before closing.'); return; }
+    closed.current = true;
+    if (inFlight) { record('upload_cancelled'); if (draft.value.uploadOperation && owner) void retryComposerUploadCleanup(owner, draft.value.uploadOperation).catch(() => {}); field('uploadOperation', undefined); }
+    void draft.persist().then(saved => { if (saved) { draft.leave(); onClose(); } else closed.current = false; });
+  };
+  const discarding = useRef(false);
+  const discardLocalDraft = async () => {
+    if (publishing.current || discarding.current) return; discarding.current = true;
+    try {
+    const discarded = draft.value;
+    closed.current = true;
+    const cleanup = discarded.uploadOperation && owner ? await retryComposerUploadCleanup(owner, discarded.uploadOperation) : null;
+    if (discarded.uploadOperation && cleanup?.pending.includes(discarded.uploadOperation)) {
+      closed.current = false;
+      setError('Could not confirm whether this upload was published or removed. Your draft is kept; try discarding again when connected.');
+      return;
+    }
+    if (!await draft.clear(initial, discarded)) { closed.current = false; return; }
+    if (discarded.uploadOperation && cleanup?.published.includes(discarded.uploadOperation)) {
+      record('published', undefined, discarded.publicationOperation);
+      Alert.alert('Post already published', 'The server confirmed your post was published. Its local draft was removed. You can manage the post from your profile.');
+      onSuccess?.();
+    } else record(discarded.uploadCompleted ? 'post_discarded_after_upload' : 'discarded_draft');
+    if (discarded.media && owner) await discardDraftAsset((discarded.media as PickedMedia & { recoveryUri?: string }).recoveryUri ?? discarded.media.uri, owner.ownerId).catch(() => {});
+    onClose();
+    } catch { closed.current = false; setError('Draft could not be discarded. Your saved copy is kept; try again.'); }
+    finally { discarding.current = false; }
+  };
+  const dismiss = createComposerDismissHandlers(leaveComposer);
 
   return (
     <View style={uc.page}>
+      {draft.error ? <Text accessibilityRole="alert">{draft.error}</Text> : null}
+      {draft.ready && postComposerNonempty(draft.value) ? <Pressable accessibilityRole="button" accessibilityLabel="Discard post draft" disabled={submitting} onPress={() => void discardLocalDraft()}><Text>Discard draft</Text></Pressable> : null}
       {/* Full-screen page header — safe-area aware. Dismiss = X button
           (Android hardware back pops the /create route via the router). */}
       <View style={[uc.head, { paddingTop: Math.max(insets.top + 8, 60) }]}>
@@ -654,10 +790,17 @@ function PostDraft({
                       setMentionVisible(!!trigger && (items.length > 0 || isLoading));
                     }}
                   />
+                  {(selectedType === 'share_postcard' || selectedType === 'share_moment' || selectedType === 'post_update') && (
+                    <WritingAssistControl context="caption" fieldId={AI_WRITING_FIELD_IDS.caption}
+                      text={text} onInsert={setText} disabled={submitting || inFlight} />
+                  )}
                 </View>
 
                 {/* photo picker */}
                 <View style={uc.field}>
+                  <Pressable accessibilityRole="button" disabled={submitting || inFlight || !!stamp.pending} onPress={() => router.push('/create-ai')} style={{ minHeight: 44, justifyContent: 'center' }}>
+                    <Text style={uc.fieldLabel}>Create an AI image or video</Text>
+                  </Pressable>
                   <Text style={uc.fieldLabel}>{photoLabel(selectedType)}</Text>
                   <Pressable style={uc.mediaPicker} onPress={openPickerSheet} disabled={submitting || inFlight || !!stamp.pending}>
                     {media ? (

@@ -1,3 +1,4 @@
+import { cleanupCancelledComposerUploads } from './CancelledComposerUploadCleanup.js';
 /**
  * PendingUploadSweep — the one implementation of "an upload whose completion
  * never ran does not keep its unstripped original".
@@ -219,6 +220,8 @@ export async function sweepAbandonedPendingUploads(
     }
   }
 
+  const drafts = await cleanupCancelledComposerUploads(sc, cutoff, limit);
+  errors += drafts.errors;
   return { ok: true, swept, errors, examined: rows.length, completedMeanwhile, stillSending, more: rows.length >= limit };
 }
 

@@ -32,6 +32,7 @@ import {
   provenanceClassOf,
   mediaQualityOf,
   utilityTerm,
+  freshnessTerm,
   type MediaRankingSignals,
 } from "../lib/mediaRankingSignals.js";
 import {
@@ -111,6 +112,30 @@ function canonical(sourceType: string, extra: Record<string, unknown> = {}): unk
 function ids(rows: MediaCandidateRow[]): string[] {
   return rows.map((r) => String(r.id));
 }
+
+describe("media evidence clocks and generated fallback isolation", () => {
+  it("an old capture uploaded today cannot earn fresh coverage or a freshness boost", () => {
+    const old = row("old-capture", { created_at: iso(NOW), canonical_media: canonical("camera", { captured_at: iso(NOW - 365 * DAY) }) });
+    const recent = row("recent-capture", { created_at: iso(NOW - HOUR), canonical_media: canonical("camera", { captured_at: iso(NOW - HOUR) }) });
+    assert.ok(freshnessTerm(old, NOW) < freshnessTerm(recent, NOW));
+    assert.equal(buildRankingPage([old], NOW).freshAtPlace.size, 0);
+    assert.equal(toMediaProjection(old, NOW)?.freshness, "historical");
+    const future = row("future", { canonical_media: canonical("camera", { captured_at: iso(NOW + DAY) }) });
+    assert.equal(freshnessTerm(future, NOW), 0.5);
+    assert.equal(toMediaProjection(future, NOW)?.freshness, "historical");
+  });
+
+  it("a generated fallback cannot change the ordering or fresh coverage of real perspectives", () => {
+    const a = row("a", { canonical_media: canonical("camera"), author_id: AUTHOR_A, canonical_place_id: PLACE_1 });
+    const b = row("b", { canonical_media: canonical("camera"), author_id: AUTHOR_B, canonical_place_id: PLACE_2 });
+    const synthetic = row("synthetic", { canonical_media: canonical("generated"), author_id: AUTHOR_A, canonical_place_id: PLACE_1 });
+    const context = { nowMs: NOW, signals: signals({ intent: { mediaIds: new Set(["synthetic"]), placeIds: new Set(), categories: new Set() } }) };
+    const baseline = ids(rankMediaCandidates([a, b], context));
+    const withFallback = ids(rankMediaCandidates([synthetic, a, b], context));
+    assert.deepEqual(withFallback, [...baseline, "synthetic"]);
+    assert.deepEqual(buildRankingPage([synthetic, a, b], NOW), buildRankingPage([a, b], NOW));
+  });
+});
 
 function score(r: MediaCandidateRow, s: MediaRankingSignals, extra: Record<string, unknown> = {}): MediaRankingScore {
   return scoreMediaCandidate(r, { nowMs: NOW, signals: s, ...extra });

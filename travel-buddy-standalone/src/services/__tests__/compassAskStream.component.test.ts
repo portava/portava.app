@@ -19,6 +19,7 @@ const {
   postCompassAskStream,
   _setTestAuthToken,
   _setTestStreamFetch,
+  COMPASS_ASK_TIMEOUT_MS,
 } = require('../compass.ts') as typeof import('../compass.ts');
 
 describe('extractPartialCompassMessage', () => {
@@ -141,6 +142,20 @@ describe('postCompassAskStream', () => {
     assert.equal(r.data?.message, 'part');
   });
 
+  it('sends device location separately from the selected destination and keeps explicit trip context', async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    _setTestStreamFetch((async (_url: unknown, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return sseResponse(['data: {"done":true,"message":"Ready"}\n\n']);
+    }) as unknown as typeof fetch);
+    await postCompassAskStream('Plan Kyoto', { currentCity: 'Da Nang', tripId: 'selected-trip' });
+    assert.equal(requests[0].currentCity, 'Da Nang');
+    assert.equal(requests[0].city, undefined);
+    assert.equal(requests[0].tripId, 'selected-trip');
+    await postCompassAskStream('Find dinner', { city: 'Kyoto', currentCity: 'Da Nang' });
+    assert.equal(requests[1].city, 'Kyoto');
+  });
+
   it('uses the grounded terminal message, including when no deltas arrive and the native connection stays open', async () => {
     const encoder = new TextEncoder();
     const chunks = [
@@ -219,7 +234,7 @@ describe('postCompassAskStream', () => {
       const turn = postCompassAskStream('hi');
       await jest.advanceTimersByTimeAsync(1);
       assert.equal(read.mock.calls.length, 1);
-      await jest.advanceTimersByTimeAsync(30_000);
+      await jest.advanceTimersByTimeAsync(COMPASS_ASK_TIMEOUT_MS);
       assert.equal((await turn).error, 'timeout');
     } finally { jest.useRealTimers(); }
   });

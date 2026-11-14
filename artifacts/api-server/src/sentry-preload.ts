@@ -1,3 +1,4 @@
+import { redactCrashBreadcrumb, redactCrashEvent } from "./lib/crashInputPrivacy.js";
 /**
  * Sentry pre-load bootstrap — loaded via `node --import ./dist/sentry-preload.mjs`
  * BEFORE the main application bundle.
@@ -33,5 +34,9 @@ if (dsn) {
     // in app.ts; this flag suppresses the misleading "not instrumented" warning
     // that fires when OTel's isWrapped() check finds unshimmed CJS modules.
     disableInstrumentationWarnings: true,
+    sendDefaultPii: false,
+    beforeBreadcrumb: redactCrashBreadcrumb,
+    beforeSend: redactCrashEvent,
+    beforeSendTransaction: redactCrashEvent,
   });
 }

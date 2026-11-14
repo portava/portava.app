@@ -2,10 +2,10 @@
  * POST /api/media/analytics/batch
  *
  * Receives batched client-side media analytics events from useMediaAnalytics
- * and delegates each to recordMediaEvent (fire-and-forget, MEDIA_ANALYTICS_ENABLED gated).
+ * and acknowledges only rows returned by persistence (MEDIA_ANALYTICS_ENABLED gated).
  *
- * Requires auth. Payload is validated; forbidden fields are stripped server-side
- * by recordMediaEvent before any DB write.
+ * Requires auth. Unknown fields, raw text, malformed values and caller-supplied
+ * viewer identity are rejected before the recorder; server-only outcomes are refused.
  */
 import { Router } from "express";
 import { z } from "zod";
@@ -13,12 +13,16 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import {
-  recordMediaEvent,
-  MEDIA_NORTH_STAR_EVENT_TYPES, MEDIA_CLIENT_OUTCOME_SIGNAL_TYPES,
+  persistMediaEventBatch,
+  MEDIA_NORTH_STAR_EVENT_TYPES, MEDIA_CLIENT_OUTCOME_SIGNAL_TYPES, MEDIA_SERVER_OUTCOME_SIGNAL_TYPES,
   type MediaEventType,
 } from "../lib/mediaAnalytics.js";
 
+import { mediaAnalyticsClientPayload } from "../lib/mediaAnalyticsClientPayload.js";
+import composerOutcomesRouter from "./composerOutcomes.js";
+
 const router = Router();
+router.use(composerOutcomesRouter);
 
 /**
  * Event types this endpoint will forward. Still a closed allow-list — an
@@ -31,17 +35,19 @@ const router = Router();
  * to recordMediaEvent. Nothing failed anywhere, so nothing reported it — the
  * funnel simply read zero.
  *
- * They are spread from MEDIA_NORTH_STAR_EVENT_TYPES rather than retyped, so the
- * list cannot drift from the `MediaEventType` union again; the spread is still
- * an enumeration of eight fixed names, not an opening of the allow-list.
+ * Client-observable types are spread from MEDIA_NORTH_STAR_EVENT_TYPES, so the
+ * list cannot drift from the `MediaEventType` union again; server-confirmed
+ * arrivals/contributions are excluded and cannot be forged by the client.
  */
 const VALID_EVENT_TYPES = new Set<string>([
-  "mode_switch", "impression", "qualified_view", "completion", "rewatch",
+  // Observed Watch views use /media/:id/view with owner/item/session receipts.
+  // Generic batches cannot bypass that access and idempotency boundary.
+  "mode_switch",
   "like", "comment", "save", "share", "profile_open", "place_open",
   "event_open", "trip_open", "grid_tile_open", "gems_filter_change",
   "add_to_trip", "directions_tap", "wrong_place_report",
   "upload_start", "processing_complete", "processing_failure", "playback_failure",
-  ...MEDIA_NORTH_STAR_EVENT_TYPES,
+  ...MEDIA_NORTH_STAR_EVENT_TYPES.filter(type => !MEDIA_SERVER_OUTCOME_SIGNAL_TYPES.includes(type)),
   // §44 outcome signals a client surface emits (census-media §21). The SERVER-only
   // outcome signals (MEDIA_SERVER_OUTCOME_SIGNAL_TYPES) are deliberately absent.
   ...MEDIA_CLIENT_OUTCOME_SIGNAL_TYPES,
@@ -51,10 +57,10 @@ const batchSchema = z.object({
   events: z.array(
     z.object({
       type:    z.string(),
-      payload: z.record(z.unknown()).optional().default({}),
-    }),
+      payload: mediaAnalyticsClientPayload.optional().default({}),
+    }).strict(),
   ).max(50),
-});
+}).strict();
 
 router.post("/media/analytics/batch", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
@@ -63,8 +69,7 @@ router.post("/media/analytics/batch", asyncHandler(async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) {
-    // Non-fatal: analytics must never block the client
-    res.json({ ok: true, accepted: 0 });
+    res.status(503).json({ ok: false, accepted: 0, retryable: false, reason: "analytics_unavailable" });
     return;
   }
 
@@ -74,16 +79,18 @@ router.post("/media/analytics/batch", asyncHandler(async (req, res) => {
     return;
   }
 
-  let accepted = 0;
-  for (const evt of parsed.data.events) {
-    if (!VALID_EVENT_TYPES.has(evt.type)) continue;
-    // Stamp the authenticated viewer_id — client cannot spoof this
-    const payload = { ...evt.payload, viewer_id: user.id };
-    recordMediaEvent(evt.type as MediaEventType, payload, sc);
-    accepted++;
-  }
-
-  res.json({ ok: true, accepted });
+  const events = parsed.data.events.filter(evt => VALID_EVENT_TYPES.has(evt.type));
+  const rejected = parsed.data.events.length - events.length;
+  const receipt = await persistMediaEventBatch(events.map(evt => ({
+    type: evt.type as MediaEventType, payload: { ...evt.payload, viewer_id: user.id },
+  })), sc);
+  // A disabled policy or erasure trigger explicitly discards events. It is
+  // never described as persistence. Legacy clients must not retry an ambiguous
+  // batch: no per-event identity exists in this old transport contract.
+  res.status(receipt.failed ? 503 : 200).json({
+    ok: receipt.failed === 0, ...receipt, rejected, retryable: false,
+    ...(receipt.failed ? { reason: "analytics_write_failed" } : {}),
+  });
 }));
 
 export default router;

@@ -162,8 +162,8 @@ function makeFakeClient(opts: {
     // derived personal memory behind after a deletion request is a privacy
     // failure — so without this stub the execute endpoint would (correctly)
     // refuse to mark the request completed.
-    rpc: (_fn: string, _args: Record<string, unknown>) =>
-      Promise.resolve({ data: null, error: null }),
+    rpc: (fn: string, _args: Record<string, unknown>) =>
+      Promise.resolve({ data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null }),
     auth: {
       getUser: () => Promise.resolve({ data: { user: { id: ADMIN_USER_ID } }, error: null }),
       // The deletion cascade removes the Supabase Auth user as a FATAL step —

@@ -441,15 +441,9 @@ export function DiscoveryCategoryTab({
 
   const applyClientFilters = (raw: DiscoveryPlace[]): DiscoveryPlace[] => {
     let result = raw;
-    // Open Now filter: OSM has opening_hours occasionally — filter where present
-    if (filters.openNow) {
-      result = result.filter((p) => {
-        if (!p.openingHours) return true; // no data → include optimistically
-        return isLikelyOpen(p.openingHours);
-      });
-    }
-    // Min rating: OSM rarely carries ratings — no-op client-side for now
-    // (kept as a UI affordance; future backend pass can honour it)
+    // The API evaluates hours in the venue's timezone. Unknown is not open.
+    if (filters.openNow) result = result.filter((p) => p.isOpenNow === true);
+    if (filters.minRating !== null) result = result.filter((p) => p.rating !== null && Number.isFinite(p.rating) && p.rating >= filters.minRating!);
     return result;
   };
 
@@ -728,20 +722,6 @@ export function DiscoveryCategoryTab({
       )}
     </View>
   );
-}
-
-/** Crude heuristic: check if today's day abbreviation appears in opening hours */
-function isLikelyOpen(hours: string): boolean {
-  const now = new Date();
-  const dayAbbr = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'][now.getDay()];
-  const hh = now.getHours() * 100 + now.getMinutes();
-  // Simple: if hours string mentions the day and seems to cover current hour
-  if (!hours.includes(dayAbbr ?? '')) return false;
-  const match = hours.match(/(\d{2}):(\d{2})-(\d{2}):(\d{2})/);
-  if (!match) return true; // can't parse, be optimistic
-  const open  = parseInt(match[1]!) * 100 + parseInt(match[2]!);
-  const close = parseInt(match[3]!) * 100 + parseInt(match[4]!);
-  return hh >= open && hh <= close;
 }
 
 const styles = StyleSheet.create({

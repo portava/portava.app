@@ -142,12 +142,22 @@ export async function compassAiFailureFallbackWithRetrieval(
   toolLog: readonly ToolLogEntryLike[],
   retrieve: () => Promise<unknown>,
   honest: string,
+  timeoutMs = 5_000,
 ): Promise<{ message: string; fallbackRenderer?: string; memoryFactCount?: number }> {
   const fromTurn = compassAiFailureFallback(toolLog, honest);
   if (fromTurn.fallbackRenderer) return fromTurn;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return compassAiFailureFallback([{ name: "memory_search", result: await retrieve() }], honest);
+    // A failed model call must not lead to an unbounded second wait. This is
+    // read-only; a late retrieval cannot change the returned answer.
+    const unavailable = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("memory_fallback_timeout")), timeoutMs);
+    });
+    const result = await Promise.race([retrieve(), unavailable]);
+    return compassAiFailureFallback([{ name: "memory_search", result }], honest);
   } catch {
     return { message: honest };
+  } finally {
+    clearTimeout(timer);
   }
 }

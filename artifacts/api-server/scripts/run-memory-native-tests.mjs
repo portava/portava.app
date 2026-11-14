@@ -9,6 +9,25 @@ export { default } from "./run-memory-sql-tests.mjs";
 const scriptPath = realpathSync(fileURLToPath(import.meta.url));
 const apiRoot = resolve(dirname(scriptPath), "..");
 const manifests = {
+  "input-outcome": {
+  "file": "src/test/inputOutcomeConsent.postgres.test.ts",
+  "suite": "4029 PostgreSQL two-connection consent races (isolated socket-only database)",
+  "binaryVariable": "INPUT_OUTCOME_POSTGRES_BIN",
+  "expectedTests": 5
+},
+  "wall-outcome": {
+  "file": "src/test/wallOutcomeConsent.postgres.test.ts",
+  "suite": "4030 PostgreSQL two-connection consent races (isolated socket-only database)",
+  "binaryVariable": "WALL_OUTCOME_POSTGRES_BIN",
+  "expectedTests": 3
+},
+  "media-events": {
+  "file": "src/test/mediaEventPrivacy.postgres.test.ts",
+  "suite": "4031 PostgreSQL two-connection erasure races (isolated socket-only database)",
+  "binaryVariable": "MEDIA_EVENT_POSTGRES_BIN",
+  "expectedTests": 6
+},
+
   "key-packages": {
     file: "src/test/keyPackages.postgres.test.ts",
     suite: "4014 native PostgreSQL publication, consume and retry transactions",

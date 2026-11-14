@@ -510,3 +510,22 @@ describe("audit:schema — a function in another schema resolves in THAT schema"
     assert.deepEqual([...found].sort(), [...PRIVATE].sort());
   });
 });
+
+
+describe("audit:schema — private indexes and Realtime policies retain their namespace", () => {
+  it("a same-named public index cannot satisfy a private monitor index", () => {
+    const key = relationClaimKey("intelligence_monitor", "snapshots_system_time");
+    const claim = { kind: "index" as const, key: `index:${key}`, label: key };
+    assert.equal(isMissing(claim, schema([], [], { indexes: new Set(["snapshots_system_time"]) })), true);
+    assert.equal(isMissing(claim, schema([], [], { indexes: new Set([key]) })), false);
+    assert.equal(isMissing(claim, schema([], [])), true);
+  });
+  it("a public or storage policy twin cannot satisfy a Realtime message policy", () => {
+    const key = `${relationClaimKey("realtime", "messages")}.media_generation_receive`;
+    const claim = { kind: "policy" as const, key: `policy:${key}`, label: key };
+    for (const other of ["messages.media_generation_receive", "storage.messages.media_generation_receive"])
+      assert.equal(isMissing(claim, schema([], [], { policies: new Set([other]) })), true);
+    assert.equal(isMissing(claim, schema([], [], { policies: new Set([key]) })), false);
+    assert.equal(isMissing(claim, schema([], [])), true);
+  });
+});

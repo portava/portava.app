@@ -1,3 +1,4 @@
+import { withServiceRequest } from './serviceRequest.ts';
 import { messagingOwnerToken, type MessagingOwnerRequest } from './messagingOwnerRequest.ts';
 import { newPostDestinationOperation } from './postDestinations.ts';
 /**
@@ -275,72 +276,79 @@ export interface CreateHighlightInput {
 }
 
 export async function createHighlight(input: CreateHighlightInput, owner?: MessagingOwnerRequest, signal?: AbortSignal): Promise<HighlightResult<Highlight>> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
-  const current = () => !signal?.aborted && (!owner || owner.isCurrent());
-  const stale = (): HighlightResult<Highlight> => ({ ok: false, data: null, errorKind: 'unauthenticated', message: 'Your signed-in session changed. Reopen Highlights.' });
-  if (!current()) return stale();
-  const token = owner ? await messagingOwnerToken(owner) : await freshToken();
-  if (!current()) return stale();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
-  try {
-    const res = await fetch(`${apiBase()}/api/highlights`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'Idempotency-Key': input.operationId ?? newPostDestinationOperation() },
-      signal,
-      body: JSON.stringify({
-        mediaUrl: input.mediaUrl,
-        mediaType: input.mediaType,
-        videoDurationSeconds: input.videoDurationSeconds ?? null,
-        caption: input.caption ?? null,
-        locationName: input.locationName ?? null,
-        locationCity: input.locationCity ?? null,
-        locationCountry: input.locationCountry ?? null,
-        visibility: input.visibility ?? 'public',
-        expiresInHours: input.expiresInHours ?? 24,
-        filterId: input.filterId ?? 'original',
-        filterIntensity: input.filterIntensity ?? 100,
-        mediaThumbnailUrl: input.mediaThumbnailUrl ?? null,
-        mediaDurationSeconds: input.mediaDurationSeconds ?? null,
-        // Omitted, not nulled: the server distinguishes "no class was chosen"
-        // from a class, and sending null would be a value.
-        ...(input.lifetimeClass ? { lifetimeClass: input.lifetimeClass } : {}),
-        // Same rule for §12's sources. An empty array is a CLAIM — "this
-        // Highlight projects nothing" — and the schema treats absent and empty
-        // identically only because absent is what a Stories-style create means.
-        // Sending `[]` on every create would make the two indistinguishable
-        // from the server's side.
-        ...(input.sourceMemoryIds && input.sourceMemoryIds.length > 0
-          ? { sourceMemoryIds: input.sourceMemoryIds }
-          : {}),
-      }),
-    });
-    const body = await res.json().catch(() => null);
+  return withServiceRequest<HighlightResult<Highlight>>(async (request) => {
+    if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
+    const current = () => !signal?.aborted && (!owner || owner.isCurrent());
+    const stale = (): HighlightResult<Highlight> => ({ ok: false, data: null, errorKind: 'unauthenticated', message: 'Your signed-in session changed. Reopen Highlights.' });
     if (!current()) return stale();
-    if (!res.ok) return mapApiError<Highlight>(res.status, body ?? {});
-    if (!body || typeof body.id !== 'string' || !body.id) return { ok: false, data: null, errorKind: 'db_error', message: 'Publication could not be confirmed. Retry this Highlight.' };
-    return { ok: true, data: mapHighlight(body) };
-  } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
-    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
-  }
+    const token = owner ? await request.token(() => messagingOwnerToken(owner)) : await request.token(freshToken);
+    if (!current()) return stale();
+    if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    try {
+      const res = await request.fetch(`${apiBase()}/api/highlights`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'Idempotency-Key': input.operationId ?? newPostDestinationOperation() },
+        signal,
+        body: JSON.stringify({
+          mediaUrl: input.mediaUrl,
+          mediaType: input.mediaType,
+          videoDurationSeconds: input.videoDurationSeconds ?? null,
+          caption: input.caption ?? null,
+          locationName: input.locationName ?? null,
+          locationCity: input.locationCity ?? null,
+          locationCountry: input.locationCountry ?? null,
+          visibility: input.visibility ?? 'public',
+          expiresInHours: input.expiresInHours ?? 24,
+          filterId: input.filterId ?? 'original',
+          filterIntensity: input.filterIntensity ?? 100,
+          mediaThumbnailUrl: input.mediaThumbnailUrl ?? null,
+          mediaDurationSeconds: input.mediaDurationSeconds ?? null,
+          // Omitted, not nulled: the server distinguishes "no class was chosen"
+          // from a class, and sending null would be a value.
+          ...(input.lifetimeClass ? { lifetimeClass: input.lifetimeClass } : {}),
+          // Same rule for §12's sources. An empty array is a CLAIM — "this
+          // Highlight projects nothing" — and the schema treats absent and empty
+          // identically only because absent is what a Stories-style create means.
+          // Sending `[]` on every create would make the two indistinguishable
+          // from the server's side.
+          ...(input.sourceMemoryIds && input.sourceMemoryIds.length > 0
+            ? { sourceMemoryIds: input.sourceMemoryIds }
+            : {}),
+        }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!current()) return stale();
+      if (!res.ok) return mapApiError<Highlight>(res.status, body ?? {});
+      if (!body || typeof body.id !== 'string' || !body.id) return { ok: false, data: null, errorKind: 'db_error', message: 'Publication could not be confirmed. Retry this Highlight.' };
+      return { ok: true, data: mapHighlight(body) };
+    } catch (e) {
+      if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+      return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+    }
+
+  }, { signal }).catch((e: unknown): HighlightResult<Highlight> => { return { ok: false, data: null, errorKind: 'network_unreachable', message: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 /** Fetch active highlights for a specific user, filtered by viewer permissions. */
 export async function fetchUserHighlights(userId: string): Promise<HighlightResult<Highlight[]>> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
-  try {
-    const res = await fetch(`${apiBase()}/api/users/${userId}/highlights`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return mapApiError<Highlight[]>(res.status, await res.json().catch(() => ({})));
-    const body = await res.json();
-    return { ok: true, data: (body.highlights ?? []).map(mapHighlight) };
-  } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
-    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
-  }
+  return withServiceRequest<HighlightResult<Highlight[]>>(async (request) => {
+    if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
+    const token = await request.token(freshToken);
+    if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    try {
+      const res = await request.fetch(`${apiBase()}/api/users/${userId}/highlights`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return mapApiError<Highlight[]>(res.status, await res.json().catch(() => ({})));
+      const body = await res.json();
+      if (!Array.isArray(body?.highlights)) throw new Error('Unreadable Highlights response');
+      return { ok: true, data: body.highlights.map(mapHighlight) };
+    } catch (e) {
+      if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+      return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+    }
+
+  }).catch((e: unknown): HighlightResult<Highlight[]> => { return { ok: false, data: null, errorKind: 'network_unreachable', message: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 /**
@@ -353,26 +361,30 @@ export async function fetchActiveHighlights(opts?: {
   tripId?: string;
   limit?: number;
 }): Promise<HighlightResult<Highlight[]>> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
-  const params = new URLSearchParams();
-  if (opts?.userId) params.set('userId', opts.userId);
-  if (opts?.city) params.set('city', opts.city);
-  if (opts?.tripId) params.set('tripId', opts.tripId);
-  if (opts?.limit) params.set('limit', String(opts.limit));
-  const qs = params.toString() ? `?${params.toString()}` : '';
-  try {
-    const res = await fetch(`${apiBase()}/api/highlights/active${qs}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return mapApiError<Highlight[]>(res.status, await res.json().catch(() => ({})));
-    const body = await res.json();
-    return { ok: true, data: (body.highlights ?? []).map(mapHighlight) };
-  } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
-    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
-  }
+  return withServiceRequest<HighlightResult<Highlight[]>>(async (request) => {
+    if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
+    const token = await request.token(freshToken);
+    if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    const params = new URLSearchParams();
+    if (opts?.userId) params.set('userId', opts.userId);
+    if (opts?.city) params.set('city', opts.city);
+    if (opts?.tripId) params.set('tripId', opts.tripId);
+    if (opts?.limit) params.set('limit', String(opts.limit));
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    try {
+      const res = await request.fetch(`${apiBase()}/api/highlights/active${qs}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return mapApiError<Highlight[]>(res.status, await res.json().catch(() => ({})));
+      const body = await res.json();
+      if (!Array.isArray(body?.highlights)) throw new Error('Unreadable Highlights response');
+      return { ok: true, data: body.highlights.map(mapHighlight) };
+    } catch (e) {
+      if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+      return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+    }
+
+  }).catch((e: unknown): HighlightResult<Highlight[]> => { return { ok: false, data: null, errorKind: 'network_unreachable', message: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 /** Idempotent mark-as-viewed. Best-effort — never blocks the UI. */
@@ -390,47 +402,53 @@ export async function toggleHighlightLike(
   highlightId: string,
   liked: boolean,
 ): Promise<HighlightResult<{ likedByMe: boolean; likeCount: number }>> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
-  try {
-    const res = await fetch(`${apiBase()}/api/highlights/${highlightId}/like`, {
-      method: liked ? 'DELETE' : 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return mapApiError(res.status, await res.json().catch(() => ({})));
-    return { ok: true, data: await res.json() };
-  } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
-    return { ok: false, data: null, errorKind: 'db_error' };
-  }
+  return withServiceRequest<HighlightResult<{ likedByMe: boolean; likeCount: number }>>(async (request) => {
+    if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+    const token = await request.token(freshToken);
+    if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    try {
+      const res = await request.fetch(`${apiBase()}/api/highlights/${highlightId}/like`, {
+        method: liked ? 'DELETE' : 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return mapApiError(res.status, await res.json().catch(() => ({})));
+      return { ok: true, data: await res.json() };
+    } catch (e) {
+      if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+      return { ok: false, data: null, errorKind: 'db_error' };
+    }
+
+  }).catch((e: unknown): HighlightResult<{ likedByMe: boolean; likeCount: number }> => { return { ok: false, data: null, errorKind: 'network_unreachable', message: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 export async function fetchHighlightViewers(highlightId: string): Promise<HighlightResult<HighlightViewer[]>> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
-  try {
-    const res = await fetch(`${apiBase()}/api/highlights/${highlightId}/viewers`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return mapApiError<HighlightViewer[]>(res.status, await res.json().catch(() => ({})));
-    const body = await res.json();
-    return {
-      ok: true,
-      data: (body.viewers ?? []).map((v: any) => ({
-        userId: v.user_id,
-        handle: v.handle,
-        name: v.name,
-        avatarUrl: v.avatar_url ?? null,
-        viewedAt: v.viewed_at,
-        likedByMe: v.liked ?? false,
-      })),
-    };
-  } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
-    return { ok: false, data: null, errorKind: 'db_error' };
-  }
+  return withServiceRequest<HighlightResult<HighlightViewer[]>>(async (request) => {
+    if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
+    const token = await request.token(freshToken);
+    if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    try {
+      const res = await request.fetch(`${apiBase()}/api/highlights/${highlightId}/viewers`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return mapApiError<HighlightViewer[]>(res.status, await res.json().catch(() => ({})));
+      const body = await res.json();
+      return {
+        ok: true,
+        data: (body.viewers ?? []).map((v: any) => ({
+          userId: v.user_id,
+          handle: v.handle,
+          name: v.name,
+          avatarUrl: v.avatar_url ?? null,
+          viewedAt: v.viewed_at,
+          likedByMe: v.liked ?? false,
+        })),
+      };
+    } catch (e) {
+      if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+      return { ok: false, data: null, errorKind: 'db_error' };
+    }
+
+  }).catch((e: unknown): HighlightResult<HighlightViewer[]> => { return { ok: false, data: null, errorKind: 'network_unreachable', message: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 /** Reply to a highlight — creates or returns a Telegraph DM thread. Returns threadId. */
@@ -438,38 +456,44 @@ export async function replyToHighlight(
   highlightId: string,
   message: string,
 ): Promise<HighlightResult<{ threadId: string }>> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
-  try {
-    const res = await fetch(`${apiBase()}/api/highlights/${highlightId}/reply`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ message }),
-    });
-    if (!res.ok) return mapApiError(res.status, await res.json().catch(() => ({})));
-    return { ok: true, data: await res.json() };
-  } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
-    return { ok: false, data: null, errorKind: 'db_error' };
-  }
+  return withServiceRequest<HighlightResult<{ threadId: string }>>(async (request) => {
+    if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+    const token = await request.token(freshToken);
+    if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    try {
+      const res = await request.fetch(`${apiBase()}/api/highlights/${highlightId}/reply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ message }),
+      });
+      if (!res.ok) return mapApiError(res.status, await res.json().catch(() => ({})));
+      return { ok: true, data: await res.json() };
+    } catch (e) {
+      if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+      return { ok: false, data: null, errorKind: 'db_error' };
+    }
+
+  }).catch((e: unknown): HighlightResult<{ threadId: string }> => { return { ok: false, data: null, errorKind: 'network_unreachable', message: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 export async function deleteHighlight(highlightId: string): Promise<HighlightResult<null>> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
-  try {
-    const res = await fetch(`${apiBase()}/api/highlights/${highlightId}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (res.status === 204) return { ok: true, data: null };
-    return mapApiError<null>(res.status, await res.json().catch(() => ({})));
-  } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
-    return { ok: false, data: null, errorKind: 'db_error' };
-  }
+  return withServiceRequest<HighlightResult<null>>(async (request) => {
+    if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+    const token = await request.token(freshToken);
+    if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    try {
+      const res = await request.fetch(`${apiBase()}/api/highlights/${highlightId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.status === 204) return { ok: true, data: null };
+      return mapApiError<null>(res.status, await res.json().catch(() => ({})));
+    } catch (e) {
+      if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+      return { ok: false, data: null, errorKind: 'db_error' };
+    }
+
+  }).catch((e: unknown): HighlightResult<null> => { return { ok: false, data: null, errorKind: 'network_unreachable', message: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 /* ============================================================================
@@ -490,40 +514,46 @@ export async function deleteHighlight(highlightId: string): Promise<HighlightRes
 export async function archiveHighlight(
   highlightId: string,
 ): Promise<HighlightResult<{ id: string; archivedAt: string }>> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
-  try {
-    const res = await fetch(`${apiBase()}/api/highlights/${highlightId}/archive`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return mapApiError(res.status, await res.json().catch(() => ({})));
-    return { ok: true, data: await res.json() };
-  } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
-    return { ok: false, data: null, errorKind: 'db_error' };
-  }
+  return withServiceRequest<HighlightResult<{ id: string; archivedAt: string }>>(async (request) => {
+    if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+    const token = await request.token(freshToken);
+    if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    try {
+      const res = await request.fetch(`${apiBase()}/api/highlights/${highlightId}/archive`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return mapApiError(res.status, await res.json().catch(() => ({})));
+      return { ok: true, data: await res.json() };
+    } catch (e) {
+      if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+      return { ok: false, data: null, errorKind: 'db_error' };
+    }
+
+  }).catch((e: unknown): HighlightResult<{ id: string; archivedAt: string }> => { return { ok: false, data: null, errorKind: 'network_unreachable', message: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 /** §21 Archive is reversible. This is the half that makes it so. */
 export async function unarchiveHighlight(
   highlightId: string,
 ): Promise<HighlightResult<{ id: string; archivedAt: null }>> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
-  try {
-    const res = await fetch(`${apiBase()}/api/highlights/${highlightId}/archive`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return mapApiError(res.status, await res.json().catch(() => ({})));
-    return { ok: true, data: await res.json() };
-  } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
-    return { ok: false, data: null, errorKind: 'db_error' };
-  }
+  return withServiceRequest<HighlightResult<{ id: string; archivedAt: null }>>(async (request) => {
+    if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+    const token = await request.token(freshToken);
+    if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    try {
+      const res = await request.fetch(`${apiBase()}/api/highlights/${highlightId}/archive`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return mapApiError(res.status, await res.json().catch(() => ({})));
+      return { ok: true, data: await res.json() };
+    } catch (e) {
+      if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+      return { ok: false, data: null, errorKind: 'db_error' };
+    }
+
+  }).catch((e: unknown): HighlightResult<{ id: string; archivedAt: null }> => { return { ok: false, data: null, errorKind: 'network_unreachable', message: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 /**
@@ -538,22 +568,26 @@ export async function unarchiveHighlight(
  * that prints it for a failed request tells them their archive was lost.
  */
 export async function fetchArchivedHighlights(): Promise<HighlightResult<Highlight[]>> {
-  if (!isSupabaseConfigured || !apiBase()) {
-    return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
-  }
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
-  try {
-    const res = await fetch(`${apiBase()}/api/highlights/archived`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return mapApiError<Highlight[]>(res.status, await res.json().catch(() => ({})));
-    const body = await res.json();
-    return { ok: true, data: (body.highlights ?? []).map(mapHighlight) };
-  } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
-    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
-  }
+  return withServiceRequest<HighlightResult<Highlight[]>>(async (request) => {
+    if (!isSupabaseConfigured || !apiBase()) {
+      return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
+    }
+    const token = await request.token(freshToken);
+    if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    try {
+      const res = await request.fetch(`${apiBase()}/api/highlights/archived`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return mapApiError<Highlight[]>(res.status, await res.json().catch(() => ({})));
+      const body = await res.json();
+      if (!Array.isArray(body?.highlights)) throw new Error('Unreadable Highlights response');
+      return { ok: true, data: body.highlights.map(mapHighlight) };
+    } catch (e) {
+      if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+      return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+    }
+
+  }).catch((e: unknown): HighlightResult<Highlight[]> => { return { ok: false, data: null, errorKind: 'network_unreachable', message: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 /* ============================================================================
@@ -611,52 +645,58 @@ export interface HighlightSource {
 export async function fetchHighlightSources(
   highlightId: string,
 ): Promise<HighlightResult<HighlightSource[]>> {
-  if (!isSupabaseConfigured || !apiBase()) {
-    return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
-  }
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
-  try {
-    const res = await fetch(`${apiBase()}/api/highlights/${highlightId}/sources`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return mapApiError<HighlightSource[]>(res.status, await res.json().catch(() => ({})));
-    const body = await res.json();
-    // `?? []` IS correct here and nowhere else in this file: the route answers
-    // 200 only when the link table was read successfully, and refuses with
-    // `degraded_unavailable` when it could not be. An empty list from a 200 is
-    // therefore the server saying "sourceless", not "I could not tell".
-    return {
-      ok: true,
-      data: ((body.sources ?? []) as any[]).map((s): HighlightSource => ({
-        sourceType: s.sourceType,
-        sourceId: s.sourceId,
-        provenance: s.provenance ?? 'UNKNOWN',
-        createdAt: s.createdAt ?? null,
-      })),
-    };
-  } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
-    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
-  }
+  return withServiceRequest<HighlightResult<HighlightSource[]>>(async (request) => {
+    if (!isSupabaseConfigured || !apiBase()) {
+      return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
+    }
+    const token = await request.token(freshToken);
+    if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    try {
+      const res = await request.fetch(`${apiBase()}/api/highlights/${highlightId}/sources`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return mapApiError<HighlightSource[]>(res.status, await res.json().catch(() => ({})));
+      const body = await res.json();
+      // `?? []` IS correct here and nowhere else in this file: the route answers
+      // 200 only when the link table was read successfully, and refuses with
+      // `degraded_unavailable` when it could not be. An empty list from a 200 is
+      // therefore the server saying "sourceless", not "I could not tell".
+      return {
+        ok: true,
+        data: ((body.sources ?? []) as any[]).map((s): HighlightSource => ({
+          sourceType: s.sourceType,
+          sourceId: s.sourceId,
+          provenance: s.provenance ?? 'UNKNOWN',
+          createdAt: s.createdAt ?? null,
+        })),
+      };
+    } catch (e) {
+      if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+      return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+    }
+
+  }).catch((e: unknown): HighlightResult<HighlightSource[]> => { return { ok: false, data: null, errorKind: 'network_unreachable', message: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 export async function reportHighlight(highlightId: string, reason: string): Promise<HighlightResult<null>> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
-  try {
-    const res = await fetch(`${apiBase()}/api/highlights/${highlightId}/report`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ reason }),
-    });
-    if (res.status === 204 || res.ok) return { ok: true, data: null };
-    return mapApiError<null>(res.status, await res.json().catch(() => ({})));
-  } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
-    return { ok: false, data: null, errorKind: 'db_error' };
-  }
+  return withServiceRequest<HighlightResult<null>>(async (request) => {
+    if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+    const token = await request.token(freshToken);
+    if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+    try {
+      const res = await request.fetch(`${apiBase()}/api/highlights/${highlightId}/report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ reason }),
+      });
+      if (res.status === 204 || res.ok) return { ok: true, data: null };
+      return mapApiError<null>(res.status, await res.json().catch(() => ({})));
+    } catch (e) {
+      if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+      return { ok: false, data: null, errorKind: 'db_error' };
+    }
+
+  }).catch((e: unknown): HighlightResult<null> => { return { ok: false, data: null, errorKind: 'network_unreachable', message: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 export interface HighlightFeedUser {
@@ -693,34 +733,38 @@ const FOLLOWING_FEED_PAGE_LIMIT = 200;
  * cap on, nothing after the first page could be reached.
  */
 export async function fetchFollowingHighlightsFeed(cursor: string | null = null): Promise<HighlightFeedResult> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [], nextCursor: null };
-  const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated', nextCursor: null };
-  try {
-    const qs = new URLSearchParams({ limit: String(FOLLOWING_FEED_PAGE_LIMIT) });
-    if (cursor) qs.set('cursor', cursor);
-    const res = await fetch(`${apiBase()}/api/highlights/following-feed?${qs.toString()}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) {
-      return { ...mapApiError<HighlightFeedUser[]>(res.status, await res.json().catch(() => ({}))), nextCursor: null };
+  return withServiceRequest<HighlightFeedResult>(async (request) => {
+    if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [], nextCursor: null };
+    const token = await request.token(freshToken);
+    if (!token) return { ok: false, data: null, errorKind: 'unauthenticated', nextCursor: null };
+    try {
+      const qs = new URLSearchParams({ limit: String(FOLLOWING_FEED_PAGE_LIMIT) });
+      if (cursor) qs.set('cursor', cursor);
+      const res = await request.fetch(`${apiBase()}/api/highlights/following-feed?${qs.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        return { ...mapApiError<HighlightFeedUser[]>(res.status, await res.json().catch(() => ({}))), nextCursor: null };
+      }
+      const body = await res.json();
+      if (!Array.isArray(body?.users) || body.users.some((u: any) => !u || !Array.isArray(u.highlights))) throw new Error('Unreadable Highlights feed');
+      return {
+        ok: true,
+        data: body.users.map((u: any): HighlightFeedUser => ({
+          userId: u.userId,
+          handle: u.handle ?? null,
+          name: u.name ?? null,
+          avatarUrl: u.avatarUrl ?? null,
+          highlights: (u.highlights ?? []).map(mapHighlight),
+        })),
+        nextCursor: typeof body.nextCursor === 'string' && body.nextCursor ? body.nextCursor : null,
+      };
+    } catch (e) {
+      if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable', nextCursor: null };
+      return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown', nextCursor: null };
     }
-    const body = await res.json();
-    return {
-      ok: true,
-      data: (body.users ?? []).map((u: any): HighlightFeedUser => ({
-        userId: u.userId,
-        handle: u.handle ?? null,
-        name: u.name ?? null,
-        avatarUrl: u.avatarUrl ?? null,
-        highlights: (u.highlights ?? []).map(mapHighlight),
-      })),
-      nextCursor: typeof body.nextCursor === 'string' && body.nextCursor ? body.nextCursor : null,
-    };
-  } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable', nextCursor: null };
-    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown', nextCursor: null };
-  }
+
+  }).catch((e: unknown): HighlightFeedResult => { return { ok: false, data: null, nextCursor: null, errorKind: 'network_unreachable', message: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 /**

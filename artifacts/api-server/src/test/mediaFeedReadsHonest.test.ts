@@ -588,6 +588,22 @@ describe("Gates, more actions, and ranking (census-media §47)", () => {
     assert.ok((f.get(P1)?.socialProof ?? 0) > 0, "control: 1,700 real stamps do carry social proof");
   });
 
+  it("view fatigue counts observed impressions once, excluding serves and later playback outcomes", async () => {
+    const sessionId = "55555555-0000-4000-a000-000000000005";
+    for (const observed of [0, 4]) {
+      const spec = rankedSeed();
+      spec.tables.feature_flags.push({ flag: "MEDIA_CREATOR_FATIGUE_ENABLED", enabled: true });
+      spec.tables.rank_events = [null, "watch_qualified_view", "watch_completion", "watch_rewatch"].flatMap((event_type, type) =>
+        Array.from({ length: 10 }, (_, i) => ({ id: `background-${type}-${i}`, user_id: VIEWER, item_id: P1, session_id: sessionId, surface: "watch_feed", event_type })));
+      spec.tables.rank_events.push(...Array.from({ length: observed }, (_, i) => ({ id: `observed-${i}`, user_id: VIEWER, item_id: P1, session_id: sessionId, surface: "watch_feed", event_type: "watch_impression" })));
+      use(spec);
+      const response = await get(`${WATCH}&sessionId=${sessionId}`);
+      assert.equal(response.status, 200);
+      const features = await loggedFeatures();
+      assert.equal(features.get(P1)?.sessionFatigue ?? 0, observed === 0 ? 0 : 0.25);
+    }
+  });
+
   it("RK2 — ranking on, content_stamps unread: no like term, never the cached like_count", async () => {
     use(rankedSeed({ failReads: { content_stamps: true } }));
     const r = await get(WATCH);

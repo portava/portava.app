@@ -320,14 +320,14 @@ export function uploadSummary(uploads: readonly PlannedUpload[]): { media_count:
  * is `pending`, the value 2098 pins every insert to. A video's poster is
  * recorded only when it exists.
  */
-export async function insertUploadRows(
+export async function buildUploadRows(
   sc: SupabaseClient | any,
   postId: string,
   authorId: string,
   uploads: readonly PlannedUpload[],
   opts: { presence?: ObjectPresence; durationSeconds?: number | null } = {},
-): Promise<{ ok: true; count: number } | { ok: false; error: unknown }> {
-  if (uploads.length === 0) return { ok: true, count: 0 };
+) {
+  if (uploads.length === 0) return [];
   let posters: Map<string, string>;
   try {
     const videos = uploads.filter((u) => u.kind === "video").map((u) => u.path);
@@ -336,7 +336,7 @@ export async function insertUploadRows(
     posters = new Map();
   }
   const singleVideo = uploads.length === 1 && uploads[0]!.kind === "video";
-  const rows = uploads.map((u, i) => {
+  return uploads.map((u, i) => {
     const poster = posters.get(u.path) ?? null;
     return {
       post_id: postId, user_id: authorId, media_type: u.kind, storage_bucket: u.bucket, storage_path: u.path,
@@ -345,6 +345,17 @@ export async function insertUploadRows(
       duration_seconds: singleVideo && typeof opts.durationSeconds === "number" && Number.isFinite(opts.durationSeconds) ? opts.durationSeconds : null,
     };
   });
+}
+
+export async function insertUploadRows(
+  sc: SupabaseClient | any,
+  postId: string,
+  authorId: string,
+  uploads: readonly PlannedUpload[],
+  opts: { presence?: ObjectPresence; durationSeconds?: number | null } = {},
+): Promise<{ ok: true; count: number } | { ok: false; error: unknown }> {
+  const rows = await buildUploadRows(sc, postId, authorId, uploads, opts);
+  if (!rows.length) return { ok: true, count: 0 };
   try {
     const { error } = await sc.from("post_media").insert(rows);
     if (error) return { ok: false, error };

@@ -6,33 +6,18 @@
  *   GET /api/input-assistance/memory-context            — state + inspect view
  *   PUT /api/input-assistance/memory-context-consent    — grant / revoke
  */
-import { freshToken as freshApiToken } from '../../../services/apiToken.ts';
+import { withInputApiResponse } from './inputApiRequest.ts';
 import { MEMORY_CONTEXT_DISCLOSURE_VERSION, parseMemoryContextView, type MemoryContextView } from './memoryContext.ts';
-
-async function authed(path: string, init: RequestInit = {}): Promise<Response | null> {
-  const base = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-  if (!base) return null;
-  let token: string | null = null;
-  try {
-    token = await freshApiToken();
-  } catch {
-    token = null;
-  }
-  if (!token) return null;
-  return fetch(`${base}${path}`, {
-    ...init,
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(init.headers ?? {}) },
-  });
-}
 
 export type MemoryContextRead = { status: 'ok'; view: MemoryContextView } | { status: 'unreadable' };
 
 export async function readMemoryContext(): Promise<MemoryContextRead> {
   try {
-    const res = await authed('/api/input-assistance/memory-context');
-    if (!res || !res.ok) return { status: 'unreadable' };
-    const view = parseMemoryContextView(await res.json());
-    return view ? { status: 'ok', view } : { status: 'unreadable' };
+    return await withInputApiResponse<MemoryContextRead>('/api/input-assistance/memory-context', {}, async res => {
+      if (!res.ok) return { status: 'unreadable' };
+      const view = parseMemoryContextView(await res.json());
+      return view ? { status: 'ok', view } : { status: 'unreadable' };
+    });
   } catch {
     return { status: 'unreadable' };
   }
@@ -46,14 +31,14 @@ export type MemoryContextWrite =
 
 export async function writeMemoryContextConsent(enabled: boolean): Promise<MemoryContextWrite> {
   try {
-    const res = await authed('/api/input-assistance/memory-context-consent', {
-      method: 'PUT',
+    return await withInputApiResponse<MemoryContextWrite>('/api/input-assistance/memory-context-consent', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(enabled ? { enabled: true, disclosureVersion: MEMORY_CONTEXT_DISCLOSURE_VERSION } : { enabled: false }),
+    }, async res => {
+      if (res.status === 404) return { status: 'unavailable' };
+      if (res.status === 409) return { status: 'stale_disclosure' };
+      return res.ok ? { status: 'ok' } : { status: 'failed' };
     });
-    if (!res) return { status: 'failed' };
-    if (res.status === 404) return { status: 'unavailable' };
-    if (res.status === 409) return { status: 'stale_disclosure' };
-    return res.ok ? { status: 'ok' } : { status: 'failed' };
   } catch {
     return { status: 'failed' };
   }

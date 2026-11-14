@@ -22,7 +22,9 @@
  *
  * The control case matters as much as the failures. A tripwire that fired
  * unconditionally would pass both mutation cases below and break every build —
- * so the unmodified pair must still exit 0.
+ * so the unmodified pair must pass the freshness guard. Schema rollout is a
+ * separate verdict: an intact, current snapshot can correctly report missing
+ * production objects. flagSchemaPrerequisites.test.ts owns that CLI verdict.
  *
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *      node --import tsx/esm --test src/test/snapshotFreshnessGuard.test.ts
@@ -33,8 +35,9 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { PRODUCTION_SNAPSHOT_FILENAME } from "../lib/capability/snapshots/current.js";
+import { checkSnapshotFreshness } from "../scripts/checkFlagSchemaPrerequisites.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const API_ROOT = resolve(HERE, "..", "..");
@@ -71,11 +74,35 @@ function runChecker(env: Record<string, string> = {}) {
 }
 
 describe("snapshot freshness tripwire", () => {
-  it("CONTROL — the committed snapshot and applied-list agree, so the check runs", () => {
+  it("CONTROL — the committed snapshot and applied-list agree, so the freshness guard passes", () => {
     // Without this, a tripwire that fired unconditionally would pass both
     // mutation cases below while breaking every build.
-    const { code } = runChecker();
-    assert.equal(code, 0, "the unmodified snapshot/applied pair must not trip the guard");
+    const warnings: string[] = [];
+    assert.deepEqual(checkSnapshotFreshness(SNAPSHOT, APPLIED, (message) => warnings.push(message)), []);
+    assert.deepEqual(warnings, [], "the current snapshot must not depend on the legacy exception");
+  });
+
+  it("importing the checker has no CLI output or exit-status side effects", () => {
+    // A nonexistent snapshot makes an accidental main() invocation observable
+    // even when the real repository's schema verdict happens to be green.
+    const importer = join(tmp, "import-checker.mjs");
+    writeFileSync(importer, `await import(${JSON.stringify(pathToFileURL(CHECKER).href)});\n`);
+    const result = spawnSync(process.execPath, ["--import", "tsx/esm", importer], {
+      cwd: API_ROOT,
+      encoding: "utf8",
+      env: { ...process.env, FLAG_SCHEMA_SNAPSHOT: join(tmp, "does-not-exist.json") },
+      timeout: 30_000,
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "");
+  });
+
+  it("direct CLI invocation still refuses a missing snapshot", () => {
+    const { code, out } = runChecker({ FLAG_SCHEMA_SNAPSHOT: join(tmp, "does-not-exist.json") });
+    assert.equal(code, 2);
+    assert.match(out, /snapshot missing/);
   });
 
   it("FAILS when a migration is recorded as applied AFTER the snapshot was captured", () => {
@@ -91,13 +118,14 @@ describe("snapshot freshness tripwire", () => {
     );
     const applied = JSON.parse(readFileSync(APPLIED, "utf8"));
     applied.migrations.push({
-      version: `${snapWatermark}1`,
+      version: (BigInt(snapWatermark) + 1n).toString().padStart(snapWatermark.length, "0"),
       name: "2999_a_migration_applied_after_the_snapshot",
     });
     const p = join(tmp, "applied-newer.json");
     writeFileSync(p, JSON.stringify(applied, null, 1));
 
     const { code, out } = runChecker({ FLAG_SCHEMA_APPLIED: p });
+    assert.match(checkSnapshotFreshness(SNAPSHOT, p).join("\n"), /STALE SNAPSHOT/);
     assert.notEqual(code, 0, "a snapshot older than a recorded apply must not report green");
     assert.match(out, /STALE SNAPSHOT/);
     // It must name what is missing, or the operator cannot act on it.
@@ -140,8 +168,11 @@ describe("snapshot freshness tripwire", () => {
     const p = join(tmp, "snap-legacy.json");
     writeFileSync(p, JSON.stringify(snap, null, 1));
 
-    const { code, out } = runChecker({ FLAG_SCHEMA_SNAPSHOT: p });
-    assert.equal(code, 0, "a legacy snapshot warns, it does not fail");
-    assert.match(out, /legacy snapshot/);
+    const warnings: string[] = [];
+    assert.deepEqual(checkSnapshotFreshness(p, APPLIED, (message) => warnings.push(message)), [],
+      "a legacy snapshot warns; its freshness guard does not fail");
+    assert.equal(warnings.length, 2);
+    assert.match(warnings[0], /legacy snapshot: no checksums/);
+    assert.match(warnings[1], /legacy snapshot: no productionMigrationWatermark/);
   });
 });

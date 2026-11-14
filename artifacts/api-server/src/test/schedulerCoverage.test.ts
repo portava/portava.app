@@ -122,7 +122,7 @@ describe("what the coverage count says", () => {
    * fails because a scheduler gained health reporting, that is good news and
    * the number moves DOWN; update it and say so.
    */
-  it("pins today's real coverage: 73 started, 25 reported, 13 durable, 46 invisible", () => {
+  it("pins today's real coverage: 74 started, 26 reported, 13 durable, 46 invisible", () => {
     const cov = schedulerCoverage();
     // 59 -> 60 and 12 -> 13 on 2026-10-07 (lane R, census-layover L163):
     // startLayoverAuditRetentionScheduler deletes pseudonymised layover_events
@@ -140,12 +140,12 @@ describe("what the coverage count says", () => {
     // The trip retention, forwarded-media sweep and Telegraph outcome purge
     // report to the health endpoint. The map navigation purge starts without a
     // report or a durable row, so it belongs in the explicitly unobservable set.
-    assert.equal(cov.started, 73);
-    assert.equal(cov.reported, 25);
+    assert.equal(cov.started, 74);
+    assert.equal(cov.reported, 26);
     assert.equal(cov.persisted, 13);
     assert.equal(cov.unobservable.length, 46);
     assert.ok(cov.unobservable.includes("startMapNavigationRetentionScheduler"));
-    assert.equal(cov.started, cov.unobservable.length + 27, "25 reported + 13 durable overlap on 11 schedulers");
+    assert.equal(cov.started, cov.unobservable.length + 28, "26 reported + 13 durable overlap on 11 schedulers");
   });
 
   /**

@@ -21,6 +21,7 @@ import { isFlagEnabled } from "./featureFlags.js";
 import { INTEL_IDENTIFIABLE_RETENTION_SECONDS } from "./locationPurposes.js";
 import { runInputOutcomeRetentionSweep } from "./inputAssistance/outcomeLearning.js";
 import { runWallTelemetryRetentionSweep } from "./wallTelemetryRetention.js";
+import { runMediaEventRetentionSweep } from "./mediaEventRetention.js";
 
 const STARTUP_DELAY_MS = 7 * 60 * 1000;
 
@@ -581,6 +582,7 @@ export async function runInputTelemetryRetentionSweep(
 }
 
 export const RETENTION_PASSES: readonly RetentionPass[] = [
+  { name: "media_event_retention", flag: "media_event_retention_enabled", run: runMediaEventRetentionSweep },
   { name: "intel_retention_sweep", flag: "intel_retention_sweep_enabled", run: runIntelRetentionSweep },
   { name: "intel_contribution_retention", flag: "intel_contribution_retention_enabled", run: runIntelContributionRetentionSweep },
   { name: "input_telemetry_retention", flag: null, run: runInputTelemetryRetentionSweep },

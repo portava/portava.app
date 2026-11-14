@@ -100,7 +100,7 @@ export function accountMediaFixture(initial: Record<string, Row[]> = {}) {
       operations.push(operation);
       const intercepted = await state.before(operation);
       if (intercepted) return intercepted;
-      let data: unknown = true;
+      let data: unknown = name === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : true;
       if (name === 'media_derivative_schema_status') data = state.schema;
       if (name === 'media_dubbing_retire') data = rows.media_dubbing_artifacts!.find(row => row.id === values.p_id) ?? null;
       if (name === 'media_dubbing_forget') rows.media_dubbing_artifacts = rows.media_dubbing_artifacts!.filter(row => row.id !== values.p_id);
@@ -184,6 +184,8 @@ export function accountMediaSqlFixture(executeSql: (statement: string) => Promis
       return builder;
     },
     async rpc(functionName: string, parameters: Row = {}) {
+      // This fixture isolates canonical media storage; 4031 has its own real-SQL race suite.
+      if (functionName === 'erase_media_events_for_actor') return { data: { deleted: 0, more: false }, error: null };
       if (!functionName.startsWith('media_') && !functionName.startsWith('cas_media_')) return { data: true, error: null };
       const operation: Operation = { table: functionName, action: 'rpc', values: parameters, filters: [] };
       operations.push(operation); await state.before(operation);

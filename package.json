@@ -3,10 +3,18 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
+    "test:intelligence-quality": "pnpm run test:intelligence-formulas && pnpm --filter @workspace/api-server run test:intelligence-quality",
+    "test:intelligence-formulas": "node --test scripts/src/intelligence-formulas.test.mjs",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm -r run typecheck",
     "lint": "eslint artifacts/api-server/src scripts/src travel-buddy-standalone/app travel-buddy-standalone/src",
-    "check:hook-order": "node scripts/check-hook-order.mjs"
+    "check:hook-order": "node scripts/check-hook-order.mjs",
+    "test:system-quality": "pnpm run test:provider-updates && pnpm run test:local-inference-lab && pnpm run test:provider-parity && pnpm run test:intelligence-formulas && pnpm --filter @workspace/api-server run test:system-quality && pnpm --dir travel-buddy-standalone run test:system-quality",
+    "test:provider-parity": "node --test scripts/src/provider-parity.test.mjs",
+    "check:provider-parity": "node scripts/check-provider-parity.mjs",
+    "test:local-inference-lab": "python3 -B -m unittest discover -s tools/local-inference-lab -p \"test_*.py\"",
+    "test:provider-updates": "node --test scripts/provider-release-events.test.mjs",
+    "provider:update-lockfiles": "pnpm install --lockfile-only --ignore-scripts && pnpm --dir travel-buddy-standalone install --lockfile-only --ignore-scripts"
   },
   "devDependencies": {
     "@types/node": "22.20.0",

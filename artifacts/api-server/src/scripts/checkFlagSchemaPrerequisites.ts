@@ -154,7 +154,11 @@ const APPLIED_MIGRATIONS = process.env.FLAG_SCHEMA_APPLIED
  * A snapshot with neither field is treated as legacy and only WARNS, so an old
  * capture does not hard-fail a checkout that has not been refreshed yet.
  */
-function checkSnapshotFreshness(snapshotPath: string): string[] {
+export function checkSnapshotFreshness(
+  snapshotPath: string,
+  appliedPath: string = APPLIED_MIGRATIONS,
+  warn: (message: string) => void = console.log,
+): string[] {
   const problems: string[] = [];
   let raw: any;
   try {
@@ -190,22 +194,22 @@ function checkSnapshotFreshness(snapshotPath: string): string[] {
       problems.push(`SNAPSHOT CHECKSUM MISMATCH (flags): recorded ${raw.checksums.flags}, recomputed ${flagSum}.`);
     }
   } else {
-    console.log("  (legacy snapshot: no checksums recorded — cannot verify it was not hand-edited)");
+    warn("  (legacy snapshot: no checksums recorded — cannot verify it was not hand-edited)");
   }
 
   // ── 2. staleness against the repository's own record of production ────────
   const watermark: string | undefined = raw.productionMigrationWatermark;
   if (!watermark) {
-    console.log("  (legacy snapshot: no productionMigrationWatermark — cannot detect staleness)");
+    warn("  (legacy snapshot: no productionMigrationWatermark — cannot detect staleness)");
     return problems;
   }
-  if (!existsSync(APPLIED_MIGRATIONS)) {
-    problems.push(`production-applied-migrations.json missing at ${APPLIED_MIGRATIONS}; staleness cannot be checked.`);
+  if (!existsSync(appliedPath)) {
+    problems.push(`production-applied-migrations.json missing at ${appliedPath}; staleness cannot be checked.`);
     return problems;
   }
   let applied: any;
   try {
-    applied = JSON.parse(readFileSync(APPLIED_MIGRATIONS, "utf8"));
+    applied = JSON.parse(readFileSync(appliedPath, "utf8"));
   } catch (e) {
     return [...problems, `production-applied-migrations.json is not readable JSON: ${String(e)}`];
   }
@@ -821,4 +825,6 @@ function entriesAfterWatermark(
   return late;
 }
 
-main();
+// Consumers import KNOWN and the freshness guard without running the full CLI
+// or inheriting its exit status. Direct invocation still runs every check.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

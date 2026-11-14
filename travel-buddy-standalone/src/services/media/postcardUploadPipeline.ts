@@ -1,3 +1,5 @@
+import { newClientEventId } from '../clientEventId.ts';
+import type { ComposerOutcomeEvent } from '../composerOutcome.ts';
 /**
  * postcardUploadPipeline — the postcard upload as a RESUMABLE sequence of
  * stages, each recorded before the next begins (Media spec §37 "Upload
@@ -35,6 +37,7 @@ export type PostcardUploadStage =
   | 'slot'
   | 'bytes'
   | 'poster'
+  | 'verified'
   | 'done'
   | 'failed'
   | 'cancelled';
@@ -58,6 +61,10 @@ export interface PostcardUploadInput {
   /** Output of placeToLocationFields — coarse strings, place-level coordinates, ids. */
   location: Record<string, unknown>;
   addToPassport: boolean;
+  draftKey?: string;
+  /** Original saved draft asset; an encoded upload copy may have a different key. */
+  retainedDraftAssetUri?: string;
+  trackOutcomes?: boolean;
   stampOverlay?: StampOverlayPayload;
 }
 
@@ -72,6 +79,7 @@ export interface PostcardUploadJob {
   postId?: string;
   mediaId?: string;
   uploadUrl?: string;
+  bytesUploaded?: boolean;
   fileSizeBytes?: number;
   thumbnailPath?: string | null;
   transport?: 'resumable' | 'single';
@@ -79,6 +87,11 @@ export interface PostcardUploadJob {
   /** True while paused on a transient failure; the next run resumes the same stage. */
   retryable?: boolean;
   runs: number;
+  cancelRequested?: boolean;
+  cleanupPending?: boolean;
+  localDraftPending?: boolean;
+  localAssetPending?: boolean;
+  pendingOutcomes?: ComposerOutcomeEvent[];
   result?: { stampOverlayApplied?: boolean; stampOverlayError?: string };
 }
 
@@ -96,7 +109,7 @@ export interface PipelineDeps {
   isCancelled?(): boolean;
   cancel?(): void;
   dispose?(): void;
-  createShell(input: PostcardUploadInput): Promise<ApiResult<{ id: string }>>;
+  createShell(input: PostcardUploadInput, operationId?: string): Promise<ApiResult<{ id: string }>>;
   reserveSlot(postId: string, params: { mimeType: string; fileSizeBytes: number }): Promise<ApiResult<{ mediaId: string; uploadUrl: string }>>;
   readFile(uri: string): Promise<FileLike>;
   resumable: { enabled: boolean; transport: ResumableTransport };
@@ -117,6 +130,10 @@ export interface PipelineDeps {
       stampOverlay?: StampOverlayPayload;
     },
   ): Promise<ApiResult<{ stampOverlayApplied?: boolean; stampOverlayError?: string }>>;
+  finishLocalDraft?(job: PostcardUploadJob): Promise<void>;
+  releaseUploadAsset?(job: PostcardUploadJob): Promise<void>;
+  recordOutcome?(event: ComposerOutcomeEvent): Promise<boolean>;
+  publish?(postId: string): Promise<ApiResult<Record<string, never>>>;
   discardShell(postId: string): Promise<void>;
   persist(job: PostcardUploadJob): Promise<void>;
   now(): number;
@@ -150,33 +167,58 @@ export async function runPostcardUpload(
 ): Promise<PostcardUploadJob> {
   let job: PostcardUploadJob = { ...start, runs: start.runs + 1, retryable: false, lastError: null };
   const save = async (patch: Partial<PostcardUploadJob>) => {
-    job = { ...job, ...patch, updatedAt: deps.now() };
+    const terminalOutcome = patch.stage === 'done' ? 'published' : patch.stage === 'cancelled' ? 'upload_cancelled' : patch.stage === 'failed' || patch.retryable === true ? 'upload_failed' : null;
+    const pendingOutcomes: ComposerOutcomeEvent[] | undefined = job.input.trackOutcomes && terminalOutcome && (patch.stage !== job.stage || patch.retryable) ? [...(job.pendingOutcomes ?? []), {
+      event_id: newClientEventId(), version: 1 as const, surface: 'postcard' as const, outcome: terminalOutcome as ComposerOutcomeEvent['outcome'],
+      ...(terminalOutcome === 'upload_failed' ? { failure_code: 'unknown' as const } : {}),
+    }].slice(-50) : job.pendingOutcomes;
+    job = { ...job, ...patch, pendingOutcomes, updatedAt: deps.now() };
     await deps.persist(job);
-    hooks.onStage?.(job);
+    if (job.stage !== 'done' || !cancelled()) hooks.onStage?.(job);
   };
-  const cancelled = () => hooks.isCancelled?.() === true || deps.isCancelled?.() === true;
+  const cancelled = () => job.cancelRequested === true || hooks.isCancelled?.() === true || deps.isCancelled?.() === true;
   const interrupted = () => cancelled() || deps.isCurrent?.() === false;
   const pause = (message: string) => save({ retryable: true, lastError: message });
+  const cleanup = async () => {
+    if (deps.isCurrent?.() === false) return; // retry under the original account later
+    try {
+      if (job.postId && job.mediaId && job.transport === 'resumable') {
+        await abandonSlotSession({ postId: job.postId, mediaId: job.mediaId }, deps.resumable.transport);
+      }
+      if (job.postId) await deps.discardShell(job.postId);
+      await save({ cleanupPending: false });
+    } catch { /* durable intent stays pending until a later explicit/foreground retry */ }
+  };
+  const releaseUploadAsset = async () => {
+    if (!job.localAssetPending || deps.isCurrent?.() === false) return;
+    try { await deps.releaseUploadAsset?.(job); await save({ localAssetPending: false }); }
+    catch { /* keep the durable cleanup bit for the next foreground */ }
+  };
   const fail = async (message: string) => {
-    if (job.postId) await deps.discardShell(job.postId).catch(() => {});
-    await save({ stage: 'failed', retryable: false, lastError: message });
+    await save({ stage: 'failed', retryable: false, lastError: message, cleanupPending: !!job.postId, localAssetPending: !!job.input.retainedDraftAssetUri });
+    await cleanup();
+    await releaseUploadAsset();
   };
   const cancel = async () => {
-    if (job.postId && job.mediaId && job.transport === 'resumable') {
-      await abandonSlotSession({ postId: job.postId, mediaId: job.mediaId }, deps.resumable.transport);
-    }
-    if (job.postId) await deps.discardShell(job.postId).catch(() => {});
-    await save({ stage: 'cancelled', retryable: false, lastError: 'Upload cancelled' });
+    await save({ stage: 'cancelled', cancelRequested: true, retryable: false, lastError: 'Upload cancelled', cleanupPending: !!job.postId, localDraftPending: false, localAssetPending: !!job.input.retainedDraftAssetUri });
+    await cleanup();
+    await releaseUploadAsset();
   };
 
-  if (TERMINAL_STAGES.has(job.stage)) return job;
+  if (TERMINAL_STAGES.has(job.stage)) {
+    if (job.stage === 'done' && cancelled()) { await cancel(); return job; }
+    if (job.cleanupPending) await cleanup();
+    if (job.stage === 'done' && job.localDraftPending) { await deps.finishLocalDraft?.(job); await save({ localDraftPending: false }); }
+    await releaseUploadAsset();
+    return job;
+  }
   const { asset } = job.input;
 
   // ── shell ──────────────────────────────────────────────────────────────────
   if (job.stage === 'queued') {
     if (deps.isCurrent?.() === false) { await pause('Sign in again to resume this upload.'); return job; }
     if (cancelled()) { await cancel(); return job; }
-    const shell = await deps.createShell(job.input);
+    const shell = await deps.createShell(job.input, job.id);
     if (!shell.ok) { await (deps.isCurrent?.() === false ? pause('Sign in again to resume this upload.') : cancelled() ? cancel() : shell.retryable ? pause(shell.message) : fail(shell.message)); return job; }
     await save({ stage: 'shell', postId: shell.data.id });
   }
@@ -250,7 +292,7 @@ export async function runPostcardUpload(
       }
     }
     hooks.onProgress?.(1);
-    await save({ stage: 'bytes' });
+    await save({ stage: 'bytes', bytesUploaded: true });
   }
 
   // ── poster (video only; fail-soft) ─────────────────────────────────────────
@@ -279,7 +321,22 @@ export async function runPostcardUpload(
       stampOverlay: asset.isVideo ? undefined : job.input.stampOverlay,
     });
     if (!done.ok) { await (deps.isCurrent?.() === false ? pause('Sign in again to resume this upload.') : cancelled() ? cancel() : done.retryable ? pause(done.message) : fail(done.message)); return job; }
-    await save({ stage: 'done', result: done.data });
+    await save({ stage: deps.publish ? 'verified' : 'done', result: done.data });
+    if (cancelled()) { await cancel(); return job; }
+  }
+  if (job.stage === 'verified') {
+    if (deps.isCurrent?.() === false) { await pause('Sign in again to resume this upload.'); return job; }
+    if (cancelled()) { await cancel(); return job; }
+    const published = await deps.publish!(job.postId!);
+    // Cancellation can arrive while the publication acknowledgement is in flight.
+    // The server's locked cancellation is also an idempotent withdrawal.
+    if (cancelled()) { await cancel(); return job; }
+    if (deps.isCurrent?.() === false) { await pause('Sign in again to resume this upload.'); return job; }
+    if (!published.ok) { await (published.retryable ? pause(published.message) : fail(published.message)); return job; }
+    await save({ stage: 'done', localDraftPending: !!job.input.draftKey, localAssetPending: !!job.input.retainedDraftAssetUri });
+    if (cancelled()) { await cancel(); return job; }
+    if (job.localDraftPending) { await deps.finishLocalDraft?.(job); await save({ localDraftPending: false }); }
+    await releaseUploadAsset();
   }
   return job;
 }

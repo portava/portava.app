@@ -1,3 +1,4 @@
+import { redactCrashBreadcrumb, redactCrashEvent } from "./crashInputPrivacy.js";
 /**
  * Sentry initialization for the API server.
  *
@@ -37,6 +38,10 @@ if (dsn) {
       // the resulting "express is not instrumented" console warning — errors are
       // still captured with full request context via setupExpressErrorHandler().
       disableInstrumentationWarnings: true,
+      sendDefaultPii: false,
+      beforeBreadcrumb: redactCrashBreadcrumb,
+      beforeSend: redactCrashEvent,
+      beforeSendTransaction: redactCrashEvent,
     });
   }
   // Deliberately avoid logging the DSN value.

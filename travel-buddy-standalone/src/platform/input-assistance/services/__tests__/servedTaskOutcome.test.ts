@@ -62,7 +62,7 @@ function harness(consented: boolean) {
   setTelemetrySink((e) => { events.push(e); });
   setOutcomePoster(async (b) => { posts.push(b); return true; });
   beginOutcomeAccount('owner-1');
-  if (consented) applyOutcomeConsent('owner-1', true);
+  if (consented) applyOutcomeConsent('owner-1', true, '2026-10-05T00:00:00.000Z');
   return { events, posts };
 }
 
@@ -89,6 +89,7 @@ test('S2: a trip destination bound to a canonical city — the outcome event, an
   assert.deepEqual(h.events[0]!.props, { task: 'trip_created', ok: true });
   assert.deepEqual(h.posts, [{
     context: 'trip_destination', fieldId: 'trip.destination', task: 'trip_created', ok: true,
+      outcomeConsentedAt: '2026-10-05T00:00:00.000Z',
     entities: [{ entityType: 'city', entityId: CITY }],
   }]);
 });

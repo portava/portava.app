@@ -88,6 +88,9 @@ jest.mock('../../../context/locationContextValue.ts', () => ({
   useResolvedLocation: () => ({ coords: null, source: 'none', freshness: 'unavailable', place: null }),
 }));
 
+// NOTE: SDK photo boundary; this suite tests dwell wiring, not image providers.
+jest.mock('../../../hooks/useFsqPhoto.ts', () => ({ useFsqPhoto: () => ({ uri: null, loading: false }) }));
+
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
 const PLACE: DiscoveryPlace = {

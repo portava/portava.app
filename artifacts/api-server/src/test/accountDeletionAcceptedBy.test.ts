@@ -88,7 +88,7 @@ function makeClient(seed: Record<string, any[]> = {}) {
     from: (t: string) => builder(t),
     rpc: async (fn: string, args: Record<string, unknown>) => {
       ops.push({ table: `rpc:${fn}`, op: "rpc", filters: [], values: args });
-      return { data: null, error: null };
+      return { data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null };
     },
     storage: {
       from: () => ({ remove: async (paths: string[]) => ({ data: paths.map((p) => ({ name: p })), error: null }) }),

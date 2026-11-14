@@ -101,7 +101,7 @@
  * constant moves. That is the whole refresh.
  */
 /** The capture every reader should grade against. Change this on a refresh. */
-export const PRODUCTION_SNAPSHOT_FILENAME = "20261109-post-4022-production-schema.json";
+export const PRODUCTION_SNAPSHOT_FILENAME = "20261114-post-4033-production-schema.json";
 
 /** Resolved against this directory, which is where the captures live. */
 export const PRODUCTION_SNAPSHOT_URL = new URL(

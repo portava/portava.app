@@ -53,7 +53,10 @@
  * same body, and the server's per-(emission, kind) token collides with the
  * first landing, so a retry never double-writes.
  */
-import { freshToken } from './apiToken.ts';
+import { captureMessagingOwnerRequest, type MessagingOwnerRequest } from './messagingOwnerRequest.ts';
+import { fetchOwnedApi } from './ownedApiRequest.ts';
+import { onDiscoveryScopeChange } from './discoveryViewerScope.ts';
+import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 
 // ── Vocabulary ────────────────────────────────────────────────────────────────
 
@@ -211,6 +214,42 @@ export type DwellSendResult =
 
 const API_BASE = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
+/** A same-account replacement auth session need not move Discovery's viewer.
+ * Observe both boundaries; defer the SDK callback until the owner observer has
+ * consumed the event, regardless of SDK listener registration order.
+ */
+export function onDwellOwnerInvalidation(owner: MessagingOwnerRequest, invalidate: () => void): () => void {
+  let active = true;
+  let invalidated = false;
+  const inspect = () => {
+    if (!active || invalidated || owner.isCurrent()) return;
+    invalidated = true;
+    invalidate();
+  };
+  const stopScope = onDiscoveryScopeChange(inspect);
+  let stopAuth: (() => void) | undefined;
+  try {
+    if (isSupabaseConfigured) {
+      const subscription = supabase.auth.onAuthStateChange(() => queueMicrotask(inspect)).data.subscription;
+      stopAuth = () => subscription.unsubscribe();
+    }
+  } catch {
+    // Unable to observe revocation: refuse the bounded work rather than let it
+    // run under a snapshot whose invalidation cannot be delivered promptly.
+    invalidated = true; invalidate();
+  }
+  inspect();
+  return () => { active = false; stopScope(); stopAuth?.(); };
+}
+
+function isDwellReceipt(value: unknown, expected: number): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const receipt = value as Record<string, unknown>;
+  return receipt.ok === true && Number.isSafeInteger(receipt.recorded) && Number.isSafeInteger(receipt.duplicates)
+    && (receipt.recorded as number) >= 0 && (receipt.duplicates as number) >= 0
+    && (receipt.recorded as number) + (receipt.duplicates as number) === expected;
+}
+
 /**
  * POST one emission to /api/rank-events/dwell. Never throws.
  *
@@ -222,28 +261,45 @@ const API_BASE = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
  */
 export async function sendDwellEmission(
   emission: DwellEmission,
-  opts: { enabled: boolean },
+  opts: { enabled: boolean; owner?: MessagingOwnerRequest | null; isCurrent?: () => boolean; signal?: AbortSignal },
 ): Promise<DwellSendResult> {
   if (!opts.enabled) return 'skipped_disabled';
-  const base = API_BASE();
-  if (!base) return 'skipped_no_api';
-  let token: string | null = null;
-  try { token = await freshToken(); } catch { token = null; }
-  if (!token) return 'skipped_signed_out';
-
-  const body = JSON.stringify(emission);
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const res = await fetch(`${base}/api/rank-events/dwell`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body,
-      });
-      if (res.ok) return 'sent';
-      if (res.status < 500) return 'refused';
-    } catch {
-      // network failure: fall through to the one retry
+  if (!API_BASE()) return 'skipped_no_api';
+  // The hook supplies the owner captured when the view began, before any token
+  // refresh. Direct callers also capture before their first asynchronous step.
+  const owner = opts.owner === undefined ? captureMessagingOwnerRequest() : opts.owner;
+  if (!owner) return 'skipped_signed_out';
+  const controller = new AbortController();
+  const current = () => owner.isCurrent() && opts.isCurrent?.() !== false && !opts.signal?.aborted;
+  const abort = () => controller.abort();
+  opts.signal?.addEventListener('abort', abort, { once: true });
+  const stop = onDwellOwnerInvalidation(owner, abort);
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (!current() || controller.signal.aborted) return 'refused';
+      try {
+        const res = await fetchOwnedApi('/api/rank-events/dwell', {
+          owner, signal: controller.signal, isCurrent: current, timeoutMs: 5_000,
+          method: 'POST', body: emission,
+        });
+        if (!current()) return 'refused';
+        if (res.ok) {
+          const receipt: unknown = await res.json();
+          if (!current()) return 'refused';
+          if (isDwellReceipt(receipt, emission.dwell.length)) return 'sent';
+          if (receipt && typeof receipt === 'object' && 'ok' in receipt && receipt.ok === false) return 'refused';
+          // Ambiguous 2xx is not success. A retry has the same identity and the
+          // server must confirm the exact committed records before accepting it.
+          continue;
+        }
+        if (res.status < 500) return 'refused';
+      } catch {
+        // At most one retry, only while the original owner and collection
+        // lifetime still hold. Same emission id/body; no periodic retry timer.
+      }
     }
+    return 'failed';
+  } finally {
+    stop(); opts.signal?.removeEventListener('abort', abort);
   }
-  return 'failed';
 }

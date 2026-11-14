@@ -127,7 +127,7 @@ vocabulary admits three of `09` §3's eight states and can never produce `payabl
 | `lib/creatorLedgerRows.ts` | the one model→row mapping | reachable |
 | `lib/creatorShareCanonical.ts` | pure fold over the canonical relation | reachable |
 | `lib/creatorRuleEvaluation.ts` | refuses `{}` rule params rather than defaulting (`artifacts/api-server/src/lib/creatorRuleEvaluation.ts:68#p))`) | reachable |
-| `lib/creatorAttributionScheduler.ts` | hourly tick, started at `artifacts/api-server/src/index.ts:300#startPlaceCooccurrenceRebuildScheduler();` | reachable, **inert**: one flag read per tick |
+| `lib/creatorAttributionScheduler.ts` | hourly tick, started at `artifacts/api-server/src/index.ts:302#startPlaceCooccurrenceRebuildScheduler();` | reachable, **inert**: one flag read per tick |
 | `lib/rentBuddyEarningsLedger.ts` | writes the legacy estimate summary row | reachable |
 | `lib/rentBuddyFeeSchedule.ts` | the single fee resolver (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:85#FEE_SCHEDULE_TABLE`, `:292#resolveFeeSchedule(`) | reachable |
 | `lib/rentBuddyKycGate.ts` | hard-blocks booking creation (§1.4) | **reachable and closed** |
@@ -145,7 +145,7 @@ vocabulary admits three of `09` §3's eight states and can never produce `payabl
 ### 1.4 Routes and gates
 
 **Mounted.** Both creator routers are registered:
-`artifacts/api-server/src/routes/index.ts:249#router.use(rentABuddyMarketplaceRouter);`.
+`artifacts/api-server/src/routes/index.ts:251#router.use(rentABuddyMarketplaceRouter);`.
 
 | Route group | Endpoints | Authorization / gate |
 |---|---|---|
@@ -371,7 +371,7 @@ of it.
   none of the five new ledger/attribution/audit tables appeared in `lib/deletionDispositions.ts` at
   all — not in `RETAINED_WITH_REASON`, not even in `UNCLASSIFIED_BACKLOG`, which that file is
   explicit is *"NOT a decision"* — while the three legacy money tables *are* in that backlog
-  (`artifacts/api-server/src/lib/deletionDispositions.ts:657#rent_buddy_earnings_ledger`,
+  (`artifacts/api-server/src/lib/deletionDispositions.ts:658#rent_buddy_earnings_ledger`,
   `:551#rent_buddy_payouts`, `:559#rent_buddy_tips`). All five are now classified: the four ledgers
   in a new `AWAITING_OWNER_DECISION` bucket that records C-11 without answering it, and
   `creator_rule_versions` in `RETAINED_WITH_REASON` (it carries no beneficiary and no actor, so it
@@ -436,7 +436,7 @@ privacy-language. The only tax artifact is the disclaimer string at `artifacts/a
 There is no cron and no scheduler registry. `pg_cron` is **not installed** — the only two mentions
 say so. The mechanism is that a `start…()` exported from `src/lib` is called from `src/index.ts`,
 and nothing else can start a worker; a test pins this
-(`artifacts/api-server/src/test/schedulerRegistration.test.ts:38#WORKER_SUFFIXES`). Enumerating all
+(`artifacts/api-server/src/test/schedulerRegistration.test.ts:40#WORKER_SUFFIXES`). Enumerating all
 **57** registered workers in `src/index.ts`, **none** concerns payouts, earnings finalization,
 monthly runs or balance carry-forward. The three money-adjacent ones are: `startFxRefreshLoop`
 (reference rates), `startCreatorAttributionScheduler` (attribution only, flag-gated FALSE), and
@@ -484,7 +484,7 @@ about §1 and §11's framing, not new defects:
    `09` already records this as closed; it is restated because §11 does not.)
 
 Also stale, and in the *unsafe* direction for a reader: `artifacts/api-server/src/lib/rentBuddyKycGate.ts:6#stubs` still calls the
-two real adapters "stubs", and `artifacts/api-server/src/app.ts:127#future` still calls webhook signature verification "future" —
+two real adapters "stubs", and `artifacts/api-server/src/app.ts:129#future` still calls webhook signature verification "future" —
 both are present and enforced today.
 
 ---

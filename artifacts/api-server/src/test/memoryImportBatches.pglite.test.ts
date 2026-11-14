@@ -108,7 +108,7 @@ function accountDeletionClient() {
       };
       return query;
     },
-    rpc: async () => ({ data: null, error: null }),
+    rpc: async (fn: string) => ({ data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null }),
     storage: { from: () => ({ remove: async (paths: string[]) => { assert.deepEqual(paths, []); return { data: [], error: null }; } }) },
     auth: { admin: { deleteUser: async (ownerId: string) => {
       assert.equal(await value("(SELECT account_status FROM profiles WHERE id = $1)", [ownerId]), "deleted");

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { createManagedImageUnderstandingRunner } from "./imageUnderstandingManaged.js";
 import { createLocalImageUnderstandingRunner, type ImageUnderstandingRunner } from "./imageUnderstandingLocal.js";
 import { createImageUnderstandingStore, IMAGE_UNDERSTANDING_QUEUE_MODEL, imageUnderstandingRevisionKey } from "./imageUnderstandingStore.js";
 import { runImageUnderstandingJob } from "./imageUnderstandingJob.js";
@@ -15,7 +16,9 @@ type WorkerContext = { job: unknown; signal: AbortSignal; isCurrent(): Promise<b
 type WorkerOutput = { result: Record<string, unknown>; inputBytes?: number; outputBytes?: number };
 
 export function createImageUnderstandingJobHandler(input: { sc: any; env?: NodeJS.ProcessEnv; runner?: ImageUnderstandingRunner; fetch?: typeof fetch; createJobError(code: string, retryable: boolean): Error }) {
-  const runner = input.runner ?? createLocalImageUnderstandingRunner(input.env);
+  const env = input.env ?? process.env;
+  if (env.MEDIA_VISION_EXECUTION && !["local", "huggingface"].includes(env.MEDIA_VISION_EXECUTION)) throw input.createJobError("vision_runtime_not_configured", false);
+  const runner = input.runner ?? (env.MEDIA_VISION_EXECUTION === "huggingface" ? createManagedImageUnderstandingRunner(env, input.fetch) : createLocalImageUnderstandingRunner(env));
   const store = createImageUnderstandingStore(input.sc);
   return {
     kind: "vision" as const,

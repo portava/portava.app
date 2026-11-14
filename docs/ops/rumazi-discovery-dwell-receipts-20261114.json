@@ -1,0 +1,142 @@
+{
+  "generatedAt": "2026-11-14T06:56:51.678883+00:00",
+  "scope": "Discovery dwell atomic receipts and account/session boundaries",
+  "status": "source frozen; all focused checks and existing test-typecheck ratchets pass",
+  "files": [
+    {
+      "path": "artifacts/api-server/src/lib/discoveryDwell.ts",
+      "sha256": "a76af9924130bf54f7c6dc3429486e2ab776de0375058a064448a510501bb045"
+    },
+    {
+      "path": "artifacts/api-server/src/migrations/4033_discovery_dwell_atomic_receipts.sql",
+      "sha256": "15f646762033ae2d38f28ca3a8b435f30628670bad971d038c44affc5547461c"
+    },
+    {
+      "path": "artifacts/api-server/src/test/discoveryDwell.test.ts",
+      "sha256": "249fb8115273f502bc57fc26df3efa817f8a3db87b299a6137658f7b051ec1c1"
+    },
+    {
+      "path": "artifacts/api-server/src/test/discoveryDwellAtomicReceipt.pglite.test.ts",
+      "sha256": "649fa2b9aecffe00371159293f77b5d8e7f94d11ff91eb89b60b5647b2341cea"
+    },
+    {
+      "path": "artifacts/api-server/src/test/helpers/fakeDiscoveryTelemetryDb.ts",
+      "sha256": "0bf9f5e545d16a439c9695b0410267e84f606456fbeb0a524628fe8d2d841111"
+    },
+    {
+      "path": "travel-buddy-standalone/src/services/discoveryDwell.ts",
+      "sha256": "4e11c27ecd9e0a77d101f4a44f62bbc299f1349a344371c0a18b682170d9efb3"
+    },
+    {
+      "path": "travel-buddy-standalone/src/hooks/useDiscoveryDwell.ts",
+      "sha256": "63e49f4095ae021c5ce32ec555448b896fbe7123b4b03ce1bba029fae662265e"
+    },
+    {
+      "path": "travel-buddy-standalone/src/services/__tests__/discoveryDwell.component.test.ts",
+      "sha256": "9416878222e878337666e5561255f030692d68b19066ebec783d1083c60c8c22"
+    },
+    {
+      "path": "travel-buddy-standalone/src/hooks/__tests__/useDiscoveryDwell.component.test.ts",
+      "sha256": "2462b8f01a252753a105dcc4d5623eb2b0b80eba8edb4ba14cb3f44750ba570d"
+    }
+  ],
+  "rootOwnedFixtureTested": {
+    "path": "travel-buddy-standalone/src/components/discovery/__tests__/PlaceDetailSheet.dwell.component.test.tsx",
+    "sha256": "ea4f5aedcd27530b988a28e4e898a88736c72b8fd7a165d35ae6e2368b7c539b"
+  },
+  "verification": {
+    "api": {
+      "tests": 70,
+      "pass": 70,
+      "log": "/private/tmp/rumazi-discovery-4033-api.log",
+      "logSha256": "3e8717fdab5912c3fe5544cd9529097eef852c37716b76546944eb2f8f4c60ec"
+    },
+    "client": {
+      "tests": 35,
+      "pass": 35,
+      "log": "/private/tmp/rumazi-discovery-4033-client.log",
+      "logSha256": "080c4f553cc06e4d87abf874264e2a811cea77bb1e3d5ad1e2dabd9fa8342c7e"
+    },
+    "canonicalSqlPglite": {
+      "tests": 6,
+      "pass": 6,
+      "log": "/private/tmp/rumazi-discovery-4033-pglite.log",
+      "logSha256": "dc327526ad8ea367a7e8058caf6f0755b5549652b661f51f60ce57fd1f5a0902"
+    },
+    "typecheckApi": {
+      "status": "pass",
+      "log": "/private/tmp/rumazi-discovery-4033-api-tsc.log",
+      "logSha256": "61345e683c8ce2f7727258ab4a3198b4e0aea015d92001561b028058550069e1"
+    },
+    "typecheckClient": {
+      "status": "pass",
+      "log": "/private/tmp/rumazi-discovery-4033-client-tsc.log",
+      "logSha256": "d321b63bab6c85f81463d1d38f1ded9b849640ff128a804868062ce8537ade9d"
+    },
+    "testTypecheckApi": {
+      "status": "pass",
+      "log": "/private/tmp/rumazi-discovery-4033-api-test-tsc.log",
+      "existingBaselineDiagnostics": 860,
+      "existingBaselineFiles": 113,
+      "logSha256": "0ca15907730edfcc6a55db76a82d4bda72c7696a8b05af031131b2e7270ef53b"
+    },
+    "testTypecheckClient": {
+      "status": "pass",
+      "log": "/private/tmp/rumazi-discovery-4033-client-test-tsc.log",
+      "existingBaselineDiagnostics": 144,
+      "existingBaselineFiles": 54,
+      "logSha256": "c8b012fc3d9e6e40ba87d7a4e445244ed0e108fd95a93c826e31cc027ff8f067"
+    },
+    "mockGuard": {
+      "status": "pass",
+      "log": "/private/tmp/rumazi-discovery-4033-mock-guard.log",
+      "logSha256": "797288bff58b420e846a492ec76a317f2064a4668c099f03d0be2c91da8f33eb"
+    },
+    "migrationPrefixes": {
+      "status": "pass",
+      "log": "/private/tmp/rumazi-discovery-4033-prefix.log",
+      "logSha256": "d3ca2a95f76b16eef6c91b74c8d1a01fa799a52e0ad17da32b98dfaf20d84994"
+    },
+    "migrationSessionState": {
+      "status": "pass",
+      "log": "/private/tmp/rumazi-discovery-4033-migration-session.log",
+      "logSha256": "1cc69358e8473b11217a3a5aa3b46b2b281e9c35e333d2b8959e62a4fd5a584b"
+    },
+    "diffCheck": "pass"
+  },
+  "registrationNeeded": [
+    "artifacts/api-server/src/test/discoveryDwellAtomicReceipt.pglite.test.ts"
+  ],
+  "behavior": [
+    "Service-only SECURITY INVOKER RPC admits at most three canonical place_dwell rows with current collection flag, active profile and owned served exposure locked.",
+    "Mixed conflicts and trigger refusals roll back all new measurements; exact canonical duplicates count honestly.",
+    "API and client require integer receipt counts summing to requested measurements; ambiguous success is not acknowledged.",
+    "Observed account/session changes abort in-flight work, including same-account session replacement; delayed token/body results and retries remain owner-bound.",
+    "No new collection, policy activation, timer poller, table, provider, permission or native configuration."
+  ],
+  "limitations": [
+    "Hosted migration receipt/role verification is being performed by root after CI-only application of frozen4033; no hosted changes by this agent.",
+    "PGlite is one connection and does not verify two-connection lock ordering, hosted load or device behavior.",
+    "No production4033 application, API deployment, client deployment or iPhone build in this patch.",
+    "Existing Discovery flag is the collection boundary; no new individual-consent policy is invented. Existing route authentication/restriction checks remain; only flag/profile/exposure locks are claimed.",
+    "Dwell active-interaction window remains explicitly unratified; this patch does not claim measurement accuracy or grade improvement.",
+    "No durable offline queue; two bounded attempts can still undercount during sustained network failure.",
+    "Media short-clip completion, bounded aggregate reads and audience-write races remain next-batch work, not resolved here."
+  ],
+  "updatedAt": "2026-11-14T06:57:34.780449+00:00",
+  "commands": {
+    "api": "cd artifacts/api-server && node --import tsx/esm --test src/test/discoveryDwell.test.ts src/test/discoveryOutcomeReport.test.ts src/test/discoveryTraceCoverage.test.ts src/test/discoveryRecommendationRecord.test.ts src/test/discoveryTelemetryWriters.test.ts src/test/discoveryPrivacy.test.ts",
+    "client": "cd travel-buddy-standalone && pnpm exec jest --runInBand --forceExit --runTestsByPath src/services/__tests__/discoveryDwell.component.test.ts src/hooks/__tests__/useDiscoveryDwell.component.test.ts src/components/discovery/__tests__/PlaceDetailSheet.dwell.component.test.tsx",
+    "canonicalSqlPglite": "cd artifacts/api-server && node --import tsx/esm --test src/test/discoveryDwellAtomicReceipt.pglite.test.ts",
+    "productionTypechecks": "pnpm run typecheck (each package)",
+    "testTypechecks": "pnpm run typecheck:tests (each package; existing baselines unchanged)",
+    "mockGuard": "cd travel-buddy-standalone && node scripts/check-test-mocks.mjs",
+    "migrationPrefixes": "cd artifacts/api-server && node --import tsx/esm src/scripts/checkMigrationPrefixes.ts",
+    "migrationSessionState": "cd artifacts/api-server && node --import tsx/esm src/scripts/checkMigrationSessionState.ts",
+    "diffCheck": "git diff --check"
+  },
+  "rootIntegration": {
+    "hostedEvidence": "docs/ops/rumazi-discovery-ci-receipts-20261114.json",
+    "apiTestRegistered": true
+  }
+}

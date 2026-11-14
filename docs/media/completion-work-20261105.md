@@ -168,3 +168,13 @@ A second read-only catalog inspection on November5 captured the hosted `memory_i
 The earlier queue above is superseded by the completed upload/compressor, caption/player recovery, sharing/collections, source-policy, fullscreen and navigation work in this record. Full Android and iOS builds plus installed-app native encryption checks now pass; see `../telegraph/native-validation-20261105/evidence.json`. These native checks certify the exercised Hermes/Expo/JSI paths, not every media screen or a signed release on a physical phone. The final source typecheck is clean; the client test-type baseline is reduced to144 diagnostics across54 files without new allowances.
 
 Optional model processing, hosted derivatives and native feature switches stay OFF until configured and accepted through release. The retained-source Memory policy decision remains owner-controlled. Physical-phone share sheets, long-running background behavior, accessibility and observed performance remain release checks. All local changes and migrations remain unapplied to production. Earnings remain OFF.
+
+
+## 13 November follow-up — media and input reliability, hybrid inference
+
+The [hybrid-processing record](hybrid-processing-20261113.md) documents the new managed caption and dedicated SigLIP adapters, provider-bound consent, configuration gates and outstanding live evidence. This follow-up also hardens media signing, image retries, durable upload failures and Input transport ownership, and mounts explicit writing assistance in the postcard/event/memory flows. It does not revise the stale architecture census into a 100% or A++ claim. No iPhone build or provider activation was performed.
+## 13 November follow-up: consent and conditional self-hosting
+
+The owner-only image-understanding menu and per-media consent sheet are implemented with private status, explicit provider disclosure, session/source retirement, unverified suggestions and withdrawal when processing is unavailable. The two consent/cost migrations are applied and recorded in the production migration ledger; inference flags remain off. See `hybrid-processing-20261113.md` for versions, verification and focused test results.
+
+The latest provider direction is in-house open source **only after equal-or-better quality is demonstrated**. The offline comparison checker and capability audit are in `../../scripts/check-provider-parity.mjs` and `../ops/provider-replacement-policy-20261113.md`. No candidate has live parity evidence; no provider was replaced, no application deployment was performed, and no iPhone build was run for this follow-up.

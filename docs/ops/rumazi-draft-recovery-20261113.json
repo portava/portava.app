@@ -1,0 +1,402 @@
+{
+  "schemaVersion": 1,
+  "auditedAt": "2026-11-13",
+  "status": "code_and_live_database_verified_api_client_activation_and_device_validation_pending",
+  "scope": "User-authorized draft recovery and abandoned-action outcomes. Local-account-scoped drafts; no iPhone build, model-provider change, new sensor permission, analytics SDK or polling. This agent used only synthetic CI fixtures; root separately applied the immutable production migration.",
+  "firstInstrumentationPatch": "12c4afb71",
+  "repositoryHeadAtVerification": "e51f2887e8a90a889ffb6ca8b6444958ec016259",
+  "supportedSurfaces": [
+    "CommentsSheet (per account + post + sheet)",
+    "CommentsSection inline (per account + post + inline)",
+    "PostcardComposer (per account + trip + layover context)",
+    "UnifiedPostComposer in PulseCreate: supported post_update, ask_question, share_moment, share_postcard, share_hidden_gem and share_food_spot types"
+  ],
+  "excludedClaims": [
+    "Dedicated HighlightComposer recovery is not implemented by this patch.",
+    "Native OS process termination, installed-device background transport and accessibility have not been verified.",
+    "This report does not close the 888-item master audit or assign an A++/100% grade."
+  ],
+  "completed": [
+    {
+      "id": "draft_recovery",
+      "result": "Account/composer local recovery, leave/restart, explicit discard, failed-submit preservation and exact-snapshot success clearing. Unknown/malformed storage is not replaced by an empty draft. Durable file/Blob copies and upload receipts survive supported restart paths.",
+      "evidence": [
+        "component tests",
+        "native filesystem contract tests",
+        "real Chrome IndexedDB check"
+      ]
+    },
+    {
+      "id": "upload_lifecycle",
+      "result": "New main-composer post, intent claim and post_media attachments commit in one service-only PostgreSQL RPC transaction. Attachment failure rolls everything back; response-loss retries reuse the completed operation. Postcard explicit publication remains private until committed. Canonical late writes and Passport projection inserts synchronize with cancellation through row locks.",
+      "evidence": [
+        "330 API account/postcard/SQL tests",
+        "261 API upload/access/vendor/outcome/crash tests",
+        "65 client contract tests",
+        "196 final API/SQL tests; read-only CI trigger/column/grant catalog review",
+        "Six actual CI PostgreSQL two-backend lock cases plus full-schema attachment failure rollback and response-loss replay; exact queries and results in docs/ops/rumazi-composer-ci-races-20261113.json"
+      ]
+    },
+    {
+      "id": "cleanup",
+      "result": "Remote discard tombstones and original/thumbnail/feed deletion, existing pending-upload maintenance for late PUTs, canonical late-write guard, account deletion integration, and local durable deletion journal. Retry preserves saved-draft media. Each cleanup is idempotent; independent cleanup runs on launch/foreground/auth change without a new poller. Late Passport projection writes are refused while a postcard is draft/cancelled; cancellation removes any already-created projection.",
+      "evidence": [
+        "SQL lifecycle cases",
+        "account deletion regressions",
+        "cleanup and queue tests",
+        "late-copy component tests"
+      ]
+    },
+    {
+      "id": "privacy",
+      "result": "Only enum-coded composer outcomes are exported; text/media/filenames/coordinates/content identifiers and raw errors are rejected. Existing MEDIA_ANALYTICS_ENABLED gate and original session own transport. No recommendation input is created. Client/API Sentry beforeSend and transaction hooks remove free-form payloads and SDK attachments while retaining code frames, error class and timing.",
+      "evidence": [
+        "strict endpoint payload tests",
+        "outbox owner/disable tests",
+        "client and API crash payload tests"
+      ]
+    },
+    {
+      "id": "accessibility_code",
+      "result": "Comment send, draft discard and postcard close/publish controls have accessible names/roles. Physical VoiceOver/TalkBack and keyboard traversal remain pending.",
+      "evidence": [
+        "component controls exercised",
+        "source review only for device accessibility"
+      ]
+    },
+    {
+      "id": "layover_publication_regression",
+      "result": "Ready media creates no Passport projection before explicit publish; premature publish is refused; retry is idempotent; Taipei/Taiwan stays unverified and non-stamp-eligible with no stamps.",
+      "evidence": [
+        "19/19 layover postcard route tests; /private/tmp/portava-drafts-layover-publish.log"
+      ]
+    }
+  ],
+  "outcomes": {
+    "endpoint": "POST /api/media/analytics/composer-outcomes",
+    "storedEventType": "composer_outcome",
+    "version": 1,
+    "surfaces": [
+      "comment_sheet",
+      "comment_inline",
+      "postcard",
+      "post"
+    ],
+    "outcomeValues": [
+      "left_with_unsent",
+      "discarded_draft",
+      "upload_cancelled",
+      "upload_failed",
+      "post_discarded_after_upload",
+      "published"
+    ],
+    "approvedFailureCodes": [
+      "network",
+      "storage",
+      "unsupported_media",
+      "rejected",
+      "unknown"
+    ],
+    "deduplication": "Client UUID retained through retries; server row ID hashes actor + event UUID. Payload stores no actor/content identifier.",
+    "boundedQueue": 50,
+    "rankingUse": "none"
+  },
+  "storageAndPolicy": {
+    "localDrafts": "Feature data in AsyncStorage and app-owned native files or browser IndexedDB. Cleared only after acknowledged success or explicit discard; no new automatic expiry invented. No cloud draft sync added. A user-initiated postcard submission creates its existing operational shell privately.",
+    "uploadIntents": "Service-only operational rows, ownership checks, cancellation tombstones, erasure integrated into account deletion. Existing transport-expiry cutoff reused for late PUT cleanup.",
+    "analytics": "Existing service-only media_events table and MEDIA_ANALYTICS_ENABLED gate. This patch does not resolve the existing D6/Q11 retention governance backlog for all media_events. No new retention policy or flag activation performed.",
+    "crashDiagnosticTradeoff": "Free-form exception values, request data, breadcrumbs and span descriptions are removed. Code locations, standard error classes, trace IDs, timing and sourcemap debug IDs remain."
+  },
+  "verification": [
+    {
+      "summary": "Earlier broad regression: 330/330 API postcard, account-deletion and SQL fixture tests passed before the atomic-publication follow-up. The final 196-test run revalidates changed publication/SQL paths.",
+      "log": "/private/tmp/portava-drafts-account-postcard-final.log",
+      "sha256": "19d3fb8c15815a03b56d76534dae694747301402f9ea704b85e1df25ef99391c"
+    },
+    {
+      "summary": "Earlier boundary regression: 261/261 API upload/access/vendor/outcome/cleanup/crash tests passed. The final 196-test run revalidates changed publication/upload routes. Groups overlap; do not sum as unique coverage.",
+      "log": "/private/tmp/portava-drafts-api-final.log",
+      "sha256": "d502723229afcdb0426e027265d385936810e4e5d6d970ebf3ebd252011c8719"
+    },
+    {
+      "summary": "65/65 component tests passed across 11 suites, including confirmed published versus uncertain discard outcomes and late local-copy races.",
+      "log": "/private/tmp/portava-drafts-all-components.log",
+      "sha256": "a7e40feb954891d96f65018668ee1e16e848b1b7171e479f966d14cc62275a0a"
+    },
+    {
+      "summary": "66/66 client contract tests passed, including a real 50 MB host-filesystem adapter test. Host adapter results do not certify Expo or device performance.",
+      "log": "/private/tmp/portava-drafts-client-final.log",
+      "sha256": "5a0bcab8b0443b689272586bbd9b2dfa8d2d3293382ce79bacebbe36319ed7e2"
+    },
+    {
+      "summary": "API typecheck passed.",
+      "log": "/private/tmp/portava-drafts-api-types.log",
+      "sha256": "61345e683c8ce2f7727258ab4a3198b4e0aea015d92001561b028058550069e1"
+    },
+    {
+      "summary": "Client typecheck passed.",
+      "log": "/private/tmp/portava-drafts-client-types.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "summary": "Client mock safety guard passed.",
+      "log": "/private/tmp/portava-drafts-mocks.log",
+      "sha256": "0a9c0b851f3faca8d2afd0edd1407d0d0320520b206e5220dcd5b25c240fa33c"
+    },
+    {
+      "summary": "Owned-file ESLint passed with zero errors and 725 warnings across touched legacy files/test fixtures; not warning-free.",
+      "log": "/private/tmp/portava-drafts-lint.log",
+      "sha256": "ea392bcaa80716bbfc0b021800fe4ddf587229fb9c37a846e7c4933455710c10"
+    },
+    {
+      "summary": "git diff --check passed."
+    },
+    {
+      "summary": "Real Chrome IndexedDB adapter harness: PASS 4/4 reload recovery, exact Blob bytes, account isolation, idempotent discard. Synthetic data cleared and localhost harness stopped.",
+      "method": "CUA-observed browser result; harness at /private/tmp/portava-draft-browser-check. No screenshot artifact retained. This is not full app or native-device evidence."
+    },
+    {
+      "summary": "196/196 API and SQL tests passed after atomic publication and late Passport projection guards. Covers legacy create/complete, new atomic RPC routing, attachment rollback, committed retries, cancellation order, canonical late writes, and projection refusal.",
+      "log": "/private/tmp/portava-drafts-atomic-final.log",
+      "sha256": "9d11d416d87c3e523f9dc8d24a93baba2e859f468e26c538930423fbf775ec02"
+    },
+    {
+      "summary": "4/4 host/native-adapter contract tests passed. 50,000,000-byte synthetic source copied in 172.2 ms in this run; byte hash matched; saved-copy reuse made no second copy; scratch data removed. RSS delta is noisy and not a device memory budget.",
+      "log": "/private/tmp/portava-drafts-host-filesystem.log",
+      "sha256": "769d2e7bcef86588c98b56c8427a8dfd5224c320e4d8003ee4a744b0e4772fa5"
+    },
+    {
+      "summary": "19/19 layover postcard tests passed with explicit publication and no prepublication projection; original location/presence assertions retained.",
+      "log": "/private/tmp/portava-drafts-layover-publish.log",
+      "sha256": "193f09beeb899773fbb67054c170cec5dfa44a49cf41268ed902892c67bf2736"
+    },
+    {
+      "summary": "Six two-backend PostgreSQL race cases passed against applied 4028 on CI. Distinct backend PIDs and 7.5\u201312.5 second waits observed. Attachment constraint failure rolled back post, intent claim and media; successful retry and repeated receipt returned one complete post. Two draft Passport projections were refused. Synthetic cleanup independently verified zero across all 11 counters.",
+      "artifact": "docs/ops/rumazi-composer-ci-races-20261113.json",
+      "sha256": "4b78f9364227252fb7229e84148e94e5a2ec8085aa2f247a9ef1c4ad08e278e5",
+      "method": "Existing pg_cron launched self-unscheduling one-shot operations; foreground sessions exercised the real applied functions/triggers. Initial serialized connector attempts are explicitly excluded. Self-unscheduling is recorded as canceled in cron history; committed SQL outcomes were independently checked."
+    }
+  ],
+  "activationRequirements": [
+    "Root verified production post-media public=false and media_pending_upload_sweep_enabled=true. 4028 still enforces private-bucket precondition; no bucket change by this agent.",
+    "4028 applied to full CI and then production with immutable SHA256 8dcf89d2bb5491db2d366b1b6b6765d8da1281ae22a3d667db03f35204d58359. Root reports production version 20261113220440, ledger applied_at 2026-11-13T22:04:55.669002Z; catalog captured 22:05:19Z. API/client deployment remains pending.",
+    "Deploy API and client as a compatible rollout, retain private bucket posture and verify unauthenticated legacy public URLs plus foreign signed-URL access against real objects.",
+    "Root verified the existing pending-upload cleanup flag true; verify deployed maintenance execution after rollout. No new scheduler added.",
+    "Register the new test paths centrally in project CI as applicable; root owns package scripts/census/CI edits.",
+    "Run authorized physical iOS/Android restart/termination/background upload, account-switch, offline/retry and screen-reader checks when device/build access is available. No iPhone build made.",
+    "Verify real Sentry export envelopes after activation; unit payload tests and no-DSN SDK smoke tests do not prove the hosted export configuration."
+  ],
+  "newTestPaths": [
+    "artifacts/api-server/src/test/composerDraftLifecycle.pglite.test.ts",
+    "artifacts/api-server/src/test/composerOutcomes.test.ts",
+    "artifacts/api-server/src/test/composerUploadCleanup.test.ts",
+    "artifacts/api-server/src/test/crashInputPrivacy.test.ts",
+    "travel-buddy-standalone/src/components/__tests__/composerDraftRecovery.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useComposerOutcome.component.test.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/useLocalComposerDraft.component.test.ts",
+    "travel-buddy-standalone/src/lib/crashInputPrivacy.test.ts",
+    "travel-buddy-standalone/src/services/localComposerAssetCleanup.test.ts",
+    "travel-buddy-standalone/src/services/nativeComposerAssets.test.ts"
+  ],
+  "ownedPaths": [
+    "artifacts/api-server/src/lib/crashInputPrivacy.ts",
+    "artifacts/api-server/src/lib/media/storageBackedPostMedia.ts",
+    "artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts",
+    "artifacts/api-server/src/lib/mediaAccess.ts",
+    "artifacts/api-server/src/lib/postSchemas.ts",
+    "artifacts/api-server/src/lib/sentry.ts",
+    "artifacts/api-server/src/migrations/4028_postcard_private_draft_publication.sql",
+    "artifacts/api-server/src/routes/composerOutcomes.ts",
+    "artifacts/api-server/src/routes/composerUploads.ts",
+    "artifacts/api-server/src/routes/mediaAnalyticsBatch.ts",
+    "artifacts/api-server/src/routes/postcardDrafts.ts",
+    "artifacts/api-server/src/routes/postcards.ts",
+    "artifacts/api-server/src/routes/posts.ts",
+    "artifacts/api-server/src/sentry-preload.ts",
+    "artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts",
+    "artifacts/api-server/src/services/accountDeletion/composerUploads.ts",
+    "artifacts/api-server/src/services/media/CancelledComposerUploadCleanup.ts",
+    "artifacts/api-server/src/services/media/PendingUploadSweep.ts",
+    "artifacts/api-server/src/test/composerDraftLifecycle.pglite.test.ts",
+    "artifacts/api-server/src/test/composerOutcomes.test.ts",
+    "artifacts/api-server/src/test/composerUploadCleanup.test.ts",
+    "artifacts/api-server/src/test/crashInputPrivacy.test.ts",
+    "artifacts/api-server/src/test/mediaAccess.test.ts",
+    "artifacts/api-server/src/test/mediaPendingUploadRule.test.ts",
+    "artifacts/api-server/src/test/mediaPendingUploadSweep.test.ts",
+    "artifacts/api-server/src/test/mediaUploadHardening.test.ts",
+    "artifacts/api-server/src/test/mediaVendorSeams.test.ts",
+    "artifacts/api-server/src/test/storageBackedPostMedia.test.ts",
+    "docs/ops/rumazi-draft-recovery-20261113.json",
+    "travel-buddy-standalone/app/_layout.tsx",
+    "travel-buddy-standalone/src/components/CommentsSheet.tsx",
+    "travel-buddy-standalone/src/components/PostcardComposer.tsx",
+    "travel-buddy-standalone/src/components/PulseCreate.tsx",
+    "travel-buddy-standalone/src/components/__tests__/CommentsSection.editSave.component.test.tsx",
+    "travel-buddy-standalone/src/components/__tests__/PostcardComposer.emptyStatePick.component.test.tsx",
+    "travel-buddy-standalone/src/components/__tests__/PostcardComposer.layover.component.test.tsx",
+    "travel-buddy-standalone/src/components/__tests__/PostcardComposer.tripCrew.component.test.tsx",
+    "travel-buddy-standalone/src/components/__tests__/PostcardComposer.videoPoster.component.test.tsx",
+    "travel-buddy-standalone/src/components/__tests__/PulseCreate.locationPrivacy.component.test.tsx",
+    "travel-buddy-standalone/src/components/__tests__/PulseCreate.neighborhoodOnly.component.test.tsx",
+    "travel-buddy-standalone/src/components/__tests__/PulseCreate.tripPost.component.test.tsx",
+    "travel-buddy-standalone/src/components/__tests__/composerDraftRecovery.component.test.tsx",
+    "travel-buddy-standalone/src/components/__tests__/composerDraftTestRuntime.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/useComposerOutcome.component.test.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/useLocalComposerDraft.component.test.ts",
+    "travel-buddy-standalone/src/hooks/useCommentDraft.ts",
+    "travel-buddy-standalone/src/hooks/useComposerOutcome.ts",
+    "travel-buddy-standalone/src/hooks/useLocalComposerDraft.ts",
+    "travel-buddy-standalone/src/lib/crashInputPrivacy.test.ts",
+    "travel-buddy-standalone/src/lib/crashInputPrivacy.ts",
+    "travel-buddy-standalone/src/services/browserComposerAssets.ts",
+    "travel-buddy-standalone/src/services/clientEventId.ts",
+    "travel-buddy-standalone/src/services/composerDraftAsset.ts",
+    "travel-buddy-standalone/src/services/composerOutcome.ts",
+    "travel-buddy-standalone/src/services/composerOutcomeDelivery.ts",
+    "travel-buddy-standalone/src/services/composerUploadCleanup.ts",
+    "travel-buddy-standalone/src/services/localComposerAssetCleanup.test.ts",
+    "travel-buddy-standalone/src/services/localComposerAssetCleanup.ts",
+    "travel-buddy-standalone/src/services/localComposerDraft.ts",
+    "travel-buddy-standalone/src/services/media.ts",
+    "travel-buddy-standalone/src/services/media/__tests__/androidUploadLifetime.test.ts",
+    "travel-buddy-standalone/src/services/media/postcardUploadDevice.ts",
+    "travel-buddy-standalone/src/services/media/postcardUploadPipeline.ts",
+    "travel-buddy-standalone/src/services/media/postcardUploadQueue.ts",
+    "travel-buddy-standalone/src/services/media/uploadLifetime.ts",
+    "travel-buddy-standalone/src/services/nativeComposerAssets.test.ts",
+    "travel-buddy-standalone/src/services/nativeComposerAssets.ts",
+    "travel-buddy-standalone/src/services/postComposerDraft.ts",
+    "travel-buddy-standalone/src/services/postcardDraft.ts",
+    "travel-buddy-standalone/src/services/posts.ts"
+  ],
+  "sourceSha256": {
+    "artifacts/api-server/src/lib/crashInputPrivacy.ts": "3569a8518f7f51dae52733ddb0ac9d24806507dd723b4463581410870d74df8c",
+    "artifacts/api-server/src/lib/media/storageBackedPostMedia.ts": "1f8270201f70d9eb0f1041c0c5c5320af0bd3c15129b8373a4ab1c92c5845b70",
+    "artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts": "2e4b8128d1ac87486c739098ba8459a774c899224af028d6900c2778126627ca",
+    "artifacts/api-server/src/lib/mediaAccess.ts": "5b07c88a582ad0eaff0466d692a0193dd941cb0d30cd38ad5a0621e491335fe5",
+    "artifacts/api-server/src/lib/postSchemas.ts": "f88e5d0c6e56b04bfc12a274b23030e40a206d725f6e90fdcd62bcde38177226",
+    "artifacts/api-server/src/lib/sentry.ts": "1db1010610485384d209a07b4f8190d0b832da152f61b0c3561d001e83c7c194",
+    "artifacts/api-server/src/migrations/4028_postcard_private_draft_publication.sql": "8dcf89d2bb5491db2d366b1b6b6765d8da1281ae22a3d667db03f35204d58359",
+    "artifacts/api-server/src/routes/composerOutcomes.ts": "42affa2cecd8d4473c4e8c7385ad7f98f722787f03d2b139f1779742e5aeef7f",
+    "artifacts/api-server/src/routes/composerUploads.ts": "deb40b25902d68ed79a66d715c393402d631a3fab50bcf90ac8edc99864a4166",
+    "artifacts/api-server/src/routes/mediaAnalyticsBatch.ts": "0b3bc79af47d38bb2de61cd377b306aa008697b996ea2cdb80f6987dbf5e68d8",
+    "artifacts/api-server/src/routes/postcardDrafts.ts": "94d00876b14ce43b22ec0e10fba3c4edec6e91fa2bd7026283b1ebb2e137433a",
+    "artifacts/api-server/src/routes/postcards.ts": "1e4744f03b62bbe83cac523d30e39bad3f6630aee150e28489be1841d7723bc7",
+    "artifacts/api-server/src/routes/posts.ts": "aae7e3eabf980f6181928708b0871965429f4881bb25d13abf501b23a52b88e7",
+    "artifacts/api-server/src/sentry-preload.ts": "01a9025b28d04ceaf4857b17280418480cea7888205f8b92d8f2988e63d64442",
+    "artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts": "b63ee511e70d609bd211d7ce0777be66d2da86c83dd0fc6fe68ee9a174d6c260",
+    "artifacts/api-server/src/services/accountDeletion/composerUploads.ts": "d7254bed7f49dcc7e2483fe0d93bfc1684f803fc791faabe61814d2e39d0ed2e",
+    "artifacts/api-server/src/services/media/CancelledComposerUploadCleanup.ts": "c34233e8cc328979bacb704381b489078862449fcba4e02ce11c15dedafbf663",
+    "artifacts/api-server/src/services/media/PendingUploadSweep.ts": "7435726be0307613ceb3b3bb4a2769a92c9419f1d4752fb89fcf6c468dcecc30",
+    "artifacts/api-server/src/test/composerDraftLifecycle.pglite.test.ts": "4d460fdb02af091e3727443649e7d5ef63eeffd96703319538e0e0a684c9815f",
+    "artifacts/api-server/src/test/composerOutcomes.test.ts": "92a4b2f83df14a21b04e5d42d6ac885fe7f9ef00ca3b4a1748e49894d671177d",
+    "artifacts/api-server/src/test/composerUploadCleanup.test.ts": "82a31c7fd8afee75641c052c79f8a27e21349923889fd319156a428ee36b1bf2",
+    "artifacts/api-server/src/test/crashInputPrivacy.test.ts": "e7113824746115b8259fc4523ad3c8749fd2e54362a9e71b4040ac59c6ce8bcc",
+    "artifacts/api-server/src/test/mediaAccess.test.ts": "79a2153da2634598fd6fc351d4f4357eba306bd8b68d4cdf9a8ab1646e8af98b",
+    "artifacts/api-server/src/test/mediaPendingUploadRule.test.ts": "a0c2cff0c702e36e630af19996decce2f1bddb3ac52e0e65c6682022ab1a801c",
+    "artifacts/api-server/src/test/mediaPendingUploadSweep.test.ts": "1c2ce6f8b089170e19758b03290bd093f96d1ff949c911fa249988a61c9d1a8d",
+    "artifacts/api-server/src/test/mediaUploadHardening.test.ts": "4aea897b8227875ae8815c02d1a4c93c3900f08e601e54a4e548bff5753923d9",
+    "artifacts/api-server/src/test/mediaVendorSeams.test.ts": "0ce97bcf4d7d5291701058d48d2cfa0f24047a8b38e78e2ab3968c47b6863886",
+    "artifacts/api-server/src/test/storageBackedPostMedia.test.ts": "4dc67492cedc8ebf2b22a068c57a1f68a3327e36f5cd74e4f2f0c0e47454806f",
+    "travel-buddy-standalone/app/_layout.tsx": "3d564e0690aa259a92bdfb32df1985dc7394f5c7cf44f84dc2f98abe23d885e7",
+    "travel-buddy-standalone/src/components/CommentsSheet.tsx": "1e56f3745ac5b1a47b9a606bf2b60cb0ed95a531389432a9b801642c017edbeb",
+    "travel-buddy-standalone/src/components/PostcardComposer.tsx": "8ab4be1e47a2b887deef03c2b983b9c18dfd755143206dd619e44c06f8424392",
+    "travel-buddy-standalone/src/components/PulseCreate.tsx": "911ba03ef6a20535188cc731988160f4033ef38388291e3f3f6ce5e19def4227",
+    "travel-buddy-standalone/src/components/__tests__/CommentsSection.editSave.component.test.tsx": "4ebb32011abf6a9a50914fac68bd2160c5b7c3ddfb8ee2442e17b53cefd1da4c",
+    "travel-buddy-standalone/src/components/__tests__/PostcardComposer.emptyStatePick.component.test.tsx": "7b97cc202a24f7c0d547cfe9f9537f6db6559128275811005b809150c4f6ac47",
+    "travel-buddy-standalone/src/components/__tests__/PostcardComposer.layover.component.test.tsx": "29d5e51c56756a20171132a40abde8722bae5a7fde89607bc4de24ffc91fcd1a",
+    "travel-buddy-standalone/src/components/__tests__/PostcardComposer.tripCrew.component.test.tsx": "6447f03ab7f91624c9c70e408c243579543ae893db6ba81b86e27d6e7fffcef4",
+    "travel-buddy-standalone/src/components/__tests__/PostcardComposer.videoPoster.component.test.tsx": "ed2e3da6c13e49f32a8ffc6f6238a6660280e23f9b379aa2f854e1bb30dec3cc",
+    "travel-buddy-standalone/src/components/__tests__/PulseCreate.locationPrivacy.component.test.tsx": "1021c6b7fd9296d7defc16861d22be46b78164f111cb918bdfe1d593aaa02561",
+    "travel-buddy-standalone/src/components/__tests__/PulseCreate.neighborhoodOnly.component.test.tsx": "112f5e6c5485ce4c58494f8803020b1074fcca405b12453c4e55a958a2bcc000",
+    "travel-buddy-standalone/src/components/__tests__/PulseCreate.tripPost.component.test.tsx": "c6707218a5c3412b62aad836961239ff958bb149bcd6457d75717839f4a55fdd",
+    "travel-buddy-standalone/src/components/__tests__/composerDraftRecovery.component.test.tsx": "fec3c4920f6b36ae10cc270435f9ace6e786b4b35dc39a69ab7a466e4493fd93",
+    "travel-buddy-standalone/src/components/__tests__/composerDraftTestRuntime.ts": "33d535034ffd8b97c2c1afc36e88b6fb5ed2269f69d3597eeb8eb5c634c4d4a0",
+    "travel-buddy-standalone/src/hooks/__tests__/useComposerOutcome.component.test.ts": "c62c2cd7f9f9a5bf31ef590a52fc2210d8ff7d9632518e241eb53a122a97059d",
+    "travel-buddy-standalone/src/hooks/__tests__/useLocalComposerDraft.component.test.ts": "1d7cf48e23cc882466fe7a3196bfa8b81725a6dc5e69b5ccae6a4739e0981119",
+    "travel-buddy-standalone/src/hooks/useCommentDraft.ts": "e2d82e9232e84c6f1020ba99224223a9cd391d0ad7ec1c2dcf18a8f7d5f258bc",
+    "travel-buddy-standalone/src/hooks/useComposerOutcome.ts": "7269d1eafc2cb1984b974726dc2e024c259fbd04a27223d96f1e6041004fde02",
+    "travel-buddy-standalone/src/hooks/useLocalComposerDraft.ts": "1f446eca1421289b1dbd6455e09c35d6496cf2014a996bfbab1f9cdd60202c91",
+    "travel-buddy-standalone/src/lib/crashInputPrivacy.test.ts": "f882febcba5ede71e05f5a4009b502e58c602a9a474f752788ae7d60c85e8bee",
+    "travel-buddy-standalone/src/lib/crashInputPrivacy.ts": "3569a8518f7f51dae52733ddb0ac9d24806507dd723b4463581410870d74df8c",
+    "travel-buddy-standalone/src/services/browserComposerAssets.ts": "8c29e77acd0c0cdcb68d2f38208a3de84c2fbaafcd93534fd9cfcb06d8fb656b",
+    "travel-buddy-standalone/src/services/clientEventId.ts": "ab63699cddb2aad008d12e3ba6d992bd10fd36fcbd30fbff7c80c315c9f5fd8b",
+    "travel-buddy-standalone/src/services/composerDraftAsset.ts": "1e6a2102b0abd028f537f80062268253e30e4f611cb851fc23737292ee037dd1",
+    "travel-buddy-standalone/src/services/composerOutcome.ts": "a14ca393d693fd026d867e937ec5d29c2ef5bac2fec1e61f9404b305beabf5af",
+    "travel-buddy-standalone/src/services/composerOutcomeDelivery.ts": "f5cb761aafa36b838a3ff2204bbb17cb30bf66a89ee4cba50017e8f9110e49ae",
+    "travel-buddy-standalone/src/services/composerUploadCleanup.ts": "7a53060f740b27d0619d225b399a2eba18d391c5d03c67244082ac1addf84747",
+    "travel-buddy-standalone/src/services/localComposerAssetCleanup.test.ts": "1652599c2963666ffc31922c5d25634bbfd968ede96587f20ef15cfec8644467",
+    "travel-buddy-standalone/src/services/localComposerAssetCleanup.ts": "b6de316e6ddec24e803a336f4515ee72dd938d7bdbc7ce96fa12734e4f2acc06",
+    "travel-buddy-standalone/src/services/localComposerDraft.ts": "42a558c3db4cb0255076e8ab6acf5ede7609c4bbf8580e2bfdc02fada3c6f3ef",
+    "travel-buddy-standalone/src/services/media.ts": "07d37ce4cd8092a6a3d6bd54029df81ab81f0435d795a6262be84343a8a4d018",
+    "travel-buddy-standalone/src/services/media/__tests__/androidUploadLifetime.test.ts": "1e45093456c4b3bae05b161f5ec135ce2e527fcc1c0170cd16d4668a52f87499",
+    "travel-buddy-standalone/src/services/media/postcardUploadDevice.ts": "9dba1ee0043e24aa04ff4a8a48ebde7d781ce2972a57855cdb005c250a0fa1ad",
+    "travel-buddy-standalone/src/services/media/postcardUploadPipeline.ts": "3d4abd778d7660114dabce385b5df93ca3e8ba65df19a04641e9d7fa6be4f882",
+    "travel-buddy-standalone/src/services/media/postcardUploadQueue.ts": "eedc1d28be270afa4955552b5e5d5f6cbac3f0db57a12e51104bac24c72dee35",
+    "travel-buddy-standalone/src/services/media/uploadLifetime.ts": "9ec633d30822186cda9f1abbb16ea9718cc52ae2f95c10649a7e5ac64eb1298d",
+    "travel-buddy-standalone/src/services/nativeComposerAssets.test.ts": "86676fc68b11a83891e1232409f5d94169c31b9c17939ddcc0864f6d8a6ec602",
+    "travel-buddy-standalone/src/services/nativeComposerAssets.ts": "c2151905d5c6adeaa9bf610431de9501066b3383f4b5a57c635fbb5756a316de",
+    "travel-buddy-standalone/src/services/postComposerDraft.ts": "49593325cc6636f488411c91aad29f503b092a12f5651ac6daa6478b043827a3",
+    "travel-buddy-standalone/src/services/postcardDraft.ts": "d0c0344045fb380e8d073318a8fdd365ab30d277f9349577a968f39261fbeed3",
+    "travel-buddy-standalone/src/services/posts.ts": "1e79f14cd95c01188342265e9d4c545c632fdb972fb5562e15bf14e89ca28a15"
+  },
+  "concurrencyReview": {
+    "mainPost": "commit_composer_post locks active profile FOR SHARE then owned intent FOR UPDATE, inserts post and all attachments in one transaction. claim_composer_upload requires the atomic-operation transaction marker. Compensating deletion is retained only for legacy no-operation clients.",
+    "cancelWinner": "cancel_composer_upload locks the same intent. If cancellation wins, commit refuses and writes nothing; if commit wins, cancellation returns already_published and the UI shows publication, not discard. Unknown cleanup receipts preserve the local draft.",
+    "canonicalWrites": "guard_composer_media_asset_write takes profile and intent FOR SHARE locks before accepting new canonical metadata; cancellation/erasure waits or the write sees the terminal state.",
+    "passportProjection": "New Passport projection INSERT/UPDATE checks and locks its postcard parent. Cancel either deletes a committed projection or prevents a late copy from appearing after deletion. New post_media INSERT also locks/checks its parent.",
+    "compatibility": "CI catalog read-only review confirmed enum types, required columns, no direct client writes to posts/post_media/media_assets, and existing moderation/invalidation triggers. passport_postcards previously had only set_updated_at trigger. Old clients omit deferPublication and publish on /complete; pre-existing null lifecycle rows retain legacy behavior. Root applied the exact migration to the full CI schema; real trigger interactions passed in the CI race/atomicity checks. Production migration activation was reported separately by root.",
+    "liveVerification": {
+      "artifact": "docs/ops/rumazi-composer-ci-races-20261113.json",
+      "passedCases": 6,
+      "cleanup": [
+        {
+          "cleanup": {
+            "auth": 0,
+            "posts": 0,
+            "intents": 0,
+            "profile": 0,
+            "cron_jobs": 0,
+            "checked_at": "2026-11-13T23:18:58.069255+00:00",
+            "post_media": 0,
+            "cron_history": 0,
+            "media_assets": 0,
+            "test_sessions": 0,
+            "storage_objects": 0,
+            "passport_projections": 0
+          }
+        }
+      ],
+      "limitation": "SQL ran as postgres with service/client grants checked separately. No real storage objects, authenticated end-to-end HTTP requests, native devices or hosted Sentry export were exercised in this database test."
+    }
+  },
+  "performanceReview": {
+    "nativeCopy": "New persistence uses asynchronous native file copy; an already-owned file is reused without another copy. Draft records hold paths/form data, not media bytes. Retained originals survive cancelled uploads; separate prepared copies are cleaned.",
+    "limits": "Existing client envelope is 10 MB images/50 MB video; missing picker size still requires server validation. Native OS quota, interruption during copy, and large-device-memory behavior remain device checks.",
+    "hostEvidence": "50 MB filesystem adapter proof verifies exact bytes, removed-source recovery, one-copy reuse and idempotent delete. It uses Node filesystem effects, not Expo; browser IndexedDB proof is separate.",
+    "resources": "Synthetic 50 MB source and copy removed after test; no PostgreSQL test server started; failed initdb scratch directories removed. No unknown IPC or user process was altered. Subsequent CI checks created only synthetic metadata; no storage bytes. All fixture records and one-shot jobs/history/sessions were removed and zero counts independently verified."
+  },
+  "integratedDraftPatch": "93d900bec",
+  "sourceSha256Scope": "Original frozen 70-path patch snapshot. Later root-owned followups are tracked separately; these hashes are not represented as the current whole-tree hashes.",
+  "rolloutStatus": {
+    "migrationVersion": "20261113220440",
+    "ledgerAppliedAt": "2026-11-13T22:04:55.669002Z",
+    "catalogCapturedAt": "2026-11-13T22:05:19Z",
+    "apiClientDeployed": false,
+    "privateBucketVerified": true,
+    "rlsVerified": true,
+    "clientRpcAccess": false,
+    "serviceCommitAccess": true,
+    "higgsfieldEnabled": false
+  },
+  "followUpPaths": [
+    "artifacts/api-server/src/test/layoverPostcard.test.ts",
+    "docs/ops/rumazi-composer-ci-races-20261113.json",
+    "docs/ops/rumazi-draft-recovery-20261113.json"
+  ],
+  "followUpSourceSha256": {
+    "artifacts/api-server/src/test/layoverPostcard.test.ts": "4825bf1af5957d8b14f793c90ba5e820c394eea4321005717eea27bc31bfae5e",
+    "docs/ops/rumazi-composer-ci-races-20261113.json": "4b78f9364227252fb7229e84148e94e5a2ec8085aa2f247a9ef1c4ad08e278e5"
+  }
+}

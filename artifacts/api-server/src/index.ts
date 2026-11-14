@@ -32,6 +32,7 @@ import { initCityTimezonePersistence } from "./compass/CompassGraphEngine.js";
 import { assertRequiredEnv } from "./lib/envValidation";
 import { startWorkerLoop, queryStampWorkerHealth, startHealthMonitorLoop } from "./lib/stamps/generationWorker";
 import { startVisualGenerationWorker } from "./lib/visuals/generationWorker";
+import { startHiggsfieldGenerationWorker } from "./lib/media/generation/worker.js";
 import { startFxRefreshLoop } from "./lib/fxRefreshScheduler"; import "./lib/paymentsStartupLog.js"; // payments/identity provider mode: one startup line, booleans only (lib/paymentsMode.ts)
 import { startXXCatalogSweeper } from "./lib/stamps/xxCatalogRepair";
 import { startCorrectionSweep } from "./lib/stamps/countryGeocoder";
@@ -275,6 +276,7 @@ app.listen(port, (err) => {
   // Unconditionally started: it is a low-overhead poller; jobs are only
   // created when generation is explicitly requested via the API.
   startVisualGenerationWorker();
+  startHiggsfieldGenerationWorker();
 
   // FX daily refresh — only when FX_REFRESH_ENABLED=true. Pulls ECB reference
   // rates (frankfurter.dev) into fx_rates once a day so budget conversions stay

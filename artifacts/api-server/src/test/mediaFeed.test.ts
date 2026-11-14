@@ -945,6 +945,13 @@ describe("GET /media/feed", () => {
     assert.ok(typeof body.sessionId === "string", "sessionId must be a string");
   });
 
+  it("normalizes a legacy non-UUID session before persisting served rows", async () => {
+    const { status, body } = await jsonFetch(base, "/media/feed?mode=fullscreen&feedType=for_you&sessionId=sess_legacy");
+    assert.equal(status, 200);
+    assert.match(body.sessionId, /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/);
+    assert.notEqual(body.sessionId, "sess_legacy");
+  });
+
   it("following feed returns empty when viewer follows nobody", async () => {
     const client = makeClient({
       featureFlags: defaultFlags,
@@ -1359,18 +1366,48 @@ describe("POST /media/:id/view", () => {
     assert.equal(body.counted, false, "qualified_view with short watchedMs must not be counted");
   });
 
-  it("counts a valid impression from a different creator", async () => {
+  it("counts a bound, persisted impression from a different creator", async () => {
+    const sessionId = "55555555-0000-4000-a000-000000000005";
+    const eventId = "66666666-0000-4000-a000-000000000006";
     const client = makeClient({
       featureFlags: defaultFlags,
       posts: [makePost({ id: POST_2, author_id: CREATOR_A, status: "active", post_status: "published" })],
+      rankEvents: [{ id: "served", user_id: VIEWER_ID, item_id: POST_2, session_id: sessionId, surface: "watch_feed", position: 0 }],
     });
     _setTestClient(client, true);
     const { status, body } = await jsonFetch(base, `/media/${POST_2}/view`, {
-      method: "POST",
-      body: { type: "impression" },
+      method: "POST", body: { type: "impression", sessionId, eventId },
     });
     assert.equal(status, 200);
-    assert.equal(body.counted, true, "impression from another creator must be counted");
+    assert.equal(body.counted, true);
+    assert.equal(body.stored, true);
+  });
+
+  it("does not count an unbound legacy or another viewer's session", async () => {
+    const sessionId = "55555555-0000-4000-a000-000000000005";
+    const client = makeClient({ featureFlags: defaultFlags, posts: [makePost({ id: POST_2 })],
+      rankEvents: [{ id: "other-serve", user_id: CREATOR_B, item_id: POST_2, session_id: sessionId, surface: "watch_feed" }] });
+    _setTestClient(client, true);
+    for (const payload of [{ type: "impression" }, { type: "impression", sessionId, eventId: POST_3 }]) {
+      const { status, body } = await jsonFetch(base, `/media/${POST_2}/view`, { method: "POST", body: payload });
+      assert.equal(status, 200); assert.equal(body.counted, false); assert.equal(body.stored, false);
+    }
+    assert.equal(client._inserted.length, 0);
+  });
+
+  it("does not count private, unfollowed followers-only, blocked, or private-account posts", async () => {
+    for (const state of [
+      { posts: [makePost({ id: POST_2, visibility: "private" })], userFollows: [{ follower_id: VIEWER_ID, following_id: CREATOR_A }] },
+      { posts: [makePost({ id: POST_2, visibility: "followers_only" })] },
+      { posts: [makePost({ id: POST_2 })], blocks: [{ blocker_id: CREATOR_A, blocked_id: VIEWER_ID }] },
+      { posts: [makePost({ id: POST_2 })], profiles: [makeProfile({ is_private: true })] },
+      { posts: [makePost({ id: POST_2 })], profiles: [makeProfile({ account_status: "pending_deletion" })] },
+    ]) {
+      const client = makeClient({ featureFlags: defaultFlags, ...state });
+      _setTestClient(client, true);
+      const { status } = await jsonFetch(base, `/media/${POST_2}/view`, { method: "POST", body: { type: "impression", sessionId: POST_1, eventId: POST_3 } });
+      assert.equal(status, 404); assert.equal(client._inserted.length, 0);
+    }
   });
 
   it("returns 400 for invalid media id", async () => {
@@ -1883,8 +1920,8 @@ describe("hydrateMediaGridItem — relay URL resolution for video assets", () =>
 
     assert.equal(
       item.videoUrl,
-      `${API_BASE}/api/media/file/post-media/uploads/user456/vid.mp4`,
-      "relay URL must use 'post-media' as default bucket when storage_bucket is absent",
+      'post-media/uploads/user456/vid.mp4',
+      "private storage refs must go through the authenticated signer",
     );
   });
 
@@ -2105,5 +2142,24 @@ describe("census-media §28.13 — DELETE /media/:id answers a stranger as it an
     const upd = (client._updated as any[]).filter((u) => u.table === "posts");
     assert.equal(upd.length, 1);
     assert.equal(upd[0].data.status, "deleted");
+  });
+});
+
+describe('grid private media signing contract', () => {
+  const row = { id: POST_1, author_id: CREATOR_A, view_count: 0, qualified_view_count: 0 };
+  it('returns signable image and video poster refs regardless of the API deployment hostname', () => {
+    const image = hydrateMediaGridItem(row, [{ media_type: 'image', storage_bucket: 'post-media',
+      storage_path: 'owner/photo.jpg' }], 'https://internal-api.test');
+    assert.equal(image.posterUrl, 'post-media/owner/photo.jpg');
+    const video = hydrateMediaGridItem(row, [{ media_type: 'video', storage_bucket: 'post-media',
+      storage_path: 'owner/clip.mp4', thumbnail_storage_path: 'owner/poster.jpg' }], 'https://internal-api.test');
+    assert.equal(video.posterUrl, 'post-media/owner/poster.jpg');
+    assert.equal(video.videoUrl, 'post-media/owner/clip.mp4');
+  });
+  it('does not hand a video file to the image loader when the thumbnail is missing', () => {
+    const video = hydrateMediaGridItem(row, [{ media_type: 'video', storage_bucket: 'post-media',
+      storage_path: 'owner/clip.mp4' }]);
+    assert.equal(video.posterUrl, null);
+    assert.equal(video.videoUrl, 'post-media/owner/clip.mp4');
   });
 });

@@ -310,10 +310,13 @@ describe("§56 DV-77 — NEVER SERVED while it waits: the relay refuses a row th
     assert.equal(await authorizeMediaAccess(sc, OWNER, "post-media", path), true, "the owner must still reach their own upload");
   });
 
-  it("POSITIVE CONTROL: the same object is served once its row is ready", async () => {
+  it("POSITIVE CONTROL: ready bytes stay private until publication, then become readable", async () => {
     const { mediaId, path } = await abandonedUpload();
     rowOf(mediaId)!.processing_status = "ready";
     rowOf(mediaId)!.moderation_status = "approved";
+    Object.assign(tables.posts[0], { postcard_draft_state: "draft", post_status: "draft", visibility: "private" });
+    assert.equal(await authorizeMediaAccess(sc, STRANGER, "post-media", path), false, "ready is not published");
+    Object.assign(tables.posts[0], { postcard_draft_state: "published", post_status: "published", visibility: "public" });
     assert.equal(await authorizeMediaAccess(sc, STRANGER, "post-media", path), true);
   });
 });

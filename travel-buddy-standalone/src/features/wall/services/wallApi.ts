@@ -1,3 +1,4 @@
+import { withServiceRequest } from '../../../services/serviceRequest.ts';
 /**
  * wallApi — the typed client for the Wall endpoints (Wall spec §26/§29).
  *
@@ -106,7 +107,7 @@ function normalizeDegraded(raw: unknown): WallLane[] | undefined {
   return lanes.length > 0 ? lanes : undefined;
 }
 
-async function readErrorCode(res: Response): Promise<string> {
+async function readErrorCode(res: Pick<Response, 'status' | 'json'>): Promise<string> {
   try {
     const body = (await res.json()) as { error?: string; message?: string };
     return body.error ?? body.message ?? `http_${res.status}`;
@@ -118,41 +119,46 @@ async function readErrorCode(res: Response): Promise<string> {
 // ── GET /wall ────────────────────────────────────────────────────────────────
 
 export async function fetchWall(opts: FetchWallOptions): Promise<FetchWallResult> {
-  if (!isSupabaseConfigured || !apiBase()) {
-    return { ok: true, data: emptyWallResponse(opts.mode), degraded: true };
-  }
-  const token = await tokenForWallOwner();
-  if (!token) {
-    // Not signed in — a safe empty feed, not an error screen.
-    return { ok: true, data: emptyWallResponse(opts.mode), degraded: true };
-  }
-
-  const params = new URLSearchParams({ mode: opts.mode });
-  if (opts.cursor) params.set('cursor', opts.cursor);
-  if (opts.sessionIntent && opts.sessionIntent.trim()) {
-    params.set('session_intent', opts.sessionIntent.trim());
-  }
-  if (opts.limit != null) params.set('limit', String(opts.limit));
-
-  try {
-    const res = await fetch(`${apiBase()}/api/wall?${params}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: opts.signal,
-    });
-    if (!res.ok) {
-      const code = await readErrorCode(res);
-      // The Wall being disabled is a normal, degraded-but-safe state.
-      if (code === 'feature_disabled') {
-        return { ok: true, data: emptyWallResponse(opts.mode), degraded: true };
-      }
-      return { ok: false, error: code };
+  return withServiceRequest<FetchWallResult>(async (request) => {
+    if (!isSupabaseConfigured || !apiBase()) {
+      return { ok: true, data: emptyWallResponse(opts.mode), degraded: true };
     }
-    const body = (await res.json()) as Partial<WallResponse>;
-    return { ok: true, data: normalizeWallResponse(opts.mode, body), degraded: false };
-  } catch (err: any) {
-    if (err?.name === 'AbortError') return { ok: false, error: 'aborted' };
-    return { ok: false, error: err?.message ?? 'Network error' };
-  }
+    const token = await request.token(tokenForWallOwner);
+    if (!token) {
+      // Not signed in — a safe empty feed, not an error screen.
+      return { ok: true, data: emptyWallResponse(opts.mode), degraded: true };
+    }
+
+    const params = new URLSearchParams({ mode: opts.mode });
+    if (opts.cursor) params.set('cursor', opts.cursor);
+    if (opts.sessionIntent && opts.sessionIntent.trim()) {
+      params.set('session_intent', opts.sessionIntent.trim());
+    }
+    if (opts.limit != null) params.set('limit', String(opts.limit));
+
+    try {
+      const res = await request.fetch(`${apiBase()}/api/wall?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: opts.signal,
+      });
+      if (!res.ok) {
+        const code = await readErrorCode(res);
+        // The Wall being disabled is a normal, degraded-but-safe state.
+        if (code === 'feature_disabled') {
+          return { ok: true, data: emptyWallResponse(opts.mode), degraded: true };
+        }
+        return { ok: false, error: code };
+      }
+      const body = (await res.json()) as Partial<WallResponse>;
+      if (!body || !Array.isArray(body.items) || !Array.isArray(body.liveForYou)) return { ok: false, error: 'Unreadable Wall response' };
+      const data = normalizeWallResponse(opts.mode, body);
+      return { ok: true, data, degraded: Boolean(data.degraded?.length) };
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return { ok: false, error: 'aborted' };
+      return { ok: false, error: err?.message ?? 'Network error' };
+    }
+
+  }, { signal: opts.signal }).catch((e: unknown): FetchWallResult => { return { ok: false, error: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 // ── GET /wall/live ───────────────────────────────────────────────────────────
@@ -161,35 +167,39 @@ export async function fetchLiveForYou(opts: {
   limit?: number;
   signal?: AbortSignal;
 } = {}): Promise<FetchLiveResult> {
-  if (!isSupabaseConfigured || !apiBase()) {
-    return { ok: true, liveForYou: [], degraded: true };
-  }
-  const token = await tokenForWallOwner();
-  if (!token) return { ok: true, liveForYou: [], degraded: true };
-
-  const params = new URLSearchParams();
-  if (opts.limit != null) params.set('limit', String(opts.limit));
-
-  try {
-    const res = await fetch(`${apiBase()}/api/wall/live?${params}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: opts.signal,
-    });
-    if (!res.ok) {
-      const code = await readErrorCode(res);
-      if (code === 'feature_disabled') return { ok: true, liveForYou: [], degraded: true };
-      return { ok: false, error: code };
+  return withServiceRequest<FetchLiveResult>(async (request) => {
+    if (!isSupabaseConfigured || !apiBase()) {
+      return { ok: true, liveForYou: [], degraded: true };
     }
-    const body = (await res.json()) as { liveForYou?: LiveForYouItem[] };
-    return {
-      ok: true,
-      liveForYou: Array.isArray(body.liveForYou) ? body.liveForYou : [],
-      degraded: false,
-    };
-  } catch (err: any) {
-    if (err?.name === 'AbortError') return { ok: false, error: 'aborted' };
-    return { ok: false, error: err?.message ?? 'Network error' };
-  }
+    const token = await request.token(tokenForWallOwner);
+    if (!token) return { ok: true, liveForYou: [], degraded: true };
+
+    const params = new URLSearchParams();
+    if (opts.limit != null) params.set('limit', String(opts.limit));
+
+    try {
+      const res = await request.fetch(`${apiBase()}/api/wall/live?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: opts.signal,
+      });
+      if (!res.ok) {
+        const code = await readErrorCode(res);
+        if (code === 'feature_disabled') return { ok: true, liveForYou: [], degraded: true };
+        return { ok: false, error: code };
+      }
+      const body = (await res.json()) as { liveForYou?: LiveForYouItem[] };
+      if (!Array.isArray(body?.liveForYou)) return { ok: false, error: 'Unreadable live response' };
+      return {
+        ok: true,
+        liveForYou: Array.isArray(body.liveForYou) ? body.liveForYou : [],
+        degraded: false,
+      };
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return { ok: false, error: 'aborted' };
+      return { ok: false, error: err?.message ?? 'Network error' };
+    }
+
+  }, { signal: opts.signal }).catch((e: unknown): FetchLiveResult => { return { ok: false, error: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 // ── GET /wall/quick-media (spec §18) ─────────────────────────────────────────
@@ -203,62 +213,69 @@ export async function fetchQuickMedia(opts: {
   limit?: number;
   signal?: AbortSignal;
 } = {}): Promise<FetchQuickMediaResult> {
-  if (!isSupabaseConfigured || !apiBase()) {
-    return { ok: true, items: [], degraded: true };
-  }
-  const token = await tokenForWallOwner();
-  if (!token) return { ok: true, items: [], degraded: true };
-
-  const params = new URLSearchParams();
-  if (opts.limit != null) params.set('limit', String(opts.limit));
-
-  try {
-    const res = await fetch(`${apiBase()}/api/wall/quick-media?${params}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: opts.signal,
-    });
-    if (!res.ok) {
-      const code = await readErrorCode(res);
-      if (code === 'feature_disabled') return { ok: true, items: [], degraded: true };
-      return { ok: false, error: code };
+  return withServiceRequest<FetchQuickMediaResult>(async (request) => {
+    if (!isSupabaseConfigured || !apiBase()) {
+      return { ok: true, items: [], degraded: true };
     }
-    const body = (await res.json()) as { items?: QuickMediaItem[] };
-    return {
-      ok: true,
-      items: Array.isArray(body.items) ? body.items : [],
-      degraded: false,
-    };
-  } catch (err: any) {
-    if (err?.name === 'AbortError') return { ok: false, error: 'aborted' };
-    return { ok: false, error: err?.message ?? 'Network error' };
-  }
+    const token = await request.token(tokenForWallOwner);
+    if (!token) return { ok: true, items: [], degraded: true };
+
+    const params = new URLSearchParams();
+    if (opts.limit != null) params.set('limit', String(opts.limit));
+
+    try {
+      const res = await request.fetch(`${apiBase()}/api/wall/quick-media?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: opts.signal,
+      });
+      if (!res.ok) {
+        const code = await readErrorCode(res);
+        if (code === 'feature_disabled') return { ok: true, items: [], degraded: true };
+        return { ok: false, error: code };
+      }
+      const body = (await res.json()) as { items?: QuickMediaItem[] };
+      if (!Array.isArray(body?.items)) return { ok: false, error: 'Unreadable media response' };
+      return {
+        ok: true,
+        items: Array.isArray(body.items) ? body.items : [],
+        degraded: false,
+      };
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return { ok: false, error: 'aborted' };
+      return { ok: false, error: err?.message ?? 'Network error' };
+    }
+
+  }, { signal: opts.signal }).catch((e: unknown): FetchQuickMediaResult => { return { ok: false, error: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 // ── POST /wall/session-intent ────────────────────────────────────────────────
 
 export async function setSessionIntent(text: string): Promise<SessionIntentResult> {
-  if (!isSupabaseConfigured || !apiBase()) {
-    return { ok: false, error: 'not_configured', disabled: true };
-  }
-  const token = await tokenForWallOwner();
-  if (!token) return { ok: false, error: 'not_authenticated' };
-
-  try {
-    const res = await fetch(`${apiBase()}/api/wall/session-intent`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-    });
-    if (!res.ok) {
-      const code = await readErrorCode(res);
-      return { ok: false, error: code, disabled: code === 'feature_disabled' };
+  return withServiceRequest<SessionIntentResult>(async (request) => {
+    if (!isSupabaseConfigured || !apiBase()) {
+      return { ok: false, error: 'not_configured', disabled: true };
     }
-    const body = (await res.json()) as { sessionIntent?: StructuredIntent; intentResolution?: string };
-    if (!body.sessionIntent) return { ok: false, error: 'malformed_response' };
-    return { ok: true, sessionIntent: body.sessionIntent, resolution: readIntentResolution(body.intentResolution) }; // W71
-  } catch (err: any) {
-    return { ok: false, error: err?.message ?? 'Network error' };
-  }
+    const token = await request.token(tokenForWallOwner);
+    if (!token) return { ok: false, error: 'not_authenticated' };
+
+    try {
+      const res = await request.fetch(`${apiBase()}/api/wall/session-intent`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) {
+        const code = await readErrorCode(res);
+        return { ok: false, error: code, disabled: code === 'feature_disabled' };
+      }
+      const body = (await res.json()) as { sessionIntent?: StructuredIntent; intentResolution?: string };
+      if (!body.sessionIntent) return { ok: false, error: 'malformed_response' };
+      return { ok: true, sessionIntent: body.sessionIntent, resolution: readIntentResolution(body.intentResolution) }; // W71
+    } catch (err: any) {
+      return { ok: false, error: err?.message ?? 'Network error' };
+    }
+
+  }).catch((e: unknown): SessionIntentResult => { return { ok: false, error: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 // ── DELETE /wall/session-intent ──────────────────────────────────────────────

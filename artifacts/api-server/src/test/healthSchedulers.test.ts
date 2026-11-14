@@ -58,6 +58,7 @@ const PATH = "/api/healthz/schedulers";
 /** The exact set the aggregate must cover. A job dropped from it is a job that
  *  goes back to being unreadable, so the set is pinned by name. */
 const EXPECTED_JOBS = [
+  "higgsfieldGeneration",
   "inviteSlotReconciler",
   "zombieTokenSweeper",
   "eventWaitlistSweeper",
@@ -237,13 +238,13 @@ describe("never_ran is distinguished, and does NOT alarm", () => {
 
   it("callSweepScheduler is never_ran until a sweep COMPLETES, then healthy — a clean counter alone proves nothing", async () => {
     // It used to export no run timestamp and read `unknown`. It now records the
-    // last completed sweep, so nothing on the list is unknown any more.
+    // last completed sweep. The separately disabled generation worker remains unknown.
     _resetCallSweepFailureState();
     const r = await get(base, PATH);
     const calls = (r.body.jobs as any[]).find((j) => j.job === "callSweepScheduler");
     assert.equal(calls.status, "never_ran", "a zero failure counter with no completed sweep is not a run");
     assert.equal(calls.lastRunAt, null);
-    assert.equal(r.body.unknownCount, 0);
+    assert.deepEqual((r.body.jobs as any[]).filter((j) => j.status === "unknown").map((j) => j.job), ["higgsfieldGeneration"]);
 
     // A real tick through the scheduler's own entry point, with the sweep seam
     // answering a completed pass.

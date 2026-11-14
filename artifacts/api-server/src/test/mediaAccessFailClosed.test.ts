@@ -519,8 +519,14 @@ describe("transform parameters are bounded, and the two handlers agree", () => {
  *     two check() calls (flag, active owner, canonical row, unexpired visual
  *     consent grant; :67-83), refuses a URL off the pinned origin or object
  *     path (:89-90), and re-checks before returning the bytes.
- * `authorizes: "mediaAccess"` is the only value that may hand the URL to a
- * caller, and this test asserts those files import the guard.
+ *   lib/media/generation/service.ts — owner-only private generated-media
+ *     previews, not a published post relay. previewGeneration scopes the job
+ *     by both id and owner, requires ready/not-deleted and the exact owned
+ *     object path, signs for 60s, then re-reads ownership/state/deletion before
+ *     returning. higgsfieldGeneration.test.ts exercises foreign ownership and
+ *     revocation while signing. No arbitrary bucket/path enters this signer.
+ * Published media relay files must import mediaAccess; generated private
+ * previews use the separate job-ownership contract above.
  */
 const SIGNING_SITES: ReadonlySet<string> = new Set([
   "routes/mediaFile.ts",
@@ -530,6 +536,7 @@ const SIGNING_SITES: ReadonlySet<string> = new Set([
   "lib/media/imageVariants/canonical.ts",
   "lib/media/vendors/imageUnderstandingPixels.ts",
   "lib/media/visualIndex/canonicalImageAcquisition.ts",
+  "lib/media/generation/service.ts",
 ]);
 const RELAY_FILES: ReadonlySet<string> = new Set(["routes/mediaFile.ts"]);
 

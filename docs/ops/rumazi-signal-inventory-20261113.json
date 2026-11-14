@@ -1,0 +1,1179 @@
+{
+  "schemaVersion": 1,
+  "auditedAt": "2026-11-13",
+  "source": "Rumazi data signals and instrumentation handoff for Codex, research snapshot 2026-11-13",
+  "scope": "All 66 candidate rows preserved. This is a candidate mapping, not 66 newly collected signals or a completed-system certificate. No production mutation or new tracking permission by this agent.",
+  "repoBaseCommit": "187a6493ff5bceb92aee70e96d3d5c602da0faaf",
+  "domains": {
+    "feed": {
+      "sources": [
+        "artifacts/api-server/src/routes/discovery.ts",
+        "artifacts/api-server/src/lib/rankLog.ts",
+        "artifacts/api-server/src/routes/rankEvents.ts",
+        "artifacts/api-server/src/routes/mediaFeed.ts"
+      ],
+      "observed": "Server serve/impression rows in rank_events include recommendation/session provenance; a response is not proof a card was rendered or visible.",
+      "retention": "rank_events has auth-user cascade; deletionDispositions still lists a governance backlog. No raw-event retention sweep was found in this audit.",
+      "ranking": "Existing ranking/momentum/fatigue consumers use selected rank_events outcomes. New exposure is not yet a ranking input."
+    },
+    "media": {
+      "sources": [
+        "travel-buddy-standalone/src/hooks/useMediaAnalytics.ts",
+        "travel-buddy-standalone/src/services/mediaAnalyticsPayload.ts",
+        "artifacts/api-server/src/routes/mediaAnalyticsBatch.ts",
+        "artifacts/api-server/src/lib/mediaAnalytics.ts",
+        "artifacts/api-server/src/migrations/2039_media_events.sql",
+        "artifacts/api-server/src/lib/mediaAnalyticsClientPayload.ts",
+        "travel-buddy-standalone/src/features/media/telemetry/mediaTelemetry.ts",
+        "travel-buddy-standalone/src/features/media/components/MediaActionRail.tsx",
+        "travel-buddy-standalone/src/features/media/components/MediaActionPanels.tsx",
+        "artifacts/api-server/src/services/ranking/MediaRankingSignalLoader.ts",
+        "artifacts/api-server/src/lib/deletionDispositions.ts",
+        "docs/ops/owner-decisions-20261004.md"
+      ],
+      "observed": "MEDIA_ANALYTICS_ENABLED gates the existing service-only media_events store. Client batches now bind to the initiating observed login session, cancel on flag disable, and validate bounded identifiers/codes before transport and ingestion. Server viewer identity is authoritative. Arrival/contribution are server-only. Picker taps no longer claim committed Trip Add/Plan. Create Plan records its actual Compass handoff. Not-interested reports no longer count useful correction. Compiled experience plans emit media_plan only when all proposed stops receive successful create acknowledgements; partial/failure/review handoffs do not. Follow-up: Watch now emits observed-forward-playback callbacks through owner/item/session-bound durable receipts; feed delivery is labeled feed_served. Generic batches await actual inserted IDs and cannot bypass the Watch observation endpoint. No production/client rollout claimed.",
+      "retention": "Code now fences account erasure and removes identified viewer/creator/content references before canonical IDs are destroyed (4031). CI migration and serial service-role fixture passed; native concurrency and production activation remain pending. The proposed 30-day retention is disabled and still requires Q11(a) legal review. Legacy unlinked composer outcomes and D6 governance remain unresolved.",
+      "ranking": "MediaRankingSignalLoader.ts reads selected media_events north-star outcomes for utility. Suppressing premature outcomes prevents those taps from inflating utility. No new ranking term is enabled."
+    },
+    "wall": {
+      "sources": [
+        "travel-buddy-standalone/src/features/wall/components/WallFeed.tsx",
+        "travel-buddy-standalone/src/features/wall/services/wallAnalytics.ts",
+        "travel-buddy-standalone/src/features/wall/services/wallAnalyticsTransport.ts",
+        "artifacts/api-server/src/routes/wallTelemetry.ts",
+        "artifacts/api-server/src/lib/wallTelemetryRetention.ts"
+      ],
+      "observed": "Wall has viewability-triggered deduplicated impressions, fixed event taxonomy, and an existing telemetry endpoint. This is partial visibility evidence, not a continuous-qualified exposure segment.",
+      "retention": "30-day wall_telemetry_events expiry and flag-independent deletion worker in source; no live execution was verified in this agent task.",
+      "ranking": "Usefulness metrics are distinct from the Wall content ranking projections."
+    },
+    "dwell": {
+      "sources": [
+        "travel-buddy-standalone/src/hooks/useDiscoveryDwell.ts",
+        "travel-buddy-standalone/src/services/discoveryDwell.ts",
+        "artifacts/api-server/src/lib/discoveryDwell.ts",
+        "artifacts/api-server/src/migrations/3395_discovery_dwell_telemetry_flag.sql"
+      ],
+      "observed": "Place-sheet dwell distinguishes active, passive foreground and idle and binds to a served recommendation. Its 10-second interaction window is explicitly unratified. It is not feed tile exposure.",
+      "retention": "Uses rank_events; expansion requires purpose/retention/consent decisions. Client sender still needs owner-bound lifetime/deadline parity.",
+      "ranking": "Passive/idle do not qualify as interest. No active-dwell ranking reader was found."
+    },
+    "records": {
+      "sources": [
+        "artifacts/api-server/src/routes/collections.ts",
+        "artifacts/api-server/src/routes/follows.ts",
+        "artifacts/api-server/src/routes/postDestinations.ts",
+        "travel-buddy-standalone/src/services/discoveryBookmarks.ts",
+        "travel-buddy-standalone/src/services/collections.ts"
+      ],
+      "observed": "Use canonical save, collection, destination and follow mutations for committed state. Names and access lists remain feature data; do not duplicate them in telemetry.",
+      "retention": "Follows operational entity deletion/access policy. A new durable analytics copy would require its own deletion/retention contract.",
+      "ranking": "Saves and follows are existing explicit preferences; remove/undo must reverse the underlying state, not merely add another engagement event."
+    },
+    "trips": {
+      "sources": [
+        "travel-buddy-standalone/src/services/tripCommands.ts",
+        "artifacts/api-server/src/routes/routePlan.ts",
+        "artifacts/api-server/src/domain/trips/services/TripCloseout.ts",
+        "travel-buddy-standalone/src/features/sharedMoments/MomentInvitesAndSuggestions.tsx"
+      ],
+      "observed": "Trip/route commands, plan items, route stops and membership state are operational sources. Route creation, arrival and completion have server-side media attribution producers. Opening a picker is not a committed trip add.",
+      "retention": "Member/owner policies and deletion are product responsibilities; exact dates, notes and membership are excluded from a general analytics expansion.",
+      "ranking": "Trip context is permissioned feature context. No new cross-purpose export is implemented."
+    },
+    "input": {
+      "sources": [
+        "travel-buddy-standalone/src/platform/input-assistance/services/inputTelemetry.ts",
+        "travel-buddy-standalone/src/platform/input-assistance/services/telemetryBatcher.ts",
+        "travel-buddy-standalone/src/platform/input-assistance/components/InputAssistanceSettings.tsx",
+        "artifacts/api-server/src/lib/inputAssistance/telemetry.ts",
+        "artifacts/api-server/src/lib/inputAssistance/outcomeLearning.ts",
+        "artifacts/api-server/src/lib/inputAssistance/inputConsent.ts",
+        "artifacts/api-server/src/migrations/2950_input_assistance_telemetry_events.sql"
+      ],
+      "observed": "Existing input events carry request linkage and per-event allowlisted properties. Raw input is used for the lookup, not retained in the telemetry row. The schema deliberately has no account identifier. Optional outcome learning and memory context have separate consent controls.",
+      "retention": "Outcome learning is a 30-day window with withdrawal deletion; raw telemetry has its existing retention contract. Needs live verification of queues, cleanup and exports, not an assertion from unit tests.",
+      "ranking": "Consented success/reversal aggregates are distinct from core suggestions and from private memory context."
+    },
+    "map": {
+      "sources": [
+        "travel-buddy-standalone/src/features/map/telemetry/mapTelemetry.ts",
+        "artifacts/api-server/src/routes/mapTelemetry.ts",
+        "artifacts/api-server/src/migrations/3701_map_telemetry_retention_30_days.sql",
+        "travel-buddy-standalone/src/services/routePlan.ts"
+      ],
+      "observed": "Existing Map taxonomy carries session/decision correlation and coarse geohash cells rather than raw coordinates. Routing coordinates remain scoped feature data. Taps/handoffs do not establish visits.",
+      "retention": "30-day map telemetry contract in source; live retention and downstream export behavior were not verified here.",
+      "ranking": "Permissioned decision context is not a license to infer home/work or sensitive affiliations."
+    },
+    "creation": {
+      "sources": [
+        "travel-buddy-standalone/src/hooks/useMediaComposer.ts",
+        "travel-buddy-standalone/src/services/media/postcardUploadQueue.ts",
+        "artifacts/api-server/src/services/postDestinations.ts",
+        "artifacts/api-server/src/routes/telegraphLinkPreview.ts"
+      ],
+      "observed": "Creation/upload/publish and preview paths exist. Product drafts, selected uploads and explicit preview requests must remain distinct from analytics. No abandoned-text or keystroke collection is added.",
+      "retention": "Draft, upload and provider deletion require each owning feature policy; general telemetry must not retain payloads.",
+      "ranking": "Unsent private input is excluded from general recommendation signals."
+    },
+    "telegraph": {
+      "sources": [
+        "artifacts/api-server/src/routes/telegraph.ts",
+        "travel-buddy-standalone/src/features/telegraph/lifecycle/useConversationTyping.ts",
+        "travel-buddy-standalone/src/services/commentTyping.ts"
+      ],
+      "observed": "Message, receipt, typing and membership state serve the communication feature. Private content/recipients are not general recommendation inputs.",
+      "retention": "Conversation visibility, erasure and transport controls apply; this audit does not certify all device encryption or member-revocation paths.",
+      "ranking": "No new private-message or social-graph analytics extraction."
+    },
+    "diagnostics": {
+      "sources": [
+        "travel-buddy-standalone/app/_layout.tsx",
+        "travel-buddy-standalone/src/lib/sentry.ts",
+        "artifacts/api-server/src/sentry-preload.ts",
+        "artifacts/api-server/src/lib/sentry.ts",
+        "travel-buddy-standalone/src/lib/notificationRoute.ts",
+        "travel-buddy-standalone/src/lib/safeNotifications.ts"
+      ],
+      "observed": "Sentry SDKs and 10% production tracing are configured. No central beforeSend/beforeBreadcrumb scrub was present at the inspected init sites. Dependency manifests show Sentry, not an installed Segment/Mixpanel/Amplitude/PostHog SDK; this is not a network-export audit.",
+      "retention": "External Sentry project settings, captured payloads and deletion/retention remain unverified.",
+      "ranking": "Diagnostics are for reliability, not profiling; do not reuse device-wide states as interest traits."
+    },
+    "sensing": {
+      "sources": [
+        "travel-buddy-standalone/src/services/sensing/deviceSensorSources.ts",
+        "travel-buddy-standalone/src/services/sensing/installSensingCapture.ts",
+        "travel-buddy-standalone/src/services/sensing/acousticMeterSource.ts",
+        "artifacts/api-server/src/routes/sensingConsent.ts",
+        "artifacts/api-server/src/routes/sensingRevocation.ts",
+        "artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts"
+      ],
+      "observed": "Existing Sensing has feature-scoped consent/capture/revocation paths. Presence/sensor processing must not be repurposed as general feed telemetry or inferred attention.",
+      "retention": "Existing sensing consent, atomic admission and revocation govern the feature. Split disclosure approval, live retention and physical-device evidence are separate gates.",
+      "ranking": "Only authorized reduced observations may reach the owning feature. Raw readings and sensitive inferences remain excluded."
+    }
+  },
+  "implemented": [
+    {
+      "change": "Bind existing media analytics queue/transport to the action-time observed owner session; abort on disable; bounded queue/dedup/in-flight transport and background flush",
+      "evidence": "travel-buddy-standalone/src/hooks/__tests__/useMediaAnalytics.owner.component.test.ts"
+    },
+    {
+      "change": "Reject unknown payload fields, caller viewer identity, raw error prose and malformed/oversized values before client transmission and server ingestion",
+      "evidence": [
+        "travel-buddy-standalone/src/services/mediaAnalyticsPayload.ts",
+        "artifacts/api-server/src/lib/mediaAnalyticsClientPayload.ts",
+        "artifacts/api-server/src/test/mediaNorthStarTelemetry.test.ts"
+      ]
+    },
+    {
+      "change": "Reject client-forged media_arrival and media_contribution; preserve server-confirmed producers",
+      "evidence": [
+        "artifacts/api-server/src/test/mediaNorthStarTelemetry.test.ts",
+        "artifacts/api-server/src/test/mediaOutcomeSignals.test.ts"
+      ]
+    },
+    {
+      "change": "Correct committed-outcome attribution",
+      "evidence": "mediaTelemetry mapping and real media rail/panel component tests distinguish navigation, pending or partial writes, dismissal, session changes and full compiled-plan acknowledgement."
+    }
+  ],
+  "validation": {
+    "clientOwnerAndPrivacyTests": 7,
+    "apiOutcomeTests": 21,
+    "runtimeTypechecks": "API and client pass",
+    "productionAndDevice": "Not performed; no iPhone build",
+    "clientComponentTests": 20,
+    "clientActionMappingTests": 44,
+    "eslint": "No errors; pre-existing any/ref warnings remain on shared media panel files",
+    "mockGuard": "pass"
+  },
+  "requiredExternalInputs": [
+    "Approved purpose, recipients, retention and user controls before new feed behavioral collection is activated. The handoff proposes 30 days as an example, not a final policy.",
+    "Authenticated test accounts and approved deployment for live payload/storage/export and real device lifecycle/accessibility/performance verification.",
+    "Sentry project configuration/export access to verify downstream recipients, retention and real captured data."
+  ],
+  "unblockedFollowup": [
+    "Continuous qualified feed exposure should be integrated only after the consent/retention contract is explicit; serving/mounting is not exposure.",
+    "Central diagnostic scrubbing at Sentry startup and downstream export verification.",
+    "Wire generic Add to Trip and legacy experience-picker committed media attribution through canonical mutation provenance; no event is emitted merely for opening those pickers. Factual correction acknowledgement needs its own producer; not_interested is not that outcome.",
+    "Media view admission/access/session binding, durable idempotency and persisted receipts are under implementation; playback summaries and qualified exposure remain separate open work.",
+    "Discovery dwell still needs account/lifetime parity audit.",
+    "Media identity erasure boundary and disabled retention proposal are implemented; finalize exact-byte native race gates and full rollout. Legal review for retention and legacy unlinked/orphaned data gaps remain open."
+  ],
+  "candidates": [
+    {
+      "id": "SIG-001",
+      "group": "Feed, media, and exploration",
+      "candidate": "Feed request, response, eligible candidate set, ranking source, displayed position",
+      "proposed_use": "Correlate exposure with request and surface. Keep candidate counts and ranker version. Full candidate lists belong in sampled debugging if needed.",
+      "proposed_scope": "Core",
+      "classification": "already captured",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "feed"
+      ],
+      "observed_and_remaining": "Serve provenance exists; eligible candidate counts/version coverage must be checked per endpoint. Never relabel served rows as viewed.",
+      "complete": false
+    },
+    {
+      "id": "SIG-002",
+      "group": "Feed, media, and exploration",
+      "candidate": "Returned but never rendered, rendered but off-screen, partially visible, sufficiently visible",
+      "proposed_use": "Track delivery failures and real opportunities to see a destination. Avoid counting prefetch or virtualized off-screen mounts.",
+      "proposed_scope": "Core",
+      "classification": "requires instrumentation",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "feed",
+        "wall"
+      ],
+      "observed_and_remaining": "Wall knows viewable items; there is no common delivered/rendered/visible contract across feeds.",
+      "complete": false
+    },
+    {
+      "id": "SIG-003",
+      "group": "Feed, media, and exploration",
+      "candidate": "Entry, exit, visible duration, visible fraction, qualified exposure, repeated exposure",
+      "proposed_use": "Evaluate which guides and places people pause on. Distinguish exposure segments from unique content per session.",
+      "proposed_scope": "Core",
+      "classification": "requires instrumentation",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "wall",
+        "dwell"
+      ],
+      "observed_and_remaining": "No shared continuous 50%-for-1s qualified feed-exposure lifecycle; place-sheet dwell is separate.",
+      "complete": false
+    },
+    {
+      "id": "SIG-004",
+      "group": "Feed, media, and exploration",
+      "candidate": "Fast scroll-past, pause, scroll back, return later, session resume",
+      "proposed_use": "Use bounded duration and revisit buckets. Avoid uploading a raw touch or scroll trace.",
+      "proposed_scope": "Later",
+      "classification": "requires instrumentation",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "wall",
+        "dwell"
+      ],
+      "observed_and_remaining": "Do not add raw scroll traces. Define purpose and bounded revisit buckets first.",
+      "complete": false
+    },
+    {
+      "id": "SIG-005",
+      "group": "Feed, media, and exploration",
+      "candidate": "Post card tap, expand caption, open comments, open creator profile, close detail",
+      "proposed_use": "Identify what earns deeper exploration. Record resulting surface and entry point.",
+      "proposed_scope": "Core",
+      "classification": "already captured",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "media",
+        "wall"
+      ],
+      "observed_and_remaining": "Several open/action signals exist; caption expansion, comments opening and close-detail coverage varies.",
+      "complete": false
+    },
+    {
+      "id": "SIG-006",
+      "group": "Feed, media, and exploration",
+      "candidate": "Carousel position, first or last image reached, backward swipe, zoom, full-screen view",
+      "proposed_use": "Identify useful imagery and where guides are dropped. Keep slide number or count and a content ID.",
+      "proposed_scope": "Later",
+      "classification": "requires instrumentation",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "media"
+      ],
+      "observed_and_remaining": "Viewer gestures exist as product behavior, but a complete slide/zoom telemetry emitter was not established.",
+      "complete": false
+    },
+    {
+      "id": "SIG-007",
+      "group": "Feed, media, and exploration",
+      "candidate": "Autoplay eligible, started, manual play, pause, seek, loop, completion, replay",
+      "proposed_use": "Separate actual playback from visible time. Capture one bounded summary with foreground and user-initiated flags.",
+      "proposed_scope": "Later",
+      "classification": "requires instrumentation",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "media"
+      ],
+      "observed_and_remaining": "Watch now produces impression, qualified_view, completion and rewatch from eligible foreground forward-playback samples; native callback wiring, served-session binding and durable exact receipts have focused tests. Buffer/seek/preload are excluded. Remaining: legacy 10s completion floor excludes short clips; no full manual-play/pause/seek summary or offline delivery guarantee; current audience read/write race, bounded ranking-population query, deployed/device/performance proof remain open.",
+      "complete": false
+    },
+    {
+      "id": "SIG-008",
+      "group": "Feed, media, and exploration",
+      "candidate": "Muted autoplay, user mutes or unmutes, captions enabled, playback speed",
+      "proposed_use": "Honor explicit media preferences and measure feature use. Keep choices scoped to the player.",
+      "proposed_scope": "Later",
+      "classification": "requires a feature or permission",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "media"
+      ],
+      "observed_and_remaining": "Own-player mute/caption controls exist. Do not inspect device-wide audio settings for ranking.",
+      "complete": false
+    },
+    {
+      "id": "SIG-009",
+      "group": "Feed, media, and exploration",
+      "candidate": "Translation offered or used, accessibility labels, captions missing, transcript expanded",
+      "proposed_use": "Find inaccessible guides. Measure the feature action and supported language at an appropriate granularity. Avoid using disability or accessibility status as a ranking trait.",
+      "proposed_scope": "Later",
+      "classification": "requires instrumentation",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "media"
+      ],
+      "observed_and_remaining": "Captions/translation features exist. Measure feature errors/actions without classifying accessibility status.",
+      "complete": false
+    },
+    {
+      "id": "SIG-010",
+      "group": "Feed, media, and exploration",
+      "candidate": "Like and undo, follow and unfollow, show less, hide, mute, block, report",
+      "proposed_use": "Keep operational records where needed. Use explicit feedback for ranking, and keep safety actions scoped to their purpose. Preserve undo semantics.",
+      "proposed_scope": "Core",
+      "classification": "available from a product record",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "records",
+        "media"
+      ],
+      "observed_and_remaining": "Keep explicit product mutations and undo semantics. Safety reports/blocks stay purpose-scoped.",
+      "complete": false
+    },
+    {
+      "id": "SIG-011",
+      "group": "Feed, media, and exploration",
+      "candidate": "Ad or sponsored result impression and dismissal",
+      "proposed_use": "If sponsorship exists, mark the placement, position, and campaign. Separate ads reporting from organic recommendation evaluation.",
+      "proposed_scope": "Later",
+      "classification": "requires a feature or permission",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "feed"
+      ],
+      "observed_and_remaining": "Sponsorship must be established and governed before ad-placement measurement is introduced.",
+      "complete": false
+    },
+    {
+      "id": "SIG-012",
+      "group": "Saves, trips, and collaboration",
+      "candidate": "Save or unsave a post, place, guide, route, event, or creator",
+      "proposed_use": "Use the canonical record with object type, object ID, and visibility. A successful save can outrank dwell as an explicit interest signal.",
+      "proposed_scope": "Core",
+      "classification": "available from a product record",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "records"
+      ],
+      "observed_and_remaining": "Use authoritative save state for supported object types; do not infer successful saves from button taps.",
+      "complete": false
+    },
+    {
+      "id": "SIG-013",
+      "group": "Saves, trips, and collaboration",
+      "candidate": "Open saved items, revisit item, reorder or move item, remove or archive",
+      "proposed_use": "Understand retrieval and cleanup. A removed save should reverse or decay its contribution.",
+      "proposed_scope": "Core",
+      "classification": "requires instrumentation",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "records"
+      ],
+      "observed_and_remaining": "Retrieval/removal records exist in parts; a consistent revisit/open funnel is not yet established.",
+      "complete": false
+    },
+    {
+      "id": "SIG-014",
+      "group": "Saves, trips, and collaboration",
+      "candidate": "Create, rename, archive, or delete collection, change visibility, add or remove collaborator",
+      "proposed_use": "Support private, shared, and public states if the product offers them. Keep names, notes, and access lists in product storage.",
+      "proposed_scope": "Feature only",
+      "classification": "available from a product record",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "records"
+      ],
+      "observed_and_remaining": "Collection metadata and ownership are operational data; do not export names or collaborators.",
+      "complete": false
+    },
+    {
+      "id": "SIG-015",
+      "group": "Saves, trips, and collaboration",
+      "candidate": "Save into one or several collections, deduplicate, import from an explicit share action",
+      "proposed_use": "Track source and action outcome. Avoid duplicating pasted links or private collection titles in logs.",
+      "proposed_scope": "Core",
+      "classification": "available from a product record",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "records"
+      ],
+      "observed_and_remaining": "Reuse collection save and destination commits and existing idempotency; link/import provenance needs a defined consumer.",
+      "complete": false
+    },
+    {
+      "id": "SIG-016",
+      "group": "Saves, trips, and collaboration",
+      "candidate": "Save \u2192 revisit \u2192 add to itinerary \u2192 directions or partner click",
+      "proposed_use": "Measure the move from inspiration to planning. Label outbound clicks as handoffs. Confirm a visit or purchase only from a separate qualifying action.",
+      "proposed_scope": "Core",
+      "classification": "requires instrumentation",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "records",
+        "trips",
+        "media"
+      ],
+      "observed_and_remaining": "Existing action events are partial. The action rail emits media_trip_add/media_plan before commitment; that must be corrected before calling this a completed funnel.",
+      "complete": false
+    },
+    {
+      "id": "SIG-017",
+      "group": "Saves, trips, and collaboration",
+      "candidate": "Trip created or abandoned, destination added, trip dated or undated, archived or canceled",
+      "proposed_use": "Use trip stage for reminders and recommendations where enabled. Derive stage from product state. Keep exact travel dates out of general analytics.",
+      "proposed_scope": "Core",
+      "classification": "available from a product record",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "trips"
+      ],
+      "observed_and_remaining": "Derive stage from trip lifecycle; abandonment needs a separately defined bounded window.",
+      "complete": false
+    },
+    {
+      "id": "SIG-018",
+      "group": "Saves, trips, and collaboration",
+      "candidate": "Add/remove stop, change order or day, pin, duplicate, replace, mark optional",
+      "proposed_use": "Support planning, undo, and useful recommendations. Use committed edits as the source of truth.",
+      "proposed_scope": "Core",
+      "classification": "available from a product record",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "trips"
+      ],
+      "observed_and_remaining": "Committed trip commands are the source; do not duplicate names, dates or notes in analytics.",
+      "complete": false
+    },
+    {
+      "id": "SIG-019",
+      "group": "Saves, trips, and collaboration",
+      "candidate": "Trip filters, explicit budget band, group size band, activity interests, transport preference",
+      "proposed_use": "Personalize the current trip if users provide the information. Make preferences editable and scoped to the trip.",
+      "proposed_scope": "Feature only",
+      "classification": "available from a product record",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "trips"
+      ],
+      "observed_and_remaining": "Trip-scoped preferences require editable feature context; no general analytics export added.",
+      "complete": false
+    },
+    {
+      "id": "SIG-020",
+      "group": "Saves, trips, and collaboration",
+      "candidate": "Invite created, sent, joined, declined, expired, revoked",
+      "proposed_use": "Diagnose collaboration adoption. Keep invitation tokens and addresses out of analytics.",
+      "proposed_scope": "Core",
+      "classification": "available from a product record",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "trips"
+      ],
+      "observed_and_remaining": "Invite lifecycle is operational; tokens and recipient details excluded.",
+      "complete": false
+    },
+    {
+      "id": "SIG-021",
+      "group": "Saves, trips, and collaboration",
+      "candidate": "Collaborator role changes, votes, notes, assignment, comments on a stop",
+      "proposed_use": "Measure aggregate collaboration outcomes. Preserve member-only visibility, and keep text and membership in product storage.",
+      "proposed_scope": "Feature only",
+      "classification": "available from a product record",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "trips",
+        "telegraph"
+      ],
+      "observed_and_remaining": "Member-scoped role/vote/comment data must stay in its access domain.",
+      "complete": false
+    },
+    {
+      "id": "SIG-022",
+      "group": "Saves, trips, and collaboration",
+      "candidate": "Offline save, download, sync retry, conflict, merge, sync complete",
+      "proposed_use": "Track local action and server reconciliation separately. Count the eventual successful mutation once.",
+      "proposed_scope": "Later",
+      "classification": "requires instrumentation",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "creation",
+        "records"
+      ],
+      "observed_and_remaining": "Some owner-bound upload queues exist; a unified local/committed sync metric is not established.",
+      "complete": false
+    },
+    {
+      "id": "SIG-023",
+      "group": "Saves, trips, and collaboration",
+      "candidate": "Check-in, mark visited, trip review, itinerary completion",
+      "proposed_use": "Prefer user-confirmed visits and check-ins. Consider coarse analytics counts if a concrete metric needs them.",
+      "proposed_scope": "Feature only",
+      "classification": "available from a product record",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "trips",
+        "media"
+      ],
+      "observed_and_remaining": "Confirmed checkpoint/route/gem actions can establish arrival; directions handoff cannot.",
+      "complete": false
+    },
+    {
+      "id": "SIG-024",
+      "group": "Search, maps, places, and transactions",
+      "candidate": "Search entry, query submitted, known destination or category selected, suggestion selected",
+      "proposed_use": "Use canonical place/category IDs where possible. Record free-form search only where needed to serve the request, with any diagnostic capture separately reviewed.",
+      "proposed_scope": "Core",
+      "classification": "already captured",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "input",
+        "feed"
+      ],
+      "observed_and_remaining": "Use input request IDs and structured selection; free text only serves the lookup.",
+      "complete": false
+    },
+    {
+      "id": "SIG-025",
+      "group": "Search, maps, places, and transactions",
+      "candidate": "Partial input, reformulation, cleared input, query canceled",
+      "proposed_use": "Autocomplete can process the minimum text needed. For analytics, prefer a structured outcome or submission count. Avoid persistent partial input and per-keystroke logging.",
+      "proposed_scope": "Feature only",
+      "classification": "requires a feature or permission",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "input"
+      ],
+      "observed_and_remaining": "Autocomplete necessarily processes input; no persistent partial-input/per-keystroke analytics expansion.",
+      "complete": false
+    },
+    {
+      "id": "SIG-026",
+      "group": "Search, maps, places, and transactions",
+      "candidate": "Filter applied/reset, sort change, results count bucket, zero results, result selected",
+      "proposed_use": "Find relevance and inventory gaps. Log allowlisted filter families, result rank, and stable category IDs.",
+      "proposed_scope": "Core",
+      "classification": "already captured",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "input",
+        "map"
+      ],
+      "observed_and_remaining": "Existing search/map taxonomy covers parts; exact filter/result-count/rank coverage needs per-surface validation.",
+      "complete": false
+    },
+    {
+      "id": "SIG-027",
+      "group": "Search, maps, places, and transactions",
+      "candidate": "Search abandoned, no click, next search, results error",
+      "proposed_use": "Distinguish empty inventory, latency/error, and a session that ends without selection. An abandonment flag can be derived with a bounded window.",
+      "proposed_scope": "Core",
+      "classification": "requires instrumentation",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "input"
+      ],
+      "observed_and_remaining": "Input request errors/fallbacks exist; session-end abandonment requires bounded semantics.",
+      "complete": false
+    },
+    {
+      "id": "SIG-028",
+      "group": "Search, maps, places, and transactions",
+      "candidate": "Place detail view, guide opened, source and rank, return to results",
+      "proposed_use": "Understand discovery paths. Record a place ID and originating surface.",
+      "proposed_scope": "Core",
+      "classification": "already captured",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "media",
+        "dwell"
+      ],
+      "observed_and_remaining": "Place-open and recommendation-bound dwell exist. The follow-up binds the initiating account/session, validates save receipts and uses4033 atomic exact retry admission;35 client+70 API+6 PGlite cases pass and CI serial rollback receipt proof passes. Production/API/device rollout, two-connection proof, active-window calibration, guides and return-to-results coverage remain pending.",
+      "complete": false
+    },
+    {
+      "id": "SIG-029",
+      "group": "Search, maps, places, and transactions",
+      "candidate": "Directions, hours, website, menu, call, address copy, accessibility or language details",
+      "proposed_use": "Treat each action as an intent signal with a distinct meaning. Keep destination URLs free of credentials and user-supplied query strings in telemetry.",
+      "proposed_scope": "Core",
+      "classification": "already captured",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "media",
+        "map"
+      ],
+      "observed_and_remaining": "Directions/open actions exist. Hours/call/menu/address-copy need specific event coverage; no URL query strings.",
+      "complete": false
+    },
+    {
+      "id": "SIG-030",
+      "group": "Search, maps, places, and transactions",
+      "candidate": "Map opened, initial area, zoom band, map/list toggle, search this area",
+      "proposed_use": "Prefer user-confirmed area IDs and viewport actions. A map center can reflect browsing a future destination.",
+      "proposed_scope": "Core",
+      "classification": "already captured",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "map"
+      ],
+      "observed_and_remaining": "Map taxonomy/session decisions exist; user-selected destination must stay distinct from physical location.",
+      "complete": false
+    },
+    {
+      "id": "SIG-031",
+      "group": "Search, maps, places, and transactions",
+      "candidate": "Pin impression, pin tap, cluster expansion, map card open",
+      "proposed_use": "Use taps and opens as the initial signals. Measure pin impressions only if density and visibility can be bounded.",
+      "proposed_scope": "Later",
+      "classification": "requires instrumentation",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "map"
+      ],
+      "observed_and_remaining": "Object interactions exist in parts; dense-pin impressions are not validated qualified exposures.",
+      "complete": false
+    },
+    {
+      "id": "SIG-032",
+      "group": "Search, maps, places, and transactions",
+      "candidate": "Pan, zoom, gesture start/end, viewport history",
+      "proposed_use": "Measure coarse interaction count or final selected area when needed. Continuous camera coordinates can reveal detailed planning patterns.",
+      "proposed_scope": "Later",
+      "classification": "requires instrumentation",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "map"
+      ],
+      "observed_and_remaining": "Do not add continuous viewport histories. Any coarse interaction metric needs purpose/retention first.",
+      "complete": false
+    },
+    {
+      "id": "SIG-033",
+      "group": "Search, maps, places, and transactions",
+      "candidate": "Near me, current location, coarse area, location permission result",
+      "proposed_use": "Offer manual city entry. Use a foreground request tied to the feature. Preserve the difference between user-selected destination and physical location.",
+      "proposed_scope": "Feature only",
+      "classification": "requires a feature or permission",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "map"
+      ],
+      "observed_and_remaining": "Foreground feature request/manual city alternative; no background physical-location inference.",
+      "complete": false
+    },
+    {
+      "id": "SIG-034",
+      "group": "Search, maps, places, and transactions",
+      "candidate": "Route origin, destination, ETA, reroute, navigation handoff",
+      "proposed_use": "Route features may need coordinates in transit. Keep request data scoped to routing. A directions tap alone does not establish a visit.",
+      "proposed_scope": "Feature only",
+      "classification": "available from a product record",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "map",
+        "trips"
+      ],
+      "observed_and_remaining": "Use route operational state; coarse intent measurement is separate from route coordinates.",
+      "complete": false
+    },
+    {
+      "id": "SIG-035",
+      "group": "Search, maps, places, and transactions",
+      "candidate": "Live route sharing, geofences, repeated visits, background location",
+      "proposed_use": "These can expose whereabouts and travel routines. Consider live sharing only as an explicit time-limited feature with a visible stop control and revocable access.",
+      "proposed_scope": "Feature only",
+      "classification": "requires a feature or permission",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "map",
+        "sensing"
+      ],
+      "observed_and_remaining": "Existing live-sharing/geofence features require explicit scoped access and stop/revoke verification; no analytics reuse.",
+      "complete": false
+    },
+    {
+      "id": "SIG-036",
+      "group": "Search, maps, places, and transactions",
+      "candidate": "Partner link click, availability check, price alert, checkout start, failed checkout, cancellation, refund",
+      "proposed_use": "Track the last observable state and failure code. Keep payment data, traveler identity, and itinerary details in the operational system.",
+      "proposed_scope": "Later",
+      "classification": "requires a feature or permission",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "trips"
+      ],
+      "observed_and_remaining": "Partner/commerce availability and commercial scope must be confirmed; never call a click a booking.",
+      "complete": false
+    },
+    {
+      "id": "SIG-037",
+      "group": "Search, maps, places, and transactions",
+      "candidate": "Booking confirmation, conversion attribution, commission reconciliation",
+      "proposed_use": "Accept a supported partner confirmation with a bounded click ID and deduplicate it. Use coarse product categories in analytics where necessary.",
+      "proposed_scope": "Later",
+      "classification": "requires a feature or permission",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "trips"
+      ],
+      "observed_and_remaining": "Requires actual supported confirmation, attribution/commission policy and deduplication proof.",
+      "complete": false
+    },
+    {
+      "id": "SIG-038",
+      "group": "Search, maps, places, and transactions",
+      "candidate": "Merchant wishlist, cart, lead form, purchases on unrelated sites",
+      "proposed_use": "Advertising systems can collect these through partner integrations. Rumazi\u2019s initial scope has no dependency on them.",
+      "proposed_scope": "Exclude from analytics",
+      "classification": "out of scope",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "diagnostics"
+      ],
+      "observed_and_remaining": "Unrelated merchant behavior is excluded from this proposal.",
+      "complete": false
+    },
+    {
+      "id": "SIG-039",
+      "group": "Creation, communication, and community",
+      "candidate": "Open composer, select type, begin edit, close empty, discard non-empty, resume",
+      "proposed_use": "If a completion problem justifies measurement, emit at most one outcome per composer session with a surface enum and outcome. The text itself, exact length, edit history, and typing rhythm provide no necessary input to that funnel.",
+      "proposed_scope": "Later",
+      "classification": "requires instrumentation",
+      "coverage": "implemented and controlled-test verified for the named flows; deployment/device/export acceptance pending",
+      "domains": [
+        "creation"
+      ],
+      "observed_and_remaining": "User explicitly requested structured abandoned-action outcomes. Six composer_outcome values now distinguish leaving, discard, upload cancellation/failure, post discard after upload and publication. No content/length/recipient payload. Code and controlled tests pass; deployed/device/export validation still open.",
+      "complete": false
+    },
+    {
+      "id": "SIG-040",
+      "group": "Creation, communication, and community",
+      "candidate": "Local draft created, edited, autosaved, restored, expired, or deleted",
+      "proposed_use": "Store locally by default where compatible with product behavior. Distinguish draft state from submission and server receipt.",
+      "proposed_scope": "Feature only",
+      "classification": "available from a product record",
+      "coverage": "implemented and controlled-test verified for the named flows; deployment/device/export acceptance pending",
+      "domains": [
+        "creation"
+      ],
+      "observed_and_remaining": "Account/composer-scoped local comment and supported post draft recovery implemented. Success/discard clears; failed submission preserves. Controlled restart, browser IndexedDB and account-switch checks documented; physical restart/termination and deployed access still open.",
+      "complete": false
+    },
+    {
+      "id": "SIG-041",
+      "group": "Creation, communication, and community",
+      "candidate": "Explicit cloud draft sync, collaboration, autosave, duplicate recovery",
+      "proposed_use": "If supported, define audience, sync behavior, retention, and delete semantics. Reuse existing product storage for content. Analytics needs a result code at most.",
+      "proposed_scope": "Feature only",
+      "classification": "requires a feature or permission",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "creation"
+      ],
+      "observed_and_remaining": "Requires a documented cloud-draft audience, retention and deletion contract.",
+      "complete": false
+    },
+    {
+      "id": "SIG-042",
+      "group": "Creation, communication, and community",
+      "candidate": "Unsent comments, captions, DMs, pasted text, edit buffers, keystrokes, cursor movements",
+      "proposed_use": "Keep raw input out of events, session replay, crash breadcrumbs, remote debug logs, and third-party analytics. Analyze abandonment through the minimal outcome above.",
+      "proposed_scope": "Exclude from analytics",
+      "classification": "out of scope",
+      "coverage": "implemented and controlled-test verified for the named flows; deployment/device/export acceptance pending",
+      "domains": [
+        "input",
+        "telegraph",
+        "diagnostics"
+      ],
+      "observed_and_remaining": "Raw unsent content remains excluded; composer/client/server schemas and central Sentry scrubber are tested. Hosted crash/export capture is not yet verified.",
+      "complete": false
+    },
+    {
+      "id": "SIG-043",
+      "group": "Creation, communication, and community",
+      "candidate": "Mention, hashtag, place, or link preview request",
+      "proposed_use": "These features can transmit data before publish. Send only the lookup needed by the feature and keep payloads out of event logs. Review any preview destination and third-party exposure.",
+      "proposed_scope": "Feature only",
+      "classification": "requires a feature or permission",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "input",
+        "creation"
+      ],
+      "observed_and_remaining": "Lookup and previews are scoped feature requests, not authorization to retain content in analytics.",
+      "complete": false
+    },
+    {
+      "id": "SIG-044",
+      "group": "Creation, communication, and community",
+      "candidate": "Media picker, capture, select, upload started, upload failed, draft canceled",
+      "proposed_use": "Treat permission, import, on-device transform, temporary server upload, and publish as separate steps. A provider failure should appear as a redacted code.",
+      "proposed_scope": "Feature only",
+      "classification": "available from a product record",
+      "coverage": "implemented and controlled-test verified for the named flows; deployment/device/export acceptance pending",
+      "domains": [
+        "creation"
+      ],
+      "observed_and_remaining": "Private pre-publication upload state, idempotent cancellation/finalization and cleanup races implemented in4028, applied CI/production; client/API deployment pending. Structured failure codes only; saved drafts preserve media.",
+      "complete": false
+    },
+    {
+      "id": "SIG-045",
+      "group": "Creation, communication, and community",
+      "candidate": "Crop, trim, blur faces, audio selection, translation, captions, moderation before publish",
+      "proposed_use": "Prefer on-device processing when practical. For an explicitly requested cloud tool, scope the upload, document retention, and expire temporary objects after cancel or failure. Remove unneeded metadata such as embedded GPS before publication where compatible with the feature.",
+      "proposed_scope": "Feature only",
+      "classification": "requires a feature or permission",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "creation"
+      ],
+      "observed_and_remaining": "Use explicit selected content and the owning feature/provider consent/deletion contract.",
+      "complete": false
+    },
+    {
+      "id": "SIG-046",
+      "group": "Creation, communication, and community",
+      "candidate": "Publish success/failure, edit, delete, restore, moderation decision, appeal",
+      "proposed_use": "Use server outcomes and separate access controls for moderation evidence. Keep text and attachment contents in the product or moderation store.",
+      "proposed_scope": "Core",
+      "classification": "available from a product record",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "creation",
+        "records"
+      ],
+      "observed_and_remaining": "Use server publish/edit/delete/moderation outcomes; separate evidence access.",
+      "complete": false
+    },
+    {
+      "id": "SIG-047",
+      "group": "Creation, communication, and community",
+      "candidate": "Share sheet opened, returned, handoff available, copied link, invite redeemed",
+      "proposed_use": "Separate intent, handoff, and redemption. OS callbacks and browser APIs have different semantics. Avoid reporting a recipient when the system never provided one. [Web Share behavior][webshare]",
+      "proposed_scope": "Later",
+      "classification": "requires instrumentation",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "records",
+        "media"
+      ],
+      "observed_and_remaining": "Share UI handoff is not delivery. Only invite redemption proves redemption.",
+      "complete": false
+    },
+    {
+      "id": "SIG-048",
+      "group": "Creation, communication, and community",
+      "candidate": "Message send, delivered, read, typing, reaction, unsend",
+      "proposed_use": "Use metadata where necessary to deliver the user-facing feature. Typing can be ephemeral. Read receipts and presence need the product\u2019s visibility rules. Avoid using private communications for general recommendations.",
+      "proposed_scope": "Feature only",
+      "classification": "available from a product record",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "telegraph"
+      ],
+      "observed_and_remaining": "Receipts/presence remain communication features, not recommendation signals.",
+      "complete": false
+    },
+    {
+      "id": "SIG-049",
+      "group": "Creation, communication, and community",
+      "candidate": "Group join/leave, event RSVP, meetup invite, member discovery, follow graph",
+      "proposed_use": "Support group and event access and user-selected discovery. Private group membership and meetup logistics can reveal sensitive affiliations or whereabouts.",
+      "proposed_scope": "Feature only",
+      "classification": "available from a product record",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "trips",
+        "telegraph",
+        "records"
+      ],
+      "observed_and_remaining": "Keep membership/RSVP/invite visibility rules; do not derive sensitive affiliations.",
+      "complete": false
+    },
+    {
+      "id": "SIG-050",
+      "group": "Creation, communication, and community",
+      "candidate": "Address-book sync, contact matching, inferred social graph",
+      "proposed_use": "Prefer explicit invite links and allow direct invites without importing an address book. Other people\u2019s contact uploads can reveal non-users\u2019 information.",
+      "proposed_scope": "Exclude from analytics",
+      "classification": "out of scope",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "telegraph"
+      ],
+      "observed_and_remaining": "No broad address-book or inferred social-graph analytics introduced.",
+      "complete": false
+    },
+    {
+      "id": "SIG-051",
+      "group": "App lifecycle, devices, sensors, and inference",
+      "candidate": "Session start/end, foreground/background, hidden tab, navigation, app version",
+      "proposed_use": "Define active time and accurate exposure windows. Keep a bounded session ID and timestamps only as needed.",
+      "proposed_scope": "Core",
+      "classification": "already captured",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "media",
+        "wall",
+        "input",
+        "diagnostics"
+      ],
+      "observed_and_remaining": "Lifecycle hooks exist. Media queue background flush/account epochs are verified here; cross-feed visibility/overlay/browser hidden-tab exposure remains open.",
+      "complete": false
+    },
+    {
+      "id": "SIG-052",
+      "group": "App lifecycle, devices, sensors, and inference",
+      "candidate": "Notification opt-in, sent, provider acceptance, open, action, unsubscribe",
+      "proposed_use": "Track lifecycle stages separately. Provider acceptance gives limited delivery evidence. Keep push tokens and message text in operational storage.",
+      "proposed_scope": "Later",
+      "classification": "available from a product record",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "diagnostics"
+      ],
+      "observed_and_remaining": "Notification operational stages must distinguish provider acceptance from delivery/open.",
+      "complete": false
+    },
+    {
+      "id": "SIG-053",
+      "group": "App lifecycle, devices, sensors, and inference",
+      "candidate": "Deep-link entry, referral surface, invite redemption, install attribution",
+      "proposed_use": "Allowlist campaign values. Strip arbitrary URL params and secrets. Avoid cross-app attribution until an actual business case exists.",
+      "proposed_scope": "Later",
+      "classification": "requires instrumentation",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "diagnostics"
+      ],
+      "observed_and_remaining": "Deep-link routing exists; no new cross-app attribution added, and arbitrary params must not enter events.",
+      "complete": false
+    },
+    {
+      "id": "SIG-054",
+      "group": "App lifecycle, devices, sensors, and inference",
+      "candidate": "Network reachability, retry, load failure, latency bands, cache hit, crash",
+      "proposed_use": "Improve travel reliability under poor connectivity. Use scrubbed diagnostics, app version, and coarse device class. Keep IP, exact payloads, local file paths, and account secrets out of analytics events.",
+      "proposed_scope": "Core",
+      "classification": "already captured",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "diagnostics",
+        "input",
+        "creation"
+      ],
+      "observed_and_remaining": "Latency/errors/cache/failure paths exist. Payload/trace scrubbing and production export inspection remain open.",
+      "complete": false
+    },
+    {
+      "id": "SIG-055",
+      "group": "App lifecycle, devices, sensors, and inference",
+      "candidate": "OS/app version, locale, display size bucket, time zone",
+      "proposed_use": "Use compatibility data to debug and language choices to localize. Store the smallest set needed. Avoid joining these into a device fingerprint.",
+      "proposed_scope": "Later",
+      "classification": "requires a feature or permission",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "diagnostics"
+      ],
+      "observed_and_remaining": "Compatibility metadata only; no fingerprint assembly. Exact exported fields need inspection.",
+      "complete": false
+    },
+    {
+      "id": "SIG-056",
+      "group": "App lifecycle, devices, sensors, and inference",
+      "candidate": "Audio mute, headphones, connected audio route, system ringer, Focus mode",
+      "proposed_use": "Use Rumazi\u2019s own audio toggle for preference. A connected headset or silent phone is weak evidence about a person\u2019s intent or surroundings.",
+      "proposed_scope": "Exclude from analytics for device-wide states",
+      "classification": "out of scope",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "diagnostics",
+        "media"
+      ],
+      "observed_and_remaining": "Device-wide audio/ringer/Focus states excluded; explicit player choices are separate.",
+      "complete": false
+    },
+    {
+      "id": "SIG-057",
+      "group": "App lifecycle, devices, sensors, and inference",
+      "candidate": "Accelerometer, gyroscope, compass, orientation, speed, altitude, steps",
+      "proposed_use": "Compass or route features can use needed readings while active. Keep continuous readings and motion histories out of discovery analytics.",
+      "proposed_scope": "Feature only",
+      "classification": "requires a feature or permission",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "sensing",
+        "map"
+      ],
+      "observed_and_remaining": "Needed active-feature readings only; no continuous sensor history in analytics.",
+      "complete": false
+    },
+    {
+      "id": "SIG-058",
+      "group": "App lifecycle, devices, sensors, and inference",
+      "candidate": "Stationary, walking, running, cycling, in vehicle, confidence or unknown",
+      "proposed_use": "If a defined navigation feature needs a context mode, prefer a manual control. Evaluate ephemeral on-device classification only if useful. Treat unknown as a normal state.",
+      "proposed_scope": "Feature only",
+      "classification": "requires a feature or permission",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "sensing"
+      ],
+      "observed_and_remaining": "Activity classification cannot infer driver/passenger or sitting/standing; manual/unknown remain valid.",
+      "complete": false
+    },
+    {
+      "id": "SIG-059",
+      "group": "App lifecycle, devices, sensors, and inference",
+      "candidate": "Phone facing down, proximity, ambient light, charging, low power, battery level",
+      "proposed_use": "These are device conditions with ambiguous behavioral meaning. Collect coarse battery or performance diagnostics only if tied to an observed problem.",
+      "proposed_scope": "Later for diagnostics",
+      "classification": "requires instrumentation",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "diagnostics"
+      ],
+      "observed_and_remaining": "Later diagnostic-only; no behavioral meaning inferred from phone posture/battery.",
+      "complete": false
+    },
+    {
+      "id": "SIG-060",
+      "group": "App lifecycle, devices, sensors, and inference",
+      "candidate": "Eye direction, blink, pupil response, facial expression, voiceprints, ambient microphone",
+      "proposed_use": "Skip passive collection. Optional camera tools should have a clear user action and visible feature state. A gaze or expression estimate gives weak evidence of interest or emotion.",
+      "proposed_scope": "Exclude from analytics",
+      "classification": "out of scope",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "sensing"
+      ],
+      "observed_and_remaining": "Passive gaze/face/voiceprint/ambient recording excluded from general analytics. Existing acoustic feature does not authorize that reuse.",
+      "complete": false
+    },
+    {
+      "id": "SIG-061",
+      "group": "App lifecycle, devices, sensors, and inference",
+      "candidate": "GPS, IP, Wi-Fi, Bluetooth beacons, cell network, location metadata",
+      "proposed_use": "Use network data where necessary for operations and abuse prevention. For discovery use a user-chosen area or scoped location request. Avoid SSIDs, nearby device IDs, precise location histories, and broker data in analytics.",
+      "proposed_scope": "Feature only",
+      "classification": "requires a feature or permission",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "sensing",
+        "map"
+      ],
+      "observed_and_remaining": "Feature location and abuse operations are distinct from analytics. No SSID/device-ID/location-history expansion.",
+      "complete": false
+    },
+    {
+      "id": "SIG-062",
+      "group": "App lifecycle, devices, sensors, and inference",
+      "candidate": "Contact book, calendar, photo library, clipboard, wearable or health data",
+      "proposed_use": "Use system pickers, explicit paste, and scoped integrations when a feature requires them. Avoid background clipboard reads and broad library import. A feature grant does not imply a new analytics use.",
+      "proposed_scope": "Feature only",
+      "classification": "requires a feature or permission",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "creation",
+        "input"
+      ],
+      "observed_and_remaining": "System pickers/explicit paste/scoped calendar integrations only; no background clipboard or broad library analytics.",
+      "complete": false
+    },
+    {
+      "id": "SIG-063",
+      "group": "App lifecycle, devices, sensors, and inference",
+      "candidate": "Advertising IDs, fingerprinting, cross-app linking, data brokers, session replay",
+      "proposed_use": "Review SDK defaults and downstream recipients. Apple prohibits fingerprinting. Exclude session replay on editors, chat, account, maps, and travel plans from the initial scope.",
+      "proposed_scope": "Exclude from analytics",
+      "classification": "out of scope",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "diagnostics"
+      ],
+      "observed_and_remaining": "No advertising ID, fingerprint/broker/session-replay integration added. Existing SDK export verification remains necessary.",
+      "complete": false
+    },
+    {
+      "id": "SIG-064",
+      "group": "App lifecycle, devices, sensors, and inference",
+      "candidate": "Predicted interest, destination affinity, travel stage, group fit",
+      "proposed_use": "Prefer explicit saves, categories, and trip actions. Track provenance and expiry. \u201cSaved Lisbon cafes\u201d supports a content preference. It cannot establish current residence, location, or planned travel dates.",
+      "proposed_scope": "Later",
+      "classification": "available from a product record",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "input",
+        "trips",
+        "records"
+      ],
+      "observed_and_remaining": "Explicit preferences and consented outcome memory exist. Evidence does not establish physical location or travel dates.",
+      "complete": false
+    },
+    {
+      "id": "SIG-065",
+      "group": "App lifecycle, devices, sensors, and inference",
+      "candidate": "Home/work, routine, relationship, religion, health, sexuality, immigration status, vulnerability",
+      "proposed_use": "Precise location and repeated visits can expose sensitive patterns. Exclude these inferences from recommendation and advertising systems.",
+      "proposed_scope": "Exclude from analytics",
+      "classification": "out of scope",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "sensing",
+        "input",
+        "feed"
+      ],
+      "observed_and_remaining": "Sensitive personal/affiliation/location-routine inferences are excluded from recommendations and ads.",
+      "complete": false
+    },
+    {
+      "id": "SIG-066",
+      "group": "App lifecycle, devices, sensors, and inference",
+      "candidate": "AI prompts, generated plans, feedback, accepted or edited suggestions",
+      "proposed_use": "If an AI planner exists, keep prompt and output in the intended feature store, with retention and provider scope documented. Analytics can use structured tool/result type, latency, error, or accept/edit/dismiss outcome.",
+      "proposed_scope": "Feature only",
+      "classification": "available from a product record",
+      "coverage": "partial; code audit only, not acceptance-complete",
+      "domains": [
+        "input",
+        "creation"
+      ],
+      "observed_and_remaining": "Feature prompts/outputs stay in intended stores; analytics uses allowlisted result/latency/outcome metadata.",
+      "complete": false
+    }
+  ],
+  "updatedAt": "2026-11-14T07:02:12.499995+00:00",
+  "integrationEvidence": [
+    "docs/ops/rumazi-draft-recovery-20261113.json",
+    "docs/ops/rumazi-input-consent-boundary-20261114.json",
+    "docs/ops/rumazi-wall-consent-boundary-20261113.json",
+    "docs/ops/rumazi-media-event-privacy-20261114.json",
+    "docs/ops/rumazi-signal-ci-privacy-20261114.json",
+    "docs/ops/rumazi-media-view-receipts-20261114.json",
+    "docs/ops/rumazi-discovery-dwell-receipts-20261114.json",
+    "docs/ops/rumazi-discovery-ci-receipts-20261114.json"
+  ]
+}

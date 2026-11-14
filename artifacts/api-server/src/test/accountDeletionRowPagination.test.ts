@@ -213,7 +213,7 @@ function makeClient(opts: {
       if (opts.rpcFail && fn === "tombstone_post") {
         return { data: null, error: { message: opts.rpcFail } };
       }
-      return { data: null, error: null };
+      return { data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null };
     },
     storage: {
       from: (bucket: string) => ({

@@ -1,3 +1,4 @@
+import { providerModel } from "../lib/providerVersions.js";
 /**
  * CompassMemoryService — Phase 6: Layered Compass Memory.
  *
@@ -128,7 +129,7 @@ async function findContradictedMemories(
   try {
     const listing = candidates.map((c) => ({ id: c.id, content: c.content }));
     const completion = await getOpenAI().chat.completions.create({
-      model: "gpt-5-mini",
+      model: providerModel("openai", "gpt-5-mini"),
       max_completion_tokens: 200,
       messages: [
         {
@@ -365,7 +366,7 @@ export async function teachMemory(
 
   try {
     const completion = await getOpenAI().chat.completions.create({
-      model: "gpt-5-mini",
+      model: providerModel("openai", "gpt-5-mini"),
       max_completion_tokens: 200,
       messages: [
         {
@@ -502,7 +503,7 @@ export async function compressConversationIfDue(
     if (transcript) {
       try {
         const completion = await getOpenAI().chat.completions.create({
-          model: "gpt-5-mini",
+          model: providerModel("openai", "gpt-5-mini"),
           max_completion_tokens: 400,
           messages: [
             {

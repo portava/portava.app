@@ -146,7 +146,7 @@ const deferred = () => {
 
 beforeEach(() => {
   jest.useFakeTimers();
-  process.env.EXPO_PUBLIC_API_BASE_URL = 'http://api.test';
+  process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
   mockLegacy = false;
   mockOwner = 'owner-a';
   mockParams = { draftId: 'existing-draft' };
@@ -236,7 +236,7 @@ beforeEach(() => {
   setTelemetrySink((e) => { events.push(e); });
   setOutcomePoster(async (b) => { posts.push(b); return true; });
   beginOutcomeAccount('owner-a');
-  applyOutcomeConsent('owner-a', true);
+  applyOutcomeConsent('owner-a', true, '2026-10-05T00:00:00.000Z');
 });
 afterEach(() => {
   resetTelemetrySink();

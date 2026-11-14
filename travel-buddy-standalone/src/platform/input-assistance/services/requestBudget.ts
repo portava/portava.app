@@ -1,5 +1,5 @@
 import {
-  currentDiscoveryScope, isCurrentDiscoveryScope, viewerKeyForToken,
+  currentDiscoveryScope, isCurrentDiscoveryScope, onDiscoveryScopeChange, viewerKeyForToken,
 } from '../../../services/discoveryViewerScope.ts';
 
 export const SUGGEST_TIMEOUT_MS = 5000;
@@ -19,9 +19,10 @@ export function withInputBudget(outer?: AbortSignal) {
   let expired = false;
   const timer = setTimeout(() => { expired = true; controller.abort(); }, SUGGEST_TIMEOUT_MS);
   const cancel = () => controller.abort();
+  const unsubscribe = onDiscoveryScopeChange(cancel);
   if (outer?.aborted) cancel();
   else outer?.addEventListener('abort', cancel);
-  return {
+  const budget = {
     signal,
     timedOut: () => expired,
     current(token?: string) {
@@ -35,12 +36,28 @@ export function withInputBudget(outer?: AbortSignal) {
       signal.addEventListener('abort', rejectAbort);
       try {
         const value = await Promise.race([start(), aborted]);
-        if (!isCurrentDiscoveryScope(scope)) throw abortError();
+        if (signal.aborted || !isCurrentDiscoveryScope(scope)) throw abortError();
         return value;
       } finally {
         signal.removeEventListener('abort', rejectAbort);
       }
     },
-    done() { clearTimeout(timer); outer?.removeEventListener('abort', cancel); },
+    /** Private drafts and learning events stay on the configured API origin. */
+    async fetch(base: string, path: string, token: string, init: RequestInit = {}, fetchImpl = fetch): Promise<Response> {
+      if (!budget.current(token)) throw abortError();
+      if (!base || /[\s\\?#@]/.test(base)) throw new Error('Invalid API origin');
+      const origin = new URL(base);
+      if (origin.protocol !== 'https:' || origin.pathname !== '/' || origin.username || origin.password
+        || !path.startsWith('/api/input-assistance/') || /[\\?#]/.test(path)) throw new Error('Invalid input endpoint');
+      const endpoint = `${base.replace(/\/$/, '')}${path}`;
+      const response = await budget.wait(() => fetchImpl(endpoint, {
+        ...init, redirect: 'error', credentials: 'omit', cache: 'no-store', signal,
+        headers: { ...init.headers, Authorization: `Bearer ${token}` },
+      }));
+      if (response.redirected || response.url && response.url !== endpoint) throw new Error('Input request redirected');
+      return response;
+    },
+    done() { clearTimeout(timer); unsubscribe(); outer?.removeEventListener('abort', cancel); },
   };
+  return budget;
 }

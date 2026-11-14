@@ -1,0 +1,376 @@
+{
+  "schemaVersion": 1,
+  "auditedAt": "2026-11-13",
+  "status": "six_two_connection_cases_verified_synthetic_cleanup_complete",
+  "project": "hwokxgbmezheskbzskfr",
+  "environment": "CI only",
+  "migration": "4028_postcard_private_draft_publication.sql",
+  "migrationSha256": "8dcf89d2bb5491db2d366b1b6b6765d8da1281ae22a3d667db03f35204d58359",
+  "fixture": {
+    "actor": "7ae0c2e6-4e07-cf6b-a481-e58c08a2e090",
+    "run": "codex4028_04237ceb",
+    "operations": [
+      "a455d9b9-0f8a-e094-6edd-ccf3e417e20e",
+      "2a21c3e8-d37b-8b0e-7988-e694873a076c",
+      "ca1384a0-aba9-f201-108a-0482d7bd1713",
+      "6fcfe5a3-1f44-28a1-9112-9a571f85c595",
+      "40a71ae9-83be-4e4e-bfb7-e3bd98bba803",
+      "d409e3f1-283a-409f-8bf3-dbe8e1b7fbb5",
+      "2e32e2df-6dbf-46d2-9237-6f34d073739d"
+    ],
+    "privatePostcards": [
+      "f9e6195d-2709-4b30-b849-285e01a93ba6",
+      "112b40ca-2b87-4574-8265-a7805aab0462"
+    ],
+    "storageBytesCreated": 0,
+    "cronJobIds": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ]
+  },
+  "method": "A one-shot pg_cron command first unschedules itself in a committed transaction, then executes the real function/trigger operation and holds its transaction for 25 seconds. The foreground session waits to observe its advisory marker, records both backend PIDs, then performs the conflicting operation and measures server-side wait time. No schema changes or new extensions. All data belongs to one synthetic CI actor.",
+  "qualifications": [
+    "Initial parallel execute_sql attempts serialized and do not count as concurrency proof.",
+    "Self-unscheduling causes cron.job_run_details to report job canceled. The case results independently verify distinct concurrent backend PIDs, actual lock waiting and committed row state; scheduler success status is not claimed.",
+    "These SQL checks use PostgreSQL actor postgres. Restricted client grants are separately checked; this is not an authenticated end-to-end HTTP/storage-object test.",
+    "No actual storage bytes were uploaded; private-bucket and RLS checks do not replace public-URL/signed-URL tests using real bytes.",
+    "No production mutations were made by this agent. Root separately applied immutable 4028 to production."
+  ],
+  "setupQueries": [
+    "BEGIN; SET LOCAL statement_timeout='15s'; INSERT INTO auth.users(id) VALUES('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090'); INSERT INTO public.profiles(id,handle,name,account_status) VALUES('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','codex4028_04237ceb','Synthetic composer race test','active'); SELECT reserve_composer_upload('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','a455d9b9-0f8a-e094-6edd-ccf3e417e20e',ARRAY['7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/composer-drafts/a455d9b9-0f8a-e094-6edd-ccf3e417e20e.jpg'],'synthetic'); SELECT finish_composer_upload('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','a455d9b9-0f8a-e094-6edd-ccf3e417e20e'); SELECT reserve_composer_upload('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','2a21c3e8-d37b-8b0e-7988-e694873a076c',ARRAY['7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/composer-drafts/2a21c3e8-d37b-8b0e-7988-e694873a076c.jpg'],'synthetic'); SELECT finish_composer_upload('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','2a21c3e8-d37b-8b0e-7988-e694873a076c'); SELECT reserve_composer_upload('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','ca1384a0-aba9-f201-108a-0482d7bd1713',ARRAY['7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/composer-drafts/ca1384a0-aba9-f201-108a-0482d7bd1713.jpg'],'synthetic'); SELECT finish_composer_upload('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','ca1384a0-aba9-f201-108a-0482d7bd1713'); SELECT reserve_composer_upload('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','6fcfe5a3-1f44-28a1-9112-9a571f85c595',ARRAY['7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/composer-drafts/6fcfe5a3-1f44-28a1-9112-9a571f85c595.jpg'],'synthetic'); SELECT finish_composer_upload('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','6fcfe5a3-1f44-28a1-9112-9a571f85c595'); COMMIT; SELECT count(*) AS intents FROM composer_upload_intents WHERE owner_id='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090';",
+    "WITH ids AS (SELECT gen_random_uuid() AS id, n FROM generate_series(1,3) n), operations AS (\n INSERT INTO public.composer_upload_intents(id,owner_id,state,storage_paths,content_digest)\n SELECT id,'7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','ready',ARRAY['7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/composer-drafts/'||id::text||'.jpg'],'synthetic' FROM ids\n RETURNING id,storage_paths[1] AS path\n), cards AS (\n INSERT INTO public.posts(author_id,content,visibility,post_status,postcard_draft_state,postcard_requested_visibility,postcard_draft_operation_id)\n SELECT '7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','Synthetic private postcard','private','draft','draft','private',gen_random_uuid() FROM generate_series(1,2)\n RETURNING id\n)\nSELECT (SELECT jsonb_agg(operations) FROM operations) AS operations,(SELECT jsonb_agg(cards) FROM cards) AS cards;"
+  ],
+  "cases": [
+    {
+      "case": "publication wins, cancellation waits",
+      "elapsedTotalMs": 22171,
+      "a": [
+        {
+          "state": "published",
+          "post_id": "85f9c90d-cf1b-a75d-7c34-ee13065462ec"
+        }
+      ],
+      "b": {
+        "error": {
+          "name": "HttpException",
+          "message": "Failed to run sql query: ERROR:  22012: division by zero\n"
+        }
+      },
+      "queries": [
+        "BEGIN; SET LOCAL statement_timeout='25s'; SET LOCAL application_name='codex4028_04237ceb_pub2'; SELECT public.commit_composer_post('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','{\"id\":\"85f9c90d-cf1b-a75d-7c34-ee13065462ec\",\"author_id\":\"7ae0c2e6-4e07-cf6b-a481-e58c08a2e090\",\"content\":\"Synthetic atomic publication proof\",\"visibility\":\"private\",\"post_status\":\"published\",\"composer_upload_operation_id\":\"2a21c3e8-d37b-8b0e-7988-e694873a076c\"}'::jsonb,'[{\"post_id\":\"85f9c90d-cf1b-a75d-7c34-ee13065462ec\",\"user_id\":\"7ae0c2e6-4e07-cf6b-a481-e58c08a2e090\",\"media_type\":\"image\",\"storage_bucket\":\"post-media\",\"storage_path\":\"7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/composer-drafts/2a21c3e8-d37b-8b0e-7988-e694873a076c.jpg\",\"public_url\":\"post-media/7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/composer-drafts/2a21c3e8-d37b-8b0e-7988-e694873a076c.jpg\",\"mime_type\":\"image/jpeg\",\"processing_status\":\"ready\",\"moderation_status\":\"pending\",\"sort_order\":0}]'::jsonb); SELECT pg_advisory_xact_lock(40280102); SELECT pg_sleep(12); COMMIT; SELECT state,post_id FROM public.composer_upload_intents WHERE id='2a21c3e8-d37b-8b0e-7988-e694873a076c';",
+        "WITH before AS MATERIALIZED (SELECT clock_timestamp() AS started,(SELECT pid FROM pg_locks WHERE locktype='advisory' AND classid=0 AND objid=40280102 AND granted LIMIT 1) AS publisher_pid), action AS MATERIALIZED (SELECT 1/(publisher_pid IS NOT NULL)::int AS observed_lock,public.cancel_composer_upload('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','2a21c3e8-d37b-8b0e-7988-e694873a076c') AS cancellation FROM before) SELECT cancellation,observed_lock,publisher_pid,pg_backend_pid() AS cancellation_pid,extract(epoch FROM clock_timestamp()-started)*1000 AS elapsed_ms FROM action CROSS JOIN before;"
+      ]
+    },
+    {
+      "case": "cron-backed publication wins",
+      "result": [
+        {
+          "evidence": {
+            "case": "publication wins cancellation waits",
+            "state": "published",
+            "result": {
+              "ok": false,
+              "error": "already_published"
+            },
+            "elapsed_ms": 7537.281,
+            "post_count": 1,
+            "publisher_pid": 1355330,
+            "attachment_count": 1,
+            "cancellation_pid": 1355348
+          }
+        }
+      ],
+      "queries": [
+        "BEGIN; SELECT cron.unschedule('codex4028_04237ceb_publish'); COMMIT; BEGIN; SET LOCAL statement_timeout='40s'; SET LOCAL application_name='codex4028_04237ceb_publish'; SELECT public.commit_composer_post('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','{\"id\":\"a6d2adda-363d-9ce2-5f4b-d3457588fbf2\",\"author_id\":\"7ae0c2e6-4e07-cf6b-a481-e58c08a2e090\",\"content\":\"Synthetic atomic publication proof\",\"visibility\":\"private\",\"post_status\":\"published\",\"composer_upload_operation_id\":\"ca1384a0-aba9-f201-108a-0482d7bd1713\"}'::jsonb,'[{\"post_id\":\"a6d2adda-363d-9ce2-5f4b-d3457588fbf2\",\"user_id\":\"7ae0c2e6-4e07-cf6b-a481-e58c08a2e090\",\"storage_path\":\"7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/composer-drafts/ca1384a0-aba9-f201-108a-0482d7bd1713.jpg\",\"media_type\":\"image\",\"storage_bucket\":\"post-media\",\"public_url\":\"7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/composer-drafts/ca1384a0-aba9-f201-108a-0482d7bd1713.jpg\",\"mime_type\":\"image/jpeg\",\"processing_status\":\"ready\",\"moderation_status\":\"pending\",\"sort_order\":0}]'::jsonb); SELECT pg_advisory_xact_lock(40280103); SELECT pg_sleep(25); COMMIT;",
+        "DO $test$ DECLARE a_pid integer; started timestamptz; result jsonb; attempts integer:=0; BEGIN\n LOOP SELECT pid INTO a_pid FROM pg_locks WHERE locktype='advisory' AND classid=0 AND objid=40280103 AND granted LIMIT 1; EXIT WHEN a_pid IS NOT NULL; attempts:=attempts+1; IF attempts>100 THEN RAISE EXCEPTION 'test_connection_not_observed'; END IF; PERFORM pg_sleep(0.1); END LOOP;\n started:=clock_timestamp();\n result:=public.cancel_composer_upload('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','ca1384a0-aba9-f201-108a-0482d7bd1713');\n PERFORM set_config('rumazi.ci_race_result',jsonb_build_object('case','publication wins cancellation waits','publisher_pid',a_pid,'cancellation_pid',pg_backend_pid(),'elapsed_ms',extract(epoch from clock_timestamp()-started)*1000,'result',result,'state',(SELECT state FROM public.composer_upload_intents WHERE id='ca1384a0-aba9-f201-108a-0482d7bd1713'),'post_count',(SELECT count(*) FROM public.posts WHERE id='a6d2adda-363d-9ce2-5f4b-d3457588fbf2'),'attachment_count',(SELECT count(*) FROM public.post_media WHERE post_id='a6d2adda-363d-9ce2-5f4b-d3457588fbf2'))::text,true);\nEND;$test$; SELECT current_setting('rumazi.ci_race_result')::jsonb AS evidence;"
+      ]
+    },
+    {
+      "case": "cron-backed cancellation wins",
+      "result": [
+        {
+          "evidence": {
+            "case": "cancellation wins publication waits",
+            "state": "cancelled",
+            "result": {
+              "error": "draft_upload_unavailable",
+              "sqlstate": "P0001"
+            },
+            "elapsed_ms": 9126.454,
+            "post_count": 0,
+            "publisher_pid": 1355353,
+            "attachment_count": 0,
+            "cancellation_pid": 1355352
+          }
+        }
+      ],
+      "queries": [
+        "BEGIN; SELECT cron.unschedule('codex4028_04237ceb_cancel'); COMMIT; BEGIN; SET LOCAL statement_timeout='40s'; SET LOCAL application_name='codex4028_04237ceb_cancel'; SELECT public.cancel_composer_upload('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','6fcfe5a3-1f44-28a1-9112-9a571f85c595'); SELECT pg_advisory_xact_lock(40280104); SELECT pg_sleep(25); COMMIT;",
+        "DO $test$ DECLARE a_pid integer; started timestamptz; result jsonb; attempts integer:=0; BEGIN\n LOOP SELECT pid INTO a_pid FROM pg_locks WHERE locktype='advisory' AND classid=0 AND objid=40280104 AND granted LIMIT 1; EXIT WHEN a_pid IS NOT NULL; attempts:=attempts+1; IF attempts>100 THEN RAISE EXCEPTION 'test_connection_not_observed'; END IF; PERFORM pg_sleep(0.1); END LOOP;\n started:=clock_timestamp(); BEGIN result:=public.commit_composer_post('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','{\"id\":\"ac39afe4-2c11-e1a3-1cbc-47a852bcbc4f\",\"author_id\":\"7ae0c2e6-4e07-cf6b-a481-e58c08a2e090\",\"content\":\"Synthetic cancelled publication proof\",\"visibility\":\"private\",\"post_status\":\"published\",\"composer_upload_operation_id\":\"6fcfe5a3-1f44-28a1-9112-9a571f85c595\"}'::jsonb,'[{\"post_id\":\"ac39afe4-2c11-e1a3-1cbc-47a852bcbc4f\",\"user_id\":\"7ae0c2e6-4e07-cf6b-a481-e58c08a2e090\",\"storage_path\":\"7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/composer-drafts/6fcfe5a3-1f44-28a1-9112-9a571f85c595.jpg\",\"media_type\":\"image\",\"storage_bucket\":\"post-media\",\"public_url\":\"7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/composer-drafts/6fcfe5a3-1f44-28a1-9112-9a571f85c595.jpg\",\"mime_type\":\"image/jpeg\",\"processing_status\":\"ready\",\"moderation_status\":\"pending\",\"sort_order\":0}]'::jsonb); EXCEPTION WHEN OTHERS THEN result:=jsonb_build_object('error',SQLERRM,'sqlstate',SQLSTATE); END;\n PERFORM set_config('rumazi.ci_race_result',jsonb_build_object('case','cancellation wins publication waits','cancellation_pid',a_pid,'publisher_pid',pg_backend_pid(),'elapsed_ms',extract(epoch from clock_timestamp()-started)*1000,'result',result,'state',(SELECT state FROM public.composer_upload_intents WHERE id='6fcfe5a3-1f44-28a1-9112-9a571f85c595'),'post_count',(SELECT count(*) FROM public.posts WHERE id='ac39afe4-2c11-e1a3-1cbc-47a852bcbc4f'),'attachment_count',(SELECT count(*) FROM public.post_media WHERE post_id='ac39afe4-2c11-e1a3-1cbc-47a852bcbc4f'))::text,true);\nEND;$test$; SELECT current_setting('rumazi.ci_race_result')::jsonb AS evidence;"
+      ]
+    },
+    {
+      "case": "canonical writer wins",
+      "result": [
+        {
+          "evidence": {
+            "case": "canonical writer commits before cancellation",
+            "intent": {
+              "state": "cancelled",
+              "cleanup_pending": true
+            },
+            "result": {
+              "ok": true
+            },
+            "elapsed_ms": 10620.591,
+            "writer_pid": 1355379,
+            "canonical_count": 1,
+            "cancellation_pid": 1355381,
+            "late_write_error": "draft_upload_unavailable",
+            "captions_retained": 0
+          }
+        }
+      ],
+      "queries": [
+        "BEGIN; SELECT cron.unschedule('codex4028_04237ceb_asset'); COMMIT; BEGIN; SET LOCAL statement_timeout='40s'; SET LOCAL application_name='codex4028_04237ceb_asset'; INSERT INTO public.media_assets(owner_user_id,uploader_user_id,storage_bucket,storage_path,media_type,mime_type,visibility) VALUES('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','post-media','7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/composer-drafts/40a71ae9-83be-4e4e-bfb7-e3bd98bba803.jpg','image','image/jpeg','private'); SELECT pg_advisory_xact_lock(40280105); SELECT pg_sleep(25); COMMIT;",
+        "DO $test$ DECLARE a_pid integer; started timestamptz; result jsonb; late_error text; attempts integer:=0; BEGIN\n LOOP SELECT pid INTO a_pid FROM pg_locks WHERE locktype='advisory' AND classid=0 AND objid=40280105 AND granted LIMIT 1; EXIT WHEN a_pid IS NOT NULL; attempts:=attempts+1; IF attempts>100 THEN RAISE EXCEPTION 'test_connection_not_observed'; END IF; PERFORM pg_sleep(0.1); END LOOP;\n started:=clock_timestamp(); result:=public.cancel_composer_upload('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','40a71ae9-83be-4e4e-bfb7-e3bd98bba803');\n BEGIN UPDATE public.media_assets SET caption='Synthetic late update' WHERE storage_path='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/composer-drafts/40a71ae9-83be-4e4e-bfb7-e3bd98bba803.jpg'; EXCEPTION WHEN OTHERS THEN late_error:=SQLERRM; END;\n PERFORM set_config('rumazi.ci_race_result',jsonb_build_object('case','canonical writer commits before cancellation','writer_pid',a_pid,'cancellation_pid',pg_backend_pid(),'elapsed_ms',extract(epoch from clock_timestamp()-started)*1000,'result',result,'late_write_error',late_error,'intent',(SELECT jsonb_build_object('state',state,'cleanup_pending',cleanup_pending) FROM public.composer_upload_intents WHERE id='40a71ae9-83be-4e4e-bfb7-e3bd98bba803'),'canonical_count',(SELECT count(*) FROM public.media_assets WHERE storage_path='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/composer-drafts/40a71ae9-83be-4e4e-bfb7-e3bd98bba803.jpg'),'captions_retained',(SELECT count(*) FROM public.media_assets WHERE storage_path='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/composer-drafts/40a71ae9-83be-4e4e-bfb7-e3bd98bba803.jpg' AND caption IS NOT NULL))::text,true);\nEND;$test$; SELECT current_setting('rumazi.ci_race_result')::jsonb AS evidence;"
+      ]
+    },
+    {
+      "case": "cancellation wins canonical writer",
+      "result": [
+        {
+          "evidence": {
+            "case": "cancellation wins canonical writer waits",
+            "intent": {
+              "state": "cancelled",
+              "cleanup_pending": true
+            },
+            "result": {
+              "error": "draft_upload_unavailable",
+              "sqlstate": "P0001"
+            },
+            "elapsed_ms": 11210.177,
+            "writer_pid": 1355386,
+            "canonical_count": 0,
+            "cancellation_pid": 1355385
+          }
+        }
+      ],
+      "queries": [
+        "BEGIN; SELECT cron.unschedule('codex4028_04237ceb_asset_cancel'); COMMIT; BEGIN; SET LOCAL statement_timeout='40s'; SET LOCAL application_name='codex4028_04237ceb_asset_cancel'; SELECT public.cancel_composer_upload('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','d409e3f1-283a-409f-8bf3-dbe8e1b7fbb5'); SELECT pg_advisory_xact_lock(40280106); SELECT pg_sleep(25); COMMIT;",
+        "DO $test$ DECLARE a_pid integer; started timestamptz; result jsonb; attempts integer:=0; BEGIN\n LOOP SELECT pid INTO a_pid FROM pg_locks WHERE locktype='advisory' AND classid=0 AND objid=40280106 AND granted LIMIT 1; EXIT WHEN a_pid IS NOT NULL; attempts:=attempts+1; IF attempts>100 THEN RAISE EXCEPTION 'test_connection_not_observed'; END IF; PERFORM pg_sleep(0.1); END LOOP;\n started:=clock_timestamp(); BEGIN INSERT INTO public.media_assets(owner_user_id,uploader_user_id,storage_bucket,storage_path,media_type,mime_type,visibility) VALUES('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','post-media','7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/composer-drafts/d409e3f1-283a-409f-8bf3-dbe8e1b7fbb5.jpg','image','image/jpeg','private'); result:=jsonb_build_object('inserted',true); EXCEPTION WHEN OTHERS THEN result:=jsonb_build_object('error',SQLERRM,'sqlstate',SQLSTATE); END;\n PERFORM set_config('rumazi.ci_race_result',jsonb_build_object('case','cancellation wins canonical writer waits','cancellation_pid',a_pid,'writer_pid',pg_backend_pid(),'elapsed_ms',extract(epoch from clock_timestamp()-started)*1000,'result',result,'intent',(SELECT jsonb_build_object('state',state,'cleanup_pending',cleanup_pending) FROM public.composer_upload_intents WHERE id='d409e3f1-283a-409f-8bf3-dbe8e1b7fbb5'),'canonical_count',(SELECT count(*) FROM public.media_assets WHERE storage_path='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/composer-drafts/d409e3f1-283a-409f-8bf3-dbe8e1b7fbb5.jpg'))::text,true);\nEND;$test$; SELECT current_setting('rumazi.ci_race_result')::jsonb AS evidence;"
+      ]
+    },
+    {
+      "case": "actual schema sequential boundaries",
+      "result": [
+        {
+          "evidence": {
+            "retry": {
+              "id": "1620ff3a-9c5e-43b8-8f6d-429da70ff4a8",
+              "repeated": false
+            },
+            "post_count": 1,
+            "repeat_cancel": {
+              "ok": true
+            },
+            "attachment_count": 1,
+            "finish_after_cancel": {
+              "ok": false,
+              "error": "draft_cancelled"
+            },
+            "reserve_after_cancel": {
+              "ok": false,
+              "error": "draft_cancelled"
+            },
+            "response_loss_replay": {
+              "id": "1620ff3a-9c5e-43b8-8f6d-429da70ff4a8",
+              "repeated": true
+            },
+            "cancel_after_published": {
+              "ok": false,
+              "error": "already_published"
+            },
+            "draft_projections_rejected": 2,
+            "attachment_failure_rollback": {
+              "post_count": 0,
+              "intent_state": "ready",
+              "attachment_count": 0,
+              "attachment_constraint": "new row for relation \"post_media\" violates check constraint \"post_media_media_type_check\""
+            }
+          }
+        }
+      ],
+      "queries": [
+        "DO $test$ DECLARE c uuid; failed jsonb; bad text; result jsonb; replay jsonb; post_key uuid:=gen_random_uuid(); payload jsonb; media jsonb; guarded integer:=0; BEGIN\n FOREACH c IN ARRAY ARRAY['f9e6195d-2709-4b30-b849-285e01a93ba6'::uuid,'112b40ca-2b87-4574-8265-a7805aab0462'::uuid] LOOP\n  BEGIN INSERT INTO public.passport_postcards(post_id,user_id,caption,visibility) VALUES(c,'7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','Synthetic must remain private','private'); RAISE EXCEPTION 'draft_projection_was_allowed';\n  EXCEPTION WHEN OTHERS THEN IF SQLERRM<>'postcard_not_published' THEN RAISE; END IF; guarded:=guarded+1; END;\n  INSERT INTO public.post_media(post_id,user_id,media_type,storage_bucket,storage_path,public_url,mime_type,processing_status,moderation_status,sort_order)\n  VALUES(c,'7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','image','post-media','7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/synthetic/'||c::text||'.jpg','7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/synthetic/'||c::text||'.jpg','image/jpeg','ready','pending',0);\n  result:=public.publish_postcard_draft('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090',c); IF result->>'ok'<>'true' THEN RAISE EXCEPTION 'postcard_publish_failed'; END IF;\n END LOOP;\n payload:=jsonb_build_object('id',post_key,'author_id','7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','content','Synthetic rollback proof','visibility','private','post_status','published','composer_upload_operation_id','2e32e2df-6dbf-46d2-9237-6f34d073739d');\n media:=jsonb_build_array(jsonb_build_object('post_id',post_key,'user_id','7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','storage_bucket','post-media','storage_path','7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/composer-drafts/2e32e2df-6dbf-46d2-9237-6f34d073739d.jpg','public_url','7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/composer-drafts/2e32e2df-6dbf-46d2-9237-6f34d073739d.jpg','media_type','invalid-test-type','mime_type','image/jpeg','processing_status','ready','moderation_status','pending','sort_order',0));\n BEGIN result:=public.commit_composer_post('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090',payload,media); RAISE EXCEPTION 'invalid_attachment_committed';\n EXCEPTION WHEN check_violation THEN bad:=SQLERRM; END;\n IF EXISTS(SELECT 1 FROM public.posts WHERE id=post_key) OR EXISTS(SELECT 1 FROM public.post_media WHERE post_id=post_key) OR (SELECT state FROM public.composer_upload_intents WHERE id='2e32e2df-6dbf-46d2-9237-6f34d073739d')<>'ready' THEN RAISE EXCEPTION 'atomic_rollback_failed'; END IF;\n failed:=jsonb_build_object('attachment_constraint',bad,'post_count',0,'attachment_count',0,'intent_state','ready');\n media:=jsonb_set(media,'{0,media_type}','\"image\"'); result:=public.commit_composer_post('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090',payload,media);\n replay:=public.commit_composer_post('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090',jsonb_set(payload,'{id}',to_jsonb(gen_random_uuid())),media);\n IF result->>'repeated'<>'false' OR replay->>'repeated'<>'true' OR result->>'id'<>replay->>'id' THEN RAISE EXCEPTION 'publication_replay_failed'; END IF;\n IF (SELECT count(*) FROM public.post_media WHERE post_id=post_key)<>1 THEN RAISE EXCEPTION 'duplicate_attachments'; END IF;\n PERFORM set_config('rumazi.ci_sequential_result',jsonb_build_object('draft_projections_rejected',guarded,'attachment_failure_rollback',failed,'retry',result,'response_loss_replay',replay,'post_count',1,'attachment_count',1,'cancel_after_published',public.cancel_composer_upload('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','2e32e2df-6dbf-46d2-9237-6f34d073739d'),'repeat_cancel',public.cancel_composer_upload('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','6fcfe5a3-1f44-28a1-9112-9a571f85c595'),'finish_after_cancel',public.finish_composer_upload('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','6fcfe5a3-1f44-28a1-9112-9a571f85c595'),'reserve_after_cancel',public.reserve_composer_upload('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','6fcfe5a3-1f44-28a1-9112-9a571f85c595',ARRAY['7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/composer-drafts/6fcfe5a3-1f44-28a1-9112-9a571f85c595.jpg'],'synthetic'))::text,true);\nEND;$test$; SELECT current_setting('rumazi.ci_sequential_result')::jsonb AS evidence;"
+      ]
+    },
+    {
+      "case": "projection wins before cancellation",
+      "result": [
+        {
+          "evidence": {
+            "case": "projection commits before cancellation",
+            "result": {
+              "ok": true,
+              "absent": false
+            },
+            "lifecycle": "cancelled",
+            "elapsed_ms": 11440.952,
+            "writer_pid": 1356037,
+            "cancellation_pid": 1356057,
+            "projection_count": 0,
+            "published_media_count": 0
+          }
+        }
+      ],
+      "queries": [
+        "BEGIN; SELECT cron.unschedule('codex4028_04237ceb_projection'); COMMIT; BEGIN; SET LOCAL statement_timeout='40s'; SET LOCAL application_name='codex4028_04237ceb_projection'; INSERT INTO public.passport_postcards(post_id,user_id,caption,visibility) VALUES('f9e6195d-2709-4b30-b849-285e01a93ba6','7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','Synthetic projected caption','private'); SELECT pg_advisory_xact_lock(40280107); SELECT pg_sleep(25); COMMIT;",
+        "DO $test$ DECLARE a_pid integer; started timestamptz; result jsonb; attempts integer:=0; BEGIN\n LOOP SELECT pid INTO a_pid FROM pg_locks WHERE locktype='advisory' AND classid=0 AND objid=40280107 AND granted LIMIT 1; EXIT WHEN a_pid IS NOT NULL; attempts:=attempts+1; IF attempts>100 THEN RAISE EXCEPTION 'test_connection_not_observed'; END IF; PERFORM pg_sleep(0.1); END LOOP;\n started:=clock_timestamp(); result:=public.cancel_postcard_draft('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','f9e6195d-2709-4b30-b849-285e01a93ba6');\n PERFORM set_config('rumazi.ci_race_result',jsonb_build_object('case','projection commits before cancellation','writer_pid',a_pid,'cancellation_pid',pg_backend_pid(),'elapsed_ms',extract(epoch from clock_timestamp()-started)*1000,'result',result,'lifecycle',(SELECT postcard_draft_state FROM public.posts WHERE id='f9e6195d-2709-4b30-b849-285e01a93ba6'),'projection_count',(SELECT count(*) FROM public.passport_postcards WHERE post_id='f9e6195d-2709-4b30-b849-285e01a93ba6'),'published_media_count',(SELECT count(*) FROM public.post_media WHERE post_id='f9e6195d-2709-4b30-b849-285e01a93ba6' AND processing_status='ready'))::text,true);\nEND;$test$; SELECT current_setting('rumazi.ci_race_result')::jsonb AS evidence;"
+      ]
+    },
+    {
+      "case": "cancellation wins projection",
+      "result": [
+        {
+          "evidence": {
+            "case": "cancellation wins projection waits",
+            "result": {
+              "error": "postcard_not_published",
+              "sqlstate": "P0001"
+            },
+            "lifecycle": "cancelled",
+            "elapsed_ms": 12528.766,
+            "writer_pid": 1356062,
+            "cancellation_pid": 1356060,
+            "projection_count": 0
+          }
+        }
+      ],
+      "queries": [
+        "BEGIN; SELECT cron.unschedule('codex4028_04237ceb_projection_cancel'); COMMIT; BEGIN; SET LOCAL statement_timeout='40s'; SET LOCAL application_name='codex4028_04237ceb_projection_cancel'; SELECT public.cancel_postcard_draft('7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','112b40ca-2b87-4574-8265-a7805aab0462'); SELECT pg_advisory_xact_lock(40280108); SELECT pg_sleep(25); COMMIT;",
+        "DO $test$ DECLARE a_pid integer; started timestamptz; result jsonb; attempts integer:=0; BEGIN\n LOOP SELECT pid INTO a_pid FROM pg_locks WHERE locktype='advisory' AND classid=0 AND objid=40280108 AND granted LIMIT 1; EXIT WHEN a_pid IS NOT NULL; attempts:=attempts+1; IF attempts>100 THEN RAISE EXCEPTION 'test_connection_not_observed'; END IF; PERFORM pg_sleep(0.1); END LOOP;\n started:=clock_timestamp(); BEGIN INSERT INTO public.passport_postcards(post_id,user_id,caption,visibility) VALUES('112b40ca-2b87-4574-8265-a7805aab0462','7ae0c2e6-4e07-cf6b-a481-e58c08a2e090','Synthetic late projected caption','private'); result:=jsonb_build_object('inserted',true); EXCEPTION WHEN OTHERS THEN result:=jsonb_build_object('error',SQLERRM,'sqlstate',SQLSTATE); END;\n PERFORM set_config('rumazi.ci_race_result',jsonb_build_object('case','cancellation wins projection waits','cancellation_pid',a_pid,'writer_pid',pg_backend_pid(),'elapsed_ms',extract(epoch from clock_timestamp()-started)*1000,'result',result,'lifecycle',(SELECT postcard_draft_state FROM public.posts WHERE id='112b40ca-2b87-4574-8265-a7805aab0462'),'projection_count',(SELECT count(*) FROM public.passport_postcards WHERE post_id='112b40ca-2b87-4574-8265-a7805aab0462'))::text,true);\nEND;$test$; SELECT current_setting('rumazi.ci_race_result')::jsonb AS evidence;"
+      ]
+    }
+  ],
+  "beforeCleanup": {
+    "query": "SELECT jsonb_build_object(\n 'checked_at',clock_timestamp(),\n 'job_runs',(SELECT jsonb_agg(jsonb_build_object('jobid',jobid,'status',status,'return_message',return_message,'start_time',start_time,'end_time',end_time)) FROM cron.job_run_details WHERE jobid=ANY(ARRAY[2,3,4,5,6,7]::bigint[])),\n 'remaining_jobs',(SELECT count(*) FROM cron.job WHERE jobname LIKE 'codex4028_04237ceb%'),\n 'remaining_test_sessions',(SELECT count(*) FROM pg_stat_activity WHERE application_name LIKE 'codex4028_04237ceb%'),\n 'intents',(SELECT count(*) FROM public.composer_upload_intents WHERE owner_id='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090'),\n 'posts',(SELECT count(*) FROM public.posts WHERE author_id='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090'),\n 'media',(SELECT count(*) FROM public.post_media WHERE user_id='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090'),\n 'canonical',(SELECT count(*) FROM public.media_assets WHERE owner_user_id='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090'),\n 'projections',(SELECT count(*) FROM public.passport_postcards WHERE user_id='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090'),\n 'bucket_private',(SELECT NOT public FROM storage.buckets WHERE id='post-media'),\n 'intent_rls',(SELECT relrowsecurity FROM pg_class WHERE oid='public.composer_upload_intents'::regclass),\n 'authenticated_intent_read',has_table_privilege('authenticated','public.composer_upload_intents','SELECT'),\n 'authenticated_commit',has_function_privilege('authenticated','public.commit_composer_post(uuid,jsonb,jsonb)','EXECUTE')\n) AS evidence;",
+    "evidence": [
+      {
+        "evidence": {
+          "media": 6,
+          "posts": 6,
+          "intents": 7,
+          "job_runs": [
+            {
+              "jobid": 7,
+              "status": "failed",
+              "end_time": "2026-11-13T20:55:48.078388+00:00",
+              "start_time": "2026-11-13T20:55:46.075222+00:00",
+              "return_message": "job canceled"
+            },
+            {
+              "jobid": 5,
+              "status": "failed",
+              "end_time": "2026-11-13T20:53:58.095568+00:00",
+              "start_time": "2026-11-13T20:53:56.092513+00:00",
+              "return_message": "job canceled"
+            },
+            {
+              "jobid": 6,
+              "status": "failed",
+              "end_time": "2026-11-13T20:55:10.028445+00:00",
+              "start_time": "2026-11-13T20:55:08.025353+00:00",
+              "return_message": "job canceled"
+            },
+            {
+              "jobid": 2,
+              "status": "failed",
+              "end_time": "2026-11-13T20:51:08.022861+00:00",
+              "start_time": "2026-11-13T20:51:06.018734+00:00",
+              "return_message": "job canceled"
+            },
+            {
+              "jobid": 3,
+              "status": "failed",
+              "end_time": "2026-11-13T20:52:00.000816+00:00",
+              "start_time": "2026-11-13T20:51:58.084403+00:00",
+              "return_message": "job canceled"
+            },
+            {
+              "jobid": 4,
+              "status": "failed",
+              "end_time": "2026-11-13T20:53:20.043244+00:00",
+              "start_time": "2026-11-13T20:53:18.040147+00:00",
+              "return_message": "job canceled"
+            }
+          ],
+          "canonical": 1,
+          "checked_at": "2026-11-13T20:56:34.291112+00:00",
+          "intent_rls": true,
+          "projections": 0,
+          "bucket_private": true,
+          "remaining_jobs": 0,
+          "authenticated_commit": false,
+          "remaining_test_sessions": 0,
+          "authenticated_intent_read": false
+        }
+      }
+    ]
+  },
+  "cleanup": {
+    "query": "BEGIN;\nSET LOCAL statement_timeout='20s';\nSELECT cron.unschedule(jobid) FROM cron.job WHERE jobname LIKE 'codex4028_04237ceb%';\nDELETE FROM public.passport_postcards WHERE user_id='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090';\nDELETE FROM public.post_media WHERE user_id='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090';\nDELETE FROM public.media_assets WHERE owner_user_id='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090';\nDELETE FROM public.posts WHERE author_id='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090';\nDELETE FROM public.composer_upload_intents WHERE owner_id='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090';\nDELETE FROM public.profiles WHERE id='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090' AND handle='codex4028_04237ceb';\nDELETE FROM auth.users WHERE id='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090';\nDELETE FROM cron.job_run_details WHERE jobid=ANY(ARRAY[2,3,4,5,6,7]::bigint[]);\nCOMMIT;\nSELECT jsonb_build_object('checked_at',clock_timestamp(),\n'auth',(SELECT count(*) FROM auth.users WHERE id='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090'),\n'profile',(SELECT count(*) FROM public.profiles WHERE id='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090'),\n'intents',(SELECT count(*) FROM public.composer_upload_intents WHERE owner_id='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090'),\n'posts',(SELECT count(*) FROM public.posts WHERE author_id='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090'),\n'post_media',(SELECT count(*) FROM public.post_media WHERE user_id='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090'),\n'media_assets',(SELECT count(*) FROM public.media_assets WHERE owner_user_id='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090'),\n'passport_projections',(SELECT count(*) FROM public.passport_postcards WHERE user_id='7ae0c2e6-4e07-cf6b-a481-e58c08a2e090'),\n'storage_objects',(SELECT count(*) FROM storage.objects WHERE bucket_id='post-media' AND name LIKE '7ae0c2e6-4e07-cf6b-a481-e58c08a2e090/%'),\n'cron_jobs',(SELECT count(*) FROM cron.job WHERE jobname LIKE 'codex4028_04237ceb%'),\n'cron_history',(SELECT count(*) FROM cron.job_run_details WHERE jobid=ANY(ARRAY[2,3,4,5,6,7]::bigint[])),\n'test_sessions',(SELECT count(*) FROM pg_stat_activity WHERE application_name LIKE 'codex4028_04237ceb%')) AS cleanup;",
+    "evidence": [
+      {
+        "cleanup": {
+          "auth": 0,
+          "posts": 0,
+          "intents": 0,
+          "profile": 0,
+          "cron_jobs": 0,
+          "checked_at": "2026-11-13T23:18:58.069255+00:00",
+          "post_media": 0,
+          "cron_history": 0,
+          "media_assets": 0,
+          "test_sessions": 0,
+          "storage_objects": 0,
+          "passport_projections": 0
+        }
+      }
+    ],
+    "execution": "Root executed exact SQL after child connector confirmation expired; child independently verified the resulting zero counts.",
+    "rootReportedAt": "2026-11-13T23:18:31.395592Z"
+  },
+  "cleanupAttempts": [
+    {
+      "status": "expired",
+      "message": "This confirmation expired after 2 minutes. Call `execute_sql` again to get a new confirmation."
+    },
+    {
+      "status": "expired",
+      "message": "This confirmation expired after 2 minutes. Call `execute_sql` again to get a new confirmation."
+    }
+  ],
+  "productionRolloutReportedByRoot": {
+    "migrationVersion": "20261113220440",
+    "ledgerAppliedAt": "2026-11-13T22:04:55.669002Z",
+    "catalogCapturedAt": "2026-11-13T22:05:19Z",
+    "apiClientDeployed": false,
+    "privateBucketVerified": true,
+    "rlsVerified": true,
+    "clientRpcAccess": false,
+    "serviceCommitAccess": true,
+    "higgsfieldEnabled": false
+  },
+  "remaining": [
+    "API/client activation and real storage-byte access tests",
+    "Physical-device restart/termination/background-upload and accessibility checks",
+    "Hosted Sentry export verification"
+  ],
+  "replayNote": "Each case retains the exact background command and foreground assertion SQL. Fixture identifiers and setup data are synthetic. These are evidence queries, not an unattended reusable test runner; new runs must use fresh fixture IDs, wrap foreground GUC evidence queries in a transaction, unschedule jobs and perform cleanup in a guaranteed finally path."
+}

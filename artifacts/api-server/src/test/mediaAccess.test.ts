@@ -37,6 +37,7 @@ interface FakeState {
   tripMembers?: any[];
   closeFriends?: any[];
   mediaAssets?: any[];
+  composerUploads?: any[];
   // profile-media authorization
   profiles?: any[];
   profilePrivacySettings?: any[];
@@ -126,6 +127,7 @@ function makeClient(state: FakeState = {}) {
       table === "trip_members" ? state.tripMembers ?? [] :
       table === "close_friends" ? state.closeFriends ?? [] :
       table === "media_assets" ? state.mediaAssets ?? [] :
+      table === "composer_upload_intents" ? state.composerUploads ?? [] :
       table === "profiles" ? state.profiles ?? [] :
       table === "profile_privacy_settings" ? state.profilePrivacySettings ?? [] :
       table === "user_account_states" ? state.userAccountStates ?? [] :
@@ -1841,5 +1843,35 @@ describe("census-media §28.8 — an unreadable header setting masks with the ge
     const r = await req("GET", `/api/media/file/post-media/${hero}`);
     assert.equal(r.status, 302);
     assert.ok(r.location?.includes("generic"), `an unreadable setting must mask, got: ${r.location}`);
+  });
+});
+
+
+describe("composer private uploads and cancellation", () => {
+  const postId = "b2000000-0000-4000-a000-000000000001";
+  const path = `${OWNER}/composer-drafts/upload.jpg`;
+  const publicPost = { id: postId, author_id: OWNER, visibility: "public", post_status: "published", status: "active", media_urls: [pub(path)] };
+  it("a guessed attachment cannot expose an uploading or saved draft; cancelled bytes deny their owner too", async () => {
+    for (const state of ["uploading", "ready", "cancelled"]) {
+      const sc = makeClient({ posts: [publicPost], composerUploads: [{owner_id: OWNER, state, storage_paths: [path]}] });
+      assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), false);
+      assert.equal(await authorizeMediaAccess(sc, OWNER, "post-media", path), state !== "cancelled");
+    }
+  });
+  it("missing or unreadable intent fails closed, and published files retain moderation and audience enforcement", async () => {
+    assert.equal(await authorizeMediaAccess(makeClient({posts:[publicPost]}), OWNER, "post-media", path),false);
+    assert.equal(await authorizeMediaAccess(makeClient({tableErrors:{composer_upload_intents:{message:"unavailable"}}}), OWNER, "post-media", path),false);
+    const sc=makeClient({posts:[publicPost],composerUploads:[{owner_id:OWNER,state:"published",storage_paths:[path]}]});
+    assert.equal(await authorizeMediaAccess(sc,VIEWER,"post-media",path),true);
+    const rejected=makeClient({posts:[publicPost],composerUploads:[{owner_id:OWNER,state:"ready",storage_paths:[path]}],mediaAssets:[{id:"asset",storage_bucket:"post-media",storage_path:path,owner_user_id:OWNER,moderation_status:"rejected"}]});
+    assert.equal(await authorizeMediaAccess(rejected,OWNER,"post-media",path),false);
+  });
+  it("postcard ready bytes are owner-only before publication and unavailable to everyone after discard",async()=>{
+    const cardPath=`${OWNER}/${postId}/media.jpg`;
+    for(const state of ["draft","cancelled","published"]){
+      const sc=makeClient({posts:[{...publicPost,postcard_draft_state:state,post_status:state==="published"?"published":"draft",visibility:state==="published"?"public":"private"}],postMedia:[{post_id:postId,storage_path:cardPath,processing_status:"ready",moderation_status:"approved"}]});
+      assert.equal(await authorizeMediaAccess(sc,VIEWER,"post-media",cardPath),state==="published");
+      assert.equal(await authorizeMediaAccess(sc,OWNER,"post-media",cardPath),state!=="cancelled");
+    }
   });
 });

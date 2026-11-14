@@ -1,5 +1,5 @@
 /**
- * Current registry: 73 schedulers; 25 reported, 13 durable, 46 with no trace.
+ * Current registry: 74 schedulers; 26 reported, 13 durable, 46 with no trace.
  * Which background schedulers this process starts, and how anyone could tell
  * whether each one is still running.
  *
@@ -91,6 +91,7 @@ export const STARTED_SCHEDULERS: readonly SchedulerRow[] = [
   { start: "startFxRefreshLoop" },
   { start: "startHealthMonitorLoop", persists: ["stamp_health_monitor"] }, { start: "startHighlightExpiryEventScheduler", reportedAs: ["highlightExpiryEvents"], persists: ["highlightExpiryEvents"] }, // census H157 (3677): reports and writes job_health, so the 45 holds; line-neutral
   { start: "startIntelAttributionScheduler" },
+  { start: "startHiggsfieldGenerationWorker", reportedAs: ["higgsfieldGeneration"] },
   { start: "startIntelCalibrationScheduler" },
   { start: "startIntelCoverageScheduler" },
   { start: "startIntelPatternScheduler" },

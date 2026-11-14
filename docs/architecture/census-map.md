@@ -1963,7 +1963,7 @@ database.
   (`` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:283#reference: resolved.reference,` ``,
   unchanged in position).
 - **What the key contains.** Every key the upload route mints starts with the
-  uploader's account id: `` `artifacts/api-server/src/routes/posts.ts:226#let basePath = ` ``.
+  uploader's account id: `` `artifacts/api-server/src/routes/posts.ts:231#let basePath = ` ``.
   The ownership proof depends on exactly that segment.
 - **What 3002 promised about this table.** Its contributor id is a rotating
   token, `` `artifacts/api-server/src/migrations/3002_intel_contribution_identity.sql:387#COMMENT ON COLUMN public.intel_evidence.actor_id IS` ``.
@@ -2003,11 +2003,11 @@ The task named `media_assets.id` as the preferred reference, if the asset
 exists at capture time. It is refused on both counts:
 
 - **It may not exist.** The upload route writes the canonical row
-  fire-and-forget, `` `artifacts/api-server/src/routes/posts.ts:283#canonicalModerationAtBirth(sc).then((atBirth) => recordMediaAssetDetailed(sc, { ...atBirth,` ``,
+  fire-and-forget, `` `artifacts/api-server/src/routes/posts.ts:301#const canonicalWrite = canonicalModerationAtBirth(sc).then(async atBirth => {` ``,
   and only while `media_canonical_enabled` is on.
 - **It is not opaque.** `media_assets.owner_user_id` is one join away for any
   reader of this table. The byte gate itself reads it
-  (`` `artifacts/api-server/src/lib/mediaAccess.ts:410#if ((asset as any).owner_user_id) owner = (asset as any).owner_user_id;` ``).
+  (`` `artifacts/api-server/src/lib/mediaAccess.ts:428#if ((asset as any).owner_user_id) owner = (asset as any).owner_user_id;` ``).
   That is the same re-identification, derivable instead of direct.
 
 ### §45.3 What was built
@@ -2067,7 +2067,7 @@ still the moderation and visibility decision the module reserves, and lane I's
 MD65 Question 5.
 
 **C. Account deletion finds the bytes again.** The collection step now calls
-`` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:664#collectOwnEvidenceObjectKeys(sc, userId, readAll)` ``.
+`` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:675#collectOwnEvidenceObjectKeys(sc, userId, readAll)` ``.
 That function reads the rows under every identity the account's rows may carry
 (`` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:642#for (const identity of identities.identities) {` ``)
 and opens each reference.
@@ -2078,7 +2078,7 @@ and opens each reference.
   orphaned.
 - A reference that does not open fails the step, and the receipt carries the
   warning:
-  `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:675#if (unopenable > 0) throw new Error(` ``.
+  `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:686#if (unopenable > 0) throw new Error(` ``.
 
 The edit is line-neutral. Every citation into the file below line 682 still
 lands on its line.
@@ -2645,7 +2645,7 @@ This supersedes §45.9 item 5 and the client clause in §45.5's option D.
   (`` `travel-buddy-standalone/src/components/map/MapContributionSheet.tsx:199#const mediaOffered = onRequestMedia != null` ``),
   so nothing is uploaded and no orphan object is created.
 - **The client type** gains the optional field:
-  `` `travel-buddy-standalone/src/services/intelConsent.ts:25#coversPhotoEvidence?: boolean;` ``.
+  `` `travel-buddy-standalone/src/services/intelConsent.ts:29#coversPhotoEvidence?: boolean;` ``.
 - **FAIL-CLOSED.** The step is withheld when the bit is false, absent (an
   older server), not a boolean, when the read returns nothing or throws, and
   when the grant is disabled or withdrawn. Until the read lands, it is hidden.
@@ -3602,7 +3602,7 @@ from movement history. Suppress precise location and route contributions inside 
 - **Consequence 2:** if that row is then refused (demo source, blocked or suspended submitter, wrong tab), the canonical
   place is not served either.
 - Separately, the feed merge drops a canonical place whose normalised name matches a curated row's
-  (`artifacts/api-server/src/routes/discovery.ts:1297#places: [...curatedRows, ...canonicalRows.filter(`).
+  (`artifacts/api-server/src/routes/discovery.ts:1276#places: [...curatedRows, ...canonicalRows.filter(`).
 - PR #790's 3920 copies the materialiser's precedence for the trend context.
 
 **Production, read 2026-10-24.**

@@ -255,7 +255,7 @@ describe("accountDeletion: an unreadable moderation_reports must not hard-delete
         update: (v: any) => builder(table, "update", v),
         upsert: async () => ({ data: null, error: null }),
       }),
-      rpc: async (fn: string, args: any) => { rpcCalls.push({ fn, args }); return { data: null, error: null }; },
+      rpc: async (fn: string, args: any) => { rpcCalls.push({ fn, args }); return { data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null }; },
       storage: { from: () => ({ remove: async () => ({ data: null, error: null }) }) },
       auth: { admin: { deleteUser: async () => ({ data: null, error: null }) } },
     };

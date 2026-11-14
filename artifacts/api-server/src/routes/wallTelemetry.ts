@@ -259,7 +259,7 @@ export function containsDisallowedKey(value: unknown, depth = 0): boolean {
 const batchSchema = z.object({
   events: z.array(z.unknown()).max(100),
   meta: z
-    .object({ schemaVersion: z.string().max(16).optional() })
+    .object({ schemaVersion: z.string().max(16).optional(), outcomeConsentAt: z.string().datetime({ offset: true }).optional() })
     .optional(),
 });
 
@@ -307,6 +307,7 @@ router.post(
     }
 
     const rows: Array<Record<string, unknown>> = [];
+    const outcomes: Array<Record<string, unknown>> = [];
     let dropped = 0;
     for (const raw of parsed.data.events) {
       const clean = sanitizeWallEvent(raw);
@@ -314,7 +315,8 @@ router.post(
         dropped += 1;
         continue;
       }
-      rows.push({
+      const destination = clean.name === 'wall_real_world_outcome' ? outcomes : rows;
+      destination.push({
         viewer_id: user.id, // stamped from the token; never from the body
         event_name: clean.name,
         schema_version: parsed.data.meta?.schemaVersion ?? "1.0",
@@ -322,18 +324,29 @@ router.post(
       });
     }
 
+    let accepted = 0;
     if (rows.length > 0) {
       const { error } = await sc.from("wall_telemetry_events").insert(rows);
-      if (error) {
-        req.log.warn({ err: error }, "wall/telemetry: event write failed");
-        // Still 200: a permanent write failure must not make the client retry
-        // the same batch forever.
-        res.json({ ok: true, accepted: 0, dropped });
-        return;
-      }
+      if (error) req.log.warn({ err: error }, "wall/telemetry: event write failed");
+      else accepted += rows.length;
     }
-
-    res.json({ ok: true, accepted: rows.length, dropped });
+    if (outcomes.length > 0) {
+      let admitted = 0;
+      if (parsed.data.meta?.outcomeConsentAt) {
+        try {
+          // Checks and locks the authoritative consent row in the same
+          // transaction as insertion. No pre-read/write race or direct fallback.
+          const { data, error } = await sc.rpc("insert_wall_telemetry_outcomes", {
+            p_actor: user.id, p_rows: outcomes, p_consent_at: parsed.data.meta.outcomeConsentAt,
+          });
+          if (!error && Number.isInteger(data) && data >= 0 && data <= outcomes.length) admitted = data;
+          else req.log.warn("wall/telemetry: outcome admission unavailable");
+        } catch { req.log.warn("wall/telemetry: outcome admission unavailable"); }
+      }
+      accepted += admitted;
+      dropped += outcomes.length - admitted;
+    }
+    res.json({ ok: true, accepted, dropped });
   }),
 );
 

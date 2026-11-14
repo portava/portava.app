@@ -127,7 +127,7 @@ const outcomes = () => events.filter((e) => e.name === 'downstream_task_complete
 
 function consent(granted: boolean) {
   beginOutcomeAccount('user-1');
-  if (granted) applyOutcomeConsent('user-1', true);
+  if (granted) applyOutcomeConsent('user-1', true, '2026-10-05T00:00:00.000Z');
 }
 
 async function fillAndCreate(opts: { pick?: boolean; title?: string } = {}) {
@@ -162,6 +162,7 @@ describe('Create trip — the task its Input fields served (G320)', () => {
     ]);
     expect(posts).toEqual([{
       context: 'trip_destination', fieldId: 'trip.destination', task: 'trip_created', ok: true,
+      outcomeConsentedAt: '2026-10-05T00:00:00.000Z',
       entities: [{ entityType: 'city', entityId: CITY }],
     }]);
   });

@@ -1,3 +1,4 @@
+import './composerDraftTestRuntime.ts';
 /**
  * PostcardComposer — "Trip crew only" is offered only with a trip.
  *

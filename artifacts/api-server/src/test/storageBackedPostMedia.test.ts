@@ -62,6 +62,8 @@ interface World {
   failRead?: Set<string>;
   failInsert?: Set<string>;
   failDelete?: Set<string>;
+  composerIntents?: Row[];
+  commitComposer?: (args: { p_actor: string; p_post: Row; p_media: Row[] }) => Promise<{ data: unknown; error: unknown }>;
   storageFails?: boolean;
   inserted: Array<{ table: string; row: any }>;
   updated: Array<{ table: string; patch: any }>;
@@ -100,6 +102,7 @@ function fake(w: World): any {
     };
     function source(): Row[] {
       if (table === "posts") return w.posts;
+      if (table === "composer_upload_intents") return w.composerIntents ?? [];
       if (table === "post_media") return w.post_media;
       if (table === "post_media_moderation_ledger") return w.ledger ?? [];
       if (table === "trips") return w.trips ?? [];
@@ -135,7 +138,7 @@ function fake(w: World): any {
   }
   return {
     from,
-    rpc: async () => ({ data: null, error: null }),
+    rpc: async (name: string, args: any) => name === 'commit_composer_post' && w.commitComposer ? w.commitComposer(args) : ({ data: null, error: null }),
     auth: { getUser: async (t: string) => (users[t] ? { data: { user: { id: users[t] } }, error: null } : { data: { user: null }, error: { message: "invalid" } }) },
     storage: {
       from: () => ({
@@ -253,6 +256,30 @@ describe("U — the module", () => {
 });
 
 describe("R — the routes", () => {
+  it('composer upload publication uses one atomic RPC and response-loss retry does not insert again', async()=>{
+    const op='10000000-0000-4000-8000-000000000017';let commits=0;
+    const w=world({composerIntents:[{id:op,owner_id:AUTHOR,state:'ready',storage_paths:[MOV_KEY]}],objects:new Set([POSTER_KEY])});
+    w.commitComposer=async args=>{
+      commits++;assert.equal(args.p_actor,AUTHOR);assert.equal(args.p_post.composer_upload_operation_id,op);
+      assert.equal(args.p_media.length,1);assert.equal(args.p_media[0]!.post_id,args.p_post.id);assert.equal(args.p_media[0]!.storage_path,MOV_KEY);
+      w.posts.push(args.p_post);w.post_media.push(...args.p_media.map((row,index)=>({id:`atomic-${index}`,...row})));
+      return {data:{id:args.p_post.id,repeated:false},error:null};
+    };
+    const s=await serve(w);try{
+      const body={content:'atomic caption',visibility:'public',mediaUrls:[MOV_REF],mediaType:'video/quicktime',composerUploadOperationId:op,addToPassport:false};
+      const first=await call(s.base,'POST','/api/posts','tok-author',body);assert.equal(first.status,201,JSON.stringify(first.body));assert.equal(first.body.media.length,1);
+      const retry=await call(s.base,'POST','/api/posts','tok-author',body);assert.equal(retry.status,201);assert.equal(commits,1);
+      assert.equal(w.inserted.filter(row=>['posts','post_media'].includes(row.table)).length,0,'no separate insert after the RPC');
+    }finally{await s.close();}
+  });
+  it('a failed atomic composer publication never returns success or invokes post compensation',async()=>{
+    const op='10000000-0000-4000-8000-000000000018';
+    const w=world({composerIntents:[{id:op,owner_id:AUTHOR,state:'ready',storage_paths:[MOV_KEY]}],commitComposer:async()=>({data:null,error:{message:'attachment transaction failed'}})});
+    const s=await serve(w);try{
+      const result=await call(s.base,'POST','/api/posts','tok-author',{content:'kept locally',mediaUrls:[MOV_REF],visibility:'public',mediaType:'video/quicktime',composerUploadOperationId:op});
+      assert.notEqual(result.status,201);assert.equal(w.posts.length,0);assert.equal(w.post_media.length,0);assert.equal(w.deleted.length,0);
+    }finally{await s.close();}
+  });
   it("R1 GET /posts/:id on e4bbf335's production shape ⇒ media[0] is a video with its poster, marked as from media_urls", async () => {
     const w = world({ posts: [e4bbf335()], objects: new Set([MOV_KEY, POSTER_KEY]) });
     const s = await serve(w);

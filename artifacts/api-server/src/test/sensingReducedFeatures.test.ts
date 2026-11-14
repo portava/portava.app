@@ -169,6 +169,26 @@ describe("the store spells the features as 3312's columns", () => {
 // ── 3. the cohort ────────────────────────────────────────────────────────────
 
 describe("the cohort folds the features per contributor under the k-gate", () => {
+  it("a large total cohort cannot expose one person's features or acoustic reading", () => {
+    const sparse = cohort(K, i => ({ features: i === 0 ? features() : null }));
+    const a = aggregateSensingCohort(sparse, { nowMs: NOW });
+    assert.equal(a.publishable, true, "the base presence statistic remains usable");
+    assert.ok(a.features);
+    assert.equal(a.features.motionEnergyCenti, null);
+    assert.equal(a.features.acousticEnergyBucket, null);
+    assert.equal(a.features.contributorsWithFeatures, 0);
+
+    const partial = cohort(K);
+    assert.ok(partial.ok);
+    partial.rows.forEach((r, i) => { if (i > 0) { r.acoustic_energy_bucket = null; r.density_bucket = "unknown"; } });
+    const b = aggregateSensingCohort(partial, { nowMs: NOW });
+    assert.ok(b.features);
+    assert.notEqual(b.features.motionEnergyCenti, null, "supported fields remain useful");
+    assert.equal(b.features.acousticEnergyBucket, null);
+    assert.equal(b.features.acousticContributors, 0);
+    assert.equal(b.features.densityBucket, null);
+  });
+
   it("a k-passing cohort reports per-contributor medians and the plurality density", () => {
     const read = cohort(K, (i) => ({
       features: features({ motionEnergyCenti: 10 + i, density: i % 3 === 0 ? "busy" : "moderate" }),

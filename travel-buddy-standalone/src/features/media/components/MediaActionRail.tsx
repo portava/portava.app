@@ -138,9 +138,9 @@ function ActiveMediaActionRail({ mediaId, visible, onClose, onSavedChange }: Med
       if (!current() || lifetime.busy) return;
       const exec = resolveMediaActionExecution(action, entityRefs);
 
-      // Fire the §45 outcome event at the media-originated action point: this is
-      // where a media object CAUSES a real-world action (Place Open / Compass /
-      // Trip Add / Plan / Correction). Coarse metadata only — never the caption,
+      // Navigation can record its handoff here. Writes record only after their
+      // committed result; opening a picker is not a Trip Add or Plan outcome.
+      // Coarse metadata only — never the caption,
       // note, prompt, or a coordinate. Self-filters (no-op for non-outcome
       // actions) and never throws, so it cannot affect the action below.
       const entityIdOf = (kind: MediaEntityKind): string | undefined =>
@@ -372,6 +372,11 @@ function ActiveMediaActionRail({ mediaId, visible, onClose, onSavedChange }: Med
             <TripChoicePanel
               plan={panel.plan}
               onBack={() => setPanel(null)}
+              onCommitted={(tripId) => {
+                if (current()) emitMediaNorthStar(record, 'do_this_experience', {
+                  mediaId, tripId, entityKind: 'trip', surface: 'action_rail',
+                });
+              }}
               onApplied={(tripId) => closeThenNavigate(onClose, `/trip/${encodeURIComponent(tripId)}`)}
             />
           ) : panel?.kind === 'invite' ? (

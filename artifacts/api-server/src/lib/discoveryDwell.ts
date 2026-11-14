@@ -71,15 +71,12 @@ import { recommendationIdFor } from "./discoveryRecommendationId.js";
 import {
   canonicalServedAt,
   checkEventSchemaVersion,
-  isDuplicateExposureReplay,
   screenFeaturesForStorage,
   DISCOVERY_EVENT_SCHEMA_VERSION,
   DISCOVERY_EVENT_PRIVACY_CLASS,
 } from "./discoveryRecommendationRecord.js";
 import {
-  RECOMMENDATION_ARBITER,
   RECOMMENDATION_ID_SHAPE,
-  isMissingRecommendationIdSchema,
   reportRankEventsRejection,
 } from "./rankEventsProvenance.js";
 import { isFlagEnabled } from "./featureFlags.js";
@@ -121,7 +118,7 @@ const dwellMeasurementSchema = z.object({
   kind: z.enum(DWELL_KINDS),
   // A zero-length episode is not an episode; the client never sends one.
   ms:   z.number().int().min(1).max(DWELL_MS_MAX),
-});
+}).strict();
 
 export const dwellBodySchema = z.object({
   item_id:           z.string().min(1).max(200),
@@ -131,7 +128,7 @@ export const dwellBodySchema = z.object({
   dwell:             z.array(dwellMeasurementSchema).min(1).max(DWELL_KINDS.length)
     .refine((ds) => new Set(ds.map((d) => d.kind)).size === ds.length, "each dwell kind may appear once per emission"),
   schema_version:    z.unknown().optional(),
-});
+}).strict();
 export type DwellBody = z.infer<typeof dwellBodySchema>;
 
 /**
@@ -210,10 +207,9 @@ const DWELL_WRITER = "lib/discoveryDwell.ts";
 type DwellLog = { warn?: (ctx: unknown, msg?: string) => void; error?: (ctx: unknown, msg?: string) => void } | undefined;
 
 /**
- * One attention row, spelled out so `check:write-path-columns` reads every
- * column this writer sends. Every column is classified in
- * `RANK_EVENTS_COLUMN_CLASSES`, and every value satisfies 2890's CHECKs and
- * 2891's shape CHECK (pinned by the dwell suite).
+ * Canonical expected attention row. The executed-SQL parity test checks the
+ * transactional writer in migration 4033 against this shape. Every column is
+ * classified in `RANK_EVENTS_COLUMN_CLASSES` and satisfies 2890/2891.
  */
 export function dwellRowFor(
   userId: string,
@@ -273,7 +269,6 @@ export async function acceptDiscoveryDwell(
   req: { body: unknown; log?: DwellLog },
   res: any,
   userId: string,
-  nowIso: string = new Date().toISOString(),
 ): Promise<void> {
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
@@ -304,33 +299,48 @@ export async function acceptDiscoveryDwell(
   if (binding.kind === "not_found") { sendError(res, "not_found", "No exposure with this recommendation_id for this viewer"); return; }
   if (binding.kind === "mismatch") { sendError(res, "conflict", `recommendation_id names a different ${binding.field} than this dwell`); return; }
 
-  // ON CONFLICT (recommendation_id, outcome) DO NOTHING: a retried emission
-  // reproduces its tokens and lands nothing; `.select("id")` returns only the
-  // rows that DID land. Table, payload and select are spelled at the call site
-  // so check:write-path-columns resolves every column this writer sends.
+  // The service-only RPC locks the current collection/account/exposure boundary
+  // and verifies every canonical payload in the same transaction. A mixed
+  // conflict or silently refused row rolls back the whole batch (4033).
   const expected = body.dwell.length;
-  const attempt = await sc.from("rank_events")
-    .upsert(body.dwell.map((d) => dwellRowFor(userId, binding.exposure, body.recommendation_id, body.client_event_id, d, nowIso)),
-      { onConflict: RECOMMENDATION_ARBITER, ignoreDuplicates: true })
-    .select("id");
-  const error = attempt?.error ?? null;
-
-  if (error && isDuplicateExposureReplay(error)) {
-    // A replay that reached the arbiter as an error rather than DO NOTHING.
-    res.json({ ok: true, recorded: 0, duplicates: expected });
-    return;
+  let attempt: any;
+  try {
+    attempt = await sc.rpc("admit_discovery_dwell", {
+      p_user_id: userId,
+      p_exposure_id: binding.exposure.id,
+      p_recommendation_id: body.recommendation_id,
+      p_item_id: body.item_id,
+      p_measurements: body.dwell.map(d => ({
+        kind: d.kind, ms: d.ms,
+        token: dwellTokenFor(userId, body.client_event_id, d.kind, body.item_id),
+      })),
+    });
+  } catch {
+    sendError(res, "degraded_unavailable", "Could not verify the dwell write. Please try again."); return;
   }
-  if (error) {
-    reportRankEventsRejection(req.log, { writer: DWELL_WRITER, err: error, rows: expected, extra: { where: "dwell insert" } });
-    if (isMissingRecommendationIdSchema(error)) {
-      // 2890/2891 absent here: without the arbiter a retry would double-write,
-      // so nothing is written rather than something non-idempotent.
-      sendError(res, "degraded_unavailable", "dwell requires migrations 2890 and 2891");
-      return;
+  if (attempt?.error) {
+    const error = attempt.error;
+    if (error.message === "dwell_receipt_conflict") {
+      sendError(res, "conflict", "This dwell identity was already used for a different measurement."); return;
     }
-    sendError(res, "db_error", String(error?.message ?? "db_error"));
-    return;
+    if (error.message === "dwell_invalid_payload") {
+      sendError(res, "invalid_payload", "Invalid dwell measurement."); return;
+    }
+    reportRankEventsRejection(req.log, { writer: DWELL_WRITER, err: error, rows: expected, extra: { where: "dwell admission" } });
+    sendError(res, "degraded_unavailable", "Could not verify the dwell write. Please try again."); return;
   }
-  const landed = Array.isArray(attempt?.data) ? attempt.data.length : expected;
-  res.json({ ok: true, recorded: landed, duplicates: expected - landed });
+  const receipt = attempt?.data;
+  if (receipt && typeof receipt === "object" && !Array.isArray(receipt)) {
+    if (receipt.ok === false) {
+      if (receipt.reason === "disabled") { sendError(res, "feature_disabled", "dwell telemetry is not enabled"); return; }
+      if (receipt.reason === "account_unavailable") { sendError(res, "forbidden", "This account cannot record dwell."); return; }
+      if (receipt.reason === "not_found") { sendError(res, "not_found", "No exposure with this recommendation_id for this viewer"); return; }
+    }
+    if (receipt.ok === true && Number.isSafeInteger(receipt.recorded) && Number.isSafeInteger(receipt.duplicates)
+      && receipt.recorded >= 0 && receipt.duplicates >= 0 && receipt.recorded + receipt.duplicates === expected) {
+      res.json({ ok: true, recorded: receipt.recorded, duplicates: receipt.duplicates }); return;
+    }
+  }
+  // No optimistic fallback: a missing/malformed RPC result is unknown.
+  sendError(res, "degraded_unavailable", "Could not verify the dwell write. Please try again.");
 }

@@ -9,14 +9,16 @@
  * was its own definition); lib/intelRetentionScheduler's header records another
  * (location_snapshots carried `expires_at` for months with nothing enforcing it).
  *
- * There is NO pg_cron anywhere in src/migrations, so for every worker in this
- * tree the ONLY thing that can start it is a call from src/index.ts. This test
- * asserts that for all of them, by source, with no allowlist.
+ * Every application worker must still start from src/index.ts. The owner also
+ * requested a database-hosted operational monitor in4026; its single bounded
+ * aggregate-only job is pinned separately below. No other database scheduler
+ * may silently replace or duplicate an application worker.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 const LIB = path.resolve(process.cwd(), "src/lib");
 const INDEX = path.resolve(process.cwd(), "src/index.ts");
@@ -69,12 +71,17 @@ test("the intel retention scheduler is started on the server boot path", () => {
   assert.match(index, /startSensingRetentionScheduler\s*\(\s*\)/);
 });
 
-test("no migration schedules work in the database, so a Node boot path is the only invoker", () => {
-  // If this ever stops being true the test above stops being sufficient, because
-  // a pg_cron entry would be a second, invisible invoker.
+test("the owner-approved bounded database monitor is the only migration scheduler", () => {
   const dir = path.resolve(process.cwd(), "src/migrations");
-  const offenders = readdirSync(dir)
-    .filter((f) => f.endsWith(".sql"))
-    .filter((f) => /cron\.schedule/i.test(readFileSync(path.join(dir, f), "utf8")));
-  assert.deepEqual(offenders, []);
+  const scheduled = readdirSync(dir).filter(f => f.endsWith(".sql"))
+    .filter(f => /cron\.schedule/i.test(readFileSync(path.join(dir, f), "utf8")));
+  assert.deepEqual(scheduled, ["4026_intelligence_system_monitor.sql"]);
+  const source = readFileSync(path.join(dir, scheduled[0]!), "utf8");
+  // This migration is already applied. Pin its whole reviewed definition, not
+  // merely a filename exemption that could conceal another scheduler/network job.
+  assert.equal(createHash("sha256").update(source).digest("hex"),
+    "dd97f5286aa962ec99df463b56e88701a76101f073e17aff4df338bb98e724f3");
+  assert.equal([...source.matchAll(/cron\.schedule\s*\(/gi)].length, 1);
+  assert.match(source, /cron\.schedule\('intelligence-system-monitor-hourly', '7 \* \* \* \*',/);
+  assert.ok(source.includes("set statement_timeout='20s'; set lock_timeout='2s'; select intelligence_monitor.collect();"));
 });

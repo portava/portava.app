@@ -118,7 +118,7 @@ function makeStub(opts: StubOpts = {}) {
     from: (t: string) => builder(t),
     rpc: async (fn: string, args: Record<string, unknown>) => {
       if (fn === "tombstone_post") tombstoned.push(args.p_post_id as string);
-      return { data: null, error: null };
+      return { data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null };
     },
     storage: { from: () => ({ remove: async () => ({ data: [], error: null }) }) },
     auth: { admin: { deleteUser: async () => ({ data: {}, error: null }) } },

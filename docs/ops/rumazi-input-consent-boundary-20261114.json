@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 1,
+  "auditedAt": "2026-11-14",
+  "status": "code_and_ci_schema_verified_rollout_pending",
+  "scope": "Consent/account boundaries and truthful outcomes for existing Input learning; not calibration or whole-system acceptance.",
+  "behavior": [
+    "Local authorization sidecars bind each optional outcome to one account session and exact consent grant. Wire carries only the grant timestamp as admission metadata; actor is authenticated server-side and absent from stored task aggregates.",
+    "Withdrawal invalidates queued and pending requests before token lookup; token identity must match the action-time owner. Account A to B to A never restores old queued authorization.",
+    "Account-local failed-withdrawal hold survives restart when storage succeeds. Per-account intent revisions, ordered storage writes and a compensating hold prevent a late grant response/native storage removal from erasing a newer withdrawal. Network writes start in intent order; no new retry timer or app polling.",
+    "Settings distinguish local pause, acknowledged account withdrawal, verified erasure and unknown erasure. Only literal countersErased=true claims deletion. Enabled or unstamped opposite-state responses remain pending with explicit retry.",
+    "4029 serializes consent/flag admission and counter/aggregate writes using SHARE row locks, and rejects missing/stale grant provenance. Legacy overloads fail closed; core assistance is independent.",
+    "4032 prevents retained learning under old disclosures from influencing ranking. Sole production personal-counter reader is gateway to attachOutcomeMemory to input_outcome_memory; erasure/expiry writers and service-only aggregated metrics remain separate.",
+    "Aggregate RPC failures/unknown receipts are failed operations, not policy refusals. Ingest returns503 with actual committed/failed/refused counts. Client does not start a telemetry retry loop."
+  ],
+  "verification": [
+    {
+      "kind": "client components",
+      "result": "59/59 across 7 suites; exact final owner/intent/receipt source",
+      "log": "/private/tmp/portava-input-client-final3.log",
+      "sha256": "027619c6aae7634ff910ecea5b46c373e621b4bbff902d296351af57c162a50d"
+    },
+    {
+      "kind": "pure client",
+      "result": "41/41; outcome gate, task reporter and telemetry installer",
+      "log": "/private/tmp/portava-input-intent-pure.log",
+      "sha256": "c608625c260209dd38637a73ff87f6f012d7c8ea82c290ff2da105b3fc15725a"
+    },
+    {
+      "kind": "API route/privacy/vocabulary",
+      "result": "69/69",
+      "log": "/private/tmp/rumazi-input-4032-api.log",
+      "sha256": "71156704b2610d9b52fd988590904b6d266380533de68387fb8dde69e7ac4533"
+    },
+    {
+      "kind": "actual migration SQL",
+      "result": "6/6; final4029 and4032 PGlite",
+      "log": "/private/tmp/rumazi-input-4032-pglite.log",
+      "sha256": "2d6bcb72606db00bb2efb694d902179ed046dd116b951475fb45e8fa9d060b9c"
+    },
+    {
+      "kind": "existing certification regression",
+      "result": "29/29",
+      "log": "/private/tmp/rumazi-input-4032-certification.log",
+      "sha256": "548c9ff9a45b36cfc54710ce3d115e5625d96bdfce8455a7f2f2de89f1958f81"
+    },
+    {
+      "kind": "API production typecheck",
+      "result": "passed",
+      "log": "/private/tmp/rumazi-input-4032-tsc.log",
+      "sha256": "61345e683c8ce2f7727258ab4a3198b4e0aea015d92001561b028058550069e1"
+    },
+    {
+      "kind": "client production typecheck",
+      "result": "passed",
+      "log": "/private/tmp/portava-input-races-typecheck.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "kind": "client test typecheck",
+      "result": "144 pre-existing diagnostics in54files; baseline unchanged/no new errors",
+      "log": "/private/tmp/portava-input-intent-test-types.log",
+      "sha256": "c8b012fc3d9e6e40ba87d7a4e445244ed0e108fd95a93c826e31cc027ff8f067"
+    },
+    {
+      "kind": "independent race reproduction",
+      "result": "before: later withdrawal lost; after: old grant failed, both holds true, restart learning false; opposite-state receipt refused",
+      "log": "/private/tmp/rumazi-input-review-after.log",
+      "sha256": "0dfd4d70969a9288a1b7d55f04f4044c5fe6d894f5f3278aa95a7273bbc58b87"
+    }
+  ],
+  "hostedVerification": "docs/ops/rumazi-signal-ci-privacy-20261114.json",
+  "nativeConcurrency": {
+    "earlier": "5/5 two-backend4029 races passed before the final SECURITY INVOKER change; lock bodies unchanged. Not claimed as final-hash proof.",
+    "log": "/private/tmp/portava-input-consent-postgres.log",
+    "required": "Unconditional CI native gate requires5 actual tests and refuses skipped/masked/missing-binary execution. Final-byte hosted serial service permissions passed."
+  },
+  "remaining": [
+    "Production migrations/API/client rollout, real sessions and physical-device lifecycle/storage/assistive-technology verification remain unperformed.",
+    "If storage and network withdrawal both fail, this process remains paused but a restart cannot guarantee restored withdrawal intent; UI retains retry.",
+    "Client request ordering cannot prove cancellation of an HTTP operation already accepted by a remote server after a transport timeout. Local withdrawal hold and server grant-fenced admission remain fail-closed for subsequent events.",
+    "No outcome/acceptance ranking calibration or real-population metrics are claimed; G5/G14/G322/G323/G370 remain open.",
+    "No raw draft content, media, filename, partial input, recipient or error prose added to analytics."
+  ],
+  "files": [
+    {
+      "path": "artifacts/api-server/src/lib/inputAssistance/outcomeLearning.ts",
+      "sha256": "fc0cdceb3e5f2e2596542972ac156f5ef87c3ccc824bec673bb2a57d7c695de3"
+    },
+    {
+      "path": "artifacts/api-server/src/lib/inputAssistance/telemetry.ts",
+      "sha256": "2dbf2e31aecfe9e3d7e5b64040f4a0ff9e2e7ebf15ac5c109dde93cf90e55c00"
+    },
+    {
+      "path": "artifacts/api-server/src/migrations/4029_input_outcome_consent_fence.sql",
+      "sha256": "c913a363d1fd4f6bd5a926ea4a40884da823683aeada3167605150676a715765"
+    },
+    {
+      "path": "artifacts/api-server/src/migrations/4032_input_outcome_memory_current_consent.sql",
+      "sha256": "707f6b9302bc5b4b369f29803482bf6aa85a5312fb3f719ed6e57c5b90305079"
+    },
+    {
+      "path": "artifacts/api-server/src/routes/inputAssistance.ts",
+      "sha256": "6e3ef9d7e82e7b54dc9871709a8ad1c067f0d5d62d97e9d220265aca86d512a3"
+    },
+    {
+      "path": "artifacts/api-server/src/test/inputAssistanceCertification.test.ts",
+      "sha256": "7173b7eae6b40325c4bc1816636046df00ac05b3045636acaf72c5d31d7276c3"
+    },
+    {
+      "path": "artifacts/api-server/src/test/inputOutcomeConsent.postgres.test.ts",
+      "sha256": "87468638db012f0148d6f4a42aabea9df38808bb6720b2e412cfd3625e69fa58"
+    },
+    {
+      "path": "artifacts/api-server/src/test/inputOutcomeConsentFence.pglite.test.ts",
+      "sha256": "b21fddfa5b113e31261f62150da0d80b787c447efd6d874557abcdc0c92f36d0"
+    },
+    {
+      "path": "artifacts/api-server/src/test/inputOutcomeLearning.test.ts",
+      "sha256": "1892e6e3ad2fafc18e49555b1327257f5528b751dc15b5c82f9f2e16d60d138d"
+    },
+    {
+      "path": "artifacts/api-server/src/test/inputOutcomeMemoryCurrentConsent.pglite.test.ts",
+      "sha256": "7d4be6414fa9be2b0a7a297c5633917b67b1edfc29f2bead564d319b39ded6f8"
+    },
+    {
+      "path": "travel-buddy-standalone/app/events/__tests__/create.taskOutcome.component.test.tsx",
+      "sha256": "07639b16c8c9a81d42f1f1e609f54ae25c02ffac39423347d686218c6b1db7fb"
+    },
+    {
+      "path": "travel-buddy-standalone/src/components/__tests__/TripCreate.taskOutcome.component.test.tsx",
+      "sha256": "55f114773a68cc4791c242a67f22503160a401f94dc9a6997b17b2ee66c88228"
+    },
+    {
+      "path": "travel-buddy-standalone/src/features/telegraph/__tests__/composerTaskOutcome.component.test.tsx",
+      "sha256": "80feec4ec4f237f93c46cbf84e08450c610978d90ed81900fd58c221560095c7"
+    },
+    {
+      "path": "travel-buddy-standalone/src/platform/input-assistance/components/OutcomeLearningSetting.tsx",
+      "sha256": "0abac7ed09f583237a444ebab1fa9314b074d7cebcf33857eef06b3b0d80dd4c"
+    },
+    {
+      "path": "travel-buddy-standalone/src/platform/input-assistance/components/__tests__/outcomeLearningSetting.component.test.tsx",
+      "sha256": "1ce6013b70137f6aa5c15b626f3a078673b8139356b7518caf2c37dc2e04907a"
+    },
+    {
+      "path": "travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.outcomeHint.component.test.tsx",
+      "sha256": "a0934653a3de475c29ff0550102c591f84460a2a4266a003688d0b0330661b1f"
+    },
+    {
+      "path": "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/inputTransportPrivacy.component.test.ts",
+      "sha256": "79d479635f4ea671600f0f253fe5fc4cb0d151ed8dc9d3ce602e6afbf7d862c2"
+    },
+    {
+      "path": "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/installInputTelemetry.test.ts",
+      "sha256": "6efb1ebe5960dcad1807fc8690b2e995fb2e023c61fc1a468976b8b1d3d01834"
+    },
+    {
+      "path": "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/outcomeLearning.test.ts",
+      "sha256": "fc8fa8b3f81cc98703626407af80bd5888a262415c0d6700c82d5894e22cb080"
+    },
+    {
+      "path": "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/outcomeLearningTransport.component.test.ts",
+      "sha256": "9f600295040fcc4baff581ba0f3acc1044fcb89ca8c47d7b9d8f401980abb459"
+    },
+    {
+      "path": "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/servedTaskOutcome.test.ts",
+      "sha256": "24b556da1a62e59c5c329681302b5e5eca393a963ee26af072001302a9b308c1"
+    },
+    {
+      "path": "travel-buddy-standalone/src/platform/input-assistance/services/inputApiRequest.ts",
+      "sha256": "be2caf2f111fd466a787778f762dbe2ddfd0e785a839e4b793242d3fb9f3cd93"
+    },
+    {
+      "path": "travel-buddy-standalone/src/platform/input-assistance/services/outcomeLearning.ts",
+      "sha256": "d888182ce2313eff6e1360eebab8e9dd767557338523516c2aae37c5737ce6e5"
+    },
+    {
+      "path": "travel-buddy-standalone/src/platform/input-assistance/services/outcomeLearningTransport.ts",
+      "sha256": "cb4db1022ea7ab81791e25457830eba758c08e57255a0158192aa8d04a5a8033"
+    },
+    {
+      "path": "travel-buddy-standalone/src/platform/input-assistance/services/telemetryBatcher.ts",
+      "sha256": "73faa8653b45869e871ccc40bdc8feca3b3729af95bc04c29495b753c31e11bc"
+    },
+    {
+      "path": "travel-buddy-standalone/src/platform/input-assistance/services/telemetryTransport.ts",
+      "sha256": "f269ef7e9e433dc96d97826e3ffa5308bdd4932c630c9f6339dd1837f88bd95d"
+    }
+  ]
+}

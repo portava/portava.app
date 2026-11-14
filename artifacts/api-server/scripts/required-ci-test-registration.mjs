@@ -73,6 +73,27 @@ const encodingStep = [
   '          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:media-encoding 2>&1 | tee "$RUNNER_TEMP/media-encoding.log"',
 ].join("\n");
 
+const signalPrivacyGates = [
+  {
+    "file": "src/test/inputOutcomeConsent.postgres.test.ts",
+    "script": "test:input-outcome-native",
+    "command": "node scripts/run-memory-native-tests.mjs input-outcome src/test/inputOutcomeConsent.postgres.test.ts",
+    "step": "      - name: Require native input-outcome privacy suite\n        timeout-minutes: 5\n        shell: bash\n        env:\n          INPUT_OUTCOME_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}\n          TMPDIR: /tmp\n        run: |\n          set -euo pipefail\n          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:input-outcome-native 2>&1 | tee \"$RUNNER_TEMP/input-outcome-native.log\""
+  },
+  {
+    "file": "src/test/wallOutcomeConsent.postgres.test.ts",
+    "script": "test:wall-outcome-native",
+    "command": "node scripts/run-memory-native-tests.mjs wall-outcome src/test/wallOutcomeConsent.postgres.test.ts",
+    "step": "      - name: Require native wall-outcome privacy suite\n        timeout-minutes: 5\n        shell: bash\n        env:\n          WALL_OUTCOME_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}\n          TMPDIR: /tmp\n        run: |\n          set -euo pipefail\n          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:wall-outcome-native 2>&1 | tee \"$RUNNER_TEMP/wall-outcome-native.log\""
+  },
+  {
+    "file": "src/test/mediaEventPrivacy.postgres.test.ts",
+    "script": "test:media-events-native",
+    "command": "node scripts/run-memory-native-tests.mjs media-events src/test/mediaEventPrivacy.postgres.test.ts",
+    "step": "      - name: Require native media-events privacy suite\n        timeout-minutes: 5\n        shell: bash\n        env:\n          MEDIA_EVENT_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}\n          TMPDIR: /tmp\n        run: |\n          set -euo pipefail\n          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:media-events-native 2>&1 | tee \"$RUNNER_TEMP/media-events-native.log\""
+  }
+];
+
 function requireStep(steps, expected) {
   const name = expected.split("\n")[0];
   if (steps.filter(step => step === expected).length !== 1
@@ -121,5 +142,9 @@ export function requiredCiTestFiles(scripts, workflow) {
   if (preparation >= account || cache >= encodingPreparation || encodingPreparation >= encoding) {
     throw new Error("Mandatory account Media and encoding gates require their verified preparation first");
   }
-  return new Set([mediaTranslationFile, accountMediaFile, encodingFile]);
+  for (const gate of signalPrivacyGates) {
+    if (scripts[gate.script] !== gate.command) throw new Error('Mandatory signal privacy command changed: ' + gate.script);
+    if (requireStep(steps, gate.step) <= preparation) throw new Error('Signal privacy gate must follow verified PostgreSQL preparation');
+  }
+  return new Set([mediaTranslationFile, accountMediaFile, encodingFile, ...signalPrivacyGates.map(gate => gate.file)]);
 }

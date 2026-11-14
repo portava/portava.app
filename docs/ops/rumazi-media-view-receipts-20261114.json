@@ -1,0 +1,171 @@
+{
+  "version": 1,
+  "created_at": "2026-11-14T06:30:33.521518+00:00",
+  "status": "locally_verified_not_deployed",
+  "native_build_performed": false,
+  "hosted_changes": false,
+  "migration_required": false,
+  "files": [
+    {
+      "path": "artifacts/api-server/src/lib/mediaAnalytics.ts",
+      "sha256": "570d76221c93bedf31f4169213eef9d330f2c51655f0afe7cdf65c2e1feab2ee"
+    },
+    {
+      "path": "artifacts/api-server/src/lib/mediaViewReceipt.ts",
+      "sha256": "a451d52e339877431da37ebc2138f0ae81824b043dc6a29b0d0e09ceeb2b7b2f"
+    },
+    {
+      "path": "artifacts/api-server/src/routes/mediaAnalyticsBatch.ts",
+      "sha256": "0bba33173c70b6312b50f4cd6ae657cbb83e05cdd831386d11c2acfe3bd69aa0"
+    },
+    {
+      "path": "artifacts/api-server/src/routes/mediaFeed.ts",
+      "sha256": "aa8abc0a3cd087fee1390ee445bcb8c115a474a95ee1f60393c1607f2e5bebf2"
+    },
+    {
+      "path": "artifacts/api-server/src/test/mediaAnalyticsReceipt.pglite.test.ts",
+      "sha256": "c12a31086a80ce12eaef617cb1ddb212019845ae02820180ff52f1d982f57f5a"
+    },
+    {
+      "path": "artifacts/api-server/src/test/mediaAnalyticsReceipt.test.ts",
+      "sha256": "2cc1e641cce0c8e49943149629d22004ac34e6212bb1675f7e24d92c9f9035cc"
+    },
+    {
+      "path": "artifacts/api-server/src/test/mediaViewReceipt.pglite.test.ts",
+      "sha256": "03a260acab4f427860633c95f75d54dd85f7fe4323e88ff4da9bb0a024f935ca"
+    },
+    {
+      "path": "artifacts/api-server/src/test/mediaFeed.test.ts",
+      "sha256": "39cd64cfaadbb7894697ec642da4acdc20d6ad8a47584d47bafb43cb52599483"
+    },
+    {
+      "path": "artifacts/api-server/src/test/mediaFeedReadsHonest.test.ts",
+      "sha256": "bd05b4a0ad3122e2f8ebf0ec26ea8fb7d452b5ca30547987f9a2687de6204566"
+    },
+    {
+      "path": "artifacts/api-server/src/test/mediaNorthStarTelemetry.test.ts",
+      "sha256": "5e92f4cd3d7ba6a5b702452856ad95a08a45a169367f7fb5a312c2cd8268dd1e"
+    },
+    {
+      "path": "travel-buddy-standalone/src/components/media/WatchFeed.tsx",
+      "sha256": "e5cbc35857d24bb13594ad4489542014c638c5809dd9c0fcbec8bb342776b286"
+    },
+    {
+      "path": "travel-buddy-standalone/src/components/media/WatchFeedList.tsx",
+      "sha256": "144b70f7d617e33c04548cc11ca47fef16e82555ef6c2f193567803320098f20"
+    },
+    {
+      "path": "travel-buddy-standalone/src/components/media/WatchVideoCell.tsx",
+      "sha256": "84855fcb21106079574fa29e704e72d02afed8777be3fb6cc0d80660708c1c0b"
+    },
+    {
+      "path": "travel-buddy-standalone/src/hooks/useWatchFeed.ts",
+      "sha256": "103565cfdf2d7e22332fa39bf65ba9495387c1d557f02c806f19cea0deed6781"
+    },
+    {
+      "path": "travel-buddy-standalone/src/hooks/useWatchViewReporting.ts",
+      "sha256": "0e0178d01864732c4c10031d89c8d96bf41b40067402299afc61828d73bfdc38"
+    },
+    {
+      "path": "travel-buddy-standalone/src/hooks/__tests__/useWatchFeed.owner.component.test.ts",
+      "sha256": "684c88011b94d6d7c8958e7c78adcd2f6e65d64dc5bd9fbfe36c02d81e89295d"
+    },
+    {
+      "path": "travel-buddy-standalone/src/hooks/__tests__/useWatchViewReporting.component.test.ts",
+      "sha256": "1de2d3f1b46c7c9ef7a96f0559490c46bf4649a5711b139ed7501cd1bcb29fb4"
+    },
+    {
+      "path": "travel-buddy-standalone/src/services/mediaFeed.ts",
+      "sha256": "79936b9ea1087126f5b10707f76edb4a66205384a5fe0e1eb10eb01fd3588856"
+    },
+    {
+      "path": "travel-buddy-standalone/src/services/watchViewObservation.ts",
+      "sha256": "4792e02c3f15dfa34c449b8567f86d819561b6c6c4f2795413c7d70135fb0405"
+    }
+  ],
+  "completed": [
+    "POST /media/:id/view rejects current block, nonpublic post audience, private account, restricted creator, self and inactive/unpublished post cases before writing. Required gate read failures return unavailable.",
+    "Stable UUID eventId plus authenticated owner derives an existing rank_events primary key. Insert-returned row or exact duplicate lookup is required for stored=true. Failed writes reserve no process-local dedupe state. Conflicting payload under one identity returns409.",
+    "View session must match an existing same-owner/item/session watch_feed served row (event_type IS NULL). Generic rankEvents surface allow-list excludes watch_feed. Generic media batches now reject the four observed view event types.",
+    "Watch client generates UUID sessions; legacy non-UUID feed sessions are normalized to server UUIDs and returned for adoption. Served rows are awaited before the feed response; failed persistence is named in failedSources.",
+    "Feed analytics are named feed_served, distinct from observed impression. Seen-item and creator-fatigue reads use watch_impression only, excluding serves and playback outcome rows.",
+    "Watch player callbacks feed a bounded observation accumulator and owned transport under the existing MEDIA_RANKING_ENABLED flag. Pause/buffer/seek/background/preload and stale source callbacks do not accrue observed time. No polling, interval, disk queue or automatic retry was added.",
+    "Watch feed token acquisition and decoding are bound to the initiating observed owner; refreshed/superseded requests and unmounts abort; stale account or refresh replies do not update the active slot.",
+    "Media analytics batch awaits database-returned ids and reports accepted/discarded/failed separately. Actual immutable4031 trigger refusal is tested; no silent trigger rejection is reported as stored."
+  ],
+  "events": {
+    "observed": [
+      "impression",
+      "qualified_view",
+      "completion",
+      "rewatch"
+    ],
+    "database_types": [
+      "watch_impression",
+      "watch_qualified_view",
+      "watch_completion",
+      "watch_rewatch"
+    ],
+    "served": "feed_served",
+    "view_wire_fields": [
+      "type",
+      "watchedMs",
+      "sessionId",
+      "eventId"
+    ],
+    "server_added_owner": "authenticated user.id"
+  },
+  "verification": [
+    {
+      "kind": "api",
+      "log": "/private/tmp/rumazi-media-view-api-frozen.log",
+      "sha256": "2a5dab5605ad18d33ab0a69403d87f296c4a34b34f43785c77e74603738b5283",
+      "result": "passed",
+      "tests_passed": 175
+    },
+    {
+      "kind": "database",
+      "log": "/private/tmp/rumazi-media-view-db-frozen.log",
+      "sha256": "65cde8e4804f8676c1663e7696c6f15d0d6764800c3e4bd2298caf28d27ee0c9",
+      "result": "passed",
+      "tests_passed": 4
+    },
+    {
+      "kind": "client",
+      "log": "/private/tmp/rumazi-media-view-client-final.log",
+      "sha256": "c7476268a08aedd8df60bb9032f862cf5194eb976e1866f83ebe5f753a8f520d",
+      "result": "passed",
+      "tests_passed": 28
+    },
+    {
+      "kind": "pure_node_client",
+      "log": "/private/tmp/rumazi-media-view-node-client.log",
+      "sha256": "9270344f687490d42df97ea0128a9b1b7e3443678a0cfb05100dd9a780414331",
+      "result": "passed",
+      "tests_passed": 5
+    },
+    {
+      "kind": "api_typecheck",
+      "log": "/private/tmp/rumazi-media-view-api-tsc-frozen.log",
+      "sha256": "61345e683c8ce2f7727258ab4a3198b4e0aea015d92001561b028058550069e1",
+      "result": "passed"
+    },
+    {
+      "kind": "client_typecheck",
+      "log": "/private/tmp/rumazi-media-view-client-tsc-final.log",
+      "sha256": "d321b63bab6c85f81463d1d38f1ded9b849640ff128a804868062ce8537ade9d",
+      "result": "passed"
+    }
+  ],
+  "limitations": [
+    "No deployment or hosted migration performed. Replit origin access remains denied; this patch is local reviewable code.",
+    "No physical-device or actual AV playback/visibility/accessibility performance proof. Jest exercises callbacks and native boundaries; it is not an iPhone build or device result.",
+    "PGlite executes the actual existing rank_events and4031 schema. Concurrent promise admission proves the primary-key constraint within that engine; it is not a new two-connection hosted/native lock test.",
+    "View receipts certify rank_events only. The secondary media_events side effect remains best effort and is not atomic with the rank event. No receipt claims both stores succeeded.",
+    "Idempotency lasts while the canonical rank_events receipt row remains retained. There is no new offline queue or automatic retry; network losses can undercount observations.",
+    "The existing completion measure requires at least10000ms observed playback in one loop. Shorter clips are not represented by this legacy completion metric. This patch does not redefine that policy.",
+    "Current audience is checked before view persistence, not transactionally locked with concurrent block/post-visibility changes. Platform consent policy and all-surface erasure/retention certification remain separate requirements.",
+    "loadMediaSignals still uses a row query subject to PostgREST response limits; this patch does not claim complete population aggregates or measured production latency.",
+    "The global mock guard currently reports two unrelated Input test mocks; no violation is in the Media-owned files."
+  ]
+}

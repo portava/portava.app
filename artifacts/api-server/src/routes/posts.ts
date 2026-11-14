@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import composerUploadsRouter, { COMPOSER_OPERATION_RE, reserveComposerUpload, finishComposerUpload, cleanComposerUpload, commitComposerPost } from './composerUploads.js';
 import { sealRecordingUpload } from '../services/stamps/recordingCapture.js';
 import { filterCurrentPostAuthors } from '../lib/postAuthorAudience.js';
 import { Router, type Request, type Response } from "express";
@@ -68,6 +70,7 @@ import { ensurePlaceDay, isEligiblePlaceDayPost } from "../lib/places/placeDays.
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 
 const router = Router();
+router.use(composerUploadsRouter);
 
 const STORAGE_BUCKET = "post-media";
 // Inbound size caps and the MIME allowlist moved to lib/mediaPipeline.ts
@@ -222,8 +225,10 @@ export async function storeVerifiedMediaUpload(req: any, res: any, sc: any, user
       uploadBuf = scrub.buffer;
     }
 
+    const operation = req.headers?.['x-composer-operation'];
+    if (operation !== undefined && (typeof operation !== 'string' || !COMPOSER_OPERATION_RE.test(operation))) { sendError(res, 'invalid_payload', 'Invalid upload operation.'); return; }
     const captureToken = req.headers?.['x-portava-capture-token'];
-    let basePath = `${user.id}/${Date.now()}`;
+    let basePath = operation ? `${user.id}/composer-drafts/${operation}` : `${user.id}/${Date.now()}`;
     let path = `${basePath}.${uploadExt}`;
     if (captureToken !== undefined) {
       if (sniffed.kind !== 'video' || !videoProbe?.durationMs || !videoProbe.width || !videoProbe.height) {
@@ -234,11 +239,22 @@ export async function storeVerifiedMediaUpload(req: any, res: any, sc: any, user
       basePath = path.slice(0,-uploadExt.length-1);
     }
 
+    // A retry after app restart may no longer carry its camera-stamp session.
+    // Reuse only this owner's immutable, digest-checked operation path.
+    if (operation && captureToken === undefined) {
+      const prior = await sc.from('composer_upload_intents').select('storage_paths').eq('id', operation).eq('owner_id', user.id).maybeSingle();
+      if (prior.error) { sendError(res, 'db_error', 'Draft upload could not be verified.'); return; }
+      const previousPath = prior.data?.storage_paths?.[0];
+      if (typeof previousPath === 'string' && previousPath.startsWith(`${user.id}/`) && previousPath.endsWith(`.${uploadExt}`) && !previousPath.includes('..')) {
+        path=previousPath; basePath=path.slice(0,-uploadExt.length-1);
+      }
+    }
+    if (operation && !await reserveComposerUpload(sc, user.id, operation, path, uploadBuf)) { sendError(res, 'conflict', 'Draft upload is unavailable.'); return; }
     const { error } = await sc.storage
       .from(STORAGE_BUCKET)
       .upload(path, uploadBuf, { contentType: uploadMime, upsert: false });
     // A retried token can only name this immutable path and its exact stored digest.
-    const duplicateCapture = captureToken !== undefined && (error?.statusCode === '409' || error?.statusCode === 409 || error?.error === 'Duplicate');
+    const duplicateCapture = (captureToken !== undefined || operation !== undefined) && (error?.statusCode === '409' || error?.statusCode === 409 || error?.error === 'Duplicate');
     if (error && !duplicateCapture) {
       req.log.error({ err: error, path }, "Storage upload failed");
       sendError(res, "db_error", `Upload failed: ${error.message}`);
@@ -252,7 +268,7 @@ export async function storeVerifiedMediaUpload(req: any, res: any, sc: any, user
       const { error: tErr } = await sc.storage
         .from(STORAGE_BUCKET)
         .upload(thumbnailPath, thumb.buffer, { contentType: thumb.mime, upsert: false });
-      if (tErr) {
+      if (tErr && !(operation && (String(tErr.statusCode) === '409' || tErr.error === 'Duplicate'))) {
         req.log.warn({ err: tErr }, "Thumbnail upload failed — continuing without");
         thumbnailPath = null;
       } else {
@@ -269,7 +285,7 @@ export async function storeVerifiedMediaUpload(req: any, res: any, sc: any, user
       const { error: fErr } = await sc.storage
         .from(STORAGE_BUCKET)
         .upload(feedPath, feed.buffer, { contentType: feed.mime, upsert: false });
-      if (fErr) {
+      if (fErr && !(operation && (String(fErr.statusCode) === '409' || fErr.error === 'Duplicate'))) {
         req.log.warn({ err: fErr }, "Feed-variant upload failed — continuing without");
         feedPath = null;
       } else {
@@ -277,10 +293,21 @@ export async function storeVerifiedMediaUpload(req: any, res: any, sc: any, user
       }
     }
 
+    if (operation && !await finishComposerUpload(sc, user.id, operation)) { await cleanComposerUpload(sc, user.id, operation, [path, `${basePath}.thumb.jpg`, `${basePath}.feed.jpg`]); sendError(res, 'conflict', 'Draft upload was cancelled.'); return; }
     const mediaRelayUrl = `${STORAGE_BUCKET}/${path}`;
 
     // Canonical dual-write (flag-gated OFF; fail-soft — legacy flow unaffected).
-    void canonicalModerationAtBirth(sc).then((atBirth) => recordMediaAssetDetailed(sc, { ...atBirth,
+    let reusedApprovedCanonical = false;
+    const canonicalWrite = canonicalModerationAtBirth(sc).then(async atBirth => {
+      if (operation && duplicateCapture) {
+        const existing = await sc.from('media_assets').select('id,version,moderation_status').eq('owner_user_id', user.id).eq('storage_bucket', STORAGE_BUCKET).eq('storage_path', path).maybeSingle();
+        if (existing.error) throw new Error('Canonical upload receipt unavailable');
+        if (existing.data) {
+          reusedApprovedCanonical = existing.data.moderation_status === 'active';
+          return { assetId: existing.data.id, assetVersion: existing.data.version, outcome: 'written' as const, droppedColumns: [], errorCode: null, schemaState: 'present' as const };
+        }
+      }
+      return recordMediaAssetDetailed(sc, { ...atBirth,
       ownerUserId: user.id, sourceType: MEDIA_SOURCE_UNDECLARED, // §6 source: this route receives bytes and a Content-Type, never camera vs library (census-media §35, MD37)
       storageBucket: STORAGE_BUCKET,
       storagePath: path,
@@ -297,7 +324,24 @@ export async function storeVerifiedMediaUpload(req: any, res: any, sc: any, user
       // the Wall's §16 experienceAt could never differ from publishedAt.
       capturedAt,
       durationMs: videoProbe?.durationMs == null ? null : Math.round(videoProbe.durationMs),
-    })).then(async (asset) => { await runMediaVendorIngest(sc, { assetId: asset.assetId, sourceVersion: asset.assetVersion, bucket: STORAGE_BUCKET, path, mediaType: sniffed.kind, durationMs: videoProbe?.durationMs ?? null }); });
+    });
+    });
+    void canonicalWrite.then(async (asset) => {
+      if (reusedApprovedCanonical) return;
+      if (operation) {
+        const intent = await sc.from('composer_upload_intents').select('state').eq('id', operation).eq('owner_id', user.id).maybeSingle();
+        if (intent.error || !intent.data || intent.data.state === 'cancelled') return;
+        await runMediaVendorIngest(sc, { assetId: asset.assetId, sourceVersion: asset.assetVersion, bucket: STORAGE_BUCKET, path, mediaType: sniffed.kind, durationMs: videoProbe?.durationMs ?? null }, undefined, { prePublication: intent.data.state !== 'published' });
+        return;
+      }
+      await runMediaVendorIngest(sc, { assetId: asset.assetId, sourceVersion: asset.assetVersion, bucket: STORAGE_BUCKET, path, mediaType: sniffed.kind, durationMs: videoProbe?.durationMs ?? null });
+    }).catch(() => { /* The draft response below requires its canonical receipt; legacy writes remain fail-soft. */ });
+    if (operation) {
+      try {
+        const receipt = await canonicalWrite;
+        if (!['written', 'written_degraded', 'skipped_flag_off'].includes(receipt.outcome)) { sendError(res, 'degraded_unavailable', 'Upload preparation could not be confirmed. Try again.'); return; }
+      } catch { sendError(res, 'degraded_unavailable', 'Upload preparation could not be confirmed. Try again.'); return; }
+    }
 
     // Response stays backward-compatible ({url, path}); new fields are additive.
     // `phash` is included so the client can persist it on the post_media row.
@@ -589,7 +633,20 @@ router.post("/posts", async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
     return;
   }
-  const { content, mediaUrls, tripId, visibility } = parsed.data;
+  const { content, mediaUrls, tripId, visibility, composerUploadOperationId, composerPublicationOperationId } = parsed.data;
+  if (composerPublicationOperationId) {
+    const previous = await flagSc!.from('posts').select(POST_COLUMNS).eq('author_id', user.id).eq('composer_publication_operation_id', composerPublicationOperationId).maybeSingle();
+    if (previous.error) { sendError(res, 'db_error', 'Could not verify this publication.'); return; }
+    if (previous.data) { res.status(201).json(await withPostMediaOne(flagSc, previous.data)); return; }
+  }
+  if (composerUploadOperationId) {
+    const previous = await flagSc!.from('posts').select(POST_COLUMNS).eq('author_id', user.id).eq('composer_upload_operation_id', composerUploadOperationId).maybeSingle();
+    if (previous.error) { sendError(res, 'db_error', 'Could not verify this publication.'); return; }
+    if (previous.data) { res.status(201).json(await withPostMediaOne(flagSc, previous.data)); return; }
+    const intent = await flagSc!.from('composer_upload_intents' as never).select('storage_paths,state').eq('id', composerUploadOperationId).eq('owner_id', user.id).maybeSingle();
+    const row = intent.data as unknown as { storage_paths?: string[]; state?: string } | null;
+    if (intent.error || !['ready','published'].includes(row?.state ?? '') || !mediaUrls?.length || mediaUrls.some(url => !row?.storage_paths?.some(path => url === `post-media/${path}`))) { sendError(res, 'conflict', 'Draft upload is not ready.'); return; }
+  }
   const {
     mediaType, addToPassport, locationName, locationPlaceId, locationCity,
     locationCountry, locationLat, locationLng, userGpsLat, userGpsLng,
@@ -642,11 +699,11 @@ router.post("/posts", async (req, res) => {
     locationSource: locationSource ?? 'none',
   });
 
-  const { data, error } = await client
-    .from("posts")
-    .insert({
+  const postRow = {
       author_id: user.id, // verified user only — never from client
       trip_id: tripId ?? null,
+      composer_upload_operation_id: composerUploadOperationId ?? null,
+      composer_publication_operation_id: composerPublicationOperationId ?? null,
       content: content ?? "",
       media_urls: uploadPlan.external, media_count: uploadPlan.uploads.length, has_video: uploadPlan.uploads.some((u) => u.kind === "video"), primary_media_type: uploadSummary(uploadPlan.uploads)?.primary_media_type ?? null, // 2026-10-24: external references only (2083); uploads are rows, written below. Explicit keys (no spread) so check:write-path-columns resolves the payload; 0/false/null are the columns' own defaults
       media_type: mediaType ?? null,
@@ -693,16 +750,28 @@ router.post("/posts", async (req, res) => {
       publish_eligible_at: publishEligibleAt,
       location_sensitivity_level: sens,
       post_status: delayedStatus,
-    })
-    .select(POST_COLUMNS)
-    .single();
+    };
+  let result: { data: any; error: { message: string } | null };
+  let replayed = false;
+  if (composerUploadOperationId) {
+    const postId = randomUUID();
+    const rows = await buildUploadRows(flagSc!, postId, user.id, uploadPlan.uploads, { durationSeconds: mediaDurationSeconds ?? null });
+    const committed = await commitComposerPost(flagSc!, user.id, { ...postRow, id: postId }, rows);
+    replayed = committed.ok && committed.repeated;
+    result = committed.ok ? await client.from('posts').select(POST_COLUMNS).eq('id', committed.id).eq('author_id', user.id).single() : { data: null, error: committed.error };
+  } else {
+    result = await client.from('posts').insert(postRow).select(POST_COLUMNS).single();
+  }
+  const { data, error } = result;
 
   if (error) {
     req.log.error({ err: error }, "Failed to insert post");
     sendError(res, "db_error", error.message);
     return;
   }
-  { const rowsWrite = await insertUploadRows(flagSc, String((data as any).id), user.id, uploadPlan.uploads, { durationSeconds: mediaDurationSeconds ?? null }); if (!rowsWrite.ok) { req.log.error({ err: rowsWrite.error, postId: (data as any).id }, "post create: post_media write failed; removing the post"); const { error: undoErr } = await flagSc!.from("posts").delete().eq("id", (data as any).id); if (undoErr) req.log.error({ err: undoErr, postId: (data as any).id, flag: "post_without_uploaded_media" }, "post create: compensation failed; a post exists without its uploaded media"); sendError(res, "db_error", "We couldn't attach your photos and videos. Please try again."); return; } } { const msc = getServiceClient(); if (msc) void recordPostMediaAttachments(msc, { postId: String((data as any).id), authorId: user.id, mediaUrls: mediaUrls ?? [] }); } // §6.1 post→asset link, gated inside (census-media §20)
+  if (replayed) { res.status(201).json(await withPostMediaOne(flagSc, data)); return; }
+  if (!composerUploadOperationId) { const rowsWrite = await insertUploadRows(flagSc, String((data as any).id), user.id, uploadPlan.uploads, { durationSeconds: mediaDurationSeconds ?? null }); if (!rowsWrite.ok) { req.log.error({ err: rowsWrite.error, postId: (data as any).id }, "post create: post_media write failed; removing the post"); const { error: undoErr } = await flagSc!.from("posts").delete().eq("id", (data as any).id); if (undoErr) req.log.error({ err: undoErr, postId: (data as any).id, flag: "post_without_uploaded_media" }, "post create: compensation failed; a post exists without its uploaded media"); sendError(res, "db_error", "We couldn't attach your photos and videos. Please try again."); return; } } { const msc = getServiceClient(); if (msc) void recordPostMediaAttachments(msc, { postId: String((data as any).id), authorId: user.id, mediaUrls: mediaUrls ?? [] }); } // §6.1 post→asset link, gated inside (census-media §20)
+  if (composerUploadOperationId) void import('./composerUploads.js').then(({ activatePublishedComposerMedia }) => activatePublishedComposerMedia(flagSc!, user.id, composerUploadOperationId));
   // Compass activity ingestion — fire-and-forget
   recordActivityEvent(
     getServiceClient(),
@@ -3773,7 +3842,7 @@ async function checkPostCommentsReadPermission(
   }
   return true;
 }
-import { planPostMediaUploads, moderatedUploadKeys, uploadSummary, insertUploadRows, mediaUrlsFallback, projectedMedia } from "../lib/media/storageBackedPostMedia.js"; const EDIT_CANNOT_ADD_UPLOADS_MESSAGE = "Photos and videos are added when a post is created."; // 2026-10-24 video playback: the one authority for uploads named by media_urls
+import { planPostMediaUploads, moderatedUploadKeys, uploadSummary, insertUploadRows, buildUploadRows, mediaUrlsFallback, projectedMedia } from "../lib/media/storageBackedPostMedia.js"; const EDIT_CANNOT_ADD_UPLOADS_MESSAGE = "Photos and videos are added when a post is created."; // 2026-10-24 video playback: the one authority for uploads named by media_urls
 
 
 import { commentTypingStore, publishCommentTyping } from '../lib/commentTyping.js';

@@ -456,6 +456,50 @@ jobs:
           set -euo pipefail
           pnpm install --frozen-lockfile
 
+      - name: Cache pinned PostgreSQL source archive
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/memory-postgres-source/postgresql-17.11.tar.bz2
+          key: memory-postgres-source-17.11-dd27f2b3c59e73ed14aa3324901242bf69a032a6347805f274e6260322d42979
+
+      - name: Build verified PostgreSQL for native Memory tests
+        id: memory-postgres
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          node .github/scripts/prepare-memory-native-postgres.mjs 2>&1 | tee "$RUNNER_TEMP/memory-native-prepare.log"
+
+      - name: Require native input-outcome privacy suite
+        timeout-minutes: 5
+        shell: bash
+        env:
+          INPUT_OUTCOME_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}
+          TMPDIR: /tmp
+        run: |
+          set -euo pipefail
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:input-outcome-native 2>&1 | tee "$RUNNER_TEMP/input-outcome-native.log"
+
+      - name: Require native wall-outcome privacy suite
+        timeout-minutes: 5
+        shell: bash
+        env:
+          WALL_OUTCOME_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}
+          TMPDIR: /tmp
+        run: |
+          set -euo pipefail
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:wall-outcome-native 2>&1 | tee "$RUNNER_TEMP/wall-outcome-native.log"
+
+      - name: Require native media-events privacy suite
+        timeout-minutes: 5
+        shell: bash
+        env:
+          MEDIA_EVENT_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}
+          TMPDIR: /tmp
+        run: |
+          set -euo pipefail
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:media-events-native 2>&1 | tee "$RUNNER_TEMP/media-events-native.log"
+
       - name: Run suite and report totals
         shell: bash
         env:
@@ -696,20 +740,6 @@ jobs:
             echo "| pass >= floor | $MIN_PASS (\`API_TEST_MIN_PASS\`, mandatory) | $PASS |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Cache pinned PostgreSQL source archive
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/memory-postgres-source/postgresql-17.11.tar.bz2
-          key: memory-postgres-source-17.11-dd27f2b3c59e73ed14aa3324901242bf69a032a6347805f274e6260322d42979
-
-      - name: Build verified PostgreSQL for native Memory tests
-        id: memory-postgres
-        timeout-minutes: 10
-        shell: bash
-        run: |
-          set -euo pipefail
-          node .github/scripts/prepare-memory-native-postgres.mjs 2>&1 | tee "$RUNNER_TEMP/memory-native-prepare.log"
-
       - name: Require all four native Memory suites
         timeout-minutes: 10
         shell: bash
@@ -927,6 +957,30 @@ jobs:
             sudo apt-get install -y -qq postgresql-client
           fi
           psql --version
+
+      # The operational monitor migration uses the real pg_cron extension.
+      # Install from the PostgreSQL image's signed package repository, with the
+      # scheduler disabled during fixture tests (no hidden background writes).
+      - name: Prepare pg_cron for the disposable database
+        shell: bash
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          node --test .github/scripts/repair-disposable-pgdg-source.test.mjs
+          docker exec -i "$POSTGRES_CONTAINER" sh -s < .github/scripts/repair-disposable-pgdg-source.sh
+          docker exec "$POSTGRES_CONTAINER" sh -c 'apt-get update -qq && apt-get install -y -qq postgresql-16-cron'
+          docker exec "$POSTGRES_CONTAINER" psql -U postgres -c "ALTER SYSTEM SET shared_preload_libraries = 'pg_cron'"
+          docker exec -i "$POSTGRES_CONTAINER" sh -c 'cat >> "$PGDATA/postgresql.auto.conf"' <<'CRON_CONFIG'
+          cron.database_name = 'portava_local'
+          cron.launch_active_jobs = off
+          CRON_CONFIG
+          docker restart "$POSTGRES_CONTAINER"
+          for attempt in $(seq 1 30); do
+            if docker exec "$POSTGRES_CONTAINER" pg_isready -U postgres; then break; fi
+            sleep 1
+          done
+          docker exec "$POSTGRES_CONTAINER" pg_isready -U postgres
 
       - name: Resolve pnpm store path
         id: pnpm-store
@@ -1428,6 +1482,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+
+      - name: Provider release event gate
+        run: node --test scripts/provider-release-events.test.mjs
 
       - name: No soft-fail constructs in any workflow
         shell: bash

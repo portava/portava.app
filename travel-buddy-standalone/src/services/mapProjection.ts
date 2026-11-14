@@ -1,3 +1,4 @@
+import { withServiceRequest } from './serviceRequest.ts';
 /**
  * mapProjection service — the client half of the Map Intelligence Gateway
  * (Map spec §19).
@@ -67,7 +68,7 @@ export type MapProjectionResult =
   | { ok: true; data: MapProjectionEnvelope }
   | { ok: false; error: string };
 
-/** The empty, disabled envelope — used for both "not configured" and parse failures. */
+/** An explicit disabled state, never a substitute for an unreadable response. */
 function disabledEnvelope(): MapProjectionEnvelope {
   return {
     enabled: false,
@@ -94,50 +95,56 @@ export interface FetchProjectionOptions {
 export async function fetchMapProjection(
   opts: FetchProjectionOptions,
 ): Promise<MapProjectionResult> {
-  if (!isSupabaseConfigured || !apiBase()) {
-    // Not an error the UI should surface — it just means the gateway is
-    // unavailable here, so the caller falls back.
-    return { ok: true, data: disabledEnvelope() };
-  }
-  const token = await freshApiToken();
-  if (!token) return { ok: false, error: 'Not authenticated' };
-
-  const { west, south, east, north } = opts.bbox;
-  const params = new URLSearchParams({
-    // Wire order is w,s,e,n — the server's parseBbox reads it positionally.
-    bbox: `${west},${south},${east},${north}`,
-    zoom: String(opts.zoom),
-  });
-  if (opts.kinds && opts.kinds.length > 0) params.set('kinds', opts.kinds.join(','));
-  if (opts.limit != null) params.set('limit', String(opts.limit));
-  if (opts.cursor) params.set('cursor', opts.cursor);
-
-  try {
-    const res = await fetch(`${apiBase()}/api/map/projection?${params}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: opts.signal,
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return { ok: false, error: (body as any).message ?? `Request failed (${res.status})` };
+  return withServiceRequest<MapProjectionResult>(async (request) => {
+    if (!isSupabaseConfigured || !apiBase()) {
+      // Not an error the UI should surface — it just means the gateway is
+      // unavailable here, so the caller falls back.
+      return { ok: true, data: disabledEnvelope() };
     }
-    const body = (await res.json()) as Partial<MapProjectionEnvelope>;
-    return {
-      ok: true,
-      data: {
-        ...disabledEnvelope(),
-        ...body,
-        // Defensive: a malformed body must not crash the renderer, and must not
-        // masquerade as an enabled-but-empty result.
-        enabled: body.enabled === true,
-        objects: Array.isArray(body.objects) ? body.objects : [],
-        sources: Array.isArray(body.sources) ? body.sources : [],
-      },
-    };
-  } catch (err: any) {
-    if (err?.name === 'AbortError') return { ok: false, error: 'aborted' };
-    return { ok: false, error: err?.message ?? 'Network error' };
-  }
+    const token = await request.token(freshApiToken);
+    if (!token) return { ok: false, error: 'Not authenticated' };
+
+    const { west, south, east, north } = opts.bbox;
+    const params = new URLSearchParams({
+      // Wire order is w,s,e,n — the server's parseBbox reads it positionally.
+      bbox: `${west},${south},${east},${north}`,
+      zoom: String(opts.zoom),
+    });
+    if (opts.kinds && opts.kinds.length > 0) params.set('kinds', opts.kinds.join(','));
+    if (opts.limit != null) params.set('limit', String(opts.limit));
+    if (opts.cursor) params.set('cursor', opts.cursor);
+
+    try {
+      const res = await request.fetch(`${apiBase()}/api/map/projection?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: opts.signal,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        return { ok: false, error: (body as any).message ?? `Request failed (${res.status})` };
+      }
+      const body = (await res.json()) as Partial<MapProjectionEnvelope>;
+      if (!body || typeof body.enabled !== 'boolean' || !Array.isArray(body.objects)) {
+        return { ok: false, error: 'The map response could not be read. Try again.' };
+      }
+      return {
+        ok: true,
+        data: {
+          ...disabledEnvelope(),
+          ...body,
+          // Defensive: a malformed body must not crash the renderer, and must not
+          // masquerade as an enabled-but-empty result.
+          enabled: body.enabled === true,
+          objects: Array.isArray(body.objects) ? body.objects : [],
+          sources: Array.isArray(body.sources) ? body.sources : [],
+        },
+      };
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return { ok: false, error: 'aborted' };
+      return { ok: false, error: err?.message ?? 'Network error' };
+    }
+
+  }, { signal: opts.signal }).catch((e: unknown): MapProjectionResult => { return { ok: false, error: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 /**

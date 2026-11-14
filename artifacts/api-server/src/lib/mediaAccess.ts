@@ -388,6 +388,24 @@ async function decide(
       forwardMediaAllowed = true;
     } catch { return false; }
   }
+  // Unpublished composer uploads remain owner-only even if another surface
+  // tries to attach a guessed key. Explicit cancellation denies the owner too.
+  try {
+    if (path.includes('/composer-drafts/') || path.includes('/capture-stamps/')) {
+    const intent = await sc.from('composer_upload_intents').select('owner_id,state').overlaps('storage_paths', [path]).maybeSingle();
+    if (intent.error) return false;
+    const draft = intent.data as unknown as { owner_id: string; state: string } | null;
+    if (draft && draft.state !== 'published' && (!['uploading','ready'].includes(draft.state) || draft.owner_id !== viewerId)) return false;
+    if (path.includes('/composer-drafts/') && !draft) return false;
+    }
+    const postcard = /^[0-9a-f-]{36}\/([0-9a-f-]{36})\//i.exec(path);
+    if (postcard) {
+      const parent = await sc.from('posts').select('author_id,postcard_draft_state').eq('id', postcard[1]).maybeSingle();
+      if (parent.error) return false;
+      if (parent.data?.postcard_draft_state === 'cancelled') return false;
+      if (parent.data?.postcard_draft_state === 'draft' && parent.data.author_id !== viewerId) return false;
+    }
+  } catch { return false; }
   const pathOwner = ownerFromPath(path);
   let owner = pathOwner;
   let canonicalAssetId: string | null = null;

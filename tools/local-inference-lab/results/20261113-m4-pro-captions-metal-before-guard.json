@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "kind": "experimental_mps_feasibility",
+  "eligibleForReplacement": false,
+  "completed": true,
+  "model": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+  "revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+  "cases": [
+    {
+      "case": "jfk.wav",
+      "secondsExcludingModelLoad": 17.00240279082209,
+      "audioSeconds": 11.0,
+      "transcript": "And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+      "wordErrorRate": 0.0,
+      "silenceHallucination": false
+    },
+    {
+      "case": "english.wav",
+      "secondsExcludingModelLoad": 7.314067457802594,
+      "audioSeconds": 7.2426875,
+      "transcript": "Please plan a quiet afternoon in Da Nang. I prefer vegetarian food, short walks, and a budget of $20.",
+      "wordErrorRate": 0.1,
+      "silenceHallucination": false
+    },
+    {
+      "case": "spanish.wav",
+      "secondsExcludingModelLoad": 7.062764374539256,
+      "audioSeconds": 7.3143125,
+      "transcript": "Quiero visitar un museo por la mañana y comer cerca de la playa. Mi presupuesto es de 30 euros y prefiero caminar.",
+      "wordErrorRate": 0.045454545454545456,
+      "silenceHallucination": false
+    },
+    {
+      "case": "vietnamese.wav",
+      "secondsExcludingModelLoad": 6.6498335422948,
+      "audioSeconds": 5.8398125,
+      "transcript": "Tôi muốn đi bộ gần biển vào buổi sáng, hãy tìm một quán cà phê yên tĩnh ở Đà Nẵng.",
+      "wordErrorRate": 0.0,
+      "silenceHallucination": false
+    },
+    {
+      "case": "silence.wav",
+      "secondsExcludingModelLoad": 7.3236131658777595,
+      "audioSeconds": 8.0,
+      "transcript": "Thank you.",
+      "wordErrorRate": null,
+      "silenceHallucination": true
+    }
+  ],
+  "startedAt": "2026-11-13T15:03:06.626733+00:00",
+  "modelLoadSeconds": 14.986683666706085
+}

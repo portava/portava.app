@@ -56,11 +56,10 @@ export async function fetchInputPolicies(signal?: AbortSignal): Promise<PolicyFe
     if (!token) return { ok: false, unavailable: true, error: 'Not signed in' };
     if (!budget.current(token)) return { ok: false, unavailable: false, error: 'Account changed' };
 
-    const res = await budget.wait(() => fetch(`${base}/api/input-assistance/policies`, {
+    const res = await budget.fetch(base, '/api/input-assistance/policies', token, {
       method: 'GET',
       headers: { Authorization: `Bearer ${token}` },
-      signal: budget.signal,
-    }));
+    });
     if (!res.ok) {
       return {
         ok: false,

@@ -6,6 +6,7 @@ import type { DiscoveryEventPost } from '../types/discovery.ts';
 import { openDiscoveryLease, currentDiscoveryScope, viewerKeyForToken, isCurrentDiscoveryScope, isLeaseViewerCurrent, onDiscoveryScopeChange, VIEWER_CHANGED_ERROR, type DiscoveryLease, type DiscoveryScope } from './discoveryViewerScope.ts';
 import { stampCandidateReceipt } from '../features/discovery/candidateProjection.ts';
 import { placeLiveAnchorOf, liveCoordParam, type PlaceLiveAnchor } from '../features/discovery/placeLiveAnchor.ts';
+import { requestDeadline } from '../lib/requestDeadline.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
@@ -482,17 +483,19 @@ export async function getCommunityPlaces(
 
   const params = new URLSearchParams({ city, type, limit: String(limit) });
   if (sortBy) params.set('sortBy', sortBy);
-  const lease = openDiscoveryLease(await freshToken());  // bylines, blocks and mutes are per viewer — VIEWER SCOPE, foot of file
+  const deadline = requestDeadline(DISCOVERY_FEED_TIMEOUT_MS);
   try {
-    const init: RequestInit & { cache: 'no-store' } = { ...lease.init, cache: 'no-store' }; const res = await fetch(`${base}/api/discovery/community?${params}`, init);
+    const lease = openDiscoveryLease(await deadline.wait(freshToken));
+    const init: RequestInit & { cache: 'no-store' } = { ...lease.init, cache: 'no-store', signal: deadline.signal };
+    const res = await deadline.wait(() => fetch(`${base}/api/discovery/community?${params}`, init));
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
     const cacheable = !(res.headers?.get('Cache-Control') ?? '').split(',').some((directive) =>
       ['no-store', 'no-cache'].includes(directive.split('=')[0].trim().toLowerCase()),
     );
-    return communityForLease(lease, withParsedRefusal<CommunityDiscoveryResult>(await res.json()), cacheable);
+    return communityForLease(lease, withParsedRefusal<CommunityDiscoveryResult>(await deadline.wait(() => res.json())), cacheable);
   } catch {
-    return { ok: false, error: 'Network error — check your connection' };
-  }
+    return { ok: false, error: deadline.signal.aborted ? 'Places took too long to load. Try again.' : 'Network error — check your connection' };
+  } finally { deadline.dispose(); }
 }
 
 export interface SubmitPlacePayload {
@@ -768,11 +771,12 @@ export async function getDiscoveryPlaces(
     // Last, and only when chosen: with no selection the URL is the one sent before modes existed.
     ...(isDiscoveryIntentMode(filters.intentMode) ? { intentMode: filters.intentMode } : {}),
   });
-  const lease = openDiscoveryLease(await freshToken());  // the viewer this page is fetched AS — VIEWER SCOPE, foot of file
+  const deadline = requestDeadline(DISCOVERY_FEED_TIMEOUT_MS);
   try {
-    const res = await fetch(`${base}/api/discovery?${params}`, lease.init);
+    const lease = openDiscoveryLease(await deadline.wait(freshToken));
+    const res = await deadline.wait(() => fetch(`${base}/api/discovery?${params}`, { ...lease.init, signal: deadline.signal }));
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
-    const body = (await res.json()) as unknown;
+    const body = (await deadline.wait(() => res.json())) as unknown;
     const data = stampCandidateReceipt(withParsedRefusal<DiscoveryResult>(body), Date.now());  // DSV2-04: why-now expiry runs on THIS device's clock
     const refusal = data.refusal;
     // A page fetched AS one viewer is never handed to another: the account switched mid-flight.
@@ -796,8 +800,8 @@ export async function getDiscoveryPlaces(
     }
     return { ok: true, data };
   } catch {
-    return { ok: false, error: 'Network error — check your connection' };
-  }
+    return { ok: false, error: deadline.signal.aborted ? 'Places took too long to load. Try again.' : 'Network error — check your connection' };
+  } finally { deadline.dispose(); }
 }
 
 /**

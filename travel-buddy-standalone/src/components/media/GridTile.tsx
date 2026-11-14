@@ -33,6 +33,8 @@ import { useSmartVideoFit } from '../../hooks/useSmartVideoFit.ts';
 import { VideoBlurBackdrop } from '../ui/VideoBlurBackdrop.tsx';
 import { VerifiedLocationStamp } from './VerifiedLocationStamp.tsx';
 import { StampButton } from '../stamps/StampButton.tsx';
+import { useHydratedMedia } from '../../services/mediaUrl.ts';
+import { playbackUriState } from '../../services/playbackUri.ts';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -66,7 +68,10 @@ export interface GridTileProps {
 function GridTileInner({ item, index, cellWidth, cellHeight, onPress, isVisible = false }: GridTileProps) {
   const isVideo = item.mediaType === 'video';
   const isProcessing = item.processingStatus != null;
-  const hasVideoUrl = isVideo && isLoadablePlaybackUri(item.videoUrl) && !isProcessing; // 2026-10-24: only a loadable source mounts a player; otherwise the poster
+  const { resolved } = useHydratedMedia(isVideo && !isProcessing ? [item.videoUrl] : []);
+  const playback = playbackUriState(item.videoUrl, resolved);
+  const videoUri = isVideo && !isProcessing && playback.state === 'ready' ? playback.uri : null;
+  const hasVideoUrl = videoUri !== null;
 
   const posterUri = item.posterUrl ?? item.thumbnailUrl;
   const qualifiedViews = item.qualifiedViewCount > 0 ? item.qualifiedViewCount : item.viewCount; const [discWidth, setDiscWidth] = useState(DISC_IDLE_WIDTH); // census-media §40.14: the stamp disc's measured width
@@ -102,7 +107,7 @@ function GridTileInner({ item, index, cellWidth, cellHeight, onPress, isVisible 
           {needsLetterbox ? <VideoBlurBackdrop uri={posterUri} /> : null}
           <Video
             ref={videoRef}
-            source={{ uri: item.videoUrl! }}
+            source={{ uri: videoUri! }}
             style={StyleSheet.absoluteFill}
             resizeMode={resizeMode}
             shouldPlay={false}   // imperative control via useInViewAutoplay
@@ -299,4 +304,3 @@ const DISC_IDLE_WIDTH = 36;
 function verifiedStampMaxWidth(cellWidth: number, discWidth: number): number {
   return cellWidth - 6 - 4 - discWidth - 8;
 }
-import { isLoadablePlaybackUri } from '../../services/playbackUri.ts'; // 2026-10-24 video playback: the one playback rule

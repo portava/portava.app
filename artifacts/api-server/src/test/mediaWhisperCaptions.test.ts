@@ -203,3 +203,17 @@ test("production factory resolves persisted consent itself and refuses revoked g
   await handler.discard(fixture.context, result);
   assert.equal(objects.size, 0);
 });
+
+
+test("managed worker requires provider disclosure and keeps its result private and reviewable", async () => {
+  let exports = 0;
+  const managed = { ...config, provider: "deepgram" as const, disclosureVersion: "deepgram-audio-opt-out-v1", modelPath: "", pythonPath: "" };
+  const handler = createWhisperCaptionHandler(managed, fixtureTool, async () => { exports++; return answer; });
+  await assert.rejects(handler(fake.client, job, new AbortController().signal), /managed_consent_required/);
+  assert.equal(exports,0);
+  const result = await handler(fake.client, { ...job, consent: { ...job.consent, disclosureVersion: managed.disclosureVersion } }, new AbortController().signal);
+  assert.equal(exports,1);
+  assert.equal(result.metrics.estimatedProviderCostUsd,null);
+  assert.equal(JSON.parse(objects.get(result.artifactKey)!).aiLabel,"AI transcription · needs creator review");
+  assert.equal(calls.length,1, "only audio extraction uses a local subprocess");
+});

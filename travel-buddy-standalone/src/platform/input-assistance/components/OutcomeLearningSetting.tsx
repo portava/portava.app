@@ -21,7 +21,7 @@
  * it also hides itself when the server says the setting is not offered, unless
  * the person is still opted in (they must always be able to withdraw).
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { View, Text, Switch, Pressable, StyleSheet } from 'react-native';
 import { color, space, radius, type as t } from '../../../theme/tokens.ts';
 import {
@@ -29,6 +29,7 @@ import {
   OUTCOME_DISCLOSURE_TITLE,
   applyOutcomeConsent,
   currentOutcomeAccount,
+  currentOutcomeScope, isCurrentOutcomeScope, subscribeOutcomeScope, holdOutcomeWithdrawal, clearOutcomeWithdrawal, hasOutcomeWithdrawalHold,
   stateGrantsOutcomes,
   type OutcomeConsentState,
 } from '../services/outcomeLearning.ts';
@@ -54,37 +55,67 @@ export function OutcomeLearningSetting({ read = defaultRead, write = defaultWrit
   const [reviewing, setReviewing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [pendingWithdrawal, setPendingWithdrawal] = useState(false);
+  const request = useRef(0);
+  const mounted = useRef(true);
 
   const load = useCallback(async () => {
+    const id = ++request.current;
+    const scope = currentOutcomeScope();
     setView({ kind: 'loading' });
-    const r = await read();
+    const r = await read().catch(() => ({ status: 'unreadable' } as const));
+    if (!mounted.current || id !== request.current) return;
+    if (!isCurrentOutcomeScope(scope)) { setView({ kind: 'unreadable' }); return; }
     if (r.status === 'ok') {
       setView({ kind: 'ready', state: r.state });
-      applyOutcomeConsent(currentOutcomeAccount(), stateGrantsOutcomes(r.state));
+      const pending = hasOutcomeWithdrawalHold(scope.account) && r.state.enabled;
+      setPendingWithdrawal(pending);
+      if (pending) setNote('Learning is paused on this device. Retry to turn it off for your account.');
+      applyOutcomeConsent(scope.account, stateGrantsOutcomes(r.state), r.state.consentedAt);
     } else {
       setView({ kind: 'unreadable' });
     }
   }, [read]);
 
   useEffect(() => {
+    mounted.current = true;
+    let account = currentOutcomeAccount();
+    const stop = subscribeOutcomeScope(() => {
+      if (account === currentOutcomeAccount()) return;
+      account = currentOutcomeAccount();
+      request.current += 1;
+      setBusy(false); setReviewing(false); setNote(null); setPendingWithdrawal(false);
+      void load();
+    });
     void load();
+    return () => { mounted.current = false; request.current += 1; stop(); };
   }, [load]);
 
   const commit = useCallback(
     async (enabled: boolean) => {
+      const account = currentOutcomeAccount();
+      if (account && !enabled) { holdOutcomeWithdrawal(account); setPendingWithdrawal(true); }
+      const scope = currentOutcomeScope();
+      const id = ++request.current;
       setBusy(true);
       setNote(null);
-      const w = await write(enabled);
+      const w = await write(enabled).catch(() => ({ status: 'failed' } as const));
+      if (!mounted.current || id !== request.current) return;
+      if (!isCurrentOutcomeScope(scope)) { setBusy(false); setView({ kind: 'unreadable' }); return; }
       setBusy(false);
       setReviewing(false);
-      if (w.status === 'ok') {
+      if (w.status === 'ok' && (enabled ? stateGrantsOutcomes(w.state) : !w.state.enabled && !!w.state.withdrawnAt)) {
+        setPendingWithdrawal(false);
         setView({ kind: 'ready', state: w.state });
-        applyOutcomeConsent(currentOutcomeAccount(), stateGrantsOutcomes(w.state));
+        if (enabled && scope.account && stateGrantsOutcomes(w.state)) clearOutcomeWithdrawal(scope.account);
+        applyOutcomeConsent(scope.account, stateGrantsOutcomes(w.state), w.state.consentedAt);
         if (!enabled) {
           setNote(
-            w.countersErased === false
-              ? 'Turned off. What we kept will be deleted within 30 days.'
-              : 'Turned off. What we kept has been deleted.',
+            w.countersErased === true
+              ? 'Turned off. What we kept has been deleted.'
+              : w.countersErased === false
+                ? 'Turned off. What we kept will be deleted within 30 days.'
+                : 'Turned off. We couldn’t confirm whether what we kept was deleted.',
           );
         }
         return;
@@ -98,7 +129,8 @@ export function OutcomeLearningSetting({ read = defaultRead, write = defaultWrit
         setNote('This setting isn’t available yet.');
         return;
       }
-      setNote('Your change couldn’t be saved. Please try again.');
+      setNote(enabled ? 'Your change couldn’t be saved. Please try again.'
+        : 'Learning is paused on this device. Turning it off for your account couldn’t be saved. Please retry.');
     },
     [write, load],
   );
@@ -126,7 +158,7 @@ export function OutcomeLearningSetting({ read = defaultRead, write = defaultWrit
       <View style={styles.row}>
         <Text style={styles.title}>{OUTCOME_DISCLOSURE_TITLE}</Text>
         <Switch
-          value={state.enabled || reviewing}
+          value={(state.enabled && !pendingWithdrawal) || reviewing}
           disabled={busy}
           onValueChange={(next) => {
             if (next) {
@@ -143,6 +175,10 @@ export function OutcomeLearningSetting({ read = defaultRead, write = defaultWrit
         />
       </View>
       <Text style={styles.small}>Your suggestions work the same either way.</Text>
+      {pendingWithdrawal ? <Pressable accessibilityRole="button" disabled={busy}
+        onPress={() => void commit(false)} testID="outcome-learning-retry-withdrawal">
+        <Text style={styles.link}>Retry withdrawal</Text>
+      </Pressable> : null}
       {reviewing ? (
         <View style={styles.review} testID="outcome-learning-disclosure">
           <Text style={styles.body}>{OUTCOME_DISCLOSURE_BODY}</Text>

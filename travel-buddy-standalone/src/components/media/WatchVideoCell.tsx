@@ -35,6 +35,7 @@ import { VideoBlurBackdrop } from '../ui/VideoBlurBackdrop.tsx';
 import { MediaCaptionControls } from './MediaCaptionControls.tsx';
 import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx';
 import { useAdaptivePlayback } from '../../hooks/useAdaptivePlayback.ts';
+import { useWatchViewReporting } from '../../hooks/useWatchViewReporting.ts';
 import { MediaDubbingSession, useMediaDubbingSession } from './MediaDubbingSession.tsx';
 
 // Web: inject stylesheet rules with !important so expo-av's inline-style overrides
@@ -55,6 +56,8 @@ const MAX_FAILURES = 3;
 
 export interface WatchVideoCellProps {
   id: string;
+  sessionId?: string;
+  observationEligible?: boolean;
   videoUrl: string;
   captionSource?: string;
   posterUrl: string | null;
@@ -75,7 +78,7 @@ export interface WatchVideoCellHandle {
 
 export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellProps>(
   function WatchVideoCell(
-    { id, videoUrl, captionSource, posterUrl, isActive, isViewable = isActive, playbackEligible = true, isMuted, onProgress, onVideoRef, onVideoUnmount },
+    { id, sessionId, observationEligible = true, videoUrl, captionSource, posterUrl, isActive, isViewable = isActive, playbackEligible = true, isMuted, onProgress, onVideoRef, onVideoUnmount },
     ref,
   ) {
     const videoRef = useRef<Video>(null);
@@ -97,6 +100,7 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
     const playback = useAdaptivePlayback(captionSource ?? videoUrl, videoUrl, shouldPlay);
     const dubbing = useMediaDubbingSession({ source: captionSource ?? videoUrl, active: shouldPlay && !hasHardFailed,
       controller, controlSource: { shouldPlay, isMuted, volume: 1, rate: 1 } });
+    const reportView = useWatchViewReporting({ mediaId: id, sessionId, visible: isViewable, eligible: shouldPlay && observationEligible });
     const mountedRef = useRef(true);
     const { resizeMode, needsLetterbox, onReadyForDisplay } = useSmartVideoFit(SCREEN_W, SCREEN_H);
 
@@ -127,6 +131,7 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
     const handleStatus = useCallback(
       (status: AVPlaybackStatus) => {
         if (!mountedRef.current || !layer.isCurrent()) return;
+        reportView(status);
         dubbing.playback.onSourceStatus(status);
         if (captionsEnabled) setCaptionStatus({ source: videoUrl, status });
 
@@ -155,7 +160,7 @@ export const WatchVideoCell = forwardRef<WatchVideoCellHandle, WatchVideoCellPro
           onProgress(0, null);
         }
       },
-      [failureCount, onProgress, captionsEnabled, videoUrl, playback.rejectAdaptive, dubbing.playback.onSourceStatus, layer.isCurrent, resumeAt],
+      [reportView, failureCount, onProgress, captionsEnabled, videoUrl, playback.rejectAdaptive, dubbing.playback.onSourceStatus, layer.isCurrent, resumeAt],
     );
 
     // ── Failure state ─────────────────────────────────────────────────────────

@@ -25,10 +25,12 @@ import {
   reportInputTaskOutcome,
   setOutcomePoster,
   stateGrantsOutcomes,
+  holdOutcomeWithdrawal, clearOutcomeWithdrawal, isCurrentOutcomeAuthorization, outcomeAuthorizationSignal,
   type OutcomeConsentState,
   type TaskOutcomeBody,
 } from '../outcomeLearning.ts';
 import { setTelemetrySink, resetTelemetrySink, type InputTelemetryEvent } from '../inputTelemetry.ts';
+import { createTelemetryBatcher, type TelemetryBatch } from '../telemetryBatcher.ts';
 
 const FIELD = { fieldId: 'trip.destination', context: 'trip_destination' as const };
 const STATE: OutcomeConsentState = {
@@ -45,12 +47,90 @@ function capture(): { events: InputTelemetryEvent[]; done: () => void } {
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
+test('a missing, withdrawn, obsolete-version or malformed grant cannot authorize learning', () => {
+  beginOutcomeAccount('grant-validation');
+  applyOutcomeConsent('grant-validation', true);
+  assert.equal(outcomeLearningConsented(), false);
+  for (const state of [
+    {...STATE, consentedAt:null}, {...STATE, consentedAt:'private text'},
+    {...STATE, withdrawnAt:'2026-11-13T00:00:00Z'}, {...STATE, consentVersion:'old'},
+  ]) assert.equal(stateGrantsOutcomes(state), false);
+});
+
+test('buffered outcomes are discarded on withdrawal and cannot revive after regrant', async () => {
+  const batches: TelemetryBatch[] = [];
+  const batcher = createTelemetryBatcher({sessionId:'test',schedule:()=>{},post:async batch=>{batches.push(batch);return {ok:true};}});
+  const sink = gateOutcomeEvents(batcher.sink);
+  beginOutcomeAccount('queued-grant'); applyOutcomeConsent('queued-grant',true,STATE.consentedAt);
+  sink({name:'downstream_task_completed',context:'trip_destination',fieldId:'trip.destination',at:1,props:{task:'trip_created',ok:true}});
+  sink({name:'input_opened',context:'trip_destination',fieldId:'trip.destination',at:1});
+  holdOutcomeWithdrawal('queued-grant');
+  clearOutcomeWithdrawal('queued-grant'); applyOutcomeConsent('queued-grant',true,'2026-11-13T00:00:00Z');
+  await batcher.flush();
+  assert.deepEqual(batches[0]!.events.map(e=>e.name),['input_opened']);
+  assert.equal(batcher.dropped(),1);
+});
+
+test('wire outcomes contain grant metadata but no account or local authorization proof', async () => {
+  let batch: TelemetryBatch | undefined;
+  const batcher = createTelemetryBatcher({sessionId:'opaque',schedule:()=>{},post:async value=>{batch=value;return {ok:true};}});
+  beginOutcomeAccount('private-account-id'); applyOutcomeConsent('private-account-id',true,STATE.consentedAt);
+  gateOutcomeEvents(batcher.sink)({name:'downstream_task_completed',context:'trip_destination',fieldId:'trip.destination',at:1,props:{task:'trip_created',ok:true}});
+  await batcher.flush();
+  assert.equal(batch!.events[0]!.outcomeConsentedAt,STATE.consentedAt);
+  assert.deepEqual(batch!.events[0]!.props,{task:'trip_created',ok:true});
+  assert.ok(!JSON.stringify(batch).includes('private-account-id'));
+});
+
+test('in-flight authorization aborts immediately on withdrawal or A-to-B-to-A account changes', () => {
+  for (const change of [()=>holdOutcomeWithdrawal('request-owner'),()=>{beginOutcomeAccount('other');beginOutcomeAccount('request-owner');}]) {
+    clearOutcomeWithdrawal('request-owner'); beginOutcomeAccount('request-owner'); applyOutcomeConsent('request-owner',true,STATE.consentedAt);
+    let body: TaskOutcomeBody | undefined;
+    reportInputTaskOutcome(FIELD,'trip_created',true,[{entityType:'city',entityId:'c1'}],{post:async b=>{body=b;return true;}});
+    const request = outcomeAuthorizationSignal([body!]);
+    assert.equal(request.signal.aborted,false);
+    change();
+    assert.equal(request.signal.aborted,true);
+    applyOutcomeConsent('request-owner',true,STATE.consentedAt);
+    assert.equal(isCurrentOutcomeAuthorization(body!),false);
+    request.dispose();
+  }
+  clearOutcomeWithdrawal('request-owner');
+});
+
+test('late boot and consent answers cannot override a newer auth event or withdrawal', async () => {
+  let auth!: (account:string|null)=>void, boot!: (account:string|null)=>void, answer!: (state:OutcomeConsentState)=>void;
+  const stop=createOutcomeConsentSync({subscribeAuth:cb=>{auth=cb;return()=>{};},currentUserId:()=>new Promise(resolve=>{boot=resolve;}),fetchConsent:()=>new Promise(resolve=>{answer=resolve;}),post:async()=>true});
+  auth('new-owner'); boot('stale-owner'); await tick();
+  assert.equal(currentOutcomeAccount(),'new-owner');
+  holdOutcomeWithdrawal('new-owner'); answer(STATE); await tick();
+  assert.equal(outcomeLearningConsented(),false);
+  stop(); clearOutcomeWithdrawal('new-owner');
+});
+
+test('teardown invalidates an unresolved initial account lookup', async () => {
+  let boot!: (account:string|null)=>void;
+  const stop=createOutcomeConsentSync({subscribeAuth:()=>()=>{},currentUserId:()=>new Promise(resolve=>{boot=resolve;}),fetchConsent:async()=>STATE,post:async()=>true});
+  stop(); boot('disposed-owner'); await tick();
+  assert.equal(currentOutcomeAccount(),null);
+  assert.equal(outcomeLearningConsented(),false);
+});
+
+test('a synchronous auth notification takes precedence over the bootstrap account lookup', async () => {
+  const stop=createOutcomeConsentSync({subscribeAuth:cb=>{cb('current-owner');return()=>{};},
+    currentUserId:async()=> 'stale-owner',fetchConsent:async()=>STATE,post:async()=>true});
+  await tick();
+  assert.equal(currentOutcomeAccount(),'current-owner');
+  assert.equal(outcomeLearningConsented(),true);
+  stop();
+});
+
 test('the gate is CLOSED by default and closes again on every account change', () => {
   beginOutcomeAccount(null);
   assert.equal(outcomeLearningConsented(), false);
   beginOutcomeAccount('u1');
   assert.equal(outcomeLearningConsented(), false, 'a new account starts closed');
-  applyOutcomeConsent('u1', true);
+  applyOutcomeConsent('u1', true, '2026-10-05T00:00:00.000Z');
   assert.equal(outcomeLearningConsented(), true);
   beginOutcomeAccount('u2');
   assert.equal(outcomeLearningConsented(), false, 'switching account closes it');
@@ -58,9 +138,9 @@ test('the gate is CLOSED by default and closes again on every account change', (
 
 test('an answer for a PREVIOUS account never opens the gate for the current one', () => {
   beginOutcomeAccount('u2');
-  applyOutcomeConsent('u1', true);
+  applyOutcomeConsent('u1', true, '2026-10-05T00:00:00.000Z');
   assert.equal(outcomeLearningConsented(), false);
-  applyOutcomeConsent(null, true);
+  applyOutcomeConsent(null, true, '2026-10-05T00:00:00.000Z');
   assert.equal(outcomeLearningConsented(), false, 'signed out is never consented');
 });
 
@@ -82,7 +162,7 @@ test('without consent a report does NOTHING — no event, no request', () => {
 
 test('with consent: the §44 event carries {task, ok} only, and a success credits its entities', async () => {
   beginOutcomeAccount('u1');
-  applyOutcomeConsent('u1', true);
+  applyOutcomeConsent('u1', true, '2026-10-05T00:00:00.000Z');
   const { events, done } = capture();
   const posts: TaskOutcomeBody[] = [];
   try {
@@ -97,6 +177,7 @@ test('with consent: the §44 event carries {task, ok} only, and a success credit
     assert.ok(!JSON.stringify(events[0]).includes('c1'), 'the shared stream never carries the entity');
     assert.deepEqual(posts, [{
       context: 'trip_destination', fieldId: 'trip.destination', task: 'trip_created', ok: true,
+      outcomeConsentedAt: STATE.consentedAt!,
       entities: [{ entityType: 'city', entityId: 'c1' }],
     }]);
   } finally {
@@ -107,7 +188,7 @@ test('with consent: the §44 event carries {task, ok} only, and a success credit
 
 test('a FAILED task is reported as failed and credits nothing', async () => {
   beginOutcomeAccount('u1');
-  applyOutcomeConsent('u1', true);
+  applyOutcomeConsent('u1', true, '2026-10-05T00:00:00.000Z');
   const { events, done } = capture();
   const posts: TaskOutcomeBody[] = [];
   try {
@@ -125,7 +206,7 @@ test('a FAILED task is reported as failed and credits nothing', async () => {
 
 test('credited entities are bounded and malformed ones are dropped', async () => {
   beginOutcomeAccount('u1');
-  applyOutcomeConsent('u1', true);
+  applyOutcomeConsent('u1', true, '2026-10-05T00:00:00.000Z');
   const posts: TaskOutcomeBody[] = [];
   const many = Array.from({ length: 15 }, (_, i) => ({ entityType: 'city', entityId: `c${i}` }));
   reportInputTaskOutcome(FIELD, 'trip_created', true, [{ entityType: 'city', entityId: '' }, ...many], {
@@ -139,7 +220,7 @@ test('credited entities are bounded and malformed ones are dropped', async () =>
 
 test('a rejecting poster never surfaces to the caller', async () => {
   beginOutcomeAccount('u1');
-  applyOutcomeConsent('u1', true);
+  applyOutcomeConsent('u1', true, '2026-10-05T00:00:00.000Z');
   assert.equal(
     reportInputTaskOutcome(FIELD, 'trip_created', true, [{ entityType: 'city', entityId: 'c1' }], {
       post: async () => { throw new Error('offline'); },
@@ -158,7 +239,7 @@ test('the sink filter drops downstream_task_completed without consent and passes
   sink(ev('suggestion_selected'));
   sink(ev('downstream_task_completed'));
   assert.deepEqual(seen, ['suggestion_selected']);
-  applyOutcomeConsent('u1', true);
+  applyOutcomeConsent('u1', true, '2026-10-05T00:00:00.000Z');
   sink(ev('downstream_task_completed'));
   assert.deepEqual(seen, ['suggestion_selected', 'downstream_task_completed']);
   beginOutcomeAccount(null);
@@ -218,7 +299,7 @@ test('teardown unbinds the poster — a report after it credits nothing', async 
   await tick(); await tick();
   stop();
   beginOutcomeAccount('u1');
-  applyOutcomeConsent('u1', true);
+  applyOutcomeConsent('u1', true, '2026-10-05T00:00:00.000Z');
   reportInputTaskOutcome(FIELD, 'trip_created', true, [{ entityType: 'city', entityId: 'c1' }]);
   await tick();
   assert.equal(posts.length, 0);

@@ -133,7 +133,7 @@ function makeClient(opts: {
     rpc: async (fn: string, args: Record<string, unknown>) => {
       ops.push({ table: `rpc:${fn}`, op: "rpc", args } as never);
       const failing = opts.rpcError && opts.rpcError === fn;
-      return failing ? { data: null, error: { message: opts.rpcError } } : { data: null, error: null };
+      return failing ? { data: null, error: { message: opts.rpcError } } : { data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null };
     },
     storage: {
       from: (bucket: string) => ({
@@ -158,6 +158,24 @@ function makeClient(opts: {
 
 const opFor = (c: any, table: string, op: string) =>
   c._ops.find((o: Op) => o.table === table && o.op === op);
+
+describe("media event erasure boundary", () => {
+  it("confirms event erasure before canonical content reads and records its deletion receipt", async () => {
+    const client = makeClient();
+    const outcome = await executeAccountDeletion(client, USER_ID, { actorId: null });
+    assert.equal(outcome.ok, true, JSON.stringify(outcome.steps));
+    assert.equal(client._ops[0]?.table, "rpc:erase_media_events_for_actor");
+    assert.equal(outcome.steps[0]?.step, "erase_account_media_events");
+    assert.equal(outcome.deletedCounts.media_events, 0);
+    assert.ok(opFor(client, "media_assets", "select"));
+    assert.equal(opFor(client, "user_deletion_requests", "update").values.deleted_counts.media_events, 0);
+  });
+  it("content-only deletion does not permanently fence an active account's telemetry", async () => {
+    const client = makeClient();
+    await executeAccountDeletion(client, USER_ID, { actorId: null, contentOnly: true });
+    assert.equal(client._ops.some(op => op.table === "rpc:erase_media_events_for_actor"), false);
+  });
+});
 
 describe("private map controls account erasure", () => {
   it("erases only the deleting owner's protections and navigation despite the profile tombstone", async () => {

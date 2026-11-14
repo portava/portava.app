@@ -96,7 +96,7 @@ function makeStub() {
         // Function absent in an under-migrated environment.
         return { data: null, error: { code: "PGRST202", message: "Could not find the function public.tombstone_post" } };
       }
-      return { data: null, error: null }; // erase_intel / erase_memory succeed
+      return { data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null }; // erase_intel / erase_memory succeed
     },
     storage: { from: () => ({ remove: async () => ({ data: [], error: null }) }) },
     auth: { admin: { deleteUser: async (id: string) => { authDeleted.push(id); return { data: {}, error: null }; } } },

@@ -22,6 +22,8 @@ import { useSession } from '../../src/context/SessionContext.tsx';
 import { supabase } from '../../src/lib/supabase.ts';
 import { memoryOwnerSessionId, type MemoryOwnerRequest } from '../../src/services/memoryOwnerRequest.ts';
 import { MemoryNarrativeDraft } from '../../src/features/memories/MemoryNarrativeDraft.tsx';
+import { WritingAssistControl } from '../../src/platform/input-assistance/compass/WritingAssistControl.tsx';
+import { AI_WRITING_FIELD_IDS } from '../../src/platform/input-assistance/compass/compassFields.ts';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
 import { placeToLocationFields } from '../../src/lib/location/locationPayload';
 import type { Place } from '../../src/lib/location/placeTypes'; import { MemoryTypePicker } from '../../src/features/memories/canonical/MemoryTypePicker.tsx'; import { isMemoryType, memoryPlaceLine, occurrenceNameOfPick, type MemoryType } from '../../src/features/memories/canonical/memoryCanonical.ts'; // H40/H71; on this line so no cited line moves
@@ -378,6 +380,8 @@ function OwnerMemoryEditor({ id, ownerId, isTargetCurrent }: {
         </View>
 
         {request && <MemoryNarrativeDraft request={request} disabled={saving} onUse={setCaption} />}
+        {request && <WritingAssistControl key={request.memoryId} context="caption" fieldId={AI_WRITING_FIELD_IDS.caption}
+          text={caption} disabled={saving} onInsert={setCaption} />}
 
         <View style={s.section}>
           <Text style={s.sectionLabel}>When it happened</Text>

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "transport": "signed-release-events",
+  "polling": false,
+  "providers": [
+    { "id": "higgsfield", "origins": ["https://open.higgsfield.ai", "https://docs.higgsfield.ai", "https://higgsfield.ai"], "sdk": [], "models": ["higgsfield-image", "higgsfield-video"], "releaseSubscription": "requires-provider-or-trusted-relay" },
+    { "id": "openai", "origins": ["https://developers.openai.com", "https://platform.openai.com", "https://github.com/openai/openai-node"], "sdk": ["openai"], "models": ["openai-text-mini", "openai-text-mini-54", "openai-image"], "releaseSubscription": "requires-provider-or-trusted-relay" },
+    { "id": "deepgram", "origins": ["https://developers.deepgram.com"], "sdk": [], "models": [], "releaseSubscription": "requires-provider-or-trusted-relay", "constraint": "Pinned model plus consent/config version must qualify together; no unreviewed model swap." },
+    { "id": "huggingface", "origins": ["https://huggingface.co"], "sdk": [], "models": [], "releaseSubscription": "repository-webhook", "constraint": "Weights, revision, runtime and recognition contract must qualify together." },
+    { "id": "google-maps", "origins": ["https://developers.google.com/maps"], "sdk": [], "models": [], "releaseSubscription": "requires-provider-or-trusted-relay", "constraint": "Provider-managed data; breaking endpoint changes require an adapter migration." },
+    { "id": "mapbox", "origins": ["https://docs.mapbox.com"], "sdk": [], "models": [], "releaseSubscription": "requires-provider-or-trusted-relay" },
+    { "id": "foursquare", "origins": ["https://docs.foursquare.com"], "sdk": [], "models": [], "releaseSubscription": "requires-provider-or-trusted-relay" },
+    { "id": "livekit", "origins": ["https://docs.livekit.io", "https://github.com/livekit"], "sdk": ["livekit-server-sdk", "livekit-client", "@livekit/react-native", "@livekit/react-native-expo-plugin", "@livekit/react-native-webrtc"], "models": [], "releaseSubscription": "requires-provider-or-trusted-relay" },
+    { "id": "supabase", "origins": ["https://supabase.com", "https://github.com/supabase/supabase-js"], "sdk": ["@supabase/supabase-js"], "models": [], "releaseSubscription": "requires-provider-or-trusted-relay", "constraint": "Database and auth migrations are never inferred from an SDK release." },
+    { "id": "redis", "origins": ["https://redis.io", "https://valkey.io", "https://github.com/redis/ioredis"], "sdk": ["ioredis"], "models": [], "releaseSubscription": "requires-provider-or-trusted-relay" },
+    { "id": "sentry", "origins": ["https://docs.sentry.io", "https://github.com/getsentry"], "sdk": ["@sentry/node", "@sentry/react-native", "@sentry/opentelemetry"], "models": [], "releaseSubscription": "requires-provider-or-trusted-relay" },
+    { "id": "opentelemetry", "origins": ["https://opentelemetry.io", "https://github.com/open-telemetry"], "sdk": ["@opentelemetry/api", "@opentelemetry/sdk-node", "@opentelemetry/auto-instrumentations-node"], "models": [], "releaseSubscription": "requires-provider-or-trusted-relay" },
+    { "id": "open-meteo", "origins": ["https://open-meteo.com", "https://github.com/open-meteo"], "sdk": [], "models": [], "releaseSubscription": "requires-provider-or-trusted-relay" },
+    { "id": "ticketmaster", "origins": ["https://developer.ticketmaster.com"], "sdk": [], "models": [], "releaseSubscription": "requires-provider-or-trusted-relay" },
+    { "id": "stripe", "origins": ["https://docs.stripe.com", "https://github.com/stripe/stripe-node"], "sdk": ["stripe"], "models": [], "releaseSubscription": "requires-provider-or-trusted-relay", "constraint": "Payment/identity webhook contracts and sandbox money-flow tests required." },
+    { "id": "persona", "origins": ["https://docs.withpersona.com"], "sdk": [], "models": [], "releaseSubscription": "requires-provider-or-trusted-relay" },
+    { "id": "sumsub", "origins": ["https://docs.sumsub.com"], "sdk": [], "models": [], "releaseSubscription": "requires-provider-or-trusted-relay" },
+    { "id": "twilio", "origins": ["https://www.twilio.com/docs", "https://github.com/twilio/twilio-node"], "sdk": ["twilio"], "models": [], "releaseSubscription": "requires-provider-or-trusted-relay" },
+    { "id": "expo-push", "origins": ["https://docs.expo.dev", "https://expo.dev", "https://github.com/expo/expo"], "sdk": ["expo-notifications", "expo-server-sdk"], "models": [], "releaseSubscription": "requires-provider-or-trusted-relay", "constraint": "Native updates remain pending until an iPhone build is explicitly requested." },
+    { "id": "apns", "origins": ["https://developer.apple.com"], "sdk": [], "models": [], "releaseSubscription": "requires-provider-or-trusted-relay" },
+    { "id": "fcm", "origins": ["https://firebase.google.com"], "sdk": [], "models": [], "releaseSubscription": "requires-provider-or-trusted-relay" }
+  ]
+}
