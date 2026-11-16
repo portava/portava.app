@@ -6,7 +6,7 @@ import { openIsolatedPressedPostgres } from './pressedPostgres.js';
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { openSnapshotLease } from './pressedSnapshot.js';
-import { appendFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -75,6 +75,18 @@ describe('reusable fixture failure recovery', {skip: PRESSED_SKIP_REASON}, () =>
   const options={url,without:[],prelude:()=>'',key:async()=>key,replay:async(db:{exec(sql:string):Promise<unknown>})=>{
    calls++;await db.exec('CREATE TABLE public.pressed_partial_replay(id integer)');throw new Error('injected replay failure');
   }};
+  const toolDirectory=mkdtempSync(join(tmpdir(),'pressed-wrong-tools-'));
+  const originalPath=process.env.PATH;
+  try {
+   for(const tool of ['pg_dump','pg_restore']) writeFileSync(join(toolDirectory,tool),`#!/bin/sh\nif [ "$1" = "--version" ]; then echo '${tool} (PostgreSQL) 99.0'; else exit 72; fi\n`,{mode:0o700});
+   process.env.PATH=`${toolDirectory}:${originalPath ?? ''}`;
+   await assert.rejects(openIsolatedPressedPostgres(options), /matching the PostgreSQL server major/);
+   assert.equal(calls,0,'incompatible tools must be rejected before replay');
+   assert.deepEqual((await observer.query(`SELECT value FROM public.${probe}`)).rows,[{value:'baseline'}],'incompatible tools must preserve baseline data');
+  } finally {
+   if(originalPath === undefined) delete process.env.PATH; else process.env.PATH=originalPath;
+   rmSync(toolDirectory,{recursive:true,force:true});
+  }
   const user=randomUUID();
   await observer.query('INSERT INTO auth.users(id) VALUES ($1)',[user]);
   try {

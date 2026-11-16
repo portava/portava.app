@@ -3781,7 +3781,8 @@
           }
         ]
       },
-      "review20261116ReusableFixture": "2991c6306 adds pressedSnapshot.ts solely under the counted test directory. It replaces database clones with checksum-verified local fixture snapshots and recovery; it changes no Trips runtime writer, membership, projection or migration. Fifteen focused database tests passed, including real independent-session contention, rollback, variant omission, populated-target refusal and failed-replay restoration. No Trips requirement is regraded and no deployed/device behavior is asserted."
+      "review20261116ReusableFixture": "2991c6306 adds pressedSnapshot.ts solely under the counted test directory. It replaces database clones with checksum-verified local fixture snapshots and recovery; it changes no Trips runtime writer, membership, projection or migration. Fifteen focused database tests passed, including real independent-session contention, rollback, variant omission, populated-target refusal and failed-replay restoration. No Trips requirement is regraded and no deployed/device behavior is asserted.",
+      "review20261116SnapshotTools": "Exact-major pg_dump/pg_restore preflight now rejects incompatible tools before snapshot/reset. CI pins the clients to the existing PostgreSQL16 service. This changes only fixture safety and validation tooling, not Trips runtime, migration or any requirement grade. Seven focused unit cases pass; deployed and device correctness are not inferred."
     },
     {
       "census": "census-map.md",

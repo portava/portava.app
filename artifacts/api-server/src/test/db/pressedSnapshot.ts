@@ -31,11 +31,27 @@ export function assertReusableDatabaseIdentity(identity: ReusableDatabaseIdentit
       (!loopback && (!expectedCluster || !/^\d+$/.test(expectedCluster)))) throw new Error('Pressed replay target identity mismatch');
 }
 
+/** A newer pg_dump can READ an older server but cannot promise to restore its
+ * output back into that server. pg_restore also emits version-specific SETs.
+ * Require both tools to match before saving or clearing any fixture state. */
+export function assertSnapshotToolchain(serverVersion: string, dumpVersion: string, restoreVersion: string): void {
+  const serverMajor = /^\d{6}$/.test(serverVersion) ? Math.floor(Number(serverVersion) / 10000) : 0;
+  const majorOf = (tool: string, version: string) => Number(new RegExp(`^${tool} \\(PostgreSQL\\) (\\d+)\\.\\d+(?:\\s|$)`).exec(version.trim())?.[1] ?? 0);
+  if (serverMajor < 10 || majorOf('pg_dump', dumpVersion) !== serverMajor || majorOf('pg_restore', restoreVersion) !== serverMajor) {
+    throw new Error('Pressed snapshots require pg_dump and pg_restore matching the PostgreSQL server major; reset refused');
+  }
+}
+
 export async function openSnapshotLease(db: Client, url: URL, recoveryChecksum?: string) {
   const name = reusableDatabaseName(url);
   const identity = (await db.query(`SELECT current_database() AS name, current_user AS role,
-    host(inet_server_addr()) AS host, system_identifier::text AS cluster FROM pg_control_system()`)).rows[0];
+    host(inet_server_addr()) AS host, system_identifier::text AS cluster,
+    current_setting('server_version_num') AS server_version FROM pg_control_system()`)).rows[0];
   assertReusableDatabaseIdentity(identity, url);
+  const toolEnvironment = { ...process.env, LC_ALL: 'C' };
+  const [dumpVersion, restoreVersion] = await Promise.all(['pg_dump', 'pg_restore'].map(async tool =>
+    (await run(tool, ['--version'], { env: toolEnvironment, timeout: 10_000, maxBuffer: 4096 })).stdout));
+  assertSnapshotToolchain(identity.server_version, dumpVersion!, restoreVersion!);
   if (!(await db.query("SELECT pg_try_advisory_lock(hashtext('pressed-reusable-fixture')) AS locked")).rows[0].locked) throw new Error('Pressed fixture already leased; close the current whole-database variant first');
   const root = join(process.env.PRESSED_SNAPSHOT_ROOT || tmpdir(), 'portava-pressed-snapshots', `${identity.cluster}-${name}`);
   mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -52,7 +68,7 @@ export async function openSnapshotLease(db: Client, url: URL, recoveryChecksum?:
 
   // Passwords stay out of process arguments and error messages.
   const connection = new URL(url); const password = decodeURIComponent(connection.password); connection.password = '';
-  const env = { ...process.env, ...(password ? { PGPASSWORD: password } : {}) };
+  const env = { ...toolEnvironment, ...(password ? { PGPASSWORD: password } : {}) };
   const command = async (tool: string, args: string[]) => {
     try { return (await run(tool, args, { env, timeout: 180_000, maxBuffer: 8 * 1024 * 1024 })).stdout; }
     catch (error) { const e = error as { stderr?: string; code?: unknown }; throw new Error(`${tool} failed (${String(e.code)}): ${(e.stderr ?? '').slice(-2000)}`); }

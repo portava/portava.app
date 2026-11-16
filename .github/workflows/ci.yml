@@ -948,15 +948,21 @@ jobs:
           echo "pnpm $(pnpm --version)"
           node --version
 
-      - name: psql client present
+      - name: PostgreSQL tools match the disposable server
         shell: bash
         run: |
           set -euo pipefail
-          if ! command -v psql >/dev/null 2>&1; then
+          # The runner may default to a newer client. A newer pg_restore emits
+          # settings an older server cannot accept, even for its own snapshot.
+          if [ ! -x /usr/lib/postgresql/16/bin/pg_dump ] || [ ! -x /usr/lib/postgresql/16/bin/pg_restore ]; then
             sudo apt-get update -qq
-            sudo apt-get install -y -qq postgresql-client
+            sudo apt-get install -y -qq postgresql-client-16
           fi
+          export PATH="/usr/lib/postgresql/16/bin:$PATH"
+          echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
           psql --version
+          pg_dump --version
+          pg_restore --version
 
       # The operational monitor migration uses the real pg_cron extension.
       # Install from the PostgreSQL image's signed package repository, with the

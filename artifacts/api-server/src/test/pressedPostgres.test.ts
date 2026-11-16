@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { reusableDatabaseName, assertReusableDatabaseIdentity } from "./db/pressedSnapshot.js";
+import { reusableDatabaseName, assertReusableDatabaseIdentity, assertSnapshotToolchain } from "./db/pressedSnapshot.js";
 import { Client } from 'pg';
 import { pressedPostgresServer, pressedPostgresConnection } from "./db/pressedPostgres.js";
 import { pressedMigrationOmissions, executePressedMigrationChain, pressedMigrationSql } from './db/pressedLayoverDb.js';
@@ -69,4 +69,17 @@ test('Docker fixture identity requires an independently pinned exact cluster, ne
  assert.throws(()=>assertReusableDatabaseIdentity(identity,new URL('postgresql://postgres@example.com/portava_local'),identity.cluster),/identity mismatch/);
  assert.throws(()=>assertReusableDatabaseIdentity({...identity,host:'127.0.0.1'},url,'7708745771566368103'),/identity mismatch/);
  assert.doesNotThrow(()=>assertReusableDatabaseIdentity({...identity,host:'127.0.0.1'},url,identity.cluster));
+});
+
+test('snapshot tools must match the actual server major, including both archive writer and reader', () => {
+ for (const major of [16, 17, 18]) {
+  const server = `${major}0015`;
+  assert.doesNotThrow(() => assertSnapshotToolchain(server, `pg_dump (PostgreSQL) ${major}.6 (Ubuntu)\n`, `pg_restore (PostgreSQL) ${major}.12 (Homebrew)\n`));
+  for (const wrong of [major - 1, major + 1]) {
+   assert.throws(() => assertSnapshotToolchain(server, `pg_dump (PostgreSQL) ${wrong}.6`, `pg_restore (PostgreSQL) ${major}.6`), /matching the PostgreSQL server major/);
+   assert.throws(() => assertSnapshotToolchain(server, `pg_dump (PostgreSQL) ${major}.6`, `pg_restore (PostgreSQL) ${wrong}.6`), /matching the PostgreSQL server major/);
+  }
+ }
+ for (const server of ['', '16.15', 'unknown']) assert.throws(() => assertSnapshotToolchain(server, 'pg_dump (PostgreSQL) 16.15', 'pg_restore (PostgreSQL) 16.15'));
+ for (const bad of ['', 'pg_dump (PostgreSQL) 16devel', 'unrecognized tool 16.15']) assert.throws(() => assertSnapshotToolchain('160015', bad, 'pg_restore (PostgreSQL) 16.15'));
 });
