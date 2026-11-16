@@ -21,7 +21,7 @@ function fixture(kernelOn: boolean): KernelState {
   return { rpcCalls: [], failOn: new Set(), absent: false, tables: {
     feature_flags: kernelOn ? [{ flag: "memory_kernel_enabled", enabled: true }] : [],
     profiles: [ownerId, otherId].map(id => ({ id, account_status: "active", role: "user", handle: "fixture" })),
-    memories: [{ id: memoryId, owner_id: ownerId, title: "Coffee", caption: "Owner words", visibility: "only_me",
+    memories: [{ id: memoryId, owner_id: ownerId, source_mode: "SUGGESTED", title: "Coffee", caption: "Owner words", visibility: "only_me",
       trip_id: null, event_id: null, place_id: null, location_city: null, location_country: null,
       location_lat: null, location_lng: null, canonical_location_id: null, allowed_user_ids: [], hidden_user_ids: [],
       starts_at: startsAt, ends_at: endsAt, state: "published", created_at: startsAt, updated_at: startsAt }],
@@ -70,7 +70,9 @@ function makeClient(state: KernelState, writes: Array<{ table: string; patch: Ro
     }
     return chain;
   }
-  return { from, rpc: makeKernelRpc(state),
+  const kernelRpc = makeKernelRpc(state);
+  return { from, rpc: (name: string, args: any) => name === "memory_candidate_origin_ready"
+    ? Promise.resolve({ data: true, error: null }) : kernelRpc(name, args),
     auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) } };
 }
 
