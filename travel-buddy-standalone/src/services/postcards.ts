@@ -48,6 +48,7 @@ export interface UploadUrlParams {
 
 export interface CompleteUploadParams {
   mimeType: string;
+  photoCapturedAt?: string;
   fileSizeBytes: number;
   durationSeconds?: number;
   width?: number;

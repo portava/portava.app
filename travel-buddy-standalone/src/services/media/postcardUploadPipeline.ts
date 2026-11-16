@@ -122,6 +122,7 @@ export interface PipelineDeps {
     mediaId: string,
     params: {
       mimeType: string;
+      photoCapturedAt?: string;
       fileSizeBytes: number;
       durationSeconds?: number;
       width?: number;
@@ -313,6 +314,7 @@ export async function runPostcardUpload(
     if (cancelled()) { await cancel(); return job; }
     const done = await deps.complete(job.postId!, job.mediaId!, {
       mimeType: asset.mimeType,
+      ...(!asset.isVideo && asset.photoCapturedAt ? { photoCapturedAt: asset.photoCapturedAt } : {}),
       fileSizeBytes: job.fileSizeBytes ?? asset.fileSizeBytes ?? 1,
       durationSeconds: asset.durationSeconds ?? undefined,
       width: asset.width ?? undefined,

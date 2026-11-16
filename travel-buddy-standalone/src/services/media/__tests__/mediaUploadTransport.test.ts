@@ -493,6 +493,48 @@ describe('MD284 — the queue owns the upload: it survives the screen, the app a
     return { storage, accountId: async () => account, newId: () => `job-${++id}`, now: () => 1_000 + id, deps: async () => deps };
   }
 
+  it('preserves a photo capture instant across a completion outage and a fresh process without uploading twice', async () => {
+    const capturedAt = '2026-03-04T03:06:07.000Z';
+    const file = new FakeFile(bytesOf(CHUNK * 2));
+    const srv = fakeServer(file.size);
+    const calls = freshCalls();
+    const asset = normalizePickedAsset({ uri: 'file:///photo.jpg', type: 'image', mimeType: 'image/jpeg',
+      fileSize: file.size, width: 1200, height: 900, photoCapturedAt: capturedAt });
+    const q1 = new PostcardUploadQueue(runtime(pipelineDeps(srv, file, calls, {
+      complete: async (_post, _media, params) => {
+        calls.completed.push(params);
+        return { ok: false, retryable: true, message: 'completion response lost' };
+      },
+    })));
+    await q1.enqueue({ ...input({}, file.size), asset });
+    await q1.resumePending();
+    const stored = (await q1.list())[0]!;
+    assert.equal(stored.stage, 'poster');
+    assert.equal(stored.input.asset.photoCapturedAt, capturedAt);
+    const puts = [...srv.puts];
+    const q2 = new PostcardUploadQueue(runtime(pipelineDeps(srv, file, calls)));
+    await q2.resumePending();
+    assert.equal((await q2.list())[0]!.stage, 'done');
+    assert.equal(calls.completed.length, 2);
+    assert.deepEqual(calls.completed.map(p => p.photoCapturedAt), [capturedAt, capturedAt]);
+    assert.deepEqual(srv.puts, puts, 'landed bytes are not uploaded again');
+    assert.equal(calls.shells, 1);
+    assert.equal(calls.slots, 1);
+    assert.deepEqual([...srv.assembled!], [...file.bytes]);
+  });
+
+  it('does not manufacture capture time for an undated photo or send photo metadata on a video', async () => {
+    for (const asset of [{ isVideo: false, mimeType: 'image/jpeg', durationSeconds: null },
+      { isVideo: true, photoCapturedAt: '2026-03-04T03:06:07.000Z' }]) {
+      const file = new FakeFile(bytesOf(CHUNK));
+      const calls = freshCalls();
+      const job = await runPostcardUpload(newPostcardUploadJob('capture-scope', 'acct-A', input(asset, file.size), 1000),
+        pipelineDeps(fakeServer(file.size), file, calls));
+      assert.equal(job.stage, 'done');
+      assert.equal(Object.hasOwn(calls.completed[0]!, 'photoCapturedAt'), false);
+    }
+  });
+
   it('a failed storage read never erases an existing upload or starts a new one', async () => {
     const file = new FakeFile(bytesOf(CHUNK));
     const calls = freshCalls();
@@ -710,10 +752,12 @@ describe('MD320 — the device enforces the server envelope before a byte travel
   it('resizes when required, fails CLOSED when a required resize fails, and never touches a video', async () => {
     const seen: unknown[] = [];
     _setTestMediaNatives({ manipulate: async (uri, actions) => { seen.push(actions); return { uri: `${uri}.jpg`, width: 4096, height: 3072 }; } });
-    const big = normalizePickedAsset({ uri: 'file:///big.heic', mimeType: 'image/heic', width: 8000, height: 6000, fileSize: 30_000_000 });
+    const big = normalizePickedAsset({ uri: 'file:///big.heic', mimeType: 'image/heic', width: 8000, height: 6000, fileSize: 30_000_000,
+      photoCapturedAt: '2026-03-04T03:06:07.000Z' });
     const r = await prepareImageForUpload(big);
     assert.equal(r.ok && r.resized, true);
     assert.equal(r.ok && r.asset.mimeType, 'image/jpeg');
+    assert.equal(r.ok && r.asset.photoCapturedAt, '2026-03-04T03:06:07.000Z');
     assert.deepEqual(seen, [[{ resize: { width: 4096 } }]]);
     const small = await prepareImageForUpload(normalizePickedAsset({ uri: 'file:///s.jpg', width: 1200, height: 900, fileSize: 400_000 }));
     assert.equal(small.ok && small.resized, false);

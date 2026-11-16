@@ -3,6 +3,7 @@ import type { Place } from '../lib/location/placeTypes.ts';
 import type { StampOverlayDraft } from '../lib/stampOverlay.ts';
 export interface PostcardDraftAsset {
     uri: string;
+    photoCapturedAt?: string | null;
     recoveryUri?: string;
     mimeType: string;
     fileName: string;

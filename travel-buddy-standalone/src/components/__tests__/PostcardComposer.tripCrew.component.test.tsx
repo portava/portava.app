@@ -135,3 +135,22 @@ test('with a trip, "Trip crew only" is offered and the postcard is created with 
   await waitFor(() => expect(postcards.createPostcard).toHaveBeenCalledTimes(1));
   expect(postcards.createPostcard.mock.calls[0][0]).toMatchObject({ tripId: 'trip-1', visibility: 'trip_only' });
 });
+
+test('a dated photo survives closing and restoring the private draft before the queued completion request', async () => {
+  postcards.completeUpload.mockClear();
+  const capturedAt = '2026-03-04T03:06:07.000Z';
+  const onClose = jest.fn();
+  const first = await render(<PostcardComposer visible onClose={onClose} onSuccess={jest.fn()} />);
+  await act(async () => { fireEvent.press(first.getByText('Library')); });
+  await waitFor(() => expect(resolvePick).not.toBeNull());
+  await act(async () => { resolvePick!([Object.assign(photo(), { photoCapturedAt: capturedAt })]); });
+  await waitFor(() => expect(first.getByText('Change')).toBeTruthy());
+  await act(async () => { fireEvent.press(first.getByLabelText('Close postcard composer')); });
+  await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  first.unmount();
+  const restored = await render(<PostcardComposer visible onClose={jest.fn()} onSuccess={jest.fn()} />);
+  await waitFor(() => expect(restored.getByText('Change')).toBeTruthy());
+  await act(async () => { fireEvent.press(restored.getByText('Post')); });
+  await waitFor(() => expect(postcards.completeUpload).toHaveBeenCalledTimes(1));
+  expect(postcards.completeUpload.mock.calls[0][2]).toMatchObject({ photoCapturedAt: capturedAt, mimeType: 'image/jpeg' });
+});

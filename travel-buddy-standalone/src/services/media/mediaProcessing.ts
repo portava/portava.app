@@ -38,6 +38,8 @@ export const POSTER_TIME_MS = 300;
 
 export interface PickedAssetLike {
   uri: string;
+  /** Original, timezone-qualified photo instant retained before EXIF stripping. */
+  photoCapturedAt?: string | null;
   mimeType?: string | null;
   fileName?: string | null;
   fileSize?: number | null;
@@ -50,6 +52,7 @@ export interface PickedAssetLike {
 
 export interface NormalizedAsset {
   uri: string;
+  photoCapturedAt?: string | null;
   mimeType: string;
   fileName: string;
   /** Null when the picker did not report it; resolve it from the bytes before reserving an upload. */
@@ -70,6 +73,7 @@ export function normalizePickedAsset(picked: PickedAssetLike): NormalizedAsset {
   const durationMs = positive(picked.duration);
   return {
     uri: picked.uri,
+    ...(!isVideo && picked.photoCapturedAt ? { photoCapturedAt: picked.photoCapturedAt } : {}),
     mimeType,
     fileName: picked.fileName ?? `upload.${ext}`,
     fileSizeBytes: positive(picked.fileSize),

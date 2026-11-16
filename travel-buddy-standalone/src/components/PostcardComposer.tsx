@@ -66,6 +66,7 @@ type Phase = 'pick' | 'uploading';
 
 interface PickedAsset {
   uri: string;
+  photoCapturedAt?: string | null;
   recoveryUri?: string;
   mimeType: string;
   fileName: string;
@@ -285,7 +286,7 @@ function PostcardComposerContent({ visible, onClose, onSuccess, layover = null, 
 
   // applyAsset validates and stores the picked asset. Called directly from
   // pickPostcardMedia after the useMediaPicker chooser resolves.
-  async function applyAsset(picked: ImagePicker.ImagePickerAsset, version: number) {
+  async function applyAsset(picked: ImagePicker.ImagePickerAsset & { photoCapturedAt?: string | null }, version: number) {
     const mimeType =
       picked.mimeType ??
       (picked.type === 'video' ? 'video/mp4' : 'image/jpeg');
@@ -336,6 +337,7 @@ function PostcardComposerContent({ visible, onClose, onSuccess, layover = null, 
     const previousAsset = draft.value.asset;
     setAsset({
       uri: localUri, recoveryUri: localUri,
+      ...(picked.type !== 'video' && picked.photoCapturedAt ? { photoCapturedAt: picked.photoCapturedAt } : {}),
       mimeType,
       fileName: picked.fileName ?? `postcard.${mimeType.split('/')[1] ?? 'jpg'}`,
       fileSizeBytes,
@@ -375,6 +377,7 @@ function PostcardComposerContent({ visible, onClose, onSuccess, layover = null, 
     const prepared = await prepareImageForUpload(
       normalizePickedAsset({
         uri: picked.uri,
+        photoCapturedAt: picked.photoCapturedAt,
         mimeType: picked.mimeType,
         fileName: picked.fileName,
         fileSize: picked.fileSizeBytes > 0 ? picked.fileSizeBytes : null,
@@ -427,6 +430,7 @@ function PostcardComposerContent({ visible, onClose, onSuccess, layover = null, 
       retainedDraftAssetUri: submitted.asset?.recoveryUri ?? submitted.asset?.uri,
       asset: normalizePickedAsset({
         uri: upload.uri,
+        photoCapturedAt: upload.photoCapturedAt,
         mimeType: upload.mimeType,
         fileName: upload.fileName,
         fileSize: upload.fileSizeBytes > 0 ? upload.fileSizeBytes : null,
