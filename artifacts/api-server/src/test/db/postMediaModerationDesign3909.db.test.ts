@@ -211,7 +211,7 @@ describe("3909 — production's 2098 post_media moderation design, codified", { 
 // 4034 keeps the existing client grants and serializes late inserts with discard.
 import { Client } from 'pg';
 import { currentDatabaseUrl } from './localDb.js';
-it('4034: a client upload waiting behind cancellation cannot resurrect draft media', { skip: !HAVE_DB }, async () => {
+describe('4034 cancellation serialization', { skip: !HAVE_DB }, () => { it('a client upload waiting behind cancellation cannot resurrect draft media', async () => {
   const owner = seedUser('draftRace');
   const post = randomUUID();
   const cancel = new Client({ connectionString: currentDatabaseUrl() });
@@ -253,4 +253,5 @@ it('4034: a client upload waiting behind cancellation cannot resurrect draft med
     exec(`DELETE FROM public.post_media WHERE post_id='${post}'; DELETE FROM public.posts WHERE id='${post}';`);
     deleteUser(owner);
   }
+});
 });
