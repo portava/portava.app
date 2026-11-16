@@ -1,20 +1,6 @@
-/**
- * MemoriesTab — the four §15 Memories views this lane can build.
- *
- * §15 names FIVE views: Trips, Places, People, Timeline and Map. This file
- * proves FOUR of them render real, grouped content from real memory data:
- * Trips, Places, Timeline and Map. ("All" is the ungrouped grid those views are
- * views OF, not a sixth view.)
- *
- * **People is deliberately absent and this file asserts its absence**, so that
- * the gap is visible in the test output rather than silently forgotten:
- * `PassportMemory` carries no participant field, and the memory-participant
- * visibility contract belongs to the Highlights/Memories lane under
- * `artifacts/api-server/src/services/memory/`. FOUR OF FIVE DOES NOT CLOSE P77.
- *
- * Follows the MemoriesTab component-test mock discipline established by
- * MemoriesTab.timelineView.component.test.tsx: Modal becomes a synchronous
- * View, and every native/service dep the tree pulls is stubbed.
+/** The existing Trips/Places/Timeline/Map grouping proofs remain in this file.
+ * All five named tabs are now present. MemoryPeopleView.component.test.tsx and
+ * passportMemorySources.db.test.ts prove the separate, live source/consent path.
  */
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
@@ -119,15 +105,14 @@ function renderTab() {
   return render(<MemoriesTab memories={memories} onReload={jest.fn()} trips={trips} />);
 }
 
-it('offers the grid plus the four buildable §15 views, and NOT People', async () => {
+it('offers the grid plus all five §15 views', async () => {
   await renderTab();
 
-  for (const mode of ['all', 'trips', 'places', 'timeline', 'map']) {
+  for (const mode of ['all', 'trips', 'places', 'people', 'timeline', 'map']) {
     expect(screen.getByTestId(`memories-view-${mode}`)).toBeTruthy();
   }
-  // The fifth §15 view. Its absence is the requirement's remaining half and is
-  // asserted so it cannot be quietly assumed built.
-  expect(screen.queryByTestId('memories-view-people')).toBeNull();
+  // People has its own live association/consent tests; these four continue to
+  // prove their existing grouping behavior, not a proxy for participant proof.
 });
 
 it('Trips groups memories under their trip titles', async () => {

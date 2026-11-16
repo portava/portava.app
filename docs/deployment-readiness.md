@@ -238,7 +238,7 @@ takes its documented failure branch and returns
 hiddenGemStamps: 0, safeReturnStamps: 0, totalStamps: 0` with `readFailed: true`
 (`PassportMapService.ts:506#readFailed: true`).
 
-**THE FLAG IS HONEST AND THE SCREEN IS NOT.** `routes/passportStamps.ts:553#...stats`
+**THE FLAG IS HONEST AND THE SCREEN IS NOT.** `routes/passportStamps.ts:586#...stats`
 spreads `stats` into the response, so `readFailed` does reach the client — and
 `readFailed` appears **zero** times anywhere in `travel-buddy-standalone/src`.
 Nothing reads it. A traveller with a full Passport is therefore shown

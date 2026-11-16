@@ -7284,3 +7284,23 @@ the postconditions hold (J2); each of the nine premises refuses by name and says
 the same four properties were run on an embedded PostgreSQL 16 (PGlite) in every starting shape: the chain twice, the
 rebuilt production shape then a second apply, the `$pre$` block and the postconditions alone on both, and the nine
 refusals each leaving the catalogue byte-identical.
+
+
+## Pending: 4035 Passport Memory source association (November 16)
+
+`4035_passport_memory_source_association.sql` is not recorded as applied to a
+hosted target. It adds `passport_memory_sources` (one private FK association per
+scrapbook entry, cascade erasure and source index) and the service-only
+`passport_memory_source_set` command. Anon/authenticated have no association
+access; service reads and the validated command are the only paths. It changes
+no existing Memory contents, participants, audiences or source writers.
+
+Local acceptance runs use the designated reusable synthetic fixture and restore
+its baseline. Before rollout, verify target identity, migration ledger/checksum
+and the latest canonical source schema. Apply through the existing migration
+runner once, then verify private access, duplicate retry, stale choice,
+revocation and deletion using the intended release.
+
+Rollback: revert the new API/client path and revoke service-role EXECUTE on
+`passport_memory_source_set(uuid,uuid,uuid,uuid)`. Retain the private association
+rows for recovery; do not drop owner choices or alter canonical Memories.

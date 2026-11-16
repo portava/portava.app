@@ -35,8 +35,10 @@ import {
   dismissSuggestedMemory,
   updateMemory,
   loadMemories,
+  loadMemoriesRead,
   loadSuggestions,
 } from "../services/passport/PassportMemoryService.js";
+import { loadPassportMemoryPeople } from '../services/passport/PassportMemoryPeople.js';
 import {
   buildMapPayload,
   buildStats,
@@ -245,8 +247,10 @@ router.get("/me/passport/memories", async (req, res) => {
   if (!auth) return;
   const { client, user } = auth;
 
-  const rows = await loadMemories(client, user.id);
-  const memories = filterMemories(rows as any, "owner");
+  const read = await loadMemoriesRead(client, user.id);
+  if (read.readFailed) { sendError(res, 'degraded_unavailable', 'Your Memories could not be loaded. Please try again.'); return; }
+  const memories = filterMemories(read.rows as any, "owner");
+  res.setHeader('Cache-Control', 'private, no-store');
 
   res.json({
     memories: memories.map((m) => ({
@@ -270,6 +274,35 @@ router.get("/me/passport/memories", async (req, res) => {
       createdAt: m.created_at,
     })),
   });
+});
+
+// Live-only private projection; never embedded in the persisted Passport cache.
+router.get('/me/passport/memories/people', async (req, res) => {
+  if (!await isFlagEnabled('passport_memories_enabled')) { sendError(res, 'feature_disabled'); return; }
+  const auth = await requireUser(req, res); if (!auth) return;
+  const sc = getServiceClient(); if (!sc) { sendError(res, 'server_not_configured'); return; }
+  const read = await loadMemoriesRead(sc, auth.user.id);
+  if (read.readFailed) { sendError(res, 'degraded_unavailable'); return; }
+  const people = await loadPassportMemoryPeople(sc, auth.user.id, read.rows.map(m => m.id));
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json({ memories: read.rows.map(m => ({ id: m.id, title: m.title ?? null, people: people.get(m.id) ?? { state: 'unavailable' } })) });
+});
+
+/** Owner-chosen association only. A stale save cannot replace a newer choice. */
+router.post('/me/passport/memories/:id/source', async (req, res) => {
+  if (!await isFlagEnabled('passport_memories_enabled')) { sendError(res, 'feature_disabled'); return; }
+  const auth = await requireUser(req, res); if (!auth) return;
+  const id = z.string().uuid().safeParse(req.params.id);
+  const body = z.object({ memoryId: z.string().uuid().nullable(), expectedMemoryId: z.string().uuid().nullable() }).strict().safeParse(req.body);
+  if (!id.success || !body.success) { sendError(res, 'invalid_payload'); return; }
+  const sc = getServiceClient(); if (!sc) { sendError(res, 'server_not_configured'); return; }
+  const { data, error } = await sc.rpc('passport_memory_source_set', {
+    p_actor: auth.user.id, p_passport_memory: id.data, p_memory: body.data.memoryId, p_expected_memory: body.data.expectedMemoryId,
+  });
+  if (error || !data || typeof data.ok !== 'boolean') { sendError(res, 'degraded_unavailable', 'The Memory link could not be confirmed. Reload before trying again.'); return; }
+  if (!data.ok) { sendError(res, data.reason === 'conflict' ? 'conflict' : 'not_found', data.reason === 'conflict' ? 'This link changed. Reload before saving again.' : 'Memory not available.'); return; }
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json({ memoryId: data.memoryId });
 });
 
 /**
