@@ -41,7 +41,7 @@ BEGIN
       AND post_id=split_part(NEW.storage_path,'/',2)::uuid AND storage_bucket=NEW.storage_bucket
       AND storage_path=NEW.storage_path AND user_id=NEW.owner_user_id FOR SHARE;
   END IF;
-  IF source.id IS NULL OR lower(split_part(NEW.storage_path,'/',1))<>NEW.owner_user_id::text OR source.processing_status<>'ready' OR
+  IF source.id IS NULL OR lower(split_part(NEW.storage_path,'/',1))<>NEW.owner_user_id::text OR (source.processing_status<>'ready' AND NOT (source.processing_status='pending' AND NEW.processing_status='uploaded')) OR
      NOT EXISTS(SELECT 1 FROM public.posts p WHERE p.id=source.post_id
        AND p.author_id=NEW.owner_user_id AND p.status='active' AND p.deleted_at IS NULL
        AND p.postcard_draft_state IS DISTINCT FROM 'cancelled') OR
@@ -154,4 +154,33 @@ BEGIN
     PERFORM public.retire_media_asset(asset.id,asset.owner_user_id);
   END LOOP;
 END;$reconcile_postcard_assets$;
+-- Read-only capability receipt for the complete path. Capture must be durable
+-- before EXIF stripping, and an uploaded asset must not be distributed yet.
+-- Fingerprints freeze the installed definitions; a later partial rollback or
+-- disabled/replaced guard fails readiness instead of trusting migration history.
+DO $readiness$
+DECLARE definitions text; trigger_definitions text;
+BEGIN
+  PERFORM set_config('search_path','pg_catalog,pg_temp',true);
+  SELECT string_agg(format('(%L,%L)',name,md5(pg_get_functiondef(to_regprocedure(name)))),',') INTO definitions
+    FROM (VALUES('public.guard_postcard_canonical_asset()'),('public.retire_postcard_media_source()'),
+      ('public.retire_withdrawn_postcard_assets()'),('public.retire_media_asset(uuid,uuid)'),
+      ('public.cancel_postcard_draft(uuid,uuid)')) functions(name);
+  SELECT string_agg(format('(%L::regclass,%L,%L)',t.tgrelid::regclass::text,t.tgname,md5(pg_get_triggerdef(t.oid))),',') INTO trigger_definitions
+    FROM pg_trigger t JOIN (VALUES ('public.media_assets'::regclass,'postcard_canonical_asset_guard'),
+      ('public.post_media'::regclass,'postcard_media_source_retired'),('public.posts'::regclass,'postcard_assets_withdrawn')) expected(relation,name)
+      ON t.tgrelid=expected.relation AND t.tgname=expected.name;
+  EXECUTE format($definition$
+    CREATE FUNCTION public.postcard_canonical_lifecycle_ready()
+    RETURNS boolean LANGUAGE sql STABLE SECURITY INVOKER SET search_path=pg_catalog,pg_temp AS $probe$
+      SELECT NOT EXISTS(SELECT 1 FROM (VALUES %s) expected(name,fingerprint)
+        WHERE to_regprocedure(name) IS NULL OR md5(pg_get_functiondef(to_regprocedure(name))) IS DISTINCT FROM fingerprint)
+      AND (SELECT count(*)=3 FROM pg_trigger t JOIN (VALUES %s) expected(relation,name,fingerprint)
+        ON t.tgrelid=expected.relation AND t.tgname=expected.name
+        WHERE t.tgenabled IN ('O','A') AND md5(pg_get_triggerdef(t.oid))=expected.fingerprint);
+    $probe$;
+  $definition$,definitions,trigger_definitions);
+END;$readiness$;
+REVOKE ALL ON FUNCTION public.postcard_canonical_lifecycle_ready() FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.postcard_canonical_lifecycle_ready() TO service_role;
 COMMIT;

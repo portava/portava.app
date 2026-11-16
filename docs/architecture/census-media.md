@@ -233,7 +233,7 @@ construction number. But a reader who stops at CORRECT% will be misled, so:
 | --- | --- | --- |
 | `MEDIA_WORLD_SHELL_ENABLED` | `false` (`2300:113-116`) | The entire §3–§5 six-lens shell, the §15 action rail (`app/media-viewer/[id].tsx:575`), the §44/§45 north-star emitter (`MediaActionRail.tsx:54` is its only caller), the §32 viewer affordances. `/media-world` is a registered route reachable from no UI. |
 | `MEDIA_TAB_ENABLED` | `false` (`2037_media_tab_flags.sql:7-10`) | The Media tab itself. Deep-links still resolve. |
-| `media_canonical_enabled` | `false` (`0191_media_assets.sql`, postcondition in `2250`) | Every write to `media_assets`. `lib/mediaAssets.ts:118` — `if (!(await isFlagEnabled(sc, "media_canonical_enabled"))) return null;` — is the first line of `recordMediaAsset`, and `routes/posts.ts:256` and `artifacts/api-server/src/lib/mediaAssets.ts:862#assetId = await recordMediaAsset(sc, {` are its only two call sites. **The §6 canonical asset table has no live writer.** |
+| `media_canonical_enabled` | `false` (`0191_media_assets.sql`, postcondition in `2250`) | Every write to `media_assets`. `lib/mediaAssets.ts:118` — `if (!(await isFlagEnabled(sc, "media_canonical_enabled"))) return null;` — is the first line of `recordMediaAsset`, and `routes/posts.ts:256` and `artifacts/api-server/src/lib/mediaAssets.ts:863#assetId = await recordMediaAsset(sc, {` are its only two call sites. **The §6 canonical asset table has no live writer.** |
 | `media_evidence_enabled` | `false` (`2255`, postcondition raises if seeded ON) | The §9/§35 media→intel evidence seam. |
 | `media_request_a_view_enabled` | `false` (`2257`, same postcondition) | §19 Request-a-View. |
 | `trip_readiness_enabled`, `MEDIA_RANKING_ENABLED`, `MEDIA_*_BOOST_*` | `false` | Ranking; the live feed falls back to chronological. |
@@ -417,7 +417,7 @@ testable structure by §3 and §4.1. Narrative.
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| MD36 | `MediaAsset` canonical contract (id, owner/uploader, type, storage, dimensions, size, timestamps, statuses, visibility, provenance, eligibility, version) | **W** | The table is complete and matches the spec: `0191_media_assets.sql:12-40` plus `2250_media_asset_canonical_model.sql:70-86` adding `captured_at`, `location_visibility`, `provenance`, `intelligence_eligibility`. **But it is not the canonical asset.** `lib/mediaAssets.ts:118` returns `null` before writing whenever `media_canonical_enabled` is off, and it is off; the two call sites are `routes/posts.ts:256` and `artifacts/api-server/src/lib/mediaAssets.ts:862#assetId = await recordMediaAsset(sc, {`. Meanwhile `lib/media/mediaProjection.ts:130-173` reads `post_media` first and falls back to `posts.media_urls` — **it never reads `media_assets` at all.** Three stores, and the canonical one is on no read path. |
+| MD36 | `MediaAsset` canonical contract (id, owner/uploader, type, storage, dimensions, size, timestamps, statuses, visibility, provenance, eligibility, version) | **W** | The table is complete and matches the spec: `0191_media_assets.sql:12-40` plus `2250_media_asset_canonical_model.sql:70-86` adding `captured_at`, `location_visibility`, `provenance`, `intelligence_eligibility`. **But it is not the canonical asset.** `lib/mediaAssets.ts:118` returns `null` before writing whenever `media_canonical_enabled` is off, and it is off; the two call sites are `routes/posts.ts:256` and `artifacts/api-server/src/lib/mediaAssets.ts:863#assetId = await recordMediaAsset(sc, {`. Meanwhile `lib/media/mediaProjection.ts:130-173` reads `post_media` first and falls back to `posts.media_urls` — **it never reads `media_assets` at all.** Three stores, and the canonical one is on no read path. |
 | MD37 | `sourceType` is the eight-value set camera/library/provider/official/community/generated/screenshot/derivative | **W** | `2250:98-108` adds the CHECK — as a **superset including the legacy `'user'`**, documented as such (*"legacy default (0191); kept, not rewritten"*). `0191:28` still defaults `source_type` to `'user'`, so every row written on the dark path lands outside the §6 vocabulary. *(pointer corrected 2026-09-26, §28.11)* |
 | MD38 | `version` — the asset is a versioned aggregate | **W** | `0191:36` `version INTEGER NOT NULL DEFAULT 1` exists; no writer increments it and no reader compares it. A column, not a concurrency contract. |
 | MD39 | `capturedAt` is distinct from `uploadedAt` | **C** | `lib/mediaAssets.ts:26-50` is an unusually candid header: the column, the type and every consumer existed but *"NO production caller ever supplied a non-null value"*. `capturedAtFromImageBytes` (`:69-84`) now reads EXIF from the raw buffer **before** `processImage` strips it, and rejects anything outside `[1990-01-01, now+24h]` — an implausible capture time stays `null` rather than becoming a lie. |
@@ -1078,7 +1078,7 @@ directions.
    `src/scripts/checkWriterlessReads.ts:39-41` — *"A dynamic `.from(expr)` anywhere makes
    attribution incomplete, and the run says so rather than pretending otherwise."* Every
    "nothing writes X" here was settled by opening call sites: `media_assets`'s two writers
-   are `routes/posts.ts:256` and `artifacts/api-server/src/lib/mediaAssets.ts:862#assetId = await recordMediaAsset(sc, {`, both routed through the flag
+   are `routes/posts.ts:256` and `artifacts/api-server/src/lib/mediaAssets.ts:863#assetId = await recordMediaAsset(sc, {`, both routed through the flag
    check at `mediaAssets.ts:118`; `media_intent_signals`'s one writer is
    `routes/mediaActions.ts:161`. A `from("table")` grep alone would have missed both
    directions.
@@ -1182,9 +1182,9 @@ MD269 read **C** on `media_assets.moderation_status`, `routes/adminMedia.ts`,
 
 1. **The only production writer of `post_media` rows is the postcard transport**, and it
    promotes to distributable unconditionally. The row is created pending at
-   `artifacts/api-server/src/routes/postcards.ts:488#moderation_status: 'pending',` and the
+   `artifacts/api-server/src/routes/postcards.ts:490#moderation_status: 'pending',` and the
    completion handler sets
-   `artifacts/api-server/src/routes/postcards.ts:986#moderation_status:      'approved',`
+   `artifacts/api-server/src/routes/postcards.ts:1015#moderation_status:      'approved',`
    with no classifier, no queue and no hold of any kind between them. Nothing decides; the
    state machine's promotion step is a literal.
 2. **`post_media_moderation_ledger` has no reader and no writer.** It appears in
@@ -1888,7 +1888,7 @@ than the object the row names. The concentration is `routes/mediaFeed.ts`, which
 §9 and §10 grew by about 113 lines: MD55, MD105, MD118, MD203, MD363, MD371,
 MD386 and MD388 all cite pre-§9 numbers. Others drifted on their own — MD272
 cites `lib/mediaAssets.ts` line 129 for `computeIntelligenceEligibility`, which is at
-`artifacts/api-server/src/lib/mediaAssets.ts:372#const intelligenceEligibility = computeIntelligenceEligibility({`;
+`artifacts/api-server/src/lib/mediaAssets.ts:373#const intelligenceEligibility = computeIntelligenceEligibility({`;
 MD110 and MD114 cite `HiddenGemService.ts` line 150 for a media-attachment write that
 is at
 `artifacts/api-server/src/services/hiddenGems/HiddenGemService.ts:188#unaffected). Records media_assets + media_attachments(entityType=hidden_gem)`;
@@ -3578,10 +3578,10 @@ Each was checked against the object, not the sentence.
 | --- | --- |
 | MD36 · MD339 · MD429 | **The canonical asset is on the read path.** `artifacts/api-server/src/services/media/MediaProjectionService.ts:681#rows = await prepareCanonicalRows(sc, viewer, rows);` — the first step of the one funnel every World-shell builder uses — runs `artifacts/api-server/src/services/media/MediaProjectionService.ts:1689#export async function prepareCanonicalRows(`, which calls `attachCanonicalMedia` (gated by `media_canonical_read_enabled`, off in both databases; the header that said the reader was "called from nowhere, and that is a real gap" is rewritten). The canonical read now selects the whole §6 contract and the attachment's override (`artifacts/api-server/src/lib/media/mediaCanonicalRead.ts:219#is_cover, visibility_override, media_assets(`), and `artifacts/api-server/src/lib/media/mediaAssetContract.ts:102#export interface MediaAsset {` is §6 as one typed shape, produced by `artifacts/api-server/src/lib/media/mediaAssetContract.ts:164#export function toMediaAsset(row: unknown)`, which reads legacy moderation values in §36 terms and an unknown stored audience as `private`. |
 | MD43 | **The override binds the SERVED item, not only the bytes, and means what it says.** `artifacts/api-server/src/lib/mediaVisibility.ts:81#export async function mayViewUnderOverride(` is now the ONE audience rule, used by the byte path and by `prepareCanonicalRows`. Two semantic defects fixed: `inherit` DENIED every non-owner (`artifacts/api-server/src/lib/mediaVisibility.ts:93#case "inherit":` — an explicit "same as the post" attachment was owner-only), and `shared_moment` resolved as TRIP CREW; it is now the Moment's accepted members through an APPROVED contribution (`artifacts/api-server/src/lib/mediaVisibility.ts:175#async function isSharedMomentAudience(`). A withheld attachment also clears the row's legacy branches (`artifacts/api-server/src/services/media/MediaProjectionService.ts:1730#out.push({ ...row, canonical_media: kept, post_media: [], media_urls: [] });`), because `post_media` can hold the very file the override just withheld. Migration 3320 CHECKs the override to NULL, `inherit` or a §33 audience (`artifacts/api-server/src/migrations/3320_media_canonical_contract_constraints.sql:111#ADD CONSTRAINT media_attachments_visibility_override_check`). |
-| MD38 | **`version` is an aggregate version.** Migration 3320's trigger (`artifacts/api-server/src/migrations/3320_media_canonical_contract_constraints.sql:144#CREATE TRIGGER media_assets_version_bump`) sets `NEW.version = OLD.version + 1` on every UPDATE, whoever issues it, and overrides a rewind. `artifacts/api-server/src/lib/mediaAssets.ts:1001#export async function casUpdateMediaAsset(` is the compare-and-set every read-modify-write uses — the provenance edit path (`artifacts/api-server/src/lib/mediaAssets.ts:681#const written = await casUpdateMediaAsset(sc, assetId, row.version, {`), retried with a re-read by `artifacts/api-server/src/lib/mediaAssets.ts:1031#export async function recordMediaEditWithRetry(` so a raced edit is recorded AFTER the other instead of erasing it, and the moderation service (MD351). |
-| MD41 | Migration 3320 CHECKs `media_attachments.entity_type` to the §6.1 nine (`artifacts/api-server/src/migrations/3320_media_canonical_contract_constraints.sql:99#ADD CONSTRAINT media_attachments_entity_type_check`) — the table itself, for every writer, not only the ones that go through `artifacts/api-server/src/lib/mediaAssets.ts:728#export const ATTACHMENT_ENTITY_TYPES = [`. |
-| MD44 | **The post joins its file's ONE asset.** `artifacts/api-server/src/lib/mediaAssets.ts:1081#export async function recordPostMediaAttachments(`, called from post creation (`artifacts/api-server/src/routes/posts.ts:764#void recordPostMediaAttachments(msc,`), links each storage-backed file to the post by `recordEntityMedia`, which REUSES the asset at that storage key and now refuses a key someone else owns (`artifacts/api-server/src/lib/mediaAssets.ts:856#if ((existing as any).owner_user_id !== input.ownerUserId) return NONE;`) and refuses rather than forks on an unreadable lookup. Gated on `media_canonical_enabled` AND the schema probe, so it cannot write where the canonical writer cannot. The postcard, memory, gem and Moment paths already attached; the post — the object most files are uploaded for — did not. |
-| MD57 · MD60 · MD343 | **Every served media object carries the §8 provenance layer.** `artifacts/api-server/src/lib/media/mediaProvenanceLayer.ts:109#export function buildProvenanceLayer(` — source, capture clock, edit lineage by §35 class (never the parameters), §10 location basis and confidence, §36 moderation, and the Trust flags already projected — attached at `artifacts/api-server/src/lib/media/mediaProjection.ts:352#...projectionLayers(row, media, nowMs),`. A canonical item carries the asset's DECLARED provenance; a legacy item says `basis: "legacy"` / `sourceType: "undeclared"` rather than inventing one, and 0191's default `user` is served as `undeclared` because it records the absence of a declaration. The location half is withheld whenever the choke point hides the location (`artifacts/api-server/src/lib/media/mediaProjection.ts:396#withholdLocation(p.provenance)`). By responsibility (§41, merged modules as MD341 already allows) the MediaProvenanceService is: capture (`artifacts/api-server/src/lib/mediaAssets.ts:367#const provenance = initProvenance({`), lineage (the CAS edit path above), classification (lib/media/mediaEvidenceEligibility) and serving (the layer). |
+| MD38 | **`version` is an aggregate version.** Migration 3320's trigger (`artifacts/api-server/src/migrations/3320_media_canonical_contract_constraints.sql:144#CREATE TRIGGER media_assets_version_bump`) sets `NEW.version = OLD.version + 1` on every UPDATE, whoever issues it, and overrides a rewind. `artifacts/api-server/src/lib/mediaAssets.ts:1002#export async function casUpdateMediaAsset(` is the compare-and-set every read-modify-write uses — the provenance edit path (`artifacts/api-server/src/lib/mediaAssets.ts:682#const written = await casUpdateMediaAsset(sc, assetId, row.version, {`), retried with a re-read by `artifacts/api-server/src/lib/mediaAssets.ts:1032#export async function recordMediaEditWithRetry(` so a raced edit is recorded AFTER the other instead of erasing it, and the moderation service (MD351). |
+| MD41 | Migration 3320 CHECKs `media_attachments.entity_type` to the §6.1 nine (`artifacts/api-server/src/migrations/3320_media_canonical_contract_constraints.sql:99#ADD CONSTRAINT media_attachments_entity_type_check`) — the table itself, for every writer, not only the ones that go through `artifacts/api-server/src/lib/mediaAssets.ts:729#export const ATTACHMENT_ENTITY_TYPES = [`. |
+| MD44 | **The post joins its file's ONE asset.** `artifacts/api-server/src/lib/mediaAssets.ts:1082#export async function recordPostMediaAttachments(`, called from post creation (`artifacts/api-server/src/routes/posts.ts:764#void recordPostMediaAttachments(msc,`), links each storage-backed file to the post by `recordEntityMedia`, which REUSES the asset at that storage key and now refuses a key someone else owns (`artifacts/api-server/src/lib/mediaAssets.ts:857#if ((existing as any).owner_user_id !== input.ownerUserId) return NONE;`) and refuses rather than forks on an unreadable lookup. Gated on `media_canonical_enabled` AND the schema probe, so it cannot write where the canonical writer cannot. The postcard, memory, gem and Moment paths already attached; the post — the object most files are uploaded for — did not. |
+| MD57 · MD60 · MD343 | **Every served media object carries the §8 provenance layer.** `artifacts/api-server/src/lib/media/mediaProvenanceLayer.ts:109#export function buildProvenanceLayer(` — source, capture clock, edit lineage by §35 class (never the parameters), §10 location basis and confidence, §36 moderation, and the Trust flags already projected — attached at `artifacts/api-server/src/lib/media/mediaProjection.ts:352#...projectionLayers(row, media, nowMs),`. A canonical item carries the asset's DECLARED provenance; a legacy item says `basis: "legacy"` / `sourceType: "undeclared"` rather than inventing one, and 0191's default `user` is served as `undeclared` because it records the absence of a declaration. The location half is withheld whenever the choke point hides the location (`artifacts/api-server/src/lib/media/mediaProjection.ts:396#withholdLocation(p.provenance)`). By responsibility (§41, merged modules as MD341 already allows) the MediaProvenanceService is: capture (`artifacts/api-server/src/lib/mediaAssets.ts:368#const provenance = initProvenance({`), lineage (the CAS edit path above), classification (lib/media/mediaEvidenceEligibility) and serving (the layer). |
 | MD73 | **locationConfidence distinguishes how the place was established.** `artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:255#export function locationBasisFromPost(` reads only the post's `location_source` enum and the two booleans the SERVER decides (`location_verified`, `geotag_verified`) — never a coordinate — and `artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:238#export const LOCATION_CONFIDENCE_BY_BASIS` scores verified GPS 0.9, GPS 0.7, a typed place 0.3, none 0.2 (the old `hasLocation` values are the `gps` and `none` rungs, so older rows read identically). The projection selects those three post columns (`artifacts/api-server/src/lib/media/mediaProjection.ts:42#location_source, location_verified, geotag_verified`); the basis is folded into the §10 evaluation at READ, per (asset, post) pair, and never written onto the asset — the same file tagged by a GPS fix in one post and a typed venue in another is not equally well located. |
 | MD75 · MD76 · MD78 | **The operational lifetime is stamped, enforced and served.** `artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:419#export const INTELLIGENCE_OPERATIONAL_WINDOW_MS = RECENT_WINDOW_MS;` — capture + 24 h, the instant `freshnessClass` turns `historical`, stamped by `artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:426#export function operationalExpiresAt(` on ELIGIBLE assets only. It is enforced where a current claim's evidence is decided (`artifacts/api-server/src/lib/media/mediaEvidenceLink.ts:265#if (isOperationalEvidenceAt(a, now)) return true;`), while `eligible` itself stays time-independent because PresenceVerifier asks it about receipts inside historical observation windows. `artifacts/api-server/src/lib/media/mediaTemporalState.ts:45#export interface MediaTemporalState {` is §11's contract, resolved by `artifacts/api-server/src/lib/media/mediaTemporalState.ts:71#export function resolveMediaTemporalState(` and served on every projection (`artifacts/api-server/src/lib/media/mediaProjection.ts:100#export interface MediaProjection extends MediaProjectionLayers {`). The earlier design note — "intel expiry belongs to the observation/claim" — conflated two expiries: a claim's TTL (Live Intelligence's, untouched) and the moment a photograph stops being a picture of "now" (Media's). |
 | MD274 · MD351 | **§36 is the stored vocabulary, and a service owns it.** Migration 3321 makes `processing` the default (`artifacts/api-server/src/migrations/3321_media_moderation_canonical_state.sql:73#ALTER COLUMN moderation_status SET DEFAULT 'processing';`) and stores a legacy spelling as its §36 meaning on any INSERT or UPDATE (`artifacts/api-server/src/migrations/3321_media_moderation_canonical_state.sql:95#CREATE TRIGGER media_assets_canonical_moderation`) — additive: no row rewritten, no CHECK tightened, and it REFUSES a database with the legacy-only CHECK (`artifacts/api-server/src/migrations/3321_media_moderation_canonical_state.sql:63#media_assets_moderation_status_canonical_check is absent`), i.e. production until MEDIA_CANONICAL_FLAG. `artifacts/api-server/src/services/media/MediaModerationService.ts:147#export async function applyCanonicalModerationDecision(` carries an admin decision to the file's canonical row as a compare-and-set, under the transition table (`artifacts/api-server/src/services/media/MediaModerationService.ts:86#export function canTransition(`; `owner_deleted` is terminal: `artifacts/api-server/src/services/media/MediaModerationService.ts:83#owner_deleted: [],`). The admin route calls it for a status flip (`artifacts/api-server/src/routes/adminMedia.ts:880#canonicalOutcome = await applyCanonicalModerationDecision(sc, {`) and a delete (`artifacts/api-server/src/routes/adminMedia.ts:841#canonical: await applyCanonicalModerationDecision(sc,`), reports the outcome and logs at error when a RESTRICTIVE decision failed to land. Before this, a rejected upload was rejected in `post_media` and `processing` — served — in `media_assets`. |
@@ -3869,7 +3869,7 @@ submitted at the gem submission and observation routes `artifacts/api-server/src
 media is AT the gem's place `artifacts/api-server/src/lib/mediaAnalytics.ts:361#export function recordGemContributionSignal(`; Contribution accepted, credited to the
 SUBMITTER `artifacts/api-server/src/lib/mediaAnalytics.ts:389#export function recordGemAcceptedSignal(`, at `artifacts/api-server/src/routes/hiddenGems.ts:1572#recordGemAcceptedSignal(sc`; Invite sent, only for a media item that is
 an approved contribution to that very Moment `artifacts/api-server/src/lib/mediaAnalytics.ts:415#export function recordMediaInviteIfAttributable(`, at `artifacts/api-server/src/routes/sharedMoments.ts:135#recordMediaInviteIfAttributable(`;
-Postcard created `artifacts/api-server/src/lib/mediaAnalytics.ts:441#export function recordPostcardCreatedSignal(`, at the Postcard write `artifacts/api-server/src/routes/postcards.ts:1152#recordPostcardCreatedSignal(sc, { userId: user.id, postId });`; Experience
+Postcard created `artifacts/api-server/src/lib/mediaAnalytics.ts:441#export function recordPostcardCreatedSignal(`, at the Postcard write `artifacts/api-server/src/routes/postcards.ts:1188#recordPostcardCreatedSignal(sc, { userId: user.id, postId });`; Experience
 completed for a route saved from media `artifacts/api-server/src/lib/mediaAnalytics.ts:449#export function recordExperienceCompletionIfAttributable(`, at `artifacts/api-server/src/routes/routePlan.ts:571#recordExperienceCompletionIfAttributable(`. Arrival
 "where safely measurable" is a check-in the traveller made themselves — a route
 stop marked arrived `artifacts/api-server/src/routes/routePlan.ts:649#recordMediaArrivalIfAttributable(` or a GPS-verified, non-suspicious gem visit
@@ -4204,7 +4204,7 @@ originally filled by the helper below; the current §52 upload writes it in the 
 `artifacts/api-server/src/lib/mediaVideoPoster.ts:175#export async function recordMeasuredDuration(` is the historical helper, no longer called by this upload path).
 The postcard `/complete` stores the measured duration and size over what the
 client declared
-(`artifacts/api-server/src/routes/postcards.ts:960#resolveStoredDuration(probedVideo, p.durationSeconds)`,
+(`artifacts/api-server/src/routes/postcards.ts:989#resolveStoredDuration(probedVideo, p.durationSeconds)`,
 policy at `artifacts/api-server/src/lib/videoProbe.ts:113#export function resolveStoredDuration`).
 It falls back to the declared figure only when the container states no
 duration at all, and logs that case at warn.
@@ -4219,9 +4219,9 @@ There are two routes, one per upload transport:
 - For a reserved postcard slot, the route is
   `artifacts/api-server/src/routes/postcardMediaTransport.ts:176#"/postcards/:id/media/:mediaId/poster"`.
   `/complete` admits no thumbnail path except that slot's own poster
-  (`artifacts/api-server/src/routes/postcards.ts:957#admissiblePosterPath(storagePath, p.thumbnailPath)`)
+  (`artifacts/api-server/src/routes/postcards.ts:986#admissiblePosterPath(storagePath, p.thumbnailPath)`)
   and writes it into the column the Watch feed reads
-  (`artifacts/api-server/src/routes/postcards.ts:995#thumbnail_storage_path: poster.path`).
+  (`artifacts/api-server/src/routes/postcards.ts:1024#thumbnail_storage_path: poster.path`).
   Before this, `/complete` stored whatever `thumbnailPath` a client sent.
 - For a general upload, the route is
   `artifacts/api-server/src/routes/mediaVideoPoster.ts:46#"/media/upload/poster"`.
@@ -4442,7 +4442,7 @@ it from the rows.
 
 **A behaviour change the integrator must see.** Before this pass, a general
 video upload's canonical row carried null dimensions, which parks it in
-`processing` (`artifacts/api-server/src/lib/mediaAssets.ts:404#input.width != null && input.height != null ? "ready" : "processing"`).
+`processing` (`artifacts/api-server/src/lib/mediaAssets.ts:405#input.width != null && input.height != null ? "ready" : "processing"`).
 Nothing ever moves such a row on, because there is no transcoder. With probed
 dimensions it is written `ready`, which makes a new video's canonical row
 servable exactly as a new image's has always been. That is the 2089 contract
@@ -4795,7 +4795,7 @@ shell, which is seeded off.
   - the feed-size derivative, in `feed_storage_path` / `feed_url` (0208);
   - the thumbnail, in `thumbnail_storage_path` / `thumbnail_url`.
 - The server writes them only under the uploader's own folder:
-  - `artifacts/api-server/src/routes/postcards.ts:784#const candidatePath =` (`<storage_path>.feed.jpg`)
+  - `artifacts/api-server/src/routes/postcards.ts:813#const candidatePath =` (`<storage_path>.feed.jpg`)
   - `artifacts/api-server/src/routes/posts.ts:267#thumbnailPath =` (`<uid>/<ms>.thumb.jpg`)
   - `artifacts/api-server/src/routes/posts.ts:284#feedPath =` (`<uid>/<ms>.feed.jpg`)
 - Branch 3a of the byte gate matched `post_media.storage_path` exactly, and no later branch names a variant. A non-owner's request for one therefore ended in §4's deny.
@@ -6660,7 +6660,7 @@ The upload route processes bytes it is **holding**:
 
 A row with both dimensions is written `ready`, and a row without them
 `processing`
-(`artifacts/api-server/src/lib/mediaAssets.ts:404#input.width != null && input.height != null ? "ready" : "processing"`).
+(`artifacts/api-server/src/lib/mediaAssets.ts:405#input.width != null && input.height != null ? "ready" : "processing"`).
 
 **The pipeline cannot be re-run as it stands for a queued asset.** Its input
 is the request body, and that is gone. What exists is the stored object. So
@@ -6752,7 +6752,7 @@ Two writers leave a `media_assets` row in `processing` with no lease:
 - `recordEntityMedia`, for every memory, hidden-gem and postcard file it
   records. It is staged "so it is not served as ready until a dimension sweep
   fills it in"
-  (`artifacts/api-server/src/lib/mediaAssets.ts:871#as ready until a dimension sweep fills it in.`).
+  (`artifacts/api-server/src/lib/mediaAssets.ts:872#as ready until a dimension sweep fills it in.`).
 
 `claimMediaProcessing` would accept these rows, but the worker does not read
 them. `recoverStaleMediaProcessing` skips them too, because it matches only a
@@ -8316,16 +8316,16 @@ appended at the tail of its file, so no cited line moved.
 
 **Who writes them.** `recordEntityMedia` creates a row only when no asset
 exists at that storage key yet. It writes an honest zero and stages the row
-(`artifacts/api-server/src/lib/mediaAssets.ts:872#sizeBytes: 0,`,
-`artifacts/api-server/src/lib/mediaAssets.ts:874#processingStatus: "processing",`).
+(`artifacts/api-server/src/lib/mediaAssets.ts:873#sizeBytes: 0,`,
+`artifacts/api-server/src/lib/mediaAssets.ts:875#processingStatus: "processing",`).
 It is called for four entity types, not three:
 - a Passport memory (`artifacts/api-server/src/services/passport/PassportMemoryService.ts:140#entityType: "memory",`),
   which is private unless its owner picks otherwise
   (`artifacts/api-server/src/services/passport/PassportMemoryService.ts:111#visibility: input.visibility ?? "private",`);
 - a hidden gem (`artifacts/api-server/src/services/hiddenGems/HiddenGemService.ts:194#entityType: "hidden_gem",`);
-- a postcard (`artifacts/api-server/src/routes/postcards.ts:1146#entityType: 'postcard',`);
+- a postcard (`artifacts/api-server/src/routes/postcards.ts:1182#entityType: 'postcard',`);
 - a post, through `recordPostMediaAttachments`
-  (`artifacts/api-server/src/lib/mediaAssets.ts:1096#entityType: "post",`).
+  (`artifacts/api-server/src/lib/mediaAssets.ts:1097#entityType: "post",`).
 
 **Who serves a `ready` row to someone other than its owner.** Five readers can
 hand over a `media_assets` row or its bytes. None of them serves an asset
@@ -8613,7 +8613,7 @@ All were run from `artifacts/api-server` on the final tree.
    many objects" reading. It is not graded here.
 2. (**Fixed in census-wall §17.**) **Quick Media reads a postcard link as if it named a post** (census-wall
    W72's loader). The link's id is a `passport_postcards` id
-   (`artifacts/api-server/src/routes/postcards.ts:1147#entityId: (pcIns.data as any).id as string,`),
+   (`artifacts/api-server/src/routes/postcards.ts:1183#entityId: (pcIns.data as any).id as string,`),
    and the loader looks it up in `posts`
    (`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1306#if (!postIdByAsset.has(aid) && att.entity_id) postIdByAsset.set(aid, String(att.entity_id));`).
    The post is never found, so the asset is dropped. It fails closed, so
@@ -8631,7 +8631,7 @@ All were run from `artifacts/api-server` on the final tree.
    (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:412#const { data, error } = await sc.rpc("retire_media_asset",`).
    Migration4037 commits retirement and its audit together; the PostgreSQL test injects audit failure and proves the exact prior processing state and version remain unchanged. Independent sessions produce one retirement/audit. This is unshipped code evidence; the helper still has no production caller (§30.7), and no census verdict moves.
 5. **`recordEntityMedia` guesses the MIME type from the URL**
-   (`artifacts/api-server/src/lib/mediaAssets.ts:868#mimeType: mediaType === "video" ? "video/mp4" : "image/jpeg",`).
+   (`artifacts/api-server/src/lib/mediaAssets.ts:869#mimeType: mediaType === "video" ? "video/mp4" : "image/jpeg",`).
    The sweep verifies the real kind, but leaves the guessed `mime_type` as it
    is.
 6. **A swept row keeps the moderation state it was written with.** Where 3321
@@ -9461,7 +9461,7 @@ part that needs no choice:
   The eight are listed once, beside it
   (`artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:646#export const SPEC_MEDIA_SOURCE_TYPES = [`).
 - **The writer's fallback is that name, not a bare literal**
-  (`artifacts/api-server/src/lib/mediaAssets.ts:393#source_type: input.sourceType ?? MEDIA_SOURCE_UNDECLARED,`).
+  (`artifacts/api-server/src/lib/mediaAssets.ts:394#source_type: input.sourceType ?? MEDIA_SOURCE_UNDECLARED,`).
   The input types narrow from `string` to the §6 union plus the legacy value,
   so a misspelt source no longer compiles.
 - **Every writer states its source.** The table below lists each one. Every
@@ -9470,9 +9470,10 @@ part that needs no choice:
 | Writer | What it writes | Stated source |
 | --- | --- | --- |
 | upload route (`recordMediaAssetDetailed` after §52; formerly the `recordMediaAsset` wrapper) | the uploaded file; same original canonical write, now returns its version | undeclared — `artifacts/api-server/src/routes/posts.ts:302#ownerUserId: user.id, sourceType: MEDIA_SOURCE_UNDECLARED,` |
-| postcard auto-create | the post's first ready file | undeclared — `artifacts/api-server/src/routes/postcards.ts:1148#isCover: true, sourceType: MEDIA_SOURCE_UNDECLARED,` |
+| postcard completion | the existing canonical asset, staged before EXIF stripping and reused on retry | undeclared — the capture timestamp establishes neither camera/library source nor location; `artifacts/api-server/src/routes/postcards.ts:769#width: img.width, height: img.height, sourceType: MEDIA_SOURCE_UNDECLARED,` |
+| postcard auto-create | the post's first ready file | undeclared — `artifacts/api-server/src/routes/postcards.ts:1184#isCover: true, sourceType: MEDIA_SOURCE_UNDECLARED,` |
 | memory create | the memory's photo | undeclared — `artifacts/api-server/src/services/passport/PassportMemoryService.ts:142#isCover: true, sourceType: MEDIA_SOURCE_UNDECLARED,` |
-| post attachments | each file of a new post | undeclared — `artifacts/api-server/src/lib/mediaAssets.ts:1099#isCover: i === 0, sourceType: MEDIA_SOURCE_UNDECLARED,` |
+| post attachments | each file of a new post | undeclared — `artifacts/api-server/src/lib/mediaAssets.ts:1100#isCover: i === 0, sourceType: MEDIA_SOURCE_UNDECLARED,` |
 | gem submit | the gem's photo | `community`, unchanged — `artifacts/api-server/src/services/hiddenGems/HiddenGemService.ts:197#sourceType: "community",` |
 | backfill script | twelve legacy sources undeclared; event media and gem photos `community` | the default parameter is removed, so every call states its source — `artifacts/api-server/src/scripts/backfill-media-assets.ts:33#async function upsertAsset(owner: string, publicUrl: string, sourceType: MediaSourceType)` |
 
@@ -9491,7 +9492,7 @@ scripts included. It fails when:
   backfill calls.
 - the sentinel stops being storable, becomes one of the eight, becomes
   evidence-eligible, or ranks `authentic`
-  (`artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts:394#it("the sentinel is not one of the eight, is not evidence-eligible, and does not rank as authentic"`).
+  (`artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts:395#it("the sentinel is not one of the eight, is not evidence-eligible, and does not rank as authentic"`).
 
 It also pins the eight against the spec text and against 2250's CHECK. Each
 check has a control that fails if the scan found nothing.
@@ -9712,7 +9713,7 @@ be a signal family, because it declares no origin zone.
 
 | Row | Was | Now | IMPLEMENTATION | DECISION | EXTERNAL VERIFICATION |
 | --- | --- | --- | --- | --- | --- |
-| MD37 | **W** | **W** | Done on branch. Every writer states its source, and the guard pins them (`artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts:213#const UNDECLARED_INVENTORY`). Remaining: the value, at the five sites. | §35.4 MD37: which source an undeclared upload carries. RED WHEN unchanged: every write carries one of the eight. | None until the value is chosen. Then P1 (a production write reaching `media_assets`). |
+| MD37 | **W** | **W** | Done on branch. Every writer states its source, and the guard pins them (`artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts:213#const UNDECLARED_INVENTORY`). Remaining: the value, at the six sites. | §35.4 MD37: which source an undeclared upload carries. RED WHEN unchanged: every write carries one of the eight. | None until the value is chosen. Then P1 (a production write reaching `media_assets`). |
 | MD53 | **W** | **W** | Nothing decision-free remains. The seam exists with no caller (`artifacts/api-server/src/lib/media/mediaEvidenceLink.ts:119#export async function linkMediaEvidence(`). | MD65 Options A, i/ii and 5. Serving the ref is a re-identification. | A production evidence row, once built and enabled. |
 | MD58 | **W** | **W** | Nothing decision-free remains. The served item's shape is `MediaProjection` (`artifacts/api-server/src/lib/media/mediaProjection.ts:100#export interface MediaProjection extends MediaProjectionLayers {`). | MD65 Question 5. | As MD53. |
 | MD65 | **W** | **W** | Nothing decision-free remains. The Map and presence paths are not Media's (§35.1). | MD65 Questions 1–4, a SAFETY decision. | The flag press and a production observation carrying media, after build. |
@@ -9844,7 +9845,7 @@ seeded FALSE and no database was touched.**
 | ID | Was | Now | Evidence and what remains |
 | --- | --- | --- | --- |
 | MD63 | N | **N** | IMPLEMENTATION, done up to the vendor. The EVIDENCE EXTRACTION stage now has an output type and exactly one constructor, `artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:187#export function deriveVisualEvidenceCandidates(`. It keeps a signal only for a media id the caller asked about, only in a closed vocabulary, and only with a confidence in [0, 1]. It stamps `verified: false` and `eligibleAsObservation: false` as literals, so no provider can promote an inference (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:173#verified: false;`). Its production caller is §38's "looks social" filter (MD289 below). The provider is the refusing default (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:122#export const REFUSING_VISION_PROVIDER`), and the table of implemented adapters is empty (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:130#export const IMPLEMENTED_VISION_PROVIDERS`). It stays N because no configuration of this tree reads a pixel for meaning: the seam is where an extractor goes, not an extractor. ACTIVATION: `media_vision_provider_enabled` (3355). EXTERNAL: a vision provider that returns a per-image scene or crowd estimate with a confidence, chosen and cleared by the owner (sending photographs to a model is a cost and data-protection decision); for video, a video-capable model or the stored poster frame. BLOCKER: no vision vendor chosen, so `MEDIA_VISION_PROVIDER` names nothing. |
-| MD269 | W | **W** | IMPLEMENTATION, mostly done. The §36 stage now has a decider, `artifacts/api-server/src/lib/media/vendors/mediaModerationClassifier.ts:165#export async function decidePreDistribution(`. With the stage on, every answer that is not a valid classifier verdict HOLDS the file: no classifier, an unsupported kind, a refusal, a throw, a timeout, or a malformed answer. The decider is wired at three points. **Postcard `/complete`:** `artifacts/api-server/src/routes/postcards.ts:986#await preDistributionPostMediaStatus(` — with the stage off it writes `approved` exactly as before, and a hold is `flagged`, never `pending`, because a READY `pending` row passes the post_media readers. **The canonical row of a `/media/upload`:** through MediaModerationService, from `artifacts/api-server/src/routes/posts.ts:328#await runMediaVendorIngest(sc,` into `artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:124#export async function runMediaVendorIngest(`. There the row is HELD before the classifier is asked (`artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:148#HOLD FIRST, then decide.`), so it is not distributable while a classifier decides. One residual window is left: lib/mediaAssets writes the row as `processing`, and the hold lands one round trip later. Closing it means the canonical writer choosing the initial state, a change for activation. **A general video's poster:** see MD283. With 3356 ON and no classifier, this IS the staffed hold the row offers as its operator alternative. New postcard files complete `flagged` and new canonical rows go `limited`, and the existing `POST /admin/media/:id/moderate` approve releases them. It stays W because two paths still distribute undecided. (a) A general (Pulse) post's legacy read path gates on `posts.post_status`, which an upload-time stage cannot reach. A hold there has to be composed with the delayed-publish states (`pending_location_exit`, `pending_delay`), and that needs an owner rule, not a guess. (b) `artifacts/api-server/src/routes/postcards.ts:197#.filter((r: any) => r.processing_status === 'ready')` counts a held file in `media_count` and can make it the passport cover URL (§37.6 item 1). ACTIVATION: 3356, the owner's decision that every new upload waits for a person until a classifier exists. EXTERNAL: a classifier vendor, or staffed review capacity. BLOCKER: (a) and (b), plus no classifier and no decision to staff a hold. |
+| MD269 | W | **W** | IMPLEMENTATION, mostly done. The §36 stage now has a decider, `artifacts/api-server/src/lib/media/vendors/mediaModerationClassifier.ts:165#export async function decidePreDistribution(`. With the stage on, every answer that is not a valid classifier verdict HOLDS the file: no classifier, an unsupported kind, a refusal, a throw, a timeout, or a malformed answer. The decider is wired at three points. **Postcard `/complete`:** `artifacts/api-server/src/routes/postcards.ts:1015#await preDistributionPostMediaStatus(` — with the stage off it writes `approved` exactly as before, and a hold is `flagged`, never `pending`, because a READY `pending` row passes the post_media readers. **The canonical row of a `/media/upload`:** through MediaModerationService, from `artifacts/api-server/src/routes/posts.ts:328#await runMediaVendorIngest(sc,` into `artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:124#export async function runMediaVendorIngest(`. There the row is HELD before the classifier is asked (`artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:148#HOLD FIRST, then decide.`), so it is not distributable while a classifier decides. One residual window is left: lib/mediaAssets writes the row as `processing`, and the hold lands one round trip later. Closing it means the canonical writer choosing the initial state, a change for activation. **A general video's poster:** see MD283. With 3356 ON and no classifier, this IS the staffed hold the row offers as its operator alternative. New postcard files complete `flagged` and new canonical rows go `limited`, and the existing `POST /admin/media/:id/moderate` approve releases them. It stays W because two paths still distribute undecided. (a) A general (Pulse) post's legacy read path gates on `posts.post_status`, which an upload-time stage cannot reach. A hold there has to be composed with the delayed-publish states (`pending_location_exit`, `pending_delay`), and that needs an owner rule, not a guess. (b) `artifacts/api-server/src/routes/postcards.ts:199#.filter((r: any) => r.processing_status === 'ready')` counts a held file in `media_count` and can make it the passport cover URL (§37.6 item 1). ACTIVATION: 3356, the owner's decision that every new upload waits for a person until a classifier exists. EXTERNAL: a classifier vendor, or staffed review capacity. BLOCKER: (a) and (b), plus no classifier and no decision to staff a hold. |
 | MD277 | N | **N** | IMPLEMENTATION, done up to the vendor. The transcoder seam's refusing default is `artifacts/api-server/src/lib/media/vendors/mediaTranscoder.ts:84#export const REFUSING_TRANSCODER`. Each new video is submitted at ingestion (`artifacts/api-server/src/lib/media/vendors/mediaTranscoder.ts:142#export async function submitForTranscode(`). What "a ladder" must be before anything is served as adaptive is stated as code, `artifacts/api-server/src/lib/media/vendors/mediaTranscoder.ts:111#export function validateRenditionLadder(`: an https `.m3u8` or `.mpd` matching the claimed protocol, and at least two distinct rungs. NOT built, on purpose: the playback API and the player's source switch. How a private clip's manifest and segments are authorised is the vendor's model (signed per-viewer URLs, signed cookies, or segments proxied through mediaAccess), and a consumer built before its producer is the writerless-read pattern this repo's own ratchets forbid. The player half needs no ABR code: AVPlayer and ExoPlayer choose rungs from a master playlist. ACTIVATION: 3357. EXTERNAL: a transcoder (a hosted service, or an ffmpeg worker tier) whose playback authorisation keeps private video private; then a device run showing a rung switch under a throttled network. BLOCKER: no transcoder chosen or funded. |
 | MD280 | N | **N** | IMPLEMENTATION, done up to the source. The ASR seam's refusing default is `artifacts/api-server/src/lib/media/vendors/mediaCaptionSource.ts:168#export const REFUSING_CAPTION_SOURCE`. Its validated call is `artifacts/api-server/src/lib/media/vendors/mediaCaptionSource.ts:189#export async function captionTrackFor(`. Every track must pass `artifacts/api-server/src/lib/media/vendors/mediaCaptionSource.ts:92#export function parseWebVtt(` WHOLE, whether an ASR vendor produced it or a person typed it, and it is refused if it runs past the measured duration. A kept track is stored at a path derived from the video (`artifacts/api-server/src/lib/media/vendors/mediaCaptionSource.ts:149#export function captionTrackPathFor(`), with `upsert: false`. NOT built, on purpose: serving (lib/mediaAccess deciding `<path>.captions.vtt` as its video, the way posters are decided) and the player's cue renderer. Both are consumers of a track that no configuration can produce yet. §15.9 stands. ACTIVATION: 3358. EXTERNAL: an ASR vendor with a data-processing agreement covering users' speech, OR an owner decision for an authored-WebVTT flow. BLOCKER: the caption source is undecided. |
 | MD282 | N | **N** | IMPLEMENTATION, done up to the native module. The JS seam is `travel-buddy-standalone/src/services/media/videoCompression.ts:122#export async function compressVideoForUpload`. It looks for ONE module by name through `requireOptionalNativeModule` (`travel-buddy-standalone/src/services/media/videoCompression.ts:88#requireOptionalNativeModule(name)`), which returns null, not an error, when the binary lacks it. Absent, or switched off, the video passes through as the SAME object. It uses a copy only if the module returns a smaller file with its size and display dimensions. It is wired at all four client upload paths: the postcard composer (`travel-buddy-standalone/src/components/PostcardComposer.tsx:376#compressVideoForUpload(picked)`), `uploadMedia` (`travel-buddy-standalone/src/services/media.ts:202#const uploadUri = recording ? media.uri : await videoUriForUpload(`), stories (`travel-buddy-standalone/src/services/stories.ts:104#videoUriForUpload(localUri`) and memories (`travel-buddy-standalone/src/services/memories.ts:303#videoUriForUpload(localUri`). The native contract the module must implement is written in the file's header. It stays N because no build that exists re-encodes a byte. ACTIVATION: `DEFAULT_ENABLED` (`travel-buddy-standalone/src/services/media/videoCompression.ts:51#const DEFAULT_ENABLED = false;`), flipped in the same build that adds the module, after a device run. EXTERNAL: a native encoder module implementing that contract (§37.4), a native build (§37.3), and a device run showing a smaller clip that uploads, keeps its orientation and duration, and plays. BLOCKER: no native module in the client package.json (an infra or owner decision), and no build access. |
@@ -10111,12 +10112,12 @@ touched. **No verdict moves** (§37.8.6).
 #### 37.8.1 A held or flagged file no longer counts, and is never the passport cover (§37.6 item 1; MD269 (b))
 
 The count query now reads the file's moderation state
-(`artifacts/api-server/src/routes/postcards.ts:193#sort_order, moderation_status')`).
+(`artifacts/api-server/src/routes/postcards.ts:195#sort_order, moderation_status')`).
 A file counts only if it is ready AND distributable
-(`artifacts/api-server/src/routes/postcards.ts:198#.filter((r: any) => countsTowardPostcard(r))`),
+(`artifacts/api-server/src/routes/postcards.ts:200#.filter((r: any) => countsTowardPostcard(r))`),
 and distributable means outside the one deny-set every post_media reader
 applies: flagged, limited, rejected, removed, owner_deleted
-(`artifacts/api-server/src/routes/postcards.ts:1629#export function countsTowardPostcard(`).
+(`artifacts/api-server/src/routes/postcards.ts:1665#export function countsTowardPostcard(`).
 
 The same rule decides `media_count`, `has_video`, `primary_media_type` and
 `firstReadyUrl`, the URL copied into `passport_postcards.media_url`. So a held
@@ -10136,10 +10137,10 @@ stops counting, from the next time that postcard's counts are refreshed.
 #### 37.8.2 `/complete` takes a video's size from its container when the client sends none (§37.6 item 2)
 
 The pre-verification refusal is gone
-(`artifacts/api-server/src/routes/postcards.ts:821#if (p.width == null || p.height == null) {`,
+(`artifacts/api-server/src/routes/postcards.ts:850#if (p.width == null || p.height == null) {`,
 which now only logs). The final guard refuses only when NEITHER the probed
 container nor the client states a size
-(`artifacts/api-server/src/routes/postcards.ts:1014#if (baseUpdate.width === null || baseUpdate.height === null) {`),
+(`artifacts/api-server/src/routes/postcards.ts:1043#if (baseUpdate.width === null || baseUpdate.height === null) {`),
 and the probed size still wins over the client's.
 
 Tests (`artifacts/api-server/src/test/mediaVideoTransport.test.ts`, "§37.8 on the wire…"):
@@ -10208,7 +10209,7 @@ missing parts, and they go at the first sweep after the job ends.
 With 3356 ON, `/media/upload`'s canonical row is written ONCE, already `limited`
 (`artifacts/api-server/src/routes/posts.ts:300#const canonicalWrite = canonicalModerationAtBirth(sc).then(async atBirth => {`,
 `artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:354#export async function canonicalModerationAtBirth(`,
-`artifacts/api-server/src/lib/mediaAssets.ts:396#...(input.moderationStatus ? { moderation_status: input.moderationStatus } : {})`).
+`artifacts/api-server/src/lib/mediaAssets.ts:397#...(input.moderationStatus ? { moderation_status: input.moderationStatus } : {})`).
 No canonical reader distributes `limited`, so the one-round-trip window is
 closed. The decider then moves the row: limited → active or rejected.
 
@@ -10222,7 +10223,7 @@ Tests:
 
 **In a pre-2250 database (the degraded write path)** the hold is dropped and
 reported in `droppedColumns`
-(`artifacts/api-server/src/lib/mediaAssets.ts:468#if ("moderation_status" in row) { delete row.moderation_status;`).
+(`artifacts/api-server/src/lib/mediaAssets.ts:469#if ("moderation_status" in row) { delete row.moderation_status;`).
 The legacy CHECK has no §36 values, and MediaModerationService refuses that
 schema too, so there nothing can hold a canonical row. That is stated as the
 limit, not hidden.
@@ -10391,11 +10392,11 @@ touched. **No verdict moves** (§37.9.6).
 
 | Path | What it writes | Before §37.9 | Now |
 | --- | --- | --- | --- |
-| the upload slot (`artifacts/api-server/src/routes/postcards.ts:488#moderation_status: 'pending',`) | `pending` | a pending file is not ready, so it never counts | unchanged |
-| `/complete` (`artifacts/api-server/src/routes/postcards.ts:986#preDistributionPostMediaStatus(sc,`) | the §36 value: `approved`, or held | recount, then the lazy passport postcard | unchanged: the same step, now a named function (§37.9.2) |
+| the upload slot (`artifacts/api-server/src/routes/postcards.ts:490#moderation_status: 'pending',`) | `pending` | a pending file is not ready, so it never counts | unchanged |
+| `/complete` (`artifacts/api-server/src/routes/postcards.ts:1015#preDistributionPostMediaStatus(sc,`) | the §36 value: `approved`, or held | recount, then the lazy passport postcard | unchanged: the same step, now a named function (§37.9.2) |
 | `POST /admin/media/:id/moderate`, approve / reject / flag on `post_media` (`artifacts/api-server/src/routes/adminMedia.ts:852#.update({ moderation_status: newStatus })`) | `approved`, `rejected`, `flagged` | **nothing re-derived** | the step re-runs when the file's countability changed |
 | the same route, `delete` on `post_media` (`artifacts/api-server/src/routes/adminMedia.ts:838#.delete().eq("id", id)`) | removes the row | **nothing re-derived** | the same |
-| the owner's `DELETE /postcards/:id/media/:mediaId` (`artifacts/api-server/src/routes/postcards.ts:1248#const counts = await refreshMediaCounts(sc, postId);`) | removes the row | recount | unchanged (§37.9.5 item 1) |
+| the owner's `DELETE /postcards/:id/media/:mediaId` (`artifacts/api-server/src/routes/postcards.ts:1284#const counts = await refreshMediaCounts(sc, postId);`) | removes the row | recount | unchanged (§37.9.5 item 1) |
 | MediaModerationService (`artifacts/api-server/src/services/media/MediaModerationService.ts:197#moderation_status: to,`) and the §36 vendor stages | `media_assets`, the canonical store | — | not a post_media writer; the count does not read it |
 
 No other writer of `post_media.moderation_status` exists in the api-server tree
@@ -10406,24 +10407,24 @@ scripts only insert).
 
 **The `/complete` handler was split in place.** Its 200 response is now sent on
 the line where the step used to begin
-(`artifacts/api-server/src/routes/postcards.ts:1081#const counts = await syncPostcardAfterMediaChange(sc, postId, user, req);`).
+(`artifacts/api-server/src/routes/postcards.ts:1117#const counts = await syncPostcardAfterMediaChange(sc, postId, user, req);`).
 The step itself, the recount followed by the lazy passport postcard, is now
-`artifacts/api-server/src/routes/postcards.ts:1091#export async function syncPostcardAfterMediaChange(`.
+`artifacts/api-server/src/routes/postcards.ts:1127#export async function syncPostcardAfterMediaChange(`.
 Every line census-media cites inside the step kept its number and its text:
 the insert, the canonical cover and the created signal. The response's content
 is unchanged.
 
 **The admin route re-runs that step**, through
-`artifacts/api-server/src/routes/postcards.ts:1706#export async function syncPostcardAfterModeration(`:
+`artifacts/api-server/src/routes/postcards.ts:1742#export async function syncPostcardAfterModeration(`:
 - It asks whether the file counted before and whether it counts after, using
-  `artifacts/api-server/src/routes/postcards.ts:1653#export function isCountedPostcardFile(`.
+  `artifacts/api-server/src/routes/postcards.ts:1689#export function isCountedPostcardFile(`.
   That function is the two filters `refreshMediaCounts` applies (ready, and
   `countsTowardPostcard`), composed; no rule is restated.
 - **The answer changed, or the prior state could not be read:** it runs
   `syncPostcardAfterMediaChange` for the file's uploader. That is the recount,
   plus the passport postcard the upload path would have made.
 - **The answer did not change:** nothing is written
-  (`artifacts/api-server/src/routes/postcards.ts:1722#if (wasCounted !== null && wasCounted === isCounted) return { state: 'unchanged' };`).
+  (`artifacts/api-server/src/routes/postcards.ts:1758#if (wasCounted !== null && wasCounted === isCounted) return { state: 'unchanged' };`).
   So approving an approved file, or flagging one still processing, never
   rewrites a post's counts.
 - **Release:** a held file that is approved is counted, and the postcard gains
@@ -10432,17 +10433,17 @@ is unchanged.
   stops counting.
 
 **A passport cover that no longer counts is moved**
-(`artifacts/api-server/src/routes/postcards.ts:1667#async function repointPassportCover(`).
+(`artifacts/api-server/src/routes/postcards.ts:1703#async function repointPassportCover(`).
 The cover moves to the first file that still counts when it is one of the
 post's files that no longer counts
-(`artifacts/api-server/src/routes/postcards.ts:217#uncountedUrls:`), or the file
+(`artifacts/api-server/src/routes/postcards.ts:219#uncountedUrls:`), or the file
 just deleted. A cover the function cannot prove stale is left alone. When no
 file still counts, the cover is left and the case is logged
 (`no_countable_file`).
 
 **A recount that could not read writes nothing.** Before, a failed post_media
 read counted as "no files" and wrote zeros, at `/complete` too
-(`artifacts/api-server/src/routes/postcards.ts:195#if (mediaReadErr) return`).
+(`artifacts/api-server/src/routes/postcards.ts:197#if (mediaReadErr) return`).
 The admin response then says `failed`.
 
 **Where the admin route is wired:**
@@ -10470,10 +10471,10 @@ instead of at the post's next upload.
 
 #### 37.9.3 Another lane's pinned inventory: one label changed, count and site unchanged
 
-`artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts:215#syncPostcardAfterMediaChange`
+`artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts:216#syncPostcardAfterMediaChange`
 is census-media §35's MD37 inventory. It keys each undeclared writer by
 `file · enclosing function · callee`. The postcard cover's
-`artifacts/api-server/src/routes/postcards.ts:1143#void recordEntityMedia(sc, {`
+`artifacts/api-server/src/routes/postcards.ts:1179#void recordEntityMedia(sc, {`
 is the same call on the same line, with the same sentinel. Its enclosing function
 now has a name, so the key reads
 `routes/postcards.ts · syncPostcardAfterMediaChange · recordEntityMedia` where
@@ -10538,7 +10539,7 @@ The tree's diff hash was the same before and after the run.
 
 1. **The owner's delete recounts but never moves the cover.** When the owner
    deletes the file that is the passport cover
-   (`artifacts/api-server/src/routes/postcards.ts:1248#const counts = await refreshMediaCounts(sc, postId);`),
+   (`artifacts/api-server/src/routes/postcards.ts:1284#const counts = await refreshMediaCounts(sc, postId);`),
    `passport_postcards.media_url` keeps pointing at a removed object. This
    predates §37.9. The admin paths now move the cover; the owner path was not
    in this follow-up's scope.
@@ -10612,19 +10613,19 @@ is enabled, and no database is touched. **No verdict moves** (§37.10.7).
 This was live whatever 3356 says: an owner deleting their postcard's cover file
 left `passport_postcards.media_url` on a removed object.
 - The route's read now names the file's URL
-  (`artifacts/api-server/src/routes/postcards.ts:1192#processing_status, public_url') // census-media §37.10 item 1`).
+  (`artifacts/api-server/src/routes/postcards.ts:1228#processing_status, public_url') // census-media §37.10 item 1`).
 - After its unchanged recount, the route hands that URL to the one cover rule
-  (`artifacts/api-server/src/routes/postcards.ts:1248#await repointPassportCover(sc, postId, counts, req,`).
+  (`artifacts/api-server/src/routes/postcards.ts:1284#await repointPassportCover(sc, postId, counts, req,`).
 - The cover moves to the first file that still counts. With none left, it is
   cleared (§37.10.3).
 - A recount whose read failed writes nothing, and that now includes the cover
-  (`artifacts/api-server/src/routes/postcards.ts:1675#if (counts.unread) return 'failed';`).
+  (`artifacts/api-server/src/routes/postcards.ts:1711#if (counts.unread) return 'failed';`).
 
 #### 37.10.2 Item 2 — the canonical cover attachment: NOT built, because moving it needs an owner decision
 
 **How it is written.** Exactly once, when the passport postcard is lazily
 created: `recordEntityMedia(…, entityType: 'postcard', isCover: true)`
-(`artifacts/api-server/src/routes/postcards.ts:1143#void recordEntityMedia(sc, {`).
+(`artifacts/api-server/src/routes/postcards.ts:1179#void recordEntityMedia(sc, {`).
 - It is fire-and-forget and fail-soft.
 - It is gated by `media_canonical_enabled`, seeded FALSE
   (`artifacts/api-server/src/migrations/0191_media_assets.sql:101#('media_canonical_enabled', FALSE,`).
@@ -10685,18 +10686,18 @@ Postcards tab renders that URL as its last fallback
 - A cover that is one of the post's files that no longer counts, or the file
   just removed, moves to the first file that counts.
 - With no file left that counts, the cover is cleared to null
-  (`artifacts/api-server/src/routes/postcards.ts:1685#return next === null ? 'cleared' : cover ? 'repointed' : 'filled';`).
+  (`artifacts/api-server/src/routes/postcards.ts:1721#return next === null ? 'cleared' : cover ? 'repointed' : 'filled';`).
 - A null cover is filled once a file counts again
-  (`artifacts/api-server/src/routes/postcards.ts:1680#if (cover && !(counts.uncountedUrls.includes(cover) || alsoGone.includes(cover))) return 'kept';`).
+  (`artifacts/api-server/src/routes/postcards.ts:1716#if (cover && !(counts.uncountedUrls.includes(cover) || alsoGone.includes(cover))) return 'kept';`).
 - A cover it cannot prove stale is still left alone.
 
 **`/complete` runs the rule too.** It now belongs to the shared step
-(`artifacts/api-server/src/routes/postcards.ts:1156#const cover = await repointPassportCover(sc, postId, counts, req, alsoGone);`),
+(`artifacts/api-server/src/routes/postcards.ts:1192#const cover = await repointPassportCover(sc, postId, counts, req, alsoGone);`),
 so an owner's new upload fills a cleared cover. This is the one change to
 `/complete`'s writes. Its response is unchanged.
 
 **The outcome.** `no_countable_file` is replaced by `cleared` and `filled`
-(`artifacts/api-server/src/routes/postcards.ts:1657#export type PassportCoverOutcome =`).
+(`artifacts/api-server/src/routes/postcards.ts:1693#export type PassportCoverOutcome =`).
 §37.9's REJECT case changed its expectation to match, and names the change.
 
 **The schema.** `artifacts/api-server/src/migrations/3359_passport_postcard_cover_nullable.sql`
@@ -10744,7 +10745,7 @@ read. The row is then read again and the write retried
 can land between the two. So after the step, the file's status is read again.
 If it is no longer the status this decision wrote, the step re-runs from the
 rows as they are, at most twice
-(`artifacts/api-server/src/routes/postcards.ts:1731#for (let rerun = 0; input.recheckMediaId`).
+(`artifacts/api-server/src/routes/postcards.ts:1767#for (let rerun = 0; input.recheckMediaId`).
 
 **The admin delete decides from the row it deleted.** The delete's RETURNING
 gives that row
@@ -10758,7 +10759,7 @@ The owner's delete always recounts, so there is no skip decision to go stale.
 **What the correct outcome is.** The passport postcard belongs to the post's
 author.
 - `/postcards/:id/media/upload-url` makes a slot only for the author
-  (`artifacts/api-server/src/routes/postcards.ts:460#if ((postRow as any).author_id !== user.id)`).
+  (`artifacts/api-server/src/routes/postcards.ts:462#if ((postRow as any).author_id !== user.id)`).
 - So `post_media.user_id` is the author, and the column is NOT NULL.
 
 **Recount-only was not correct.** It left a released file's postcard without
@@ -10766,7 +10767,7 @@ the passport postcard the upload path would have made.
 
 **What the code does now.**
 - The moderation step reads the author from the post when it has no uploader
-  id (`artifacts/api-server/src/routes/postcards.ts:1775#select('author_id')`),
+  id (`artifacts/api-server/src/routes/postcards.ts:1811#select('author_id')`),
   and runs the whole step.
 - Only when no author can be read either does it recount and move the cover
   without making a passport postcard, and it logs that.
@@ -13304,7 +13305,7 @@ was not fixed here.
 4. **Passport postcards copy the venue.**
    - The auto-created postcard copies `location_name` whatever the post's mode
      (`artifacts/api-server/src/routes/posts.ts:794#location_name: locationName ?? null,`,
-     `artifacts/api-server/src/routes/postcards.ts:1122#location_name:      postData.location_name ?? null,`).
+     `artifacts/api-server/src/routes/postcards.ts:1158#location_name:      postData.location_name ?? null,`).
    - The passport serves the copy
      (`artifacts/api-server/src/routes/passport.ts:75#locationName: r.location_name ?? null,`).
    - **Why not fixed:** it is a second object, with its own visibility, two
@@ -15236,7 +15237,7 @@ kept everywhere, as mapPublicPost keeps them.
 **4. Passport postcards (§42.6, item 4).**
 - Served: the postcard's `location_name`, a copy of the post's venue made at
   create (`artifacts/api-server/src/routes/posts.ts:794#location_name: locationName ?? null,`,
-  `artifacts/api-server/src/routes/postcards.ts:1122#location_name:      postData.location_name ?? null,`),
+  `artifacts/api-server/src/routes/postcards.ts:1158#location_name:      postData.location_name ?? null,`),
   on the public postcard wall
   (`artifacts/api-server/src/routes/passport.ts:75#locationName: r.location_name ?? null,`).
 - **Decided at read time, not at create.**
@@ -16330,7 +16331,7 @@ rejects a ruling, the row it moved goes back to the verdict §48 gave it.
 | MD79 | **W** | **C** | **Ruling D-26f/D-26g:** a released "Publish after I leave" post shows its place to others for 24 hours, then the city. **The producer:** `artifacts/api-server/src/lib/postLocationDisclosureLifetime.ts:59#export function postLocationDisclosureExpiresAt(`, with the window at `artifacts/api-server/src/lib/postLocationDisclosureLifetime.ts:29#export const RELEASED_DELAYED_PLACE_WINDOW_MS` and the city tier at `artifacts/api-server/src/lib/postLocationDisclosureLifetime.ts:32#export const AFTER_LOCATION_DISCLOSURE_TIER`. A released row whose `published_at` is null, unparseable or not selected counts as ENDED. **Both disclosure paths end it.** The Wall's redactor: `artifacts/api-server/src/lib/postSchemas.ts:184#postLocationDisclosureEnded(row, nowMs)) return releasedPlaceEnded(row);`. That drops the venue, its label and the exact public point (`artifacts/api-server/src/lib/postSchemas.ts:199#function releasedPlaceEnded(row: any): any {`), and through it so does `postPlaceWithheld`. The media choke point's two callers: `artifacts/api-server/src/services/media/MediaProjectionService.ts:628#locationDisclosureExpiresAt: postLocationDisclosureExpiresAt(row as any)` and `artifacts/api-server/src/routes/mediaFeed.ts:211#locationDisclosureExpiresAt: postLocationDisclosureExpiresAt(row)`. **The author is never capped.** **The instant is never served,** because it would date the author's exit. **TESTED:** `artifacts/api-server/src/test/mediaLocationDisclosureLifetime.test.ts:167#describe("D. the two paths agree at every instant"`, with suites A–E (15 tests). Through the routes, against a fake that projects each route's own SELECT: `artifacts/api-server/src/test/mediaNeighborhoodOnlyMode.test.ts:427#a released 'Publish after I leave' post shows its venue for 24 h, then the city`. **RED WHEN** ("a non-owner stops seeing the place after `locationDisclosureExpiresAt`") is met. |
 | MD71 | **W** | **C** | **Ruling D-26b:** a photo is never labelled "live"; the media freshness class caps at `fresh`, and §10's union is amended to match for media (§35.4 MD71 (a)). The writer already capped it (`artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:466#if (age < FRESH_WINDOW_MS) return "fresh";`). **The reader did not:** `toMediaAsset` passed a stored `"live"` through to the §6 MediaAsset. It now serves the cap (`artifacts/api-server/src/lib/media/mediaAssetContract.ts:147#fc === "live" ? "fresh" : "historical"`). **TESTED:** `artifacts/api-server/src/test/mediaFreshnessNeverLive.test.ts:44#describe("B. the reader never serves 'live'"`; reverting the contract line turns it red. |
 | MD77 | **N** | **C** | **Ruling D-26e:** there is no social expiry (§36.4 MD77 (c)). Spec §11's optional `socialExpiresAt` is never set, and a post stays social until its author deletes it or narrows its audience. The member is declared and honestly absent (`artifacts/api-server/src/lib/media/mediaTemporalState.ts:45#export interface MediaTemporalState {`). **TESTED:** `artifacts/api-server/src/test/mediaNoSocialExpiry.test.ts:69#describe("B. a post's age never takes it off a social surface"` (a three-year-old post is admitted exactly as a new one). The same file pins that the member is never served and that no `social_expires_at` column exists. A one-year lifetime added to `filterEligibleMediaCandidates` turns it red, and so does serving the member. |
-| MD37 | **W** | **C** | **Ruling D-26a:** §35.4 MD37 Option 0. §6 gains "undeclared", and the stored sentinel is it (`artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:674#export const MEDIA_SOURCE_UNDECLARED = "user"`). No photo changes eligibility or rank. The two values in the tree are confirmed: `community` for gem and event media, and legacy rows stay `'user'`. Every canonical writer states one of the nine. **TESTED:** `artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts:267#it("every canonical writer call passes an explicit sourceType`, with the inventory at `artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts:213#const UNDECLARED_INVENTORY`. A writer that stops stating its source turns two cases red. |
+| MD37 | **W** | **C** | **Ruling D-26a:** §35.4 MD37 Option 0. §6 gains "undeclared", and the stored sentinel is it (`artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:674#export const MEDIA_SOURCE_UNDECLARED = "user"`). No photo changes eligibility or rank. The two values in the tree are confirmed: `community` for gem and event media, and legacy rows stay `'user'`. Every canonical writer states one of the nine. **TESTED:** `artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts:268#it("every canonical writer call passes an explicit sourceType`, with the inventory at `artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts:213#const UNDECLARED_INVENTORY`. A writer that stops stating its source turns two cases red. |
 | MD197 | **W** | **C** | **Ruling D-26c:** §35.4 MD197 Option 0. Contribution Value stays marginal coverage (`artifacts/api-server/src/lib/mediaRankingSignals.ts:554#export function contributionTerm(`). §25 trust is shown only to its subject (`artifacts/api-server/src/routes/mediaViewRequest.ts:176#if (contributorId.data !== auth.user.id) {`). §14.4's reputation falsifier is conceded. **TESTED:** `artifacts/api-server/src/test/mediaContributorReputationSelfOnly.test.ts:154#another account's reputation is refused`; with the boundary removed, three cases go red. |
 | MD255 | **W** | **C** | **Ruling D-26i:** §36.4 MD255 (c). The six §33 audiences are the vocabulary of the §6.1 attachment override (`artifacts/api-server/src/lib/media/mediaAssetContract.ts:73#export const MEDIA_VISIBILITIES = [`), which only narrows its parent. The composer keeps the four post-level audiences (`artifacts/api-server/src/lib/postVisibility.ts:44#export const READABLE_VISIBILITIES`). The following feed refuses any audience it does not know (`artifacts/api-server/src/lib/mediaEligibility.ts:430#if (!FOLLOWING_FEED_ADMITTED_VISIBILITIES.has(visibility)) return false;`). **TESTED:** `artifacts/api-server/src/test/mediaProductDecisionPlumbing.test.ts:109#it("A2:`; with that gate removed it goes red. |
 
@@ -17044,7 +17045,7 @@ No census measurement base is reset. No beta criterion or activation authority i
   duration is in that initial payload, integral and at most 2147483647; no duration-only
   version bump precedes claiming. §35's source remains `MEDIA_SOURCE_UNDECLARED`, never
   guessed camera/library. Original-version proof is at
-  `artifacts/api-server/src/lib/mediaAssets.ts:413#assetVersion: first.version`,
+  `artifacts/api-server/src/lib/mediaAssets.ts:414#assetVersion: first.version`,
   the source-generation comparison at
   `artifacts/api-server/src/services/media/MediaModerationService.ts:188#if (automation.phase === "hold" && row.version !== automation.sourceVersion)`,
   and permanent route coverage at

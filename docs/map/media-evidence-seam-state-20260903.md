@@ -71,7 +71,7 @@ each verified:
 4. **Nothing ever attaches media to an observation.** The canonical attach
    choke-point `recordEntityMedia` accepts `entityType: "observation"` in its
    closed set (`lib/mediaAssets.ts:316`), but its three production callers pass
-   `postcard` (`routes/postcards.ts:915`), `memory`
+   `postcard` (`routes/postcards.ts:944`), `memory`
    (`services/passport/PassportMemoryService.ts:140`) and `hidden_gem`
    (`services/hiddenGems/HiddenGemService.ts:156`). `entity_type='observation'`
    is written by nothing in the product.

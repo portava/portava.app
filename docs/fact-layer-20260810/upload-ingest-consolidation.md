@@ -186,7 +186,7 @@ Verified directly in the clone this session `[CLONE 13dcfe3]`:
 - `lib/mediaAccess.ts:87-95` (`postVisible`) denies only when `post.status !== "active"`,
   when `post.post_status` is set and `!== "published"`, or when visibility is private.
   A null `post_status` short-circuits that clause entirely.
-- `routes/postcards.ts:274` creates the parent post with `status: 'active'`.
+- `routes/postcards.ts:276` creates the parent post with `status: 'active'`.
 
 So an object attached to an active, public parent is served through the AUTHORIZED path
 regardless of its moderation state. Moderation status is not a containment boundary, and

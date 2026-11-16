@@ -315,6 +315,7 @@ export async function recordMediaAsset(
 export async function recordMediaAssetDetailed(
   sc: SupabaseClient,
   input: RecordAssetInput,
+  options: { allowSchemaFallback?: boolean } = {},
 ): Promise<RecordAssetResult> {
   const NONE: RecordAssetResult = {
     assetId: null,
@@ -335,7 +336,7 @@ export async function recordMediaAssetDetailed(
     const schema = await probeCanonicalAssetSchema(sc);
     let degradeUpFront = false;
     if (schema.state !== "present") {
-      const fallbackOn = await isFlagEnabled(sc, "media_canonical_schema_fallback_enabled");
+      const fallbackOn = options.allowSchemaFallback !== false && await isFlagEnabled(sc, "media_canonical_schema_fallback_enabled");
       if (!(schema.state === "missing" && fallbackOn)) {
         logger.error(
           {
@@ -441,7 +442,7 @@ export async function recordMediaAssetDetailed(
     );
 
     // (2) Degraded write — deliberately switched on, or not at all.
-    if (!(await isFlagEnabled(sc, "media_canonical_schema_fallback_enabled"))) {
+    if (options.allowSchemaFallback === false || !(await isFlagEnabled(sc, "media_canonical_schema_fallback_enabled"))) {
       return { assetId: null, outcome: "failed", droppedColumns: [], errorCode, schemaState: "missing" };
     }
     return writeDegraded(sc, row, input, "missing");
