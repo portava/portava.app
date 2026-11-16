@@ -23,11 +23,11 @@
  * Run via the check-test-registration workflow:
  *   pnpm --filter @workspace/api-server run check:test-registration
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { execSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { requiredCiTestFiles } from "./required-ci-test-registration.mjs";
+import { requiredCiTestFiles, requiredLocalDatabaseTestFiles } from "./required-ci-test-registration.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkgRoot = path.resolve(__dirname, "..");
@@ -48,6 +48,11 @@ const requiredCiRegistered = requiredCiTestFiles(
   pkg.scripts ?? {},
   readFileSync(path.resolve(pkgRoot, "../../.github/workflows/ci.yml"), "utf8"),
 );
+const sqlFiles = readdirSync(path.join(pkgRoot, "src/test/db")).filter(name => name.endsWith(".db.test.ts")).map(name => `src/test/db/${name}`);
+for (const file of requiredLocalDatabaseTestFiles(
+  pkg.scripts ?? {}, readFileSync(path.resolve(pkgRoot, "../../.github/workflows/ci.yml"), "utf8"),
+  readFileSync(path.join(pkgRoot, "scripts/local-db/run-tests.sh"), "utf8"), sqlFiles,
+)) requiredCiRegistered.add(file);
 for (const file of requiredCiRegistered) registered.add(file);
 
 const allowlistPath = path.join(__dirname, "UNREGISTERED_TESTS_ALLOWLIST.json");

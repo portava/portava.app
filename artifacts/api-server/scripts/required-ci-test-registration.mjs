@@ -148,3 +148,18 @@ export function requiredCiTestFiles(scripts, workflow) {
   }
   return new Set([mediaTranslationFile, accountMediaFile, encodingFile, ...signalPrivacyGates.map(gate => gate.file)]);
 }
+
+/** The existing mandatory SQL job already executes every *.db.test.ts once.
+ * Pin its reviewed command, job and runner rather than adding duplicate API
+ * execution (which cannot provide independent PostgreSQL sessions). Changes to
+ * execution semantics require reviewing these pins, never an allowlist entry.
+ */
+export function requiredLocalDatabaseTestFiles(scripts, workflow, runner, files) {
+  if (scripts["test:db-local"] !== "bash scripts/local-db/up.sh && bash scripts/local-db/run-tests.sh") throw new Error("Required SQL command changed");
+  const jobs = workflow.split(/(?=^  [a-zA-Z0-9_-]+:\s*$)/m).filter(job => job.startsWith("  api-server-local-db:\n"));
+  if (jobs.length !== 1 || createHash("sha256").update(jobs[0]).digest("hex") !== "4ca92ef58a461a5d681253f370f7147b5b8bb4c1ea57511d161ce4c8117be90d") throw new Error("Required SQL job changed; review unconditional fixture execution");
+  if (createHash("sha256").update(runner).digest("hex") !== "c0bd371f7c662c8ce081268470a4d1728d6607ee521d9e91db28eaf34c5482d3") throw new Error("Required SQL runner changed; review full discovery, serialization and no-skip assertions");
+  if (!files.length || files.some(file => !/^src\/test\/db\/[A-Za-z0-9_.-]+\.db\.test\.ts$/.test(file))) throw new Error("Required SQL file inventory is invalid");
+  return new Set(files);
+}
+import { createHash } from "node:crypto";
