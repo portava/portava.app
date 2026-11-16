@@ -146,7 +146,7 @@ export function MediaSourceSheet({
         ? ['images', 'videos']
         : ['images'];
       const session = recordingStamp && allowsVideo ? await beginCaptureSession() : null;
-      const result = await ImagePicker.launchCameraAsync({
+      const result = await ImagePicker.launchCameraAsync({ exif: true,
         mediaTypes,
         quality: CAPTURE_QUALITY,
         videoMaxDuration: allowsVideo ? videoMaxDuration : undefined,

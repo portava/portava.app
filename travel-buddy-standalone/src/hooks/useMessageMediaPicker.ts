@@ -32,6 +32,7 @@ import { CAPTURE_QUALITY } from '../constants/mediaLimits.ts'; import { COMPATIB
 export type PickerUploadState = 'idle' | 'picking' | 'previewing' | 'uploading' | 'done' | 'failed';
 
 export interface PendingMediaAttachment {
+  photoCapturedAt?: string | null;
   localUri: string;
   mediaType: 'image' | 'video';
   mimeType: string;
@@ -98,6 +99,7 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
       primaryItem
         ? {
             localUri: primaryItem.uri,
+            photoCapturedAt: primaryItem.photoCapturedAt,
             mediaType: primaryItem.type,
             mimeType: primaryItem.mimeType,
             fileName: primaryItem.fileName,
@@ -196,7 +198,7 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
       return;
     }
     setState('picking');
-    const result = await ImagePicker.launchCameraAsync({
+    const result = await ImagePicker.launchCameraAsync({ exif: true,
       mediaTypes: ['images'],
       allowsEditing: false,
       quality: CAPTURE_QUALITY,
@@ -253,6 +255,7 @@ export function useMessageMediaPicker(): UseMessageMediaPickerReturn {
       width: media.width,
       height: media.height,
       type: media.mediaType,
+      photoCapturedAt: media.photoCapturedAt,
       // duration is stored in seconds in PendingMediaAttachment
       duration: media.duration ?? null,
     };

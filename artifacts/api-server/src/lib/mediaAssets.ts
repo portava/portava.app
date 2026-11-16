@@ -1105,3 +1105,16 @@ export async function recordPostMediaAttachments(
  * named undeclared source from the module it already imports the writer from.
  */
 export { MEDIA_SOURCE_UNDECLARED };
+
+
+/** Untrusted picker metadata preserved across an image re-encode. This supplies
+ * a clock only; it cannot establish camera provenance, location or eligibility.
+ * Require canonical UTC and the same plausibility window as byte metadata.
+ */
+export function capturedAtFromPhotoMetadata(value: unknown, now: Date = new Date()): string | null {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return null;
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms) || new Date(ms).toISOString() !== value) return null;
+  if (ms < Date.parse(EARLIEST_PLAUSIBLE_CAPTURE_ISO) || ms > now.getTime() + CAPTURE_CLOCK_SKEW_MS) return null;
+  return value;
+}

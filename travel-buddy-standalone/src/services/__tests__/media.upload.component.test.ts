@@ -107,3 +107,13 @@ test('200 with valid url → ok:true, url and mediaType returned', async () => {
   assert.equal(result.mediaType, 'image/jpeg');
   assert.equal(result.errorKind, undefined, 'errorKind must be absent on success');
 });
+
+ test('normalized photo capture time reaches the binary upload header', async () => {
+  const calls: Array<{url:string;headers:unknown}>=[];
+  const reply=makeFetch(201,{url:'https://cdn.example/photo.jpg'});
+  globalThis.fetch=async (url,options)=>{calls.push({url:String(url),headers:options?.headers});return reply(url,options);};
+  const result=await uploadMedia({...FAKE_MEDIA,photoCapturedAt:'2026-03-04T05:06:07.000Z'});
+  assert.equal(result.ok,true);
+  const upload=calls.find(c=>c.url==='https://api.test/api/media/upload');
+  assert.equal(new Headers(upload?.headers as HeadersInit).get('X-Photo-Captured-At'),'2026-03-04T05:06:07.000Z');
+});

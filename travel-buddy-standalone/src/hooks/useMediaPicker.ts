@@ -213,7 +213,7 @@ export function useMediaPicker(): UseMediaPickerReturn {
           const ok = await requestCamera();
           if (!ok) { resolve(null); return; }
           const session = options.recordingStamp && hasVideo ? await beginCaptureSession() : null;
-          const result = await ImagePicker.launchCameraAsync({
+          const result = await ImagePicker.launchCameraAsync({ exif: true,
             mediaTypes,
             allowsEditing,
             aspect,

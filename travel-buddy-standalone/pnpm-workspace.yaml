@@ -1,4 +1,5 @@
 packages: []
 
 patchedDependencies:
+  expo-image-picker@17.0.11: patches/expo-image-picker@17.0.11.patch
   react-native-reanimated@4.1.7: patches/react-native-reanimated@4.1.7.patch

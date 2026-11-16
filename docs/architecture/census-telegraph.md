@@ -13217,7 +13217,7 @@ HTTP harness with a fake Storage bucket that models listings, signed upload path
   account (`artifacts/api-server/src/lib/messageMediaPartsSweep.ts:69#export async function runMessagePartsSweep(`); an unreadable listing or
   profiles read never deletes. Reported at `/healthz/schedulers` (`messageMediaPartsSweep`).
 - **Client.** The message picker uploads through `uploadMediaResumable` with ONE upload id per picked file, reused by
-  retry (`travel-buddy-standalone/src/hooks/useMessageMediaPicker.ts:267#uploadIdRef.current = uploadIdFor(`), so a retry after a drop sends only
+  retry (`travel-buddy-standalone/src/hooks/useMessageMediaPicker.ts:270#uploadIdRef.current = uploadIdFor(`), so a retry after a drop sends only
   the missing parts (`travel-buddy-standalone/src/services/media/messageMediaResumable.ts:51#export async function uploadMessageMediaResumable(`);
   a server without the capability falls back to `/media/upload` and is not probed again that run.
 

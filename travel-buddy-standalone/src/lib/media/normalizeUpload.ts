@@ -13,6 +13,7 @@ export * from './normalizeUpload.core.ts';
 /** Spread into every `launchImageLibraryAsync`: iOS hands over JPEG (not HEIC) and H.264 MP4 (not HEVC), ratio kept. */
 // Read defensively: a test double of expo-image-picker may omit these enums (the values are the library's own).
 export const COMPATIBLE_LIBRARY_OPTIONS = {
+  exif: true,
   preferredAssetRepresentationMode: (ImagePicker.UIImagePickerPreferredAssetRepresentationMode?.Compatible ?? 'compatible') as ImagePicker.UIImagePickerPreferredAssetRepresentationMode,
   videoExportPreset: (ImagePicker.VideoExportPreset?.H264_1920x1080 ?? 7) as ImagePicker.VideoExportPreset,
 } as const;

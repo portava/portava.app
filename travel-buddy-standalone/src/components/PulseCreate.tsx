@@ -359,7 +359,7 @@ function PostDraft({
         if (!mounted || !perm.granted) return;
         const capture = await beginCaptureSession();
         if (!mounted) { capture?.owner.invalidate(); return; }
-        const result = await ImagePicker.launchCameraAsync({
+        const result = await ImagePicker.launchCameraAsync({ exif: true,
           mediaTypes: ['images', 'videos'],
           quality: CAPTURE_QUALITY,
           videoMaxDuration: 60,
@@ -371,6 +371,7 @@ function PostDraft({
         const mime = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
         const picked: PickedMedia = {
           uri: asset.uri,
+          photoCapturedAt: asset.photoCapturedAt,
           mimeType: mime,
           fileName: asset.fileName ?? null,
           fileSize: asset.fileSize ?? null,
@@ -415,6 +416,7 @@ function PostDraft({
     const durationSec = asset.duration != null ? asset.duration / 1000 : null;
     const picked: PickedMedia = {
       uri: asset.uri, mimeType: mime,
+      photoCapturedAt: (asset as ImagePicker.ImagePickerAsset & { photoCapturedAt?: string | null }).photoCapturedAt,
       fileName: asset.fileName, fileSize: asset.fileSize ?? null,
       width: asset.width, height: asset.height,
       type: asset.type as 'image' | 'video',

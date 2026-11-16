@@ -63,7 +63,7 @@ import {
   verifyUploadedBytes,
   ALLOWED_MEDIA_MIME,
 } from "../lib/mediaPipeline.js";
-import { recordMediaAssetDetailed, capturedAtFromImageBytes, recordPostMediaAttachments, MEDIA_SOURCE_UNDECLARED } from "../lib/mediaAssets.js";
+import { recordMediaAssetDetailed, capturedAtFromImageBytes, capturedAtFromPhotoMetadata, recordPostMediaAttachments, MEDIA_SOURCE_UNDECLARED } from "../lib/mediaAssets.js";
 import { resolvePostPlace } from "../lib/places/placeResolve.js";
 import { classifyBuckets, incrementBucketCounts } from "../lib/places/bucketClassifier.js";
 import { ensurePlaceDay, isEligiblePlaceDayPost } from "../lib/places/placeDays.js";
@@ -160,7 +160,7 @@ export async function storeVerifiedMediaUpload(req: any, res: any, sc: any, user
     // processImage strips the metadata — after the strip there is nothing left
     // to read. Null for video and for any image without a plausible EXIF date.
     const capturedAt =
-      sniffed.kind === "image" ? capturedAtFromImageBytes(rawBody) : null;
+      sniffed.kind === "image" ? capturedAtFromPhotoMetadata(req.headers?.['x-photo-captured-at'] ?? req.body?.photoCapturedAt) ?? capturedAtFromImageBytes(rawBody) : null;
     const videoProbe = sniffed.kind === "video" ? probeVideoContainer(rawBody) : null; // §37, measured
     if (sniffed.kind === "image") {
       try {

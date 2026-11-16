@@ -32,6 +32,7 @@ import express from "express";
 import sharp from "sharp";
 import {
   capturedAtFromImageBytes,
+  capturedAtFromPhotoMetadata,
   EARLIEST_PLAUSIBLE_CAPTURE_ISO,
   CAPTURE_CLOCK_SKEW_MS,
 } from "../lib/mediaAssets.js";
@@ -123,7 +124,7 @@ const USER_ID = "user-1";
 let server: http.Server;
 let base = "";
 
-function upload(body: Buffer, contentType: string): Promise<{ status: number; body: any }> {
+function upload(body: Buffer, contentType: string, photoCapturedAt?: string): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
     const url = new URL(base + "/api/media/upload");
     const req = http.request(
@@ -136,6 +137,7 @@ function upload(body: Buffer, contentType: string): Promise<{ status: number; bo
           authorization: `Bearer ${TOKEN}`,
           "content-type": contentType,
           "content-length": String(body.length),
+          ...(photoCapturedAt ? { 'x-photo-captured-at': photoCapturedAt } : {}),
         },
       },
       (res) => {
@@ -289,6 +291,26 @@ describe("POST /api/media/upload — supplies captured_at to the canonical write
       "2026-03-04T05:06:07.000Z",
       "captured_at must carry the EXIF capture instant, not null and not the upload time",
     );
+  });
+
+  it("preserves converted-photo metadata through the actual upload writer without retaining EXIF", async () => {
+    const client = makeClient({ media_canonical_enabled: true });
+    _setTestClient(client, true); _setTestServiceClient(client);
+    const plain = await sharp({create:{width:64,height:48,channels:3,background:'#3a5'}}).jpeg().toBuffer();
+    assert.equal(capturedAtFromImageBytes(plain), null);
+    const capture = '2026-03-03T18:45:00.000Z';
+    const response = await upload(plain, 'image/jpeg', capture);
+    assert.equal(response.status,201,JSON.stringify(response.body)); await settle();
+    const asset = client._inserted.find((i:any)=>i.table==='media_assets');
+    assert.equal(asset?.row.captured_at,capture);
+    assert.equal(asset?.row.source_type,'user');
+  });
+
+  it("refuses malformed, rolled-over, ancient and future client capture metadata", () => {
+    for (const raw of [null, [], {}, '2026-02-30T00:00:00.000Z', '2026-03-04', '1989-01-01T00:00:00.000Z', '2099-01-01T00:00:00.000Z']) {
+      assert.equal(capturedAtFromPhotoMetadata(raw,NOW),null);
+    }
+    assert.equal(capturedAtFromPhotoMetadata('2026-03-04T05:06:07.000Z',NOW),'2026-03-04T05:06:07.000Z');
   });
 
   it("leaves captured_at null for an image with no EXIF date — the honest unknown", async () => {
