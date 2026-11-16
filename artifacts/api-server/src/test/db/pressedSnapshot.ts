@@ -19,11 +19,23 @@ export function reusableDatabaseName(url: URL): string {
   return name;
 }
 
+export interface ReusableDatabaseIdentity { name: string; role: string; host: string | null; cluster: string }
+/** Docker port forwarding preserves a loopback client destination but reports
+ * the container's internal server address. Accept it only when the job has
+ * independently pinned this exact cluster through its service container. */
+export function assertReusableDatabaseIdentity(identity: ReusableDatabaseIdentity, url: URL, expectedCluster = process.env.PORTAVA_TEST_CLUSTER_ID): void {
+  const name = reusableDatabaseName(url);
+  const loopback = identity.host === '127.0.0.1' || identity.host === '::1';
+  if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || identity.name !== name || identity.role !== 'postgres' ||
+      typeof identity.host !== 'string' || !/^\d+$/.test(identity.cluster) || (expectedCluster !== undefined && identity.cluster !== expectedCluster) ||
+      (!loopback && (!expectedCluster || !/^\d+$/.test(expectedCluster)))) throw new Error('Pressed replay target identity mismatch');
+}
+
 export async function openSnapshotLease(db: Client, url: URL, recoveryChecksum?: string) {
   const name = reusableDatabaseName(url);
   const identity = (await db.query(`SELECT current_database() AS name, current_user AS role,
     host(inet_server_addr()) AS host, system_identifier::text AS cluster FROM pg_control_system()`)).rows[0];
-  if (identity.name !== name || identity.role !== 'postgres' || !['127.0.0.1', '::1'].includes(identity.host)) throw new Error('Pressed replay target identity mismatch');
+  assertReusableDatabaseIdentity(identity, url);
   if (!(await db.query("SELECT pg_try_advisory_lock(hashtext('pressed-reusable-fixture')) AS locked")).rows[0].locked) throw new Error('Pressed fixture already leased; close the current whole-database variant first');
   const root = join(process.env.PRESSED_SNAPSHOT_ROOT || tmpdir(), 'portava-pressed-snapshots', `${identity.cluster}-${name}`);
   mkdirSync(root, { recursive: true, mode: 0o700 });

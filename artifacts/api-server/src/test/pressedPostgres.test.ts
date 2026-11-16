@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { reusableDatabaseName } from "./db/pressedSnapshot.js";
+import { reusableDatabaseName, assertReusableDatabaseIdentity } from "./db/pressedSnapshot.js";
 import { Client } from 'pg';
 import { pressedPostgresServer, pressedPostgresConnection } from "./db/pressedPostgres.js";
 import { pressedMigrationOmissions, executePressedMigrationChain, pressedMigrationSql } from './db/pressedLayoverDb.js';
@@ -54,4 +54,19 @@ test('isolated replay omits only the reviewed host scheduler registration', () =
  assert.equal(pressedMigrationSql('4027_whole_system_monitor.sql', body), body);
  assert.throws(() => pressedMigrationSql('4026_intelligence_system_monitor.sql', body), /registration changed/);
  assert.throws(() => pressedMigrationSql('4026_intelligence_system_monitor.sql', body + registration + '\nDROP TABLE public.posts;'), /registration changed/);
+});
+
+
+test('Docker fixture identity requires an independently pinned exact cluster, never a private-address allowance', () => {
+ const url=new URL('postgresql://postgres@127.0.0.1/portava_local');
+ const identity={name:'portava_local',role:'postgres',host:'172.18.0.2',cluster:'7708745771566368102'};
+ assert.throws(()=>assertReusableDatabaseIdentity(identity,url,''),/identity mismatch/);
+ assert.throws(()=>assertReusableDatabaseIdentity(identity,url,'7708745771566368103'),/identity mismatch/);
+ assert.doesNotThrow(()=>assertReusableDatabaseIdentity(identity,url,identity.cluster));
+ for(const patch of [{name:'production'},{role:'service_role'},{cluster:'not-a-cluster'},{host:null}]) {
+  assert.throws(()=>assertReusableDatabaseIdentity({...identity,...patch},url,identity.cluster),/identity mismatch/);
+ }
+ assert.throws(()=>assertReusableDatabaseIdentity(identity,new URL('postgresql://postgres@example.com/portava_local'),identity.cluster),/identity mismatch/);
+ assert.throws(()=>assertReusableDatabaseIdentity({...identity,host:'127.0.0.1'},url,'7708745771566368103'),/identity mismatch/);
+ assert.doesNotThrow(()=>assertReusableDatabaseIdentity({...identity,host:'127.0.0.1'},url,identity.cluster));
 });

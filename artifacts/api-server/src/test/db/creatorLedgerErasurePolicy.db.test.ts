@@ -716,14 +716,14 @@ function assertOnlySynthetic(): void {
 // These fixtures reuse one existing database. The canonical chain must be
 // restored before the next policy or test file can use it; no clone is needed.
 import { pressedPostgresServer } from './pressedPostgres.js';
+import { assertReusableDatabaseIdentity } from './pressedSnapshot.js';
 const LEDGER_TABLES = ['rent_buddy_earnings_entries', 'creator_attributions', 'creator_earning_entries', 'creator_ledger_audit_events'];
 function validateFixtureTarget(): void {
   const target = pressedPostgresServer(LOCAL_DB_URL);
-  assert.match(target.pathname, /^\/(portava_local|portava_ci_repairs)$/,
-    'policy rehearsals require the designated disposable database');
-  assert.equal(scalar('SELECT current_database()'), target.pathname.slice(1));
-  assert.equal(scalar('SELECT current_user'), 'postgres');
-  assert.match(scalar('SELECT host(inet_server_addr())') ?? '', /^(127\.0\.0\.1|::1)$/);
+  assertReusableDatabaseIdentity({
+    name: scalar('SELECT current_database()') ?? '', role: scalar('SELECT current_user') ?? '',
+    host: scalar('SELECT host(inet_server_addr())'), cluster: scalar('SELECT system_identifier::text FROM pg_control_system()') ?? '',
+  }, target);
 }
 function assertCanonicalFixture(): void {
   for (const table of LEDGER_TABLES) assert.equal(scalar(`SELECT count(*) FROM public.${table}`), '0', `${table} must be empty before policy rehearsal`);
