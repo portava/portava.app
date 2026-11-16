@@ -184,7 +184,8 @@ function makeClient(store: Record<string, any[]>, opts: FakeOpts) {
   }
   return {
     from: (t: string) => chain(t),
-    rpc: async () => ({ data: null, error: { message: "rpc not modelled" } }),
+    rpc: async (name: string) => name === "memory_candidate_origin_ready"
+      ? { data: true, error: null } : { data: null, error: { message: "rpc not modelled" } },
     auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },
   };
 }
