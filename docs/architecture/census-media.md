@@ -986,7 +986,7 @@ and this line dropped every one of them … the funnel simply read zero."*
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| MD414 | Gem icon or geometric discovery marker | **C** | `Gem` icon used in `travel-buddy-standalone/app/(tabs)/media.tsx:167#<Gem size={22}` (corrected 2026-09-27, verdict unmoved: line 26 was the expo-router import at every recoverable commit; the icon is imported at 27 and rendered at 178); `components/media/GemsItemOverlay.tsx`. |
+| MD414 | Gem icon or geometric discovery marker | **C** | `Gem` icon used in `travel-buddy-standalone/app/(tabs)/media.tsx:172#<Gem size={22}` (corrected 2026-09-27, verdict unmoved: line 26 was the expo-router import at every recoverable commit; the icon is imported at 27 and rendered at 178); `components/media/GemsItemOverlay.tsx`. |
 | MD415 | Subtle edge glow or contour treatment | **N** | No glow/contour treatment in the gem components; `GemsItemOverlay.tsx` is a standard overlay. |
 | MD416 | Map discovery contour / approximate zone treatment | **N** | No map contour rendering. The *data* supports it — `mediaLocationVisibility.ts:98` yields a `neighborhood`-tier disclosure for approximate gems — and no client draws a zone. |
 | MD417 | Recently Confirmed / Worth the Detour / Still Hidden / Seasonal labels | **C** | `src/lib/gems/gemStateDisplay.ts` maps the ten `hiddenGemState` values (`lib/hiddenGemState.ts:37-50`) to display labels. |
@@ -3424,7 +3424,7 @@ and each says which.
 
 | Row | V | Why it does not move | RED WHEN | WHO |
 | --- | --- | --- | --- | --- |
-| MD1 | **W** | The World hierarchy is built; the Media tab a user opens is Watch (`travel-buddy-standalone/src/stores/mediaStore.ts:105#selectedMode: 'watch',`) and the World entry is behind the dark flag (`travel-buddy-standalone/app/(tabs)/media.tsx:179#isEnabled('MEDIA_WORLD_SHELL_ENABLED')`). §1: a spec about Media is not satisfied by a subsystem of it. | `MEDIA_WORLD_SHELL_ENABLED` true in production AND the tab no longer defaults to `'watch'` AND a reachability-ledger entry shows the shell reachable. | Integration owner (flag — lanes may not enable one) + owner decision to demote Watch (`travel-buddy-standalone/app/media-world/index.tsx:8#demoting the old surface (demotion is a later, deliberate step).`). |
+| MD1 | **W** | The World hierarchy is built; the Media tab a user opens is Watch (`travel-buddy-standalone/src/stores/mediaStore.ts:105#selectedMode: 'watch',`) and the World entry is behind the dark flag (`travel-buddy-standalone/app/(tabs)/media.tsx:184#isEnabled('MEDIA_WORLD_SHELL_ENABLED')`). §1: a spec about Media is not satisfied by a subsystem of it. | `MEDIA_WORLD_SHELL_ENABLED` true in production AND the tab no longer defaults to `'watch'` AND a reachability-ledger entry shows the shell reachable. | Integration owner (flag — lanes may not enable one) + owner decision to demote Watch (`travel-buddy-standalone/app/media-world/index.tsx:8#demoting the old surface (demotion is a later, deliberate step).`). |
 | MD2 | **W** | The live ranker's boost layer is per-creator (`artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:12#activeCreatorBoost  (MEDIA_ACTIVE_CREATOR_BOOST_ENABLED)`). Not a client file. | The shipped ordering carries no creator-identity boost, or the World shell is what ships (F1). | Lane C (ranker) + integration owner. |
 | MD3 | **W** | The paging feed is the shipped default; the shell has none. | F1, as MD1. | As MD1. |
 | MD29 | **W** | The dashboard is built; it is not the default page. | F1, as MD1. | As MD1. |
@@ -7441,8 +7441,8 @@ own formulas, and the test then measured each chosen value independently.
 | Add-gem form: `signal` text (back, required mark, field and form errors, close) | `travel-buddy-standalone/src/components/media/AddGemForm.tsx:1029#color: '#C43B23',` (and five more lines) | #C43B23 | 3.02 → 4.80 on the error tint |
 | Add-gem form: `faint` hints, placeholders and badge | `travel-buddy-standalone/src/components/media/AddGemForm.tsx:564#placeholderTextColor={color.mute}` (and five more) | `mute` | 2.73 → 5.27 |
 | Add-gem form: the gem green under white text | `travel-buddy-standalone/src/components/media/AddGemForm.tsx:1072#backgroundColor: '#0C875E',`, `travel-buddy-standalone/src/components/media/AddGemForm.tsx:1151#backgroundColor: '#0C875E',` | #10B981 x0.73 | 2.54 → 4.52 |
-| Tab's gem FAB | `travel-buddy-standalone/app/(tabs)/media.tsx:268#backgroundColor: '#0C875E',` | #0C875E | 2.54 → 4.52 |
-| Tab's World pill | `travel-buddy-standalone/app/(tabs)/media.tsx:280#backgroundColor: 'rgba(17,17,15,0.58)',` | 0.58 | 3.04 → 4.62 |
+| Tab's gem FAB | `travel-buddy-standalone/app/(tabs)/media.tsx:273#backgroundColor: '#0C875E',` | #0C875E | 2.54 → 4.52 |
+| Tab's World pill | `travel-buddy-standalone/app/(tabs)/media.tsx:285#backgroundColor: 'rgba(17,17,15,0.58)',` | 0.58 | 3.04 → 4.62 |
 
 **Before and after.** "Before" is each pair on the source at `2e79803cd`,
 measured with the test's formulas. "After" is the test's own table.
@@ -7461,7 +7461,7 @@ Media file, and this lane edits none of them.
 | `viewer.stampButton.count.idle.photoFloor` (World shell) | 3.12 | See below. | `travel-buddy-standalone/src/components/stamps/StampButton.tsx:301#color: color.mute,` |
 | `gems.rail.stampButton.count.idle` | 3.07 | As above. | as above |
 | `gridTile.stampButton.count.idle.photoFloor` | 3.04 | As above; the tile's new backing fixes its icon, not its idle count. | as above |
-| `tab.appHeaderOverlay.title.photoFloor` | 1.99 | The shared header draws `#fff` on a 0.28 black tint over the frame (`travel-buddy-standalone/src/components/ui/AppHeader.tsx:313#{centeredTitle('#fff')}`). The tab passes only `variant="overlay"` (`travel-buddy-standalone/app/(tabs)/media.tsx:129#variant="overlay"`); no prop sets the tint. | `travel-buddy-standalone/src/components/ui/AppHeader.tsx:305#const overlayBg = transparent ? 'transparent' : 'rgba(0,0,0,0.28)';` |
+| `tab.appHeaderOverlay.title.photoFloor` | 1.99 | The shared header draws `#fff` on a 0.28 black tint over the frame (`travel-buddy-standalone/src/components/ui/AppHeader.tsx:313#{centeredTitle('#fff')}`). The tab passes only `variant="overlay"` (`travel-buddy-standalone/app/(tabs)/media.tsx:134#variant="overlay"`); no prop sets the tint. | `travel-buddy-standalone/src/components/ui/AppHeader.tsx:305#const overlayBg = transparent ? 'transparent' : 'rgba(0,0,0,0.28)';` |
 | `gridFeed.emptyState.retryButton` | 3.14 | The Grid's error state shows the shared EmptyState's primary action, `onInk` on `signal` (`travel-buddy-standalone/src/components/ui/EmptyState.tsx:82#color: color.onInk,`). EmptyState takes no colour. | `travel-buddy-standalone/src/components/ui/EmptyState.tsx:75#backgroundColor: color.signal,` |
 
 **Why the StampButton's idle count cannot be fixed from Media's side.**
@@ -7718,7 +7718,7 @@ This pass:
 | `gems.rail.stampButton.count.idle` | 3.07 | 16.18 | The gems rail passes the tone (`travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:148#iconSize={24} tone="onDark"`). |
 | `gridTile.stampButton.count.idle.photoFloor` | 3.04 | 9.77 | The grid tile passes the tone (`travel-buddy-standalone/src/components/media/GridTile.tsx:180#iconSize={16} tone="onDark"`). Its disc drops from 0.95 to 0.80 (`travel-buddy-standalone/src/components/media/GridTile.tsx:290#zIndex: 6, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.80)',`). |
 | `gridFeed.emptyState.retryButton` | 3.14 | 4.99 | The Grid's error state passes `primaryAction.fill` as the Media-local vermilion (`travel-buddy-standalone/src/components/media/GridFeed.tsx:161#fill: '#C43B23'`), with onInk text. |
-| `tab.appHeaderOverlay.title.photoFloor` | 1.99 | 4.62 | The Media tab passes `overlayTint` as an ink tint at 0.58, the least alpha at which the white title clears 4.5:1 over any frame (`travel-buddy-standalone/app/(tabs)/media.tsx:129#overlayTint="rgba(17,17,15,0.58)"`). |
+| `tab.appHeaderOverlay.title.photoFloor` | 1.99 | 4.62 | The Media tab passes `overlayTint` as an ink tint at 0.58, the least alpha at which the white title clears 4.5:1 over any frame (`travel-buddy-standalone/app/(tabs)/media.tsx:134#overlayTint="rgba(17,17,15,0.58)"`). |
 
 Each pinned line now carries "FIXED by lane K (census-media §31.13)", for
 example
@@ -8141,7 +8141,7 @@ pass changed:
   - `travel-buddy-standalone/src/components/ui/EmptyState.tsx:75#backgroundColor: color.signal,`
   - `travel-buddy-standalone/src/components/ui/EmptyState.tsx:82#color: color.onInk,`
   - the gems rail's 0.89 (the code kept it; only its comment changed)
-  - `travel-buddy-standalone/app/(tabs)/media.tsx:129#variant="overlay"`
+  - `travel-buddy-standalone/app/(tabs)/media.tsx:134#variant="overlay"`
 - **Resolving to a "was" comment:** the grid tile disc's old 0.95. That
   line's trailing comment keeps the old text, so §31.12.3's anchor still
   resolves and the line records what it replaced.
@@ -11669,18 +11669,18 @@ server reads the fourth through `isFlagEnabled`.
   reachable only through a pill that pushed `/media-world`.
 - *Built:*
   - `world` is a mode of the tab itself and is listed first:
-    `travel-buddy-standalone/app/(tabs)/media.tsx:54#const ALL_MODES: ModeItem[] = [{ key: 'world', label: 'World', flagKey: 'MEDIA_TAB_WORLD_DEFAULT_ENABLED' },`.
+    `travel-buddy-standalone/app/(tabs)/media.tsx:55#const ALL_MODES: ModeItem[] = [{ key: 'world', label: 'World', flagKey: 'MEDIA_TAB_WORLD_DEFAULT_ENABLED' },`.
     It appears only while `MEDIA_WORLD_SHELL_ENABLED` is on as well.
   - The tab's opening mode is the first enabled mode, so the tab then opens on
     the World shell,
-    `travel-buddy-standalone/app/(tabs)/media.tsx:109#{selectedMode === 'world' && <MediaWorldTabSurface`.
+    `travel-buddy-standalone/app/(tabs)/media.tsx:114#{selectedMode === 'world' && <MediaWorldTabSurface`.
     The shell is fed the same coarse location inputs as `/media-world`:
     `travel-buddy-standalone/src/features/media/screens/MediaWorldTabSurface.tsx:39#headerAccessory={modeSwitcher}`.
   - The tab's mode switcher is drawn under the World header, through a new
     optional `headerAccessory` prop on the shell. Watch stays one tap away.
   - The tab opens on World at every launch, even over a persisted Watch:
     `travel-buddy-standalone/src/stores/mediaStore.ts:172#const candidate = openOnDefault ? defaultMode`
-    and `travel-buddy-standalone/app/(tabs)/media.tsx:231#openOnDefault={defaultMode === 'world'}`.
+    and `travel-buddy-standalone/app/(tabs)/media.tsx:236#openOnDefault={defaultMode === 'world'}`.
     MD427 asks for no full-screen stranger video immediately on open, and a
     restored Watch would be exactly that. With the flag off, the persisted mode
     wins, as before.
@@ -12462,7 +12462,7 @@ base, `e9e0b0404`. Geometry is in CSS px at 390×844 (§40.4).
   applied at
   `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:142#<View style={[styles.actionColumn, { bottom: railBottom }]} testID="gems-action-rail">`.
   - It uses the same inset hook the FAB uses
-    (`travel-buddy-standalone/app/(tabs)/media.tsx:159#{ bottom: bottomInset + 16 },`).
+    (`travel-buddy-standalone/app/(tabs)/media.tsx:164#{ bottom: bottomInset + 16 },`).
   - It adds the FAB's offset, its height and a gap:
     `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:540#const RAIL_FAB_CLEARANCE = 16 + avatar.s52 + space.sm;`.
   - A home-indicator inset, a three-button navigation bar and an active
@@ -17889,7 +17889,7 @@ written to production or `portava-ci`, and no flag was changed. `head_commit` is
 ### 56.2 What was built
 
 - **The cold-start window is closed (client; next device build).** The tab mounts no Watch feed while the flags load, nor until the store has restored the saved mode (`restored`, set in the same batch as the restored mode, `travel-buddy-standalone/src/stores/mediaStore.ts:167#setRestored(true)`; verifier 2026-10-24: gating on the flags alone still mounted it, and fired its `loadFeed()`, for the length of the AsyncStorage read)
-  (`travel-buddy-standalone/app/(tabs)/media.tsx:109#selectedMode === 'watch' && !flagsLoading && restored && <WatchFeed />`).
+  (`travel-buddy-standalone/app/(tabs)/media.tsx:114#selectedMode === 'watch' && !flagsLoading && restored && <WatchFeed />`).
   Once they land, World opens when both flags are on, or Watch opens as before.
   - Tests: `travel-buddy-standalone/app/(tabs)/__tests__/media.coldStart.component.test.tsx:86#it('C2 flags loaded with World on: the World surface, and never the Watch feed'`
     (C1–C3, with a control for World off). The WatchFeed stub counts mounts and calls `loadFeed()` on mount; C2 asserts 0 mounts and no `loadFeed()`.
@@ -18028,3 +18028,12 @@ The selected original can open over the presenting screen. Eligible video playba
 The recovered 4000 migration extends the source guard for saving an owned post to Memory to media stored in post_media. Its checksum matches the historical production application receipt (`artifacts/api-server/src/migrations/4000_memory_items_source_post_guard_post_media.sql:78#CREATE OR REPLACE FUNCTION public.memory_items_source_post_guard`).
 
 The schema-strict route fixtures use the November 9 production column catalog. The documented generator read 7,054 public columns across 657 relations in the same production project. The Place Day and Shared Moment tests seed visible places and verify privacy against the refreshed schema; unavailable reads refuse retryably and withheld places stay hidden.
+
+
+## 2026-11-16 — Simulator correction evidence (MED-001)
+
+The existing World lens strip stretched to 313 display points on the running iPhone 17 Pro simulator (iOS 26.5, 402 by 874 points). The existing `LensTabBar` now declines extra scroll-container growth and keeps each lens at a minimum 44-point touch target. Actual installed resulting-state captures show 44-point lenses, visible World dashboard content and working Places navigation. The initial entry opened World without a full-screen stranger video. This proves the measured session, not every slow-network or physical-device case.
+
+The Media tab also scopes its status-bar component to focus: light icons on the dark immersive modes, dark icons on Grid, and removal when leaving the tab so other screens retain their own style. The installed simulator build preserves the existing signed-in session and uses the same public backend configuration (rumazi.com, Supabase project ajrurzioarfkagpuxfnb). Existing native module/vendor sources are identical; native binaries were reused from the setup build rather than recompiled.
+
+Evidence is bound by the workspace `work/media-lens-runtime/manifest.json` and `work/media-statusbar-runtime/manifest.json`, with before/after screenshots and accessibility frames. Twelve shell cases and 27 tab cases pass; runtime typechecking passes. No database clone, migration, feature-flag activation or business-data write was performed for this correction. Backend rollout, physical-device recognition, complete accessibility and playback cases remain separate gates. All existing W verdicts and the 834-ID correction denominator are retained.
