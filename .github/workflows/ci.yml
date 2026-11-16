@@ -905,7 +905,7 @@ jobs:
   # ───────────────────────────────────────────────────────────────────────────
   api-server-local-db:
     name: api-server · kernel SQL executed on a throwaway database
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Matches this PostgreSQL16 fixture; latest moved to26/PG18.
     timeout-minutes: 40
     needs: preflight
     # scripts/local-db/up.sh restores baseline/20260819_baseline_structure.sql
