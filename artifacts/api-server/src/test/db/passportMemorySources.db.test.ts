@@ -120,6 +120,14 @@ describe('Passport private Memory association on the canonical schema', { skip: 
     const link=(token:string)=>fetch(`${base}/${scrapbook}/source`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({memoryId:second,expectedMemoryId:null})});
     try {
       assert.equal((await fetch(`${base}/people`)).status,401);
+      const schemaFault = (r: {target:string}) => r.target === 'passport_memory_sources' ? {status:400,body:{code:'42P01',message:'relation passport_memory_sources does not exist'}} : null;
+      resetSchemaCapabilityMemo(); db.bridge.faults.push(schemaFault);
+      const beforeCalls = db.bridge.log.filter(r => r.path.includes('passport_memory_source_set')).length;
+      try {
+        assert.equal((await link(ownerToken)).status,503);
+        assert.equal(db.bridge.log.filter(r => r.path.includes('passport_memory_source_set')).length,beforeCalls,'no command before schema readiness');
+        assert.equal((await db.query('SELECT * FROM passport_memory_sources')).length,0);
+      } finally { db.bridge.faults.splice(db.bridge.faults.indexOf(schemaFault),1); resetSchemaCapabilityMemo(); }
       assert.equal((await link(strangerToken)).status,404);
       const saved=await link(ownerToken);assert.equal(saved.status,200);assert.deepEqual(await saved.json(),{memoryId:second});
       const read=await fetch(`${base}/people`,{headers:{authorization:`Bearer ${ownerToken}`}});
@@ -132,3 +140,5 @@ describe('Passport private Memory association on the canonical schema', { skip: 
     }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));_setTestClient(null,false);_setTestServiceClient(null);}
   });
 });
+
+import { resetSchemaCapabilityMemo } from "../../lib/capability/schemaCapability.js";

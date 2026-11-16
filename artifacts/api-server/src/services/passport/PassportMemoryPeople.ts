@@ -50,6 +50,8 @@ export async function loadPassportMemoryPeople(sc: SupabaseClient, ownerId: stri
   const results = new Map<string, PassportMemoryPeople>(ids.map(id => [id, { state: 'unavailable' }]));
   if (!ids.length || ids.length > 100) return results;
   try {
+    // Schema half of passport_memories_enabled, checked before private link reads.
+    if ((await probeSchemaReadiness(sc, PASSPORT_MEMORY_SOURCES)).state !== 'ready') return results;
     const owners = await sc.from('passport_memories').select('id', { count: 'exact' }).eq('user_id', ownerId).eq('status', 'active').in('id', ids);
     if (!complete(owners) || owners.data.length !== ids.length) return results;
     const links = await sc.from('passport_memory_sources').select('passport_memory_id,memory_id', { count: 'exact' }).in('passport_memory_id', ids);
@@ -71,3 +73,6 @@ export async function loadPassportMemoryPeople(sc: SupabaseClient, ownerId: stri
   }
   return results;
 }
+
+import { PASSPORT_MEMORY_SOURCES } from "../../lib/capability/registry.js";
+import { probeSchemaReadiness } from "../../lib/capability/schemaCapability.js";

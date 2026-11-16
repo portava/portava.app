@@ -3826,7 +3826,7 @@ their own FIRST: `trip_operational_projections_enabled`
 (`domain/trips/policies/tripOperationalProjections.ts:29#TRIP_OPERATIONAL_PROJECTIONS_FLAG`,
 definition `:31#TRIP_OPERATIONAL_PROJECTIONS`, gate
 `:72#tripOperationalProjectionsGate`, registered at
-`lib/capability/registry.ts:230#[TRIP_OPERATIONAL_PROJECTIONS.flag]: TRIP_OPERATIONAL_PROJECTIONS,`), seeded
+`lib/capability/registry.ts:252#[TRIP_OPERATIONAL_PROJECTIONS.flag]: TRIP_OPERATIONAL_PROJECTIONS,`), seeded
 FALSE by `2778_trip_operational_projections_flag.sql`. The gate is a pure
 helper in the ratchet's sense, so the builders that call it first
 (`domain/trips/projections/TripFreedomProjection.ts:162#tripOperationalProjectionsGate`)
@@ -7489,7 +7489,7 @@ that is 99.1 % constructed has run out of work it can do by itself.
    `KNOWN_PRODUCTION_GAPS` entry that no longer exists: the twenty-one Trips
    tables reached production between 2026-09-16 20:13 and 21:01 UTC and were
    struck off the ratchet, per
-   `artifacts/api-server/src/scripts/checkProductionDrift.ts:135#STRUCK OFF 2026-09-17`
+   `artifacts/api-server/src/scripts/checkProductionDrift.ts:139#STRUCK OFF 2026-09-17`
    and the block that follows it. Ninety rows rest on one of these, AND NONE OF
    THEM MOVES ON THIS: `trip_kernel_enabled` and
    `trip_operational_projections_enabled` are both still FALSE in production, so

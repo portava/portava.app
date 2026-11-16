@@ -132,6 +132,10 @@ interface Gap {
  * legacy-root renames.
  */
 export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
+  passport_memory_sources: {
+    classification: "unapplied",
+    note: "4035_passport_memory_source_association.sql is pending on production (PR826). The private People reader and owner link command now consult PASSPORT_MEMORY_SOURCES first: absent/unreadable schema is unavailable/503 with no command. Proven by capabilityRegistry.test.ts and passportMemorySources.db.test.ts. This entry records an unresolved rollout requirement, not deployed correctness; remove only after verified migration application and snapshot refresh.",
+  },
   // ── STRUCK OFF 2026-09-17: the twenty-six this ratchet was largest for ─────
   // Twenty-one Trips tables (2760-2794) and five that were not Trips at all —
   // map_telemetry_events, map_telemetry_drops (2202/2222), media_intent_signals

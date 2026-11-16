@@ -203,7 +203,29 @@ export const RENT_BUDDY_LEDGER_ESTIMATE: CapabilityDefinition = {
   note: "A booking can succeed without estimated earnings. The writer refuses before appending entries if the database cannot store the same rate on its summary row.",
 };
 
+/** 4036's STABLE SQL probe only reads the canonical kernel definition. */
+export const MEMORY_CANDIDATE_ORIGIN: CapabilityDefinition = {
+  flag: "memory_kernel_enabled",
+  providedBy: ["4036_memory_candidate_source_origin.sql"],
+  requires: { tables: {}, functions: ["memory_candidate_origin_ready"], readOnlyBooleanProbe: { name: "memory_candidate_origin_ready", run: sc => sc.rpc("memory_candidate_origin_ready") } },
+  consumers: ["services/memory/episodeCandidates.ts"],
+  note: "Refuse candidate confirmation before claiming it if the canonical kernel cannot preserve suggested origin.",
+};
+
+export const PASSPORT_MEMORY_SOURCES: CapabilityDefinition = {
+  flag: "passport_memories_enabled",
+  providedBy: ["4035_passport_memory_source_association.sql"],
+  requires: {
+    tables: { passport_memory_sources: { columns: ["passport_memory_id", "memory_id"], probe: { column: "passport_memory_id", value: SCHEMA_PROBE_SENTINEL_ID } } },
+    functions: ["passport_memory_source_set"],
+  },
+  consumers: ["routes/passportStamps.ts", "services/passport/PassportMemoryPeople.ts"],
+  note: "A missing private association schema is unavailable, never an unlinked Memory or a successful save. The command RPC itself is never used as a readiness probe.",
+};
+
 export const CAPABILITIES: Readonly<Record<string, CapabilityDefinition>> = Object.freeze({
+  [MEMORY_CANDIDATE_ORIGIN.flag]: MEMORY_CANDIDATE_ORIGIN,
+  [PASSPORT_MEMORY_SOURCES.flag]: PASSPORT_MEMORY_SOURCES,
   [RENT_BUDDY_LEDGER_ESTIMATE.flag]: RENT_BUDDY_LEDGER_ESTIMATE,
   // Registered because services/ledger/RewardReversal.ts names the flag at its
   // own read site, so scanFlagReads resolves it. The consumer is that same

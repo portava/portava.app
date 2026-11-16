@@ -263,6 +263,25 @@ export async function probeSchemaReadiness(
     return refuseUnknown(sc, def, now, code, error);
   }
 
+  // Only an explicitly declared read-only readiness function may execute here.
+  // Ordinary required functions remain static declarations, never speculative commands.
+  if (def.requires.readOnlyBooleanProbe) {
+    const { name, run } = def.requires.readOnlyBooleanProbe;
+    try {
+      const result = await run(sc);
+      if (!result || !("error" in result)) return refuseUnknown(sc, def, now, null, new Error(`probe of ${name} returned no verdict`));
+      if (result.error) {
+        const code = String(result.error.code ?? "") || null;
+        if (!["PGRST202", "42883"].includes(code ?? "") && !isMissingSchemaError(result.error)) return refuseUnknown(sc, def, now, code, result.error);
+        missing.push(`${name}()`); firstMissingCode ??= code;
+      } else if (result.data === false) {
+        missing.push(`${name}()`);
+      } else if (result.data !== true) {
+        return refuseUnknown(sc, def, now, null, new Error(`probe of ${name} returned no boolean`));
+      }
+    } catch (error) { return refuseUnknown(sc, def, now, null, error); }
+  }
+
   if (missing.length === 0) {
     return remember(sc, {
       capability: def.flag,

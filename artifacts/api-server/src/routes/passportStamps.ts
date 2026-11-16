@@ -296,6 +296,7 @@ router.post('/me/passport/memories/:id/source', async (req, res) => {
   const body = z.object({ memoryId: z.string().uuid().nullable(), expectedMemoryId: z.string().uuid().nullable() }).strict().safeParse(req.body);
   if (!id.success || !body.success) { sendError(res, 'invalid_payload'); return; }
   const sc = getServiceClient(); if (!sc) { sendError(res, 'server_not_configured'); return; }
+  if ((await probeSchemaReadiness(sc, PASSPORT_MEMORY_SOURCES)).state !== 'ready') { sendError(res, 'degraded_unavailable', 'Memory linking is not available. Nothing was saved.'); return; }
   const { data, error } = await sc.rpc('passport_memory_source_set', {
     p_actor: auth.user.id, p_passport_memory: id.data, p_memory: body.data.memoryId, p_expected_memory: body.data.expectedMemoryId,
   });
@@ -954,3 +955,6 @@ router.get("/admin/passport/stamps/preview", async (req, res) => {
 });
 
 export default router;
+
+import { PASSPORT_MEMORY_SOURCES } from "../lib/capability/registry.js";
+import { probeSchemaReadiness } from "../lib/capability/schemaCapability.js";

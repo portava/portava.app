@@ -127,3 +127,48 @@ describe("media: the wrapper is a rename over the contract, and the consumer is 
     assert.ok(!src.includes('.from("media_assets")'), "a second probe implementation would drift from the first");
   });
 });
+
+import { MEMORY_CANDIDATE_ORIGIN, PASSPORT_MEMORY_SOURCES } from "../lib/capability/registry.js";
+import { probeSchemaReadiness } from "../lib/capability/schemaCapability.js";
+import { loadPassportMemoryPeople } from "../services/passport/PassportMemoryPeople.js";
+
+describe("Memory source capability refusal", () => {
+  it("requires an explicit true from the existing read-only origin probe", async () => {
+    for (const [response, expected] of [
+      [{ data: true, error: null }, "ready"],
+      [{ data: false, error: null }, "missing"],
+      [{ data: null, error: { code: "PGRST202" } }, "missing"],
+      [{ data: null, error: { code: "42883" } }, "missing"],
+      [{ data: null, error: { code: "42501" } }, "unknown"],
+      [{ data: "true", error: null }, "unknown"],
+      [{ data: true }, "unknown"], [undefined, "unknown"],
+    ] as const) {
+      const calls: string[] = [];
+      const sc = { rpc: async (name: string) => { calls.push(name); return response; } };
+      assert.equal((await probeSchemaReadiness(sc, MEMORY_CANDIDATE_ORIGIN, { force: true })).state, expected);
+      assert.deepEqual(calls, ["memory_candidate_origin_ready"]);
+    }
+    const sc = { rpc: async () => { throw new Error("offline"); } };
+    assert.equal((await probeSchemaReadiness(sc, MEMORY_CANDIDATE_ORIGIN)).state, "unknown");
+  });
+  it("declares only an audited stable SQL boolean function as an executable probe", () => {
+    for (const def of Object.values(CAPABILITIES)) {
+      const name = def.requires.readOnlyBooleanProbe?.name;
+      if (!name) continue;
+      assert.ok(def.requires.functions?.includes(name));
+      const sql = def.providedBy.map(file => readFileSync(join(MIGRATIONS, file), "utf8")).join("\n");
+      assert.ok(sql.includes(`FUNCTION public.${name}()\nRETURNS boolean LANGUAGE sql STABLE`));
+    }
+  });
+  it("missing or unreadable Passport storage remains unavailable before private reads or commands", async () => {
+    for (const error of [{ code: "42P01" }, { code: "42703" }, { code: "42501" }]) {
+      const tables: string[] = [];
+      const sc = { from(table: string) { tables.push(table); return { select() { return { eq() { return { maybeSingle: async () => ({ data: null, error }) }; } }; } }; }, rpc: async () => { throw new Error("Commands are not probes"); } };
+      const result = await loadPassportMemoryPeople(sc as never, "owner", ["scrapbook"]);
+      assert.deepEqual([...result], [["scrapbook", { state: "unavailable" }]]);
+      assert.deepEqual(tables, ["passport_memory_sources"]);
+    }
+    const sc = { from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }), rpc: async () => { throw new Error("Never invoke the writer as a probe"); } };
+    assert.equal((await probeSchemaReadiness(sc, PASSPORT_MEMORY_SOURCES)).state, "ready");
+  });
+});

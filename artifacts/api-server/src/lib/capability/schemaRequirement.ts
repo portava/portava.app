@@ -62,6 +62,8 @@ export interface SchemaRequirement {
    * A probe that can execute the writer it is checking for is not a probe.
    */
   readonly functions?: readonly string[];
+  /** Explicitly audited, read-only, zero-argument boolean readiness RPC. Never a command. */
+  readonly readOnlyBooleanProbe?: { readonly name: string; readonly run: (sc: any) => PromiseLike<{ data: unknown; error: { code?: string } | null }> };
 }
 
 export interface CapabilityDefinition {

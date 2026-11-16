@@ -294,6 +294,11 @@ type Known = {
  * trap, so the fixture now reads whichever entry happens to exist.
  */
 export const KNOWN: Record<string, Known> = {
+  passport_memories_enabled: {
+    classification: "guarded",
+    objects: ["passport_memory_source_set()", "passport_memory_sources", "passport_memory_sources.memory_id", "passport_memory_sources.passport_memory_id"],
+    note: "4035 remains pending in the November14 production snapshot. PASSPORT_MEMORY_SOURCES now probes the private association before the owner command or People read; unavailable is explicit, and the mounted route test proves zero commands when the probe fails. This is a guarded rollout gap, not deployed functionality. Remove only after verified4035 application and snapshot refresh.",
+  },
   rent_buddy_enabled: {
     classification: "guarded",
     objects: ["rent_buddy_earnings_ledger.platform_fee_basis_points"],

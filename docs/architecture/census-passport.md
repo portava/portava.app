@@ -2278,7 +2278,7 @@ defects that path actually hits.
   `artifacts/api-server/src/services/stamps/ContentStampService.ts:252#export async function measureStampsEarned(`.
   The three routes answer 200 with `stampsEarned: null` and `stampsEarnedUnavailable: true`
   (`artifacts/api-server/src/routes/passport.ts:430#...(stampsEarned.unavailable ? { stampsEarnedUnavailable: true } : {}),`,
-  `artifacts/api-server/src/routes/passportStamps.ts:591#...(stampsEarnedResult.unavailable ? { stampsEarnedUnavailable: true } : {}),`,
+  `artifacts/api-server/src/routes/passportStamps.ts:592#...(stampsEarnedResult.unavailable ? { stampsEarnedUnavailable: true } : {}),`,
   `artifacts/api-server/src/routes/profile.ts:474#stampsEarned: stampsEarned.count,`); the profile
   screen shows "—" (`travel-buddy-standalone/app/u/[username].tsx:732#const stampsEarned: number | null`).
 - `artifacts/api-server/src/services/passport/PassportMapService.ts:450#async function readAllActiveUserStamps(`

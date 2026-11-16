@@ -673,12 +673,9 @@ export async function confirmCandidate(
   let ep = loaded.episode;
   // H39: an older kernel silently drops source_mode. Refuse before claiming the
   // episode, rather than creating a Memory with invented user-created origin.
-  try {
-    const ready = await sc.rpc("memory_candidate_origin_ready");
-    if (ready.error || ready.data !== true) return { ok: false, reason: "unavailable", detail: "candidate origin storage is unavailable" };
-  } catch {
-    return { ok: false, reason: "unavailable", detail: "candidate origin storage is unavailable" };
-  }
+  // Schema half of memory_kernel_enabled; also required by the legacy fallback.
+  const origin = await probeSchemaReadiness(sc, MEMORY_CANDIDATE_ORIGIN, { force: true });
+  if (origin.state !== "ready") return { ok: false, reason: "unavailable", detail: "candidate origin storage is unavailable" };
   const title = input.title && input.title.trim() ? input.title.trim().slice(0, 200) : null;
 
   // (1)
@@ -894,3 +891,6 @@ export async function confirmCandidate(
 
   return { ok: true, episodeId: ep.id, state: "confirmed", memoryId: memoryId!, mediaAttached: attached, replayed };
 }
+
+import { MEMORY_CANDIDATE_ORIGIN } from "../../lib/capability/registry.js";
+import { probeSchemaReadiness } from "../../lib/capability/schemaCapability.js";
