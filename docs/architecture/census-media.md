@@ -5839,7 +5839,7 @@ deliverable as the audit, and states no ordering between phases.
    - A bounded collector already exists, and the poster routes use it: `artifacts/api-server/src/routes/postcardMediaTransport.ts:136#export function collectBody(limitBytes: number) {`.
 3. **An owner's retry parks an asset in `queued`, and nothing claims queued
    work.**
-   - The retry writes `artifacts/api-server/src/services/media/MediaLifecycleService.ts:470#processing_status: "queued",`.
+   - The retry writes `artifacts/api-server/src/services/media/MediaLifecycleService.ts:452#processing_status: "queued",`.
    - Its only non-test caller is `artifacts/api-server/src/routes/mediaActions.ts:213#const result = await retryMediaProcessing(sc, id, auth.user.id);`.
    - `claimMediaProcessing`, `completeMediaProcessing`, `failMediaProcessing`,
      `recoverStaleMediaProcessing` and `softDeleteMediaAsset` have no non-test
@@ -6144,7 +6144,7 @@ re-graded then. Read again at this head, the responsibility is not met:
 
 | ID | Was | Now | Evidence |
 | --- | --- | --- | --- |
-| MD338 | **C** | **W** | The owner's retry refuses only an asset that is already queued or processing (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:466#if (asset.processing_status === "queued" || asset.processing_status === "processing") {`), so a `ready` asset is re-queued too (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:470#processing_status: "queued",`). `claimMediaProcessing` (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:91#export async function claimMediaProcessing(`) has no non-test caller, so nothing ever takes a queued asset out of `queued`. Every canonical read serves only `ready` (`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1179#if (row.processing_status !== "ready") return false;`). So one `POST /media/:id/retry` takes an owner's ready asset off every read path for good, and a failed asset the owner retries is parked for good. `softDeleteMediaAsset` also has no non-test caller. **RED WHEN** a production caller claims queued assets and completes or fails each one, and a retry cannot take a `ready` asset off a read path. **Blocker: none; branch work** (§30). |
+| MD338 | **C** | **W** | The owner's retry refuses only an asset that is already queued or processing (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:448#if (asset.processing_status === "queued" || asset.processing_status === "processing") {`), so a `ready` asset is re-queued too (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:452#processing_status: "queued",`). `claimMediaProcessing` (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:91#export async function claimMediaProcessing(`) has no non-test caller, so nothing ever takes a queued asset out of `queued`. Every canonical read serves only `ready` (`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1179#if (row.processing_status !== "ready") return false;`). So one `POST /media/:id/retry` takes an owner's ready asset off every read path for good, and a failed asset the owner retries is parked for good. `softDeleteMediaAsset` also has no non-test caller. **RED WHEN** a production caller claims queued assets and completes or fails each one, and a retry cannot take a `ready` asset off a read path. **Blocker: none; branch work** (§30). |
 
 **The headline after lanes E–I and §28**, restated from `check:census-integrity`:
 
@@ -6563,7 +6563,7 @@ line moved; `check:doc-citations` is clean.
 
 | ID | Was | Now | Evidence |
 | --- | --- | --- | --- |
-| MD338 | **W** | **C** | §28.9's RED WHEN is false on this branch, on both halves. **(1) A production caller claims queued work and completes or fails each item.** `lib/media/mediaProcessingWorker` is started at boot (`artifacts/api-server/src/index.ts:311#startMediaProcessingWorker();`, imported at `artifacts/api-server/src/index.ts:46#import { startMediaProcessingWorker } from "./lib/media/mediaProcessingWorker.js";`). Each pass first recovers lapsed leases (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:235#out.recovered = await recoverStaleMediaProcessing(db, { now, limit });`), then reads `queued` and non-terminal `failed` work (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:240#.in("processing_status", ["queued", "failed"])`) and claims each item (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:261#const claim = await claimMediaProcessing(db, row.id, { now });`). It re-runs the upload pipeline over the stored object (§30.4), then completes the item with its lease token (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:280#done = await completeMediaProcessing(db, claim, {`) or fails it (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:301#const failure = await failMediaProcessing(`). **(2) A retry cannot take a `ready` asset off a read path.** Only `failed` is re-queued (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:522#if (processingStatus !== "failed") return { ok: false, alreadyQueued: false, notRetryable: true };`, called from `artifacts/api-server/src/services/media/MediaLifecycleService.ts:468#const refusal = await retryRefusal(sc, asset.processing_status); if (refusal) return refusal;`). The re-queue itself is conditional on `failed` and reads its row back, so a lost race cannot re-queue an asset that has since become ready (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:477#.eq("processing_status", "failed").select("id, processing_status").maybeSingle();`). While the worker is off, the retry refuses and writes nothing, so it cannot park work that nothing will claim (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:523#if (!(await isMediaProcessingWorkerEnabled(sc))) return { ok: false, alreadyQueued: false, workerDisabled: true };`). Tests: `artifacts/api-server/src/test/mediaProcessingWorker.test.ts:225#describe("census-media §30 (MD338) — retryMediaProcessing re-queues only a FAILED run"`, `artifacts/api-server/src/test/mediaProcessingWorker.test.ts:303#describe("census-media §30 (MD338) — POST /api/media/:id/retry"`, `artifacts/api-server/src/test/mediaProcessingWorker.test.ts:379#describe("census-media §30 (MD338) — runMediaProcessingPass"` and `artifacts/api-server/src/test/mediaProcessingWorker.test.ts:600#describe("census-media §30 (MD338) — the worker is started at boot"`: 26 cases, and every behaviour was seen red (§30.8). **Owner deletion is not graded here.** §28.9 lists `softDeleteMediaAsset`'s missing caller as evidence, but its RED WHEN does not name deletion. It is still not wired; §30.7 gives the reason and cites the spec. **RED WHEN** the boot call or the worker's claim, complete, fail or recover step is removed; or a retry writes to an asset whose `processing_status` is not `failed`; or a retry re-queues while `media_processing_worker_enabled` is off. |
+| MD338 | **W** | **C** | §28.9's RED WHEN is false on this branch, on both halves. **(1) A production caller claims queued work and completes or fails each item.** `lib/media/mediaProcessingWorker` is started at boot (`artifacts/api-server/src/index.ts:311#startMediaProcessingWorker();`, imported at `artifacts/api-server/src/index.ts:46#import { startMediaProcessingWorker } from "./lib/media/mediaProcessingWorker.js";`). Each pass first recovers lapsed leases (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:235#out.recovered = await recoverStaleMediaProcessing(db, { now, limit });`), then reads `queued` and non-terminal `failed` work (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:240#.in("processing_status", ["queued", "failed"])`) and claims each item (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:261#const claim = await claimMediaProcessing(db, row.id, { now });`). It re-runs the upload pipeline over the stored object (§30.4), then completes the item with its lease token (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:280#done = await completeMediaProcessing(db, claim, {`) or fails it (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:301#const failure = await failMediaProcessing(`). **(2) A retry cannot take a `ready` asset off a read path.** Only `failed` is re-queued (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:504#if (processingStatus !== "failed") return { ok: false, alreadyQueued: false, notRetryable: true };`, called from `artifacts/api-server/src/services/media/MediaLifecycleService.ts:450#const refusal = await retryRefusal(sc, asset.processing_status); if (refusal) return refusal;`). The re-queue itself is conditional on `failed` and reads its row back, so a lost race cannot re-queue an asset that has since become ready (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:459#.eq("processing_status", "failed").select("id, processing_status").maybeSingle();`). While the worker is off, the retry refuses and writes nothing, so it cannot park work that nothing will claim (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:505#if (!(await isMediaProcessingWorkerEnabled(sc))) return { ok: false, alreadyQueued: false, workerDisabled: true };`). Tests: `artifacts/api-server/src/test/mediaProcessingWorker.test.ts:225#describe("census-media §30 (MD338) — retryMediaProcessing re-queues only a FAILED run"`, `artifacts/api-server/src/test/mediaProcessingWorker.test.ts:303#describe("census-media §30 (MD338) — POST /api/media/:id/retry"`, `artifacts/api-server/src/test/mediaProcessingWorker.test.ts:379#describe("census-media §30 (MD338) — runMediaProcessingPass"` and `artifacts/api-server/src/test/mediaProcessingWorker.test.ts:600#describe("census-media §30 (MD338) — the worker is started at boot"`: 26 cases, and every behaviour was seen red (§30.8). **Owner deletion is not graded here.** §28.9 lists `softDeleteMediaAsset`'s missing caller as evidence, but its RED WHEN does not name deletion. It is still not wired; §30.7 gives the reason and cites the spec. **RED WHEN** the boot call or the worker's claim, complete, fail or recover step is removed; or a retry writes to an asset whose `processing_status` is not `failed`; or a retry re-queues while `media_processing_worker_enabled` is off. |
 
 ### 30.2 The retry refuses what is not retryable
 
@@ -6582,7 +6582,7 @@ The other states are refused:
 
 `queued` and `processing` are unchanged: they are still answered as
 `alreadyQueued`, with no write
-(`artifacts/api-server/src/services/media/MediaLifecycleService.ts:466#if (asset.processing_status === "queued" || asset.processing_status === "processing") {`).
+(`artifacts/api-server/src/services/media/MediaLifecycleService.ts:448#if (asset.processing_status === "queued" || asset.processing_status === "processing") {`).
 
 **The HTTP answers**, from the repo's `sendError` vocabulary. Both are
 given only to the asset's owner.
@@ -6731,7 +6731,7 @@ with a rollback at `db/rollback/2026-09-26-3338-media-processing-worker-flag-rol
   classified, and 246 seeded with 202 read (each was one fewer before).
 
 **One reader** is shared by the worker and the retry
-(`artifacts/api-server/src/services/media/MediaLifecycleService.ts:509#export const MEDIA_PROCESSING_WORKER_FLAG = "media_processing_worker_enabled";`).
+(`artifacts/api-server/src/services/media/MediaLifecycleService.ts:491#export const MEDIA_PROCESSING_WORKER_FLAG = "media_processing_worker_enabled";`).
 So "the worker is on" and "a retry may queue work for it" cannot disagree. It
 is fail-closed: absent, FALSE and unreadable all read as off.
 
@@ -6910,7 +6910,7 @@ All were run from `artifacts/api-server` on the final tree.
    `mediaAssetsRecord.test.ts` "uses only CHECK-legal status values when it
    does transition" retries through a fake that answers every table with the
    asset row
-   (`artifacts/api-server/src/test/mediaAssetsRecord.test.ts:625#await retryMediaProcessing(retryClient, ASSET, OWNER);`).
+   (`artifacts/api-server/src/test/mediaAssetsRecord.test.ts:606#await retryMediaProcessing(retryClient, ASSET, OWNER);`).
    Its flag read therefore reads `enabled` as undefined, which is off. The retry
    now refuses and writes nothing, so that half checks an empty list and passes.
    The test is not this lane's file. The re-queue's values are asserted here,
@@ -6960,7 +6960,7 @@ before merging:
 **§30.11 item 4 is fixed here, not left vacuous.** The shared fake in
 `mediaAssetsRecord.test.ts` now answers a `feature_flags` read with the flag
 ON. The case also asserts that the retry wrote something
-(`artifacts/api-server/src/test/mediaAssetsRecord.test.ts:625#await retryMediaProcessing(retryClient, ASSET, OWNER); assert.ok(retryClient.writes.some(`).
+(`artifacts/api-server/src/test/mediaAssetsRecord.test.ts:606#await retryMediaProcessing(retryClient, ASSET, OWNER); assert.ok(retryClient.writes.some(`).
 With the flag read as off again, that case goes red. Both edits are on
 existing lines.
 
@@ -8465,9 +8465,9 @@ been run.
    (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:161#processing_status: "ready",`
    opens the one UPDATE; it has no `size_bytes`). So the worker writes the
    stored object's length first, while it holds the lease, through the lifecycle service (§32.13)
-   (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:550#.update({ size_bytes: sizeBytes })`).
+   (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:532#.update({ size_bytes: sizeBytes })`).
    The write is conditional on the lease and on the zero
-   (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:551#.eq("size_bytes", 0)`),
+   (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:533#.eq("size_bytes", 0)`),
    so a recorded size is never overwritten. If the write fails, the attempt
    fails retryably; a row is never `ready` with a size of 0. The same step runs
    on the claimable path, so a staged row that failed once and is retried
@@ -8626,11 +8626,10 @@ All were run from `artifacts/api-server` on the final tree.
    For an entity row the sweep picks it up again. For an upload-route row,
    whose size is recorded, nothing does: it is neither `queued` nor `failed`
    and has no lease to lapse.
-4. **The soft-delete rollback writes `ready` whatever the row was**
-   (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:431#processing_status: "ready",`).
-   For a row without dimensions, 2089 refuses that write, so the rollback
-   fails and the row stays removed. That fails closed. `softDeleteMediaAsset`
-   still has no production caller (§30.7).
+4. **The former soft-delete compensation is replaced by an atomic transition in the current tree.**
+   `softDeleteMediaAsset` now delegates to `retire_media_asset`
+   (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:412#const { data, error } = await sc.rpc("retire_media_asset",`).
+   Migration4037 commits retirement and its audit together; the PostgreSQL test injects audit failure and proves the exact prior processing state and version remain unchanged. Independent sessions produce one retirement/audit. This is unshipped code evidence; the helper still has no production caller (§30.7), and no census verdict moves.
 5. **`recordEntityMedia` guesses the MIME type from the URL**
    (`artifacts/api-server/src/lib/mediaAssets.ts:868#mimeType: mediaType === "video" ? "video/mp4" : "image/jpeg",`).
    The sweep verifies the real kind, but leaves the guessed `mime_type` as it
@@ -8700,11 +8699,11 @@ list. Registering it would have made the guard green by describing the table
 falsely. The write is a lease-conditioned lifecycle write, the same kind as
 every other write in `MediaLifecycleService`, so that is where it now lives:
 `recordMeasuredMediaSize`
-(`artifacts/api-server/src/services/media/MediaLifecycleService.ts:548#export async function recordMeasuredMediaSize(`),
+(`artifacts/api-server/src/services/media/MediaLifecycleService.ts:530#export async function recordMeasuredMediaSize(`),
 appended at that file's tail. It keeps the file's invariant 1:
 - It is conditional on the asset id, the lease token the caller holds, and
   the zero it read
-  (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:551#.eq("processing_lease_token", claim.leaseToken).eq("size_bytes", 0)`).
+  (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:533#.eq("processing_lease_token", claim.leaseToken).eq("size_bytes", 0)`).
 - It reads the row back. It is true only when exactly this asset's row came
   back carrying the size written.
 - It refuses anything that is not a positive whole byte count, and in that
@@ -15705,8 +15704,8 @@ or its re-queue write FAILED — an outage told the owner their upload did not e
   `retryAvailable` — the processing-worker flag the retry itself obeys (§30) — so the client never
   offers a Retry that can only be refused. A failed read is db_error, never an empty list.
 - The retry carries `dbError`
-  (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:463#if (readError) return`,
-  `artifacts/api-server/src/services/media/MediaLifecycleService.ts:478#return error ? { ok: false, alreadyQueued: false, dbError`)
+  (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:445#if (readError) return`,
+  `artifacts/api-server/src/services/media/MediaLifecycleService.ts:460#return error ? { ok: false, alreadyQueued: false, dbError`)
   and the route answers db_error
   (`artifacts/api-server/src/routes/mediaActions.ts:614#if (result.dbError)`). Line-neutral: the
   lines §30 cites (378, 380, 382, 389, 593, 597) are where they were.

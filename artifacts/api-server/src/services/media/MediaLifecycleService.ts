@@ -407,35 +407,17 @@ export async function softDeleteMediaAsset(
   actorUserId: string,
   opts: { logger?: LifecycleLogger | null } = {},
 ): Promise<SoftDeleteResult> {
-  const { data: asset, error: readError } = await sc.from("media_assets")
-    .select("id, owner_user_id, moderation_status, purge_status")
-    .eq("id", assetId).maybeSingle();
-  if (readError || !asset || asset.owner_user_id !== actorUserId) return { ok: false, alreadyDeleted: false, purgeScheduled: false };
-  if (asset.purge_status === "completed" || asset.moderation_status === "owner_deleted") {
-    return { ok: true, alreadyDeleted: true, purgeScheduled: false };
-  }
-  const now = new Date().toISOString();
-  const { error } = await sc.from("media_assets").update({
-    moderation_status: "owner_deleted",
-    processing_status: "removed",
-    deleted_at: now,
-    purge_requested_at: now,
-    purge_status: "pending",
-    updated_at: now,
-  }).eq("id", assetId).eq("owner_user_id", actorUserId);
-  if (error) return { ok: false, alreadyDeleted: false, purgeScheduled: false };
-  const { error: auditError } = await sc.from("media_asset_lifecycle_events").insert({ media_asset_id: assetId, actor_user_id: actorUserId, event_type: "soft_deleted", details: {} });
-  if (auditError) {
-    const { error: rollbackError } = await sc.from("media_assets").update({
-      moderation_status: asset.moderation_status,
-      processing_status: "ready",
-      deleted_at: null,
-      purge_requested_at: null,
-      purge_status: asset.purge_status ?? "not_requested",
-      updated_at: new Date().toISOString(),
-    }).eq("id", assetId).eq("owner_user_id", actorUserId);
-    if (rollbackError) return { ok: false, alreadyDeleted: false, purgeScheduled: false };
-    return { ok: false, alreadyDeleted: false, purgeScheduled: false };
+  const refused: SoftDeleteResult = { ok: false, alreadyDeleted: false, purgeScheduled: false };
+  try {
+    const { data, error } = await sc.rpc("retire_media_asset", { p_asset: assetId, p_actor: actorUserId });
+    if (error || !data || data.ok !== true) return refused;
+    if (data.alreadyDeleted === true && data.purgeScheduled === false) {
+      return { ok: true, alreadyDeleted: true, purgeScheduled: false };
+    }
+    if (data.alreadyDeleted !== false || data.purgeScheduled !== true) return refused;
+  } catch (error) {
+    (opts.logger ?? logger).warn({ assetId, err: error }, "media asset retirement could not be confirmed");
+    return refused;
   }
   // The row is already withdrawn from every read path. The BYTES are removed
   // out of band: a slow or failing object store must not hold the response, and
