@@ -332,7 +332,7 @@ describe("census-media §50.16 — 3801: no client role reads when a post was re
     refuse(`${unwrapped(ROLLBACK)}\n${unwrapped(RB3362)}\nREVOKE SELECT ON TABLE public.posts FROM anon;\nGRANT SELECT ON TABLE public.posts TO anon WITH GRANT OPTION;`, /anon:SELECT\+grant/);
     // A client grant made by a role other than the table owner: this file's REVOKE would not remove it.
     const g = `n2b_grantor_${randomUUID().slice(0, 8)}`;
-    refuse(`${unwrapped(ROLLBACK)}\nCREATE ROLE ${g};\nGRANT SELECT ON TABLE public.posts TO ${g} WITH GRANT OPTION;\nSET LOCAL ROLE ${g};\nGRANT SELECT (content) ON TABLE public.posts TO anon;\nRESET ROLE;`,
+    refuse(`${unwrapped(ROLLBACK)}\nCREATE ROLE ${g};\nGRANT USAGE ON SCHEMA public TO ${g};\nGRANT SELECT ON TABLE public.posts TO ${g} WITH GRANT OPTION;\nSET LOCAL ROLE ${g};\nGRANT SELECT (content) ON TABLE public.posts TO anon;\nRESET ROLE;`,
       new RegExp(`a client privilege on posts was granted by ${g} rather than the table owner`));
     // And from 3362's exact end state, the precondition passes (control).
     const ok = psql(`BEGIN;\n${HISTORICAL_POSTS}\n${unwrapped(ROLLBACK)}\n${pre}\nROLLBACK;`);

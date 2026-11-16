@@ -331,7 +331,7 @@ describe("MEM-ACL-2 — 3814: memory_saves, memory_likes, memory_tags and memory
     };
     refuse(`GRANT SELECT ON public.memory_likes TO authenticated WITH GRANT OPTION;`, /public\.memory_likes was granted by a role other than its owner, or with a grant option: authenticated:SELECT\+grant option/);
     refuse(
-      `CREATE ROLE memacl2_g_${tag};\nGRANT SELECT ON public.memory_saves TO memacl2_g_${tag} WITH GRANT OPTION;\nSET LOCAL ROLE memacl2_g_${tag};\nGRANT SELECT (memory_id) ON public.memory_saves TO authenticated;\nRESET ROLE;`,
+      `CREATE ROLE memacl2_g_${tag};\nGRANT USAGE ON SCHEMA public TO memacl2_g_${tag};\nGRANT SELECT ON public.memory_saves TO memacl2_g_${tag} WITH GRANT OPTION;\nSET LOCAL ROLE memacl2_g_${tag};\nGRANT SELECT (memory_id) ON public.memory_saves TO authenticated;\nRESET ROLE;`,
       new RegExp(`authenticated:SELECT by memacl2_g_${tag}`),
     );
     refuse(

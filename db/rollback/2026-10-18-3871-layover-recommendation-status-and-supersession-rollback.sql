@@ -66,7 +66,9 @@ BEGIN
  'policies',(SELECT jsonb_agg(polname ORDER BY polname) FROM pg_policy WHERE polrelid='public.layover_recommendation_supersessions'::regclass),
  'rls',(SELECT relrowsecurity FROM pg_class WHERE oid='public.layover_recommendation_supersessions'::regclass)
  )::text) INTO shape;
-  IF shape IS DISTINCT FROM '6ba139d33cc64563df434febb01eb1b5' THEN RAISE EXCEPTION 'ROLLBACK REFUSED (3871): supersession table definitions were changed.'; END IF;
+  -- pg_dump/restore reparses BETWEEN's nested AND as a flat AND. These are the
+  -- two exact canonical catalogs; changed bounds, predicates or objects still refuse.
+  IF shape IS NULL OR shape NOT IN ('6ba139d33cc64563df434febb01eb1b5','58c0b63846c7633cd438e0096a84be2e') THEN RAISE EXCEPTION 'ROLLBACK REFUSED (3871): supersession table definitions were changed.'; END IF;
 END $pre$;
 DROP TABLE IF EXISTS public.layover_recommendation_supersessions;
 DROP FUNCTION IF EXISTS public.layover_rec_supersessions_are_immutable();

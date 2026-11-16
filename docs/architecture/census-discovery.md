@@ -16715,7 +16715,7 @@ The receipt names neither the person nor the pseudonym and carries no row count 
 - **F1–F7 exercise shipped code.** They were green before, and are not presented as red-first. Earnings (F1), refunds as a negation appended once on both ledgers (F2), attribution to a served recommendation (F3), hold and release (F4), recompute (F5), folds and summaries (F6) and the payout boundary (F7) all run through the real services on synthetic accounts: ids `c11e5e00…`, handles `c11syn_…`, test-fixture rule versions `…/v951` and `…/v952`.
 - **No network primitive was reached** (F7).
 - **S1** asserts, in each of the three databases, that no ledger row names a non-synthetic account.
-- The suites that deleted ledger rows in cleanup now purge their own synthetic rows as the harness superuser (`artifacts/api-server/src/test/db/localDb.ts:148#export function creatorLedgerPurgeSql(`). 3510 refuses service_role and the superuser alike (G3), so only `session_replication_role = replica` removes them.
+- The suites that deleted ledger rows in cleanup now purge their own synthetic rows as the harness superuser (`artifacts/api-server/src/test/db/localDb.ts:149#export function creatorLedgerPurgeSql(`). 3510 refuses service_role and the superuser alike (G3), so only `session_replication_role = replica` removes them.
 
 **Mutations: 20 of 21 killed.** Each was applied alone, and each file was restored and sha256-checked byte-identical (21 of 21). The DB-state mutations were restored by re-applying the migration.
 - **3510:**

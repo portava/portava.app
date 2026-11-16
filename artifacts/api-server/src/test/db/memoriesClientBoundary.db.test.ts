@@ -259,7 +259,7 @@ describe("V-716 fix 2 — 3813: public.memories refuses every client role", { sk
     };
     refuse(`GRANT SELECT ON public.memories TO authenticated WITH GRANT OPTION;`, /with a grant option: authenticated:SELECT\+grant option/);
     refuse(
-      `CREATE ROLE memacl_g_${tag};\nGRANT SELECT ON public.memories TO memacl_g_${tag} WITH GRANT OPTION;\nSET LOCAL ROLE memacl_g_${tag};\nGRANT SELECT (place_id) ON public.memories TO authenticated;\nRESET ROLE;`,
+      `CREATE ROLE memacl_g_${tag};\nGRANT USAGE ON SCHEMA public TO memacl_g_${tag};\nGRANT SELECT ON public.memories TO memacl_g_${tag} WITH GRANT OPTION;\nSET LOCAL ROLE memacl_g_${tag};\nGRANT SELECT (place_id) ON public.memories TO authenticated;\nRESET ROLE;`,
       new RegExp(`authenticated:SELECT by memacl_g_${tag}`),
     );
     refuse(

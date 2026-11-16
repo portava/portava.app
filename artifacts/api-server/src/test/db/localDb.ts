@@ -126,13 +126,14 @@ export function seedUser(label: string): string {
   return id;
 }
 
-/** Remove everything a suite created for a user (trips cascade from owner). */
+/** Remove this synthetic owner's reservations before trips: the append-only event guard
+ * permits cascade only after its reservation parent is gone. Keep that guard active. */
 export function deleteUser(id: string): void {
   // service_role owns the public rows; auth.users is GoTrue's and the service
   // role has no privilege on it (true on Supabase too), so that one delete runs
   // as the harness superuser after RESET ROLE.
   exec(
-    `SET LOCAL ROLE service_role;\nDELETE FROM public.trips WHERE owner_id = '${id}';\nDELETE FROM public.profiles WHERE id = '${id}';\nRESET ROLE;\nDELETE FROM auth.users WHERE id = '${id}';`,
+    `SET LOCAL ROLE service_role;\nDELETE FROM public.trip_reservations WHERE trip_id IN (SELECT id FROM public.trips WHERE owner_id = '${id}');\nDELETE FROM public.trips WHERE owner_id = '${id}';\nDELETE FROM public.profiles WHERE id = '${id}';\nRESET ROLE;\nDELETE FROM auth.users WHERE id = '${id}';`,
     { single: true },
   );
 }
