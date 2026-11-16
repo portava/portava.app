@@ -141,6 +141,9 @@ const LEGACY_SIDE = new Set([
 
 /** Files that touch the COMMAND kernel's log. */
 const KERNEL_SIDE = new Set([ "test/memoryFromOwnMedia.pglite.test.ts" /* builds the command kernel log, memory_domain_events, as its fixture */, "migrations/3990_memory_snapshots.sql", "migrations/3992_memory_import_batches.sql", "migrations/3993_owner_resurfacing_policy.sql", "test/MemorySnapshot.pglite.test.ts", "test/memoryImportBatches.pglite.test.ts", "test/memoryImportBatches.postgres.test.ts", "test/resurfacingPolicyCommand.test.ts", "test/resurfacingPolicy.native.test.ts", "test/memoryTimeCorrection.test.ts",
+  // 4036's source-origin proof asserts the canonical command event and receipt;
+  // it does not use the projection family's memory_events log.
+  "test/db/memoryCandidateOrigin.db.test.ts",
   // 4007's native proof creates and asserts the COMMAND kernel event log for
   // post-reference destinations; it never reads the projection family's log.
   "test/postDestinations.native.test.ts",

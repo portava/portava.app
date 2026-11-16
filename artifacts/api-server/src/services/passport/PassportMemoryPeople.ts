@@ -64,6 +64,10 @@ export async function loadPassportMemoryPeople(sc: SupabaseClient, ownerId: stri
       }
       catch { results.set(id, { state: 'unavailable', ...(source ? { sourceId: source } : {}) }); }
     }
-  } catch { /* Unavailable is already explicit for every requested entry. */ }
+  } catch {
+    // Resolved database errors are checked by complete(); thrown transport
+    // failures retain the explicit unavailable result for unread entries.
+    return results;
+  }
   return results;
 }
