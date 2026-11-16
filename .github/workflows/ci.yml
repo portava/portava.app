@@ -970,7 +970,7 @@ jobs:
           node --test .github/scripts/repair-disposable-pgdg-source.test.mjs
           docker exec -i "$POSTGRES_CONTAINER" sh -s < .github/scripts/repair-disposable-pgdg-source.sh
           docker exec "$POSTGRES_CONTAINER" sh -c 'apt-get update -qq && apt-get install -y -qq postgresql-16-cron'
-          docker exec "$POSTGRES_CONTAINER" psql -U postgres -c "ALTER SYSTEM SET shared_preload_libraries = 'pg_cron'"
+          docker exec "$POSTGRES_CONTAINER" psql -U postgres -c "ALTER SYSTEM SET shared_preload_libraries = 'pg_cron'" -c "ALTER SYSTEM SET max_locks_per_transaction = '1024'"
           docker exec -i "$POSTGRES_CONTAINER" sh -c 'cat >> "$PGDATA/postgresql.auto.conf"' <<'CRON_CONFIG'
           cron.database_name = 'portava_local'
           cron.launch_active_jobs = off

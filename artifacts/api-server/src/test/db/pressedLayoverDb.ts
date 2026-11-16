@@ -10,7 +10,7 @@
  *   psql   — LOCAL_DB_URL is set: CI's api-server-local-db job, whose database
  *            scripts/local-db/up.sh built from the same baseline and chain on
  *            PostgreSQL 16 + PostGIS. Flags a case changes are restored on
- *            close(). Each handle now owns an isolated replayed clone, including
+ *            close(). Each PostgreSQL handle exclusively leases the existing database, including
  *            migration-absent variants and persistent BEGIN/ROLLBACK across calls.
  *   pglite — LAYOVER_PGLITE_ROOT names a node_modules/@electric-sql directory
  *            holding `pglite` and `pglite-postgis` (the baseline needs PostGIS
@@ -36,7 +36,7 @@
  * files may fail, so the database is the whole chain or nothing.
  *
  * Realtime is schema-only (delivery raises). The monitor schema/functions replay,
- * but the exact pg_cron registration tail is withheld in isolated clones and
+ * but the exact pg_cron registration tail is withheld in replayed fixtures and
  * reported as unexecuted; local-db/up.sh tests that tail with the real extension.
  *
  * VARIANTS (both isolated engines): `without: ["3513", …]` replays the chain WITHOUT
@@ -251,8 +251,8 @@ export async function executePressedMigrationChain(db:Pick<ReplayDatabase,'exec'
   }
   return {applied,excluded,variantExcluded};
 }
-/** Isolated clones exercise monitor schema/functions, not the host scheduler.
- * pg_cron can be installed only in its configured database, not each clone.
+/** Replayed fixtures exercise monitor schema/functions, not the host scheduler.
+ * Fixture variants must not register active host jobs during a replay.
  * The main local-db/up.sh path still applies 4026 verbatim with real pg_cron.
  * Refuse any drift in the omitted registration rather than trimming arbitrary SQL. */
 export function pressedMigrationSql(file: string, sql: string): string {
@@ -307,6 +307,7 @@ function cacheKey(engine: string, without: readonly string[], order: string[]): 
   h.update(pressedMigrationSql.toString());
   h.update(readFileSync(fileURLToPath(import.meta.url)));
   h.update(readFileSync(join(HERE, "pressedPostgres.ts")));
+  h.update(readFileSync(join(HERE, "pressedSnapshot.ts")));
   h.update(readFileSync(BASELINE));
   h.update(readFileSync(join(MIGRATIONS, "ORDER_OVERRIDES.json")));
   for (const f of order) { h.update(f); h.update(readFileSync(join(MIGRATIONS, f))); }

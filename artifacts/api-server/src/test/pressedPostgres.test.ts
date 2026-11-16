@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { reusableDatabaseName } from "./db/pressedSnapshot.js";
 import { Client } from 'pg';
 import { pressedPostgresServer, pressedPostgresConnection } from "./db/pressedPostgres.js";
 import { pressedMigrationOmissions, executePressedMigrationChain, pressedMigrationSql } from './db/pressedLayoverDb.js';
@@ -11,6 +12,10 @@ test("destructive PostgreSQL proof harness refuses hosted and overridden destina
     "postgresql://postgres@127.0.0.1/db?hostaddr=10.0.0.1", "postgresql://postgres@localhost/db?service=production",
     "postgresql://postgres@localhost/db?servicefile=/tmp/pg_service.conf", "postgresql://postgres@localhost/db?dbname=production",
   ]) assert.throws(() => pressedPostgresServer(url));
+  for (const name of ['postgres', 'production', 'portava_local_copy', '']) {
+    assert.throws(() => reusableDatabaseName(new URL(`postgresql://postgres@127.0.0.1/${name}`)), /designated reusable/);
+  }
+  assert.equal(reusableDatabaseName(new URL('postgresql://postgres@127.0.0.1/portava_ci_repairs')), 'portava_ci_repairs');
   for (const host of ["127.0.0.1", "localhost", "[::1]"]) {
     assert.equal(pressedPostgresServer(`postgresql://postgres@${host}:54329/portava_local`).hostname, host);
   }

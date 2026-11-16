@@ -4,13 +4,18 @@ import { openPressedLayoverDb, PRESSED_SKIP_REASON, PRESSED_BACKEND } from "./pr
 import { POSTCONDITION_AMENDMENTS } from "../../scripts/lib/postconditionAmendments.js";
 import { openIsolatedPressedPostgres } from './pressedPostgres.js';
 import { randomUUID } from 'node:crypto';
+import { Client } from 'pg';
+import { openSnapshotLease } from './pressedSnapshot.js';
+import { appendFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 describe("pressed handles isolate committed changes and retain explicit transaction rollback", {skip: PRESSED_SKIP_REASON}, ()=>{it("pressed handles isolate committed changes and retain explicit transaction rollback", async () => {
   const first = await openPressedLayoverDb();
-  const second = await openPressedLayoverDb();
+  let second: Awaited<ReturnType<typeof openPressedLayoverDb>> | undefined;
   try {
     await first.exec("CREATE TABLE public.pressed_isolation_probe(id integer PRIMARY KEY)");
-    assert.equal(await second.hasTable("pressed_isolation_probe"), false);
+    if (PRESSED_BACKEND === "psql") await assert.rejects(openPressedLayoverDb(), /already leased/);
     await first.exec("BEGIN; INSERT INTO public.pressed_isolation_probe VALUES(1)");
     assert.equal((await first.query("SELECT id FROM public.pressed_isolation_probe")).length, 1);
     await first.exec("ROLLBACK");
@@ -32,8 +37,11 @@ describe("pressed handles isolate committed changes and retain explicit transact
     const [{definition}] = await first.query<{definition: string}>("SELECT pg_get_functiondef('public.trip_kernel_execute'::regproc) AS definition");
     await first.exec(definition.replace("WHEN 'RECORD_FLIGHT_STATUS' THEN 'engine'", "WHEN 'RECORD_FLIGHT_STATUS' THEN 'member'"));
     await assert.rejects(first.exec(assertion), /expected 5 engine-capability commands, found 4/);
+    await first.close();
+    second = await openPressedLayoverDb();
+    assert.equal(await second.hasTable("pressed_isolation_probe"), false, "committed fixture objects do not survive release");
     await second.exec(assertion);
-  } finally { await first.close(); await second.close(); }
+  } finally { await first.close(); await second?.close(); }
 });});
 describe('an omitted certified store removes its explicit dependency closure and preserves unrelated later features',{skip:PRESSED_SKIP_REASON},()=>{it('an omitted certified store removes its explicit dependency closure and preserves unrelated later features',async()=>{
  const db=await openPressedLayoverDb({without:['2700']});
@@ -44,16 +52,52 @@ describe('an omitted certified store removes its explicit dependency closure and
   assert.ok(db.report?.variantExcluded.every(f=>f.includes('(dependency omitted:')));
  }finally{await db.close();}
 });});
-describe('different cold PostgreSQL template keys serialize cluster-wide role initialization',{skip:PRESSED_SKIP_REASON},()=>{it('different cold PostgreSQL template keys serialize cluster-wide role initialization',async t=>{
- if(PRESSED_BACKEND!=='psql'){t.diagnostic('Cluster-global role concurrency is exercised on the PostgreSQL backend; PGlite owns separate clusters.');return;}
- const role=`pressed_probe_${randomUUID().replaceAll('-','')}`;let active=0,peak=0;
+describe('one reusable PostgreSQL fixture refuses competing whole-database replays',{skip:PRESSED_SKIP_REASON},()=>{it('a second lease cannot run cluster role DDL while another fixture is open',async t=>{
+ if(PRESSED_BACKEND!=='psql'){t.diagnostic('Exclusive PostgreSQL lease is specific to the PostgreSQL backend.');return;}
+ const role=`pressed_probe_${randomUUID().replaceAll('-','')}`;let calls=0;
  const options={url:process.env['LOCAL_DB_URL']!,without:[],prelude:()=>'',key:async()=>randomUUID().replaceAll('-','').slice(0,24),replay:async(db:{exec(sql:string):Promise<unknown>},version:string)=>{
-  active++;peak=Math.max(peak,active);
-  try{await db.exec(`DO $probe$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='${role}') THEN PERFORM pg_sleep(0.1);EXECUTE 'CREATE ROLE ${role}';END IF;END $probe$;`);}finally{active--;}
+  calls++;await db.exec(`CREATE ROLE ${role}`);
   return {engine:version,key:'',applied:0,excluded:[],variantExcluded:[],standIn:'none',schedulerRegistration:'not-executed-in-isolated-clone' as const,seconds:0};
  }};
- const results=await Promise.allSettled([openIsolatedPressedPostgres(options),openIsolatedPressedPostgres(options)]);
- const opened=results.flatMap(r=>r.status==='fulfilled'?[r.value]:[]);
- try{for(const r of results)assert.equal(r.status,'fulfilled',r.status==='rejected'?String(r.reason):'');assert.equal(peak,1,'different templates must not concurrently run cluster role DDL');}
- finally{if(opened[0])await opened[0].engine.exec(`DROP ROLE IF EXISTS ${role}`);for(const result of opened)await result.engine.close();}
+ const first=await openIsolatedPressedPostgres(options);
+ try{await assert.rejects(openIsolatedPressedPostgres(options),/already leased/);assert.equal(calls,1,'the rejected fixture must not replay or change roles');}
+ finally{await first.engine.exec(`DROP ROLE IF EXISTS ${role}`);await first.engine.close();}
+});});
+
+describe('reusable fixture failure recovery', {skip: PRESSED_SKIP_REASON}, () => {it('failed replay restores committed baseline data and never publishes a partial cache', async t => {
+ if (PRESSED_BACKEND !== 'psql') {t.diagnostic('PostgreSQL snapshot recovery only.'); return;}
+ const url=process.env['LOCAL_DB_URL']!;
+ const observer=new Client({connectionString:url});await observer.connect();
+ const probe=`pressed_recovery_${randomUUID().replaceAll('-','')}`;
+ const key=randomUUID().replaceAll('-','').slice(0,24);let calls=0;
+ try {
+  await observer.query(`CREATE TABLE public.${probe}(value text); INSERT INTO public.${probe} VALUES ('baseline')`);
+  const options={url,without:[],prelude:()=>'',key:async()=>key,replay:async(db:{exec(sql:string):Promise<unknown>})=>{
+   calls++;await db.exec('CREATE TABLE public.pressed_partial_replay(id integer)');throw new Error('injected replay failure');
+  }};
+  const user=randomUUID();
+  await observer.query('INSERT INTO auth.users(id) VALUES ($1)',[user]);
+  try {
+   await assert.rejects(openIsolatedPressedPostgres(options), /containing user fixtures/);
+   assert.equal(calls,0,'populated target must be refused before replay');
+   assert.equal((await observer.query('SELECT id FROM auth.users WHERE id=$1',[user])).rowCount,1,'refusal must preserve existing rows');
+  } finally {await observer.query('DELETE FROM auth.users WHERE id=$1',[user]);}
+  for(let attempt=0;attempt<2;attempt++) {
+   await assert.rejects(openIsolatedPressedPostgres(options),/injected replay failure/);
+   assert.deepEqual((await observer.query(`SELECT value FROM public.${probe}`)).rows,[{value:'baseline'}]);
+   assert.equal((await observer.query("SELECT to_regclass('public.pressed_partial_replay') AS relation")).rows[0].relation,null);
+  }
+  assert.equal(calls,2,'failed variants must replay again, never reuse a partial cache');
+  const identity=(await observer.query('SELECT current_database() AS name,system_identifier::text AS cluster FROM pg_control_system()')).rows[0];
+  const root=join(process.env.PRESSED_SNAPSHOT_ROOT || tmpdir(),'portava-pressed-snapshots',`${identity.cluster}-${identity.name}`);
+  const lease=await openSnapshotLease(observer,new URL(url));
+  try {
+   await lease.cache(key,{engine:'test',key,applied:0,excluded:[],variantExcluded:[],standIn:'none',schedulerRegistration:'not-executed-in-isolated-clone',seconds:0});
+   appendFileSync(join(root,`${key}.dump`),'injected corruption');
+   await assert.rejects(lease.cached(key),/checksum mismatch/);
+   assert.deepEqual((await observer.query(`SELECT value FROM public.${probe}`)).rows,[{value:'baseline'}],'bad checksum must be rejected before clearing baseline');
+  } finally {
+   rmSync(join(root,`${key}.dump`),{force:true});rmSync(join(root,`${key}.json`),{force:true});await lease.restore();
+  }
+ } finally {await observer.query(`DROP TABLE IF EXISTS public.${probe}`);await observer.end();}
 });});
