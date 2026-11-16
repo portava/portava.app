@@ -4277,7 +4277,7 @@ post.
 `travel-buddy-standalone/src/services/media/postcardUploadQueue.ts:83#export class PostcardUploadQueue`
 is account-scoped and stops if the account changes mid-drain. Each part is an
 OS background transfer of exactly its byte range
-(`travel-buddy-standalone/src/services/media/backgroundTransfer.ts:163#sessionType: mod.FileSystemSessionType.BACKGROUND,`),
+(`travel-buddy-standalone/src/services/media/backgroundTransfer.ts:164#sessionType: mod.FileSystemSessionType.BACKGROUND,`),
 and the queue is resumed on every foreground
 (`travel-buddy-standalone/src/services/media/postcardUploadDevice.ts:183#export function installPostcardUploadResume`,
 mounted at `travel-buddy-standalone/app/_layout.tsx:406#<MediaUploadResumeSetup />`).
@@ -9850,7 +9850,7 @@ seeded FALSE and no database was touched.**
 | MD280 | N | **N** | IMPLEMENTATION, done up to the source. The ASR seam's refusing default is `artifacts/api-server/src/lib/media/vendors/mediaCaptionSource.ts:168#export const REFUSING_CAPTION_SOURCE`. Its validated call is `artifacts/api-server/src/lib/media/vendors/mediaCaptionSource.ts:189#export async function captionTrackFor(`. Every track must pass `artifacts/api-server/src/lib/media/vendors/mediaCaptionSource.ts:92#export function parseWebVtt(` WHOLE, whether an ASR vendor produced it or a person typed it, and it is refused if it runs past the measured duration. A kept track is stored at a path derived from the video (`artifacts/api-server/src/lib/media/vendors/mediaCaptionSource.ts:149#export function captionTrackPathFor(`), with `upsert: false`. NOT built, on purpose: serving (lib/mediaAccess deciding `<path>.captions.vtt` as its video, the way posters are decided) and the player's cue renderer. Both are consumers of a track that no configuration can produce yet. §15.9 stands. ACTIVATION: 3358. EXTERNAL: an ASR vendor with a data-processing agreement covering users' speech, OR an owner decision for an authored-WebVTT flow. BLOCKER: the caption source is undecided. |
 | MD282 | N | **N** | IMPLEMENTATION, done up to the native module. The JS seam is `travel-buddy-standalone/src/services/media/videoCompression.ts:122#export async function compressVideoForUpload`. It looks for ONE module by name through `requireOptionalNativeModule` (`travel-buddy-standalone/src/services/media/videoCompression.ts:88#requireOptionalNativeModule(name)`), which returns null, not an error, when the binary lacks it. Absent, or switched off, the video passes through as the SAME object. It uses a copy only if the module returns a smaller file with its size and display dimensions. It is wired at all four client upload paths: the postcard composer (`travel-buddy-standalone/src/components/PostcardComposer.tsx:374#compressVideoForUpload(picked)`), `uploadMedia` (`travel-buddy-standalone/src/services/media.ts:201#const uploadUri = recording ? media.uri : await videoUriForUpload(`), stories (`travel-buddy-standalone/src/services/stories.ts:104#videoUriForUpload(localUri`) and memories (`travel-buddy-standalone/src/services/memories.ts:303#videoUriForUpload(localUri`). The native contract the module must implement is written in the file's header. It stays N because no build that exists re-encodes a byte. ACTIVATION: `DEFAULT_ENABLED` (`travel-buddy-standalone/src/services/media/videoCompression.ts:51#const DEFAULT_ENABLED = false;`), flipped in the same build that adds the module, after a device run. EXTERNAL: a native encoder module implementing that contract (§37.4), a native build (§37.3), and a device run showing a smaller clip that uploads, keeps its orientation and duration, and plays. BLOCKER: no native module in the client package.json (an infra or owner decision), and no build access. |
 | MD283 | W | **W** | IMPLEMENTATION, done up to the vendor. Video has its own rules in the same decider. A video-capable classifier reads the whole clip and may approve it. A frame-only classifier may REJECT or HOLD a clip, never approve it: one poster is one instant of a clip that can be minutes long (`artifacts/api-server/src/lib/media/vendors/mediaModerationClassifier.ts:112#export const FRAME_ALLOW_CLEARS_VIDEO = false;`). A general video's frame arrives after its upload, so the poster route gives the classifier its look there, and that look can only tighten (`artifacts/api-server/src/routes/mediaVideoPoster.ts:115#void moderateVideoOnFrame(sc,`, `artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:320#export async function moderateVideoOnFrame(`). Postcard `/complete` hands over the slot's own poster path. ACTIVATION: 3356. EXTERNAL: a classifier with async VIDEO moderation. With only an image classifier, every video waits for a person. BLOCKER: no classifier chosen; MD269's (a) and (b). |
-| MD284 | W | **W** | IMPLEMENTATION, JS half done. EVERY missing part is now handed to the OS at once. Every part's byte range is staged into its own cache file one at a time, to bound JS memory, and then every upload task is created and STARTED before any is awaited (`travel-buddy-standalone/src/services/media/backgroundTransfer.ts:205#export async function putPartsInBackground(`). The background transport offers the batch (`travel-buddy-standalone/src/services/media/backgroundTransfer.ts:97#putParts: (parts, contentType, onSent)`), and the resumable uploader uses it whenever it can (`travel-buddy-standalone/src/services/media/resumableUpload.ts:170#if (transport.putParts && pending.length > 1) {`). A part the batch did not deliver is never counted as sent: no answer, 408/425/429 or 5xx fall back to the one-at-a-time retries after one wait, and 400/401/403 get a fresh session. Still NOT shown: that iOS finishes the handed-over tasks while the app is suspended, and relaunches it to report them. expo-file-system registers the app-delegate hook for that, but only a device can show it happens. Android is unchanged: expo-file-system's legacy module uploads through OkHttp inside the app process and never reads the session type, so a backgrounded or killed Android process loses its parts until a foreground service keeps it alive, and that service needs a native module (§37.4). ACTIVATION: `DEFAULT_ENABLED` (`travel-buddy-standalone/src/services/media/uploadTransportFlag.ts:19#DEFAULT_ENABLED = false`), unchanged. EXTERNAL: an iOS device build and run (background → a multi-part upload completes → assemble); an Android foreground-service module plus `FOREGROUND_SERVICE_DATA_SYNC` in the manifest (absent from the prebuilt manifest, §37.3); a device matrix run (§37.3). BLOCKER: no macOS or EAS access for iOS; no Android SDK; no device; no foreground-service module. |
+| MD284 | W | **W** | IMPLEMENTATION, JS half done. EVERY missing part is now handed to the OS at once. Every part's byte range is staged into its own cache file one at a time, to bound JS memory, and then every upload task is created and STARTED before any is awaited (`travel-buddy-standalone/src/services/media/backgroundTransfer.ts:206#export async function putPartsInBackground(`). The background transport offers the batch (`travel-buddy-standalone/src/services/media/backgroundTransfer.ts:97#putParts: (parts, contentType, onSent)`), and the resumable uploader uses it whenever it can (`travel-buddy-standalone/src/services/media/resumableUpload.ts:170#if (transport.putParts && pending.length > 1) {`). A part the batch did not deliver is never counted as sent: no answer, 408/425/429 or 5xx fall back to the one-at-a-time retries after one wait, and 400/401/403 get a fresh session. Still NOT shown: that iOS finishes the handed-over tasks while the app is suspended, and relaunches it to report them. expo-file-system registers the app-delegate hook for that, but only a device can show it happens. Android is unchanged: expo-file-system's legacy module uploads through OkHttp inside the app process and never reads the session type, so a backgrounded or killed Android process loses its parts until a foreground service keeps it alive, and that service needs a native module (§37.4). ACTIVATION: `DEFAULT_ENABLED` (`travel-buddy-standalone/src/services/media/uploadTransportFlag.ts:19#DEFAULT_ENABLED = false`), unchanged. EXTERNAL: an iOS device build and run (background → a multi-part upload completes → assemble); an Android foreground-service module plus `FOREGROUND_SERVICE_DATA_SYNC` in the manifest (absent from the prebuilt manifest, §37.3); a device matrix run (§37.3). BLOCKER: no macOS or EAS access for iOS; no Android SDK; no device; no foreground-service module. |
 | MD289 | W | **W** | IMPLEMENTATION, done up to the vendor and the owner's threshold. `looksSocial=true` is a real criterion (`artifacts/api-server/src/services/media/MediaSearchService.ts:948#export async function searchMediaVisual(`, reached from `artifacts/api-server/src/routes/mediaWorld.ts:331#searchMediaVisual(`). It is APPLIED through MD63's candidates or REFUSED BY NAME with an empty answer (`artifacts/api-server/src/services/media/MediaSearchService.ts:968#if (!stageOn) return refuse("stage_off", null);`). It is never dropped: before this, "Nightlife that looks social tonight" could only be asked as "nightlife tonight". An event found by name is not served beside it (`artifacts/api-server/src/routes/mediaWorld.ts:347#results.visual ? null : str(req.query.q)`). What counts as "looks social" is a stated owner value: `busy` or `social` at a confidence of at least 0.6 (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:75#export const LOOKS_SOCIAL_LEVELS`). ACTIVATION: 3355. EXTERNAL: a vision provider (MD63). OWNER: ratify or replace the threshold. BLOCKER: no vision provider; the threshold is unratified. |
 | MD293 | N | **N** | IMPLEMENTATION, done up to the vendor. `lookLike=<media id>` first puts the SEED through the same gate as "Where was this photo taken?", so a seed the viewer cannot see never reaches the index (`artifacts/api-server/src/services/media/MediaSearchService.ts:1018#if (!seedItem) return refuse("seed_not_visible", provider.name);`). Every id the index proposes then goes back through the shared candidate loader and projector: the index can propose media, never disclose it. The proposals themselves are validated (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:234#export function validateSimilarMedia(`). It stays N because there is still no cross-place visual index. `MEDIA_SEARCH_UNSUPPORTED` keeps saying so until an index answers. ACTIVATION: 3355. EXTERNAL: an image-embedding model and a vector index keyed by media id, with deletion when the media is deleted. BLOCKER: no visual index chosen. |
 
@@ -10168,11 +10168,11 @@ probe.
 **Naming.** Every staged copy's name now carries the slot that owns it: the
 batch path and the one-at-a-time path both use
 `travel-buddy-standalone/src/services/media/backgroundTransfer.ts:102#stagedPartUri(dir, owner)`,
-from `travel-buddy-standalone/src/services/media/backgroundTransfer.ts:316#export function stagedPartUri(`.
+from `travel-buddy-standalone/src/services/media/backgroundTransfer.ts:317#export function stagedPartUri(`.
 The key is `travel-buddy-standalone/src/services/media/resumableUpload.ts:339#export function slotOwnerKey(`,
 which the uploader passes for its own slot.
 
-**The sweep** is `travel-buddy-standalone/src/services/media/backgroundTransfer.ts:352#export async function sweepStagedParts(`.
+**The sweep** is `travel-buddy-standalone/src/services/media/backgroundTransfer.ts:353#export async function sweepStagedParts(`.
 It runs at launch and on every foreground, before the queue resumes
 (`travel-buddy-standalone/src/services/media/postcardUploadDevice.ts:190#await sweepOrphanedStagedParts();`).
 Its rules:
@@ -13761,11 +13761,11 @@ Four things follow from that output:
 skips, and `run-tests.sh` refuses a run with any skip. Each property is listed
 below.
 
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:256#it("G1-0`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:258#it("G1-0`
   3362 is in force, so the refusals below cannot be vacuous. Every column of
   posts is classified once. A new column turns this red until someone decides
   which side it goes.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:268#it("G1-1`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:270#it("G1-1`
   anon, a stranger and the author are each refused exactly the 35 withheld
   columns:
   - selected one statement per column;
@@ -13773,7 +13773,7 @@ below.
   - through `SELECT *`, `WHERE original_lat > 48` and `ORDER BY user_gps_lat`.
 
   The service role reads the same values, so a refusal is never "no row".
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:285#it("G1-2`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:287#it("G1-2`
   Each client role can read exactly the 40 granted columns, and the whole list
   in one SELECT. The inventory's reads also hold:
   - the live suite's anon feed read;
@@ -13781,22 +13781,22 @@ below.
   - the author's post_media INSERT, through the owner policy's WITH CHECK;
   - a stranger's INSERT, refused by row-level security rather than by a
     privilege.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:312#it("G1-3`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:314#it("G1-3`
   The rows are unchanged:
   - anon and a stranger see the public posts;
   - a follower also sees followers_only;
   - the author also sees their own hidden post
-    (`artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:317#assert.deepEqual(visible({ role: "anon" }, ids), [PUB].sort()`).
+    (`artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:319#assert.deepEqual(visible({ role: "anon" }, ids), [PUB].sort()`).
 
   Since 3925 (PR #802) the pending delayed post is visible to its author only,
   which closes §44.7 item 1's row gap for posts. The policy catalog is byte-identical
   across rollback and re-apply, in a rolled-back transaction.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:344#it("G1-4`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:346#it("G1-4`
   The author reads their own hidden row's granted columns as before. Their own
   `original_lat` is refused to their client, and reaches them through the API's
   role, which reads all 75 columns. GET /posts/pending serves the owner
   `location_lat`, `location_lng` and `venue_name` that way.
-- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:363#it("G1-5`
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:365#it("G1-5`
   The rollback restores the table ACL to today's plus
   `anon=r/<owner>,authenticated=r/<owner>`, with no column ACL. 3362 re-applied
   on top reproduces today's catalog byte for byte. The database is left
@@ -16739,7 +16739,7 @@ and proven by a test that goes red without it.
       `docs/migrations.md`'s 3801 entry names the classes. This census grades none of them.
   - **Tests:**
     - static: `artifacts/api-server/src/test/postsReleaseTimingColumnGrants.test.ts:68#describe("A. 3801 grants 3362's columns minus exactly the two release-timing columns"` (17);
-    - database: `artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts:205#it("R1 — after the exit and the release, nobody's client key reads when` (7, run on the PGlite replica; CI's local-db job runs it on PostgreSQL).
+    - database: `artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts:207#it("R1 — after the exit and the release, nobody's client key reads when` (7, run on the PGlite replica; CI's local-db job runs it on PostgreSQL).
     - 3362's own database suite is restated for the end of the chain, with its lists narrowed by 3801's two.
       Rolled back to 3362's end state, both suites go red (10 cases). Six static mutants each turn a case red.
 - **D82-1 — a `data:` URI carried a held photo past the D-82 hold.** `appMediaRef` accepted any string
@@ -16816,7 +16816,7 @@ without it.
     `updated_at` and `publish_at`, and tells the operator to roll 3801 back first
     (`db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql:59#Roll 3801 back first`).
   - 3801's header and its rollback state the order.
-  - Test: `artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts:292#it("R4b — 3362's rollback refuses while 3801 is in force`.
+  - Test: `artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts:294#it("R4b — 3362's rollback refuses while 3801 is in force`.
     In the documented order the rollback still reaches 2148's state.
   - 3362's own database suite now rolls 3801 back first.
 - **CERT-1 — the supersession mechanism, accepted by the lead with three conditions.**
@@ -16839,7 +16839,7 @@ without it.
   - §50.16's "never restores a table-level `SELECT`" was true of 3801's rollback only (F1 above).
   - "The three functions that read `posts`": the verifier's catalog has four, all `SECURITY DEFINER`.
   - The refusal of a client grant made by a non-owner grantor is now exercised: a second grantor role on the replica
-    (`artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts:314#it("R6`).
+    (`artifacts/api-server/src/test/db/postsReleaseTimingColumns.db.test.ts:316#it("R6`).
 
 Cited, not graded (check:census-scope-coverage):
 - NOT-GRADED: artifacts/api-server/src/test/certifyPostconditionSupersession.test.ts — §50.18 cites the rules certify's postcondition supersession is held to; it is CI tooling, and no Media row is graded on it.

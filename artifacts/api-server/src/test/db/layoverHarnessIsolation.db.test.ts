@@ -50,7 +50,7 @@ describe('different cold PostgreSQL template keys serialize cluster-wide role in
  const options={url:process.env['LOCAL_DB_URL']!,without:[],prelude:()=>'',key:async()=>randomUUID().replaceAll('-','').slice(0,24),replay:async(db:{exec(sql:string):Promise<unknown>},version:string)=>{
   active++;peak=Math.max(peak,active);
   try{await db.exec(`DO $probe$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='${role}') THEN PERFORM pg_sleep(0.1);EXECUTE 'CREATE ROLE ${role}';END IF;END $probe$;`);}finally{active--;}
-  return {engine:version,key:'',applied:0,excluded:[],variantExcluded:[],standIn:'none',seconds:0};
+  return {engine:version,key:'',applied:0,excluded:[],variantExcluded:[],standIn:'none',schedulerRegistration:'not-executed-in-isolated-clone' as const,seconds:0};
  }};
  const results=await Promise.allSettled([openIsolatedPressedPostgres(options),openIsolatedPressedPostgres(options)]);
  const opened=results.flatMap(r=>r.status==='fulfilled'?[r.value]:[]);

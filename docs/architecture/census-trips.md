@@ -7099,18 +7099,18 @@ reason. §64 gives it a producer.
 
 ### 64.1 What was built, and where
 
-- **The handoff.** `travel-buddy-standalone/src/features/trips/crew/tripNavigationHandoff.ts:136#export async function startNavigation(`
+- **The handoff.** `travel-buddy-standalone/src/features/trips/crew/tripNavigationHandoff.ts:137#export async function startNavigation(`
   opens the platform's own directions link for a plan — coordinates when the
   plan has them, the place name when it does not, and **nothing at all** when
   it has neither, because a handoff to nowhere would report a journey that is
   not happening
-  (`travel-buddy-standalone/src/features/trips/crew/tripNavigationHandoff.ts:124#export function navigationUrl(`).
+  (`travel-buddy-standalone/src/features/trips/crew/tripNavigationHandoff.ts:125#export function navigationUrl(`).
   Starting navigation is an observation the traveller made themselves, so it
   reports §10.1 `transiting` with `source: 'navigation'` and a one-hour TTL —
   an abandoned journey expires instead of standing as a false "on the way".
   No position is read at any point.
 - **The callback.** Coming back to the app is the return signal
-  (`travel-buddy-standalone/src/features/trips/crew/tripNavigationHandoff.ts:184#export async function resolveNavigationReturn(`).
+  (`travel-buddy-standalone/src/features/trips/crew/tripNavigationHandoff.ts:185#export async function resolveNavigationReturn(`).
   Back **after** the plan's start is an arrival — `at_plan`, same source.
   Back **before** it says only that the traveller looked at their phone, and
   nothing is claimed. A return for another trip does not consume this trip's

@@ -165,3 +165,29 @@ test('late canonical writes cannot resurrect discarded or erased-account draft m
  await db.exec('DELETE FROM composer_upload_intents');await assert.rejects(insert(),/draft_upload_unavailable/);
  }finally{await db.close();}
 });
+
+
+test('client media insertion keeps lifecycle private and refuses cancelled posts', async () => {
+ const db=await database();
+ try {
+  await shell(db);
+  await db.exec(`GRANT USAGE ON SCHEMA public TO authenticated;
+   GRANT SELECT(id,status,deleted_at) ON posts TO authenticated;
+   GRANT INSERT ON post_media TO authenticated;`);
+  const insert = `SET ROLE authenticated; INSERT INTO post_media(post_id,user_id,processing_status)
+   VALUES('${post}','${actor}','pending'); RESET ROLE;`;
+  await assert.rejects(db.exec(insert), /permission denied/);
+  await db.exec('RESET ROLE');
+  await db.exec(readFileSync(new URL('../migrations/4034_postcard_media_invoker_boundary.sql', import.meta.url), 'utf8'));
+  await db.exec(insert);
+  assert.equal((await db.query('SELECT * FROM post_media')).rows.length,1);
+  await db.exec('SET ROLE authenticated');
+  await assert.rejects(db.exec('SELECT postcard_draft_state FROM posts'), /permission denied/);
+  await db.exec('RESET ROLE');
+  await rpc(db,'cancel_postcard_draft');
+  await assert.rejects(db.exec(insert), /post_unavailable/);
+  await db.exec('RESET ROLE');
+  assert.equal((await db.query('SELECT * FROM post_media')).rows.length,1);
+  await assert.rejects(db.exec("UPDATE post_media SET processing_status='ready'"), /draft_cancelled/);
+ } finally { await db.close(); }
+});

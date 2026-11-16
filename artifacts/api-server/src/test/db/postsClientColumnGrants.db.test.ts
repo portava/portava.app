@@ -58,7 +58,9 @@ import { HAVE_DB, exec, psql, rows, scalar, seedUser, deleteUser } from "./local
 const __dir = dirname(fileURLToPath(import.meta.url));
 // The historical migrations deliberately reject any column they have never
 // classified. Replay them on their original table shape inside ROLLBACK.
-const HISTORICAL_POSTS = "ALTER TABLE public.posts DROP COLUMN IF EXISTS post_reference_id;";
+const POSTCARD_PRIVATE_COLUMNS = ["postcard_draft_state", "postcard_requested_visibility", "postcard_draft_operation_id", "postcard_publish_on_complete", "postcard_cleanup_pending", "composer_upload_operation_id", "composer_publication_operation_id"];
+const HISTORICAL_POSTS = ["post_reference_id", ...POSTCARD_PRIVATE_COLUMNS]
+  .map(column => `ALTER TABLE public.posts DROP COLUMN IF EXISTS ${column};`).join("\n");
 const MIGRATION = resolve(__dir, "../../migrations/3362_posts_client_column_grants.sql");
 const M3801 = resolve(__dir, "../../migrations/3801_posts_release_timing_columns_withheld.sql");
 const ROLLBACK = resolve(__dir, "../../../../../db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql");
@@ -99,7 +101,7 @@ const WITHHELD = [
 const WITHHELD_BY_3801 = ["updated_at", "publish_at"] as const;
 /** The chain's end state: 3362's lists, narrowed by 3801. */
 const GRANTED_NOW = GRANTED.filter((c) => !(WITHHELD_BY_3801 as readonly string[]).includes(c));
-const WITHHELD_NOW = [...WITHHELD, ...WITHHELD_BY_3801, "post_reference_id"];
+const WITHHELD_NOW = [...WITHHELD, ...WITHHELD_BY_3801, "post_reference_id", ...POSTCARD_PRIVATE_COLUMNS];
 
 type Who = { role: "anon" } | { role: "authenticated"; uid: string };
 

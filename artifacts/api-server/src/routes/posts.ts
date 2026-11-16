@@ -643,7 +643,7 @@ router.post("/posts", async (req, res) => {
     const previous = await flagSc!.from('posts').select(POST_COLUMNS).eq('author_id', user.id).eq('composer_upload_operation_id', composerUploadOperationId).maybeSingle();
     if (previous.error) { sendError(res, 'db_error', 'Could not verify this publication.'); return; }
     if (previous.data) { res.status(201).json(await withPostMediaOne(flagSc, previous.data)); return; }
-    const intent = await flagSc!.from('composer_upload_intents' as never).select('storage_paths,state').eq('id', composerUploadOperationId).eq('owner_id', user.id).maybeSingle();
+    const intent = await flagSc!.from('composer_upload_intents').select('storage_paths,state').eq('id', composerUploadOperationId).eq('owner_id', user.id).maybeSingle();
     const row = intent.data as unknown as { storage_paths?: string[]; state?: string } | null;
     if (intent.error || !['ready','published'].includes(row?.state ?? '') || !mediaUrls?.length || mediaUrls.some(url => !row?.storage_paths?.some(path => url === `post-media/${path}`))) { sendError(res, 'conflict', 'Draft upload is not ready.'); return; }
   }

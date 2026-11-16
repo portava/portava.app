@@ -29,7 +29,7 @@ export async function finishComposerUpload(sc: Client, actor: string, operation:
 /** Remove only a durable, owned, cancelled intent. Publication claims the same
  * row lock, so cleanup cannot delete a file already attached by this operation. */
 export async function cleanComposerUpload(sc: Client, actor: string, operation: string, fallbackPaths: string[] = []): Promise<boolean> {
-    const r = await sc.from('composer_upload_intents' as never).select('storage_paths,state').eq('id', operation).eq('owner_id', actor).maybeSingle();
+    const r = await sc.from('composer_upload_intents').select('storage_paths,state').eq('id', operation).eq('owner_id', actor).maybeSingle();
     if (r.error)
         return false;
     if (!r.data) {
@@ -83,7 +83,7 @@ router.delete('/media/drafts/:operation', asyncHandler(async (req, res) => {
 export default router;
 export async function activatePublishedComposerMedia(sc: Client, actor: string, operation: string): Promise<void> {
     try {
-        const intent = await sc.from('composer_upload_intents' as never).select('state,storage_paths').eq('id', operation).eq('owner_id', actor).maybeSingle();
+        const intent = await sc.from('composer_upload_intents').select('state,storage_paths').eq('id', operation).eq('owner_id', actor).maybeSingle();
         const row = intent.data as unknown as {
             state: string;
             storage_paths: string[];

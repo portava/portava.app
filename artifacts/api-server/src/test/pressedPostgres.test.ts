@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Client } from 'pg';
 import { pressedPostgresServer, pressedPostgresConnection } from "./db/pressedPostgres.js";
-import { pressedMigrationOmissions, executePressedMigrationChain } from './db/pressedLayoverDb.js';
+import { pressedMigrationOmissions, executePressedMigrationChain, pressedMigrationSql } from './db/pressedLayoverDb.js';
 
 test("destructive PostgreSQL proof harness refuses hosted and overridden destinations", () => {
   for (const url of [
@@ -39,4 +39,14 @@ test('an unrelated migration error aborts every absent replay instead of publish
   await assert.rejects(executePressedMigrationChain(db,['2700_certified.sql','2992_ledger.sql','3899_objective.sql','3907_activity.sql'],['2700'],new Set(),f=>f),new RegExp(`3899_objective.sql: ${code}`));
   assert.equal(closed,true);assert.ok(!executed.includes('3907_activity.sql'));assert.ok(!executed.includes('2992_ledger.sql'));
  }
+});
+
+
+test('isolated replay omits only the reviewed host scheduler registration', () => {
+ const registration = "create extension if not exists pg_cron with schema pg_catalog;\nselect cron.schedule('intelligence-system-monitor-hourly', '7 * * * *',\n  $job$set statement_timeout='20s'; set lock_timeout='2s'; select intelligence_monitor.collect();$job$);";
+ const body = 'CREATE TABLE intelligence_monitor.snapshots(id uuid);\n';
+ assert.equal(pressedMigrationSql('4026_intelligence_system_monitor.sql', body + registration), body);
+ assert.equal(pressedMigrationSql('4027_whole_system_monitor.sql', body), body);
+ assert.throws(() => pressedMigrationSql('4026_intelligence_system_monitor.sql', body), /registration changed/);
+ assert.throws(() => pressedMigrationSql('4026_intelligence_system_monitor.sql', body + registration + '\nDROP TABLE public.posts;'), /registration changed/);
 });

@@ -7,7 +7,7 @@ export async function cleanupCancelledComposerUploads(sc: SupabaseClient, cutoff
     errors: number;
 }> {
     try {
-        const result = await sc.from('composer_upload_intents' as never).select('id,owner_id,storage_paths').eq('state', 'cancelled').eq('cleanup_pending', true).lt('updated_at', cutoff).order('updated_at', { ascending: true }).limit(limit);
+        const result = await sc.from('composer_upload_intents').select('id,owner_id,storage_paths').eq('state', 'cancelled').eq('cleanup_pending', true).lt('updated_at', cutoff).order('updated_at', { ascending: true }).limit(limit);
         if (result.error) {
             if (['42P01', 'PGRST205'].includes(result.error.code))
                 return { cleaned: 0, errors: 0 };
@@ -28,7 +28,7 @@ export async function cleanupCancelledComposerUploads(sc: SupabaseClient, cutoff
                     errors++;
                     continue;
                 }
-                const updated = await sc.from('composer_upload_intents' as never).update({ cleanup_pending: false } as never).eq('id', row.id).eq('state', 'cancelled');
+                const updated = await sc.from('composer_upload_intents').update({ cleanup_pending: false }).eq('id', row.id).eq('state', 'cancelled');
                 if (updated.error)
                     errors++;
                 else
