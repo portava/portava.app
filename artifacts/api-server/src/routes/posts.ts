@@ -297,17 +297,8 @@ export async function storeVerifiedMediaUpload(req: any, res: any, sc: any, user
     const mediaRelayUrl = `${STORAGE_BUCKET}/${path}`;
 
     // Canonical dual-write (flag-gated OFF; fail-soft — legacy flow unaffected).
-    let reusedApprovedCanonical = false;
     const canonicalWrite = canonicalModerationAtBirth(sc).then(async atBirth => {
-      if (operation && duplicateCapture) {
-        const existing = await sc.from('media_assets').select('id,version,moderation_status').eq('owner_user_id', user.id).eq('storage_bucket', STORAGE_BUCKET).eq('storage_path', path).maybeSingle();
-        if (existing.error) throw new Error('Canonical upload receipt unavailable');
-        if (existing.data) {
-          reusedApprovedCanonical = existing.data.moderation_status === 'active';
-          return { assetId: existing.data.id, assetVersion: existing.data.version, outcome: 'written' as const, droppedColumns: [], errorCode: null, schemaState: 'present' as const };
-        }
-      }
-      return recordMediaAssetDetailed(sc, { ...atBirth,
+      return recordMediaAssetDetailed(sc, { ...atBirth, preserveExisting: Boolean(operation),
       ownerUserId: user.id, sourceType: MEDIA_SOURCE_UNDECLARED, // §6 source: this route receives bytes and a Content-Type, never camera vs library (census-media §35, MD37)
       storageBucket: STORAGE_BUCKET,
       storagePath: path,
@@ -327,7 +318,7 @@ export async function storeVerifiedMediaUpload(req: any, res: any, sc: any, user
     });
     });
     void canonicalWrite.then(async (asset) => {
-      if (reusedApprovedCanonical) return;
+      if (asset.reused && asset.moderationStatus !== 'limited') return;
       if (operation) {
         const intent = await sc.from('composer_upload_intents').select('state').eq('id', operation).eq('owner_id', user.id).maybeSingle();
         if (intent.error || !intent.data || intent.data.state === 'cancelled') return;

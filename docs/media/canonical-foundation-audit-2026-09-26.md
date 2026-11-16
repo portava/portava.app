@@ -57,11 +57,11 @@ audited before Phase 2 began.
   - 2470 re-issues them without 2250's flag assertion: `artifacts/api-server/src/migrations/2470_media_asset_canonical_columns_flag_agnostic.sql:3#The migration-2250 column set`.
 - **A versioned aggregate.**
   - 3320's trigger bumps the version: `artifacts/api-server/src/migrations/3320_media_canonical_contract_constraints.sql:144#CREATE TRIGGER media_assets_version_bump`.
-  - Writers compare-and-set on it: `artifacts/api-server/src/lib/mediaAssets.ts:991#export async function casUpdateMediaAsset(`.
+  - Writers compare-and-set on it: `artifacts/api-server/src/lib/mediaAssets.ts:997#export async function casUpdateMediaAsset(`.
 - **Media-level visibility is CHECKed** by 3320: `artifacts/api-server/src/migrations/3320_media_canonical_contract_constraints.sql:123#ADD CONSTRAINT media_assets_visibility_check`.
-- **The writer** is `artifacts/api-server/src/lib/mediaAssets.ts:309#export async function recordMediaAssetDetailed(`.
+- **The writer** is `artifacts/api-server/src/lib/mediaAssets.ts:313#export async function recordMediaAssetDetailed(`.
   It writes nothing while the flag is off:
-  `artifacts/api-server/src/lib/mediaAssets.ts:321#if (!(await isFlagEnabled(sc, "media_canonical_enabled"))) return NONE;`.
+  `artifacts/api-server/src/lib/mediaAssets.ts:325#if (!(await isFlagEnabled(sc, "media_canonical_enabled"))) return NONE;`.
 
 **What the spec requires.** §6 sets the canonical contract: id, owner, type,
 storage, dimensions, size, timestamps, statuses, visibility, provenance,
@@ -98,9 +98,9 @@ in area 7.
   - `artifacts/api-server/src/migrations/3320_media_canonical_contract_constraints.sql:99#ADD CONSTRAINT media_attachments_entity_type_check`, the §6.1 nine types;
   - `artifacts/api-server/src/migrations/3320_media_canonical_contract_constraints.sql:111#ADD CONSTRAINT media_attachments_visibility_override_check`.
 - **The writers.**
-  - The allowed types: `artifacts/api-server/src/lib/mediaAssets.ts:718#export const ATTACHMENT_ENTITY_TYPES = [`.
-  - The attachment writer: `artifacts/api-server/src/lib/mediaAssets.ts:756#export async function recordMediaAttachment(`.
-  - The fan-out helper: `artifacts/api-server/src/lib/mediaAssets.ts:818#export async function recordEntityMedia(`.
+  - The allowed types: `artifacts/api-server/src/lib/mediaAssets.ts:724#export const ATTACHMENT_ENTITY_TYPES = [`.
+  - The attachment writer: `artifacts/api-server/src/lib/mediaAssets.ts:762#export async function recordMediaAttachment(`.
+  - The fan-out helper: `artifacts/api-server/src/lib/mediaAssets.ts:824#export async function recordEntityMedia(`.
   - The endpoint: `artifacts/api-server/src/routes/mediaActions.ts:224#/media/:id/attachments`.
 - **The canonical read** selects the override with each attachment:
   `artifacts/api-server/src/lib/media/mediaCanonicalRead.ts:219#entity_id, position, is_cover, visibility_override, media_assets(`.
@@ -169,7 +169,7 @@ upload. §40 covers the client upload service.
   - Both record the poster on the asset: `artifacts/api-server/src/lib/mediaVideoPoster.ts:138#export async function recordPosterOnAsset(`.
 - **Readiness.** A row with both dimensions is written `ready`, and one without
   them is written `processing`:
-  `artifacts/api-server/src/lib/mediaAssets.ts:397#input.width != null && input.height != null ? "ready" : "processing"`.
+  `artifacts/api-server/src/lib/mediaAssets.ts:401#input.width != null && input.height != null ? "ready" : "processing"`.
 - **The lifecycle service** is migrations 2951 to 2955 plus
   `artifacts/api-server/src/services/media/MediaLifecycleService.ts:88#export async function claimMediaProcessing(`
   and `artifacts/api-server/src/services/media/MediaLifecycleService.ts:367#export async function retryMediaProcessing(`.
@@ -187,7 +187,7 @@ upload. §40 covers the client upload service.
   claims queued work (details under Findings).
 - **Unsized video.** A video the probe cannot size still has null dimensions.
   So it stays `processing`, and nothing moves it on:
-  `artifacts/api-server/src/lib/mediaAssets.ts:540#export async function completeVideoTranscode(`
+  `artifacts/api-server/src/lib/mediaAssets.ts:546#export async function completeVideoTranscode(`
   has no non-test caller. §22.4 records this for the pre-probe state.
 
 ## 5. Storage

@@ -410,7 +410,7 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | GET | `/api/places/photo/media` | `artifacts/api-server/src/routes/places.ts:739` |
 | PUT | `/api/postcards/:id/event-link` | `artifacts/api-server/src/routes/postcards.ts:1225` |
 | POST | `/api/postcards/sweep-orphans` | `artifacts/api-server/src/routes/postcards.ts:1337` |
-| POST | `/api/posts/:postId/location-event` | `artifacts/api-server/src/routes/posts.ts:2203` |
+| POST | `/api/posts/:postId/location-event` | `artifacts/api-server/src/routes/posts.ts:2194` |
 | POST | `/api/rent-a-buddy/bookings/:bookingId/change-request` | `artifacts/api-server/src/routes/rentABuddy.ts:7338` |
 | POST | `/api/rent-a-buddy/bookings/:bookingId/pay-deposit` | `artifacts/api-server/src/routes/rentABuddy.ts:2151` |
 | POST | `/api/rent-a-buddy/bookings/:bookingId/pay-full` | `artifacts/api-server/src/routes/rentABuddy.ts:2161` |

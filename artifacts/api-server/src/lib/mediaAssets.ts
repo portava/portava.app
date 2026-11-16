@@ -137,6 +137,8 @@ export interface RecordAssetInput {
   sourceType?: MediaSourceType;
   durationMs?: number | null;
   processingStatus?: string;
+  /** Operation retries must never overwrite the canonical receipt. */
+  preserveExisting?: boolean;
   /** §6 capturedAt (may precede uploadedAt); feeds provenance + eligibility. */
   capturedAt?: string | null;
   /** True when the asset carries a trustworthy location binding (§10). */
@@ -222,6 +224,8 @@ export interface RecordAssetResult {
   /** The media_assets id, or null when nothing was written. */
   assetId: string | null;
   assetVersion?: number | null;
+  reused?: boolean;
+  moderationStatus?: string;
   outcome: CanonicalWriteOutcome;
   /**
    * §6 columns dropped to make the write land. Non-empty ONLY for
@@ -404,9 +408,9 @@ export async function recordMediaAssetDetailed(
       return writeDegraded(sc, row, input, schema.state);
     }
 
-    const first = await upsertAssetRow(sc, row);
+    const first = await upsertAssetRow(sc, row, input);
     if (!first.error) {
-      return { assetId: first.id, assetVersion: first.version, outcome: "written", droppedColumns: [], errorCode: null, schemaState: "present" };
+      return { assetId: first.id, assetVersion: first.version, ...(first.reused ? { reused: true, moderationStatus: first.moderationStatus } : {}), outcome: "written", droppedColumns: [], errorCode: null, schemaState: "present" };
     }
 
     const errorCode = String((first.error as any)?.code ?? "") || null;
@@ -468,7 +472,7 @@ async function writeDegraded(
       dropped.push(col);
     }
   }
-  const second = await upsertAssetRow(sc, row);
+  const second = await upsertAssetRow(sc, row, input);
   if (second.error) {
     logger.warn(
       { err: second.error, bucket: input.storageBucket, path: input.storagePath },
@@ -488,6 +492,7 @@ async function writeDegraded(
   );
   return {
     assetId: second.id,
+    assetVersion: second.version, ...(second.reused ? { reused: true, moderationStatus: second.moderationStatus } : {}),
     outcome: "written_degraded",
     droppedColumns: dropped,
     errorCode: null,
@@ -495,18 +500,19 @@ async function writeDegraded(
   };
 }
 
-/** One upsert attempt. Never throws; returns the id or the driver's error. */
+/** One canonical write attempt; operation retries use ON CONFLICT DO NOTHING. */
 async function upsertAssetRow(
   sc: SupabaseClient,
   row: Record<string, unknown>,
-): Promise<{ id: string | null; version?: number | null; error: unknown }> {
+  input: RecordAssetInput,
+): Promise<{ id: string | null; version?: number | null; reused?: boolean; moderationStatus?: string; error: unknown }> {
   try {
-    const { data, error } = await sc
-      .from("media_assets")
-      .upsert(row, { onConflict: "storage_bucket,storage_path" })
-      .select("id, version")
-      .single();
+    const query = sc.from("media_assets")
+      .upsert(row, { onConflict: "storage_bucket,storage_path", ...(input.preserveExisting ? { ignoreDuplicates: true } : {}) })
+      .select("id, version");
+    const { data, error } = input.preserveExisting ? await query.maybeSingle() : await query.single();
     if (error) return { id: null, error };
+    if (!data && input.preserveExisting) return readExistingAssetReceipt(sc, input);
     const version: unknown = (data as any)?.version;
     return { id: ((data as any)?.id ?? null) as string | null, version: typeof version === "number" && Number.isSafeInteger(version) && version > 0 ? version : null, error: null };
   } catch (error) {
@@ -1117,4 +1123,20 @@ export function capturedAtFromPhotoMetadata(value: unknown, now: Date = new Date
   if (!Number.isFinite(ms) || new Date(ms).toISOString() !== value) return null;
   if (ms < Date.parse(EARLIEST_PLAUSIBLE_CAPTURE_ISO) || ms > now.getTime() + CAPTURE_CLOCK_SKEW_MS) return null;
   return value;
+}
+
+/** Reconcile a duplicate without rewriting richer metadata, holds or tombstones. */
+async function readExistingAssetReceipt(sc: SupabaseClient, input: RecordAssetInput) {
+  const { data, error } = await sc.from("media_assets")
+    .select("id, version, moderation_status, deleted_at, purge_status")
+    .eq("storage_bucket", input.storageBucket).eq("storage_path", input.storagePath)
+    .eq("owner_user_id", input.ownerUserId).maybeSingle();
+  if (error) return { id: null, error };
+  if (!data || data.deleted_at || data.purge_status !== "not_requested" || ["removed", "owner_deleted"].includes(data.moderation_status)) {
+    return { id: null, error: { code: "MEDIA_ASSET_UNAVAILABLE", message: "Canonical receipt absent, not owned or retired" } };
+  }
+  if (!Number.isSafeInteger(data.version) || data.version <= 0) {
+    return { id: null, error: { code: "MEDIA_ASSET_INVALID_VERSION", message: "Canonical receipt version unavailable" } };
+  }
+  return { id: data.id as string, version: data.version as number, reused: true, moderationStatus: data.moderation_status as string, error: null };
 }
