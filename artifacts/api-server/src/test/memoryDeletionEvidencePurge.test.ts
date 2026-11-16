@@ -255,7 +255,7 @@ function makeClient(store: Record<string, any[]>, opts: FakeOpts = {}) {
   }
   return {
     from: (t: string) => chain(t),
-    rpc: async () => ({ data: null, error: { message: "rpc not modelled", code: "PGRST202" } }),
+    rpc: async (name: string) => name === "memory_candidate_origin_ready" ? { data: true, error: null } : { data: null, error: { message: "rpc not modelled", code: "PGRST202" } },
     auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },
   };
 }
@@ -347,6 +347,7 @@ describe("Keep terminal Memory refusal", () => {
       const service = {
         ...client,
         rpc: async (name: string, args: any) => {
+          if (name === "memory_candidate_origin_ready") return client.rpc(name);
           commands.push(args.p_command.type);
           assert.equal(name, "memory_kernel_execute");
           assert.equal(args.p_command.type, "CREATE_MEMORY");
@@ -384,7 +385,7 @@ describe("Keep terminal Memory refusal", () => {
   }
 
   for (const sourceMode of ["LEGACY_IMPORTED", "USER_CREATED"]) for (const linked of [false, true]) {
-    it(`preserves surviving ${sourceMode}, ${linked ? "linked" : "interrupted"} retries without relabelling or duplicates`, async () => {
+    it(`preserves imported origin or corrects the old candidate default, ${sourceMode}, ${linked ? "linked" : "interrupted"}, without duplicates`, async () => {
       resetHighlightSchemaMemo();
       const store = seed();
       const { memoryId, memory } = fixture(store, "published", linked, sourceMode);
@@ -393,7 +394,7 @@ describe("Keep terminal Memory refusal", () => {
         const result = await confirmCandidate(client as any, input);
         assert.equal(result.ok, true, JSON.stringify(result));
         if (result.ok && "memoryId" in result) assert.equal(result.memoryId, memoryId);
-        assert.equal(memory.source_mode, sourceMode);
+        assert.equal(memory.source_mode, sourceMode === "USER_CREATED" ? "SUGGESTED" : sourceMode);
       }
       assert.equal(store.memories.length, 2);
       assert.equal(store.memory_items.filter(row => row.memory_id === memoryId).length, 1);
@@ -445,6 +446,7 @@ describe("Keep terminal Memory refusal", () => {
           return query;
         },
         rpc: async (name: string, args: any) => {
+          if (name === "memory_candidate_origin_ready") return base.rpc(name);
           assert.equal(name, "memory_kernel_execute");
           const command = args.p_command;
           commands.push(command.type);
@@ -553,7 +555,7 @@ describe("Keep terminal Memory refusal", () => {
           const select = query.select;
           query.select = (columns?: string) => {
             const selected = select(columns);
-            if (table === "memories" && columns === "id, state") {
+            if (table === "memories" && columns === "id, state, source_mode") {
               selected.maybeSingle = async () => ({ data: null, error: { code: "57014", message: "owner-state read failed" } });
             }
             return selected;

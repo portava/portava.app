@@ -671,6 +671,14 @@ export async function confirmCandidate(
   const loaded = await loadOwnEpisode(sc, input.ownerId, input.episodeId);
   if (!loaded.ok) return { ok: false, reason: loaded.reason, detail: loaded.detail };
   let ep = loaded.episode;
+  // H39: an older kernel silently drops source_mode. Refuse before claiming the
+  // episode, rather than creating a Memory with invented user-created origin.
+  try {
+    const ready = await sc.rpc("memory_candidate_origin_ready");
+    if (ready.error || ready.data !== true) return { ok: false, reason: "unavailable", detail: "candidate origin storage is unavailable" };
+  } catch {
+    return { ok: false, reason: "unavailable", detail: "candidate origin storage is unavailable" };
+  }
   const title = input.title && input.title.trim() ? input.title.trim().slice(0, 200) : null;
 
   // (1)
@@ -725,6 +733,7 @@ export async function confirmCandidate(
     const write = {
       id: derivedId,
       owner_id: input.ownerId,
+      source_mode: "SUGGESTED",
       title: title ?? ep.summary,
       caption: null,
       visibility: "only_me",
@@ -741,7 +750,7 @@ export async function confirmCandidate(
       actorUserId: input.ownerId,
       idempotencyKey: candidateCreateKey(ep.id),
       fromCandidate: true,
-      payload: { to_state: lifecycleStateOf("published"), visibility: "only_me", write, select: "id" },
+      payload: { to_state: lifecycleStateOf("published"), visibility: "only_me", candidate_episode_id: ep.id, write, select: "id" },
       fromKernelResult: (r: unknown) => { const k = (r ?? {}) as { memory_id?: unknown; id?: unknown }; return { id: String(k.memory_id ?? k.id ?? "") }; },
       legacy: async () => {
         const { data, error } = await sc.from("memories").insert(write).select("id").single();
@@ -771,7 +780,7 @@ export async function confirmCandidate(
   //      deletion lifecycle's RAW_EVIDENCE_PURGED would have done.
   const { data: keptRow, error: keptErr } = await sc
     .from("memories")
-    .select("id, state")
+    .select("id, state, source_mode")
     .eq("id", memoryId)
     .eq("owner_id", input.ownerId)
     .maybeSingle();
@@ -780,6 +789,33 @@ export async function confirmCandidate(
     const retired = await retireEpisodesAndPurgeEvidence(sc, { ownerId: input.ownerId, memoryId, episodeIds: [ep.id], now: input.now, order: "purge_first" });
     if (retired.state !== "done") return { ok: false, reason: "unavailable", detail: `retiring a terminal Memory's suggestion: ${retired.detail}` };
     return { ok: false, reason: "not_a_candidate", detail: "the Memory this suggestion was kept as has been deleted or removed" };
+  }
+
+  // Known older confirmations can carry the old default. Reconcile only this
+  // explicit candidate/receipt association, through the same command writer.
+  // An imported legacy identity keeps its historical origin.
+  if (!["SUGGESTED", "LEGACY_IMPORTED"].includes((keptRow as { source_mode?: string }).source_mode ?? "")) {
+    if ((keptRow as { source_mode?: string }).source_mode !== "USER_CREATED") {
+      return { ok: false, reason: "unavailable", detail: "the kept Memory has conflicting origin" };
+    }
+    const corrected = await dispatchMemoryCommand<{ id: string }>({
+      sc, commandType: "UPDATE_MEMORY", memoryId, actorUserId: input.ownerId,
+      idempotencyKey: `memory-candidate-origin:${ep.id}`,
+      payload: { candidate_episode_id: ep.id, patch: { source_mode: "SUGGESTED" } },
+      fromKernelResult: () => ({ id: memoryId! }),
+      legacy: async () => {
+        const { error } = await sc.from("memories").update({ source_mode: "SUGGESTED" })
+          .eq("id", memoryId!).eq("owner_id", input.ownerId).eq("source_mode", "USER_CREATED")
+          .in("state", ["draft", "published", "archived"]);
+        return error ? { ok: false, http: { code: "db_error", message: error.message } }
+          : { ok: true, body: { id: memoryId! } };
+      },
+    });
+    if (!corrected.ok) return { ok: false, reason: "kernel_refused", detail: "candidate origin correction was refused" };
+    const checked = await sc.from("memories").select("source_mode, state").eq("id", memoryId).eq("owner_id", input.ownerId).maybeSingle();
+    if (checked.error || checked.data?.source_mode !== "SUGGESTED" || ["deleted", "removed"].includes(checked.data?.state)) {
+      return { ok: false, reason: "unavailable", detail: "candidate origin correction could not be verified" };
+    }
   }
 
   if (keepCanonGates) {

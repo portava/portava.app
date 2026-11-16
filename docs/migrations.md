@@ -7304,3 +7304,15 @@ revocation and deletion using the intended release.
 Rollback: revert the new API/client path and revoke service-role EXECUTE on
 `passport_memory_source_set(uuid,uuid,uuid,uuid)`. Retain the private association
 rows for recovery; do not drop owner choices or alter canonical Memories.
+
+## 2026-11-16 — 4036 candidate source origin, pending rollout
+
+`4036_memory_candidate_source_origin.sql` extends the existing `memory_kernel_execute(jsonb)` after 3913 and the 3674 source-mode column. The installed CLI generated `20261116152531_memory_candidate_source_origin.sql`; it was moved to the canonical numeric path, with no duplicate CLI migration left to apply.
+
+A suggested create must name its owner's confirmed episode and reserved candidate key. Source-origin corrections require the explicit owner-confirmed evidence link or original candidate receipt. An exclusive candidate-row lock precedes the receipt read. The canonical kernel remains the only durable Memory command writer, with its original invoker security, events, outbox and receipt. The new read-only readiness function is service-role-only and checks the current kernel before the application claims a candidate.
+
+The migration also corrects nonterminal `USER_CREATED` Memories with explicit owner-confirmed candidate links, through `UPDATE_MEMORY` commands and stable origin-correction receipt keys. It preserves `LEGACY_IMPORTED` and unrelated records. A refused or conflicting reconciliation aborts the migration; it does not silently skip an inconsistent history. Before application, verify target identity/history and inspect the exact eligible source links/counts. Do not apply it through both migration workflows.
+
+Nine actual PostgreSQL tests cover upgrade/replay, resulting origin, transaction identity, two independent sessions, current ownership, pre-upgrade refusal, old-link repair, preserved histories and grants.341 existing regressions pass; a negative control fails when persistence is removed. No production schema/data/flag was changed by this work.
+
+Rollback: stop candidate confirmations and drain in-flight commands before restoring the pre-application kernel definition and previous application release. The readiness probe then returns false or may have its service grant revoked. Retain corrected origin metadata, events and receipts; do not erase confirmed history or relabel it to the old wrong default.
