@@ -24,7 +24,7 @@ export interface ExifFacts {
   hasGpsIfd: boolean;
   /** Number of entries in the GPS IFD. A richness indicator, never a value. */
   gpsEntryCount: number;
-  /** DateTimeOriginal (0x9003) else DateTime (0x0132), ISO-ish, or null. */
+  /** DateTimeOriginal with its explicit OffsetTimeOriginal, UTC, or unknown. */
   captureTs: string | null;
 }
 
@@ -95,7 +95,7 @@ export function findTiff(buf: Buffer): Buffer | null {
 
 /**
  * Walk IFD0 for the facts the audit needs. Reads tag numbers, counts and the
- * two date strings only.
+ * original capture date and timezone strings only; never image modification time.
  */
 export function parseExif(tiff: Buffer): ExifFacts {
   if (tiff.length < 8) return NO_EXIF;
@@ -110,6 +110,7 @@ export function parseExif(tiff: Buffer): ExifFacts {
   if (ifd0 + 2 > tiff.length) return NO_EXIF;
 
   const readAscii = (entryOff: number): string | null => {
+    if (u16(entryOff + 2) !== 2) return null;
     const count = u32(entryOff + 4);
     if (count === 0 || count > 64) return null;
     const off = count <= 4 ? entryOff + 8 : u32(entryOff + 8);
@@ -124,7 +125,7 @@ export function parseExif(tiff: Buffer): ExifFacts {
 
   let hasGpsIfd = false;
   let gpsEntryCount = 0;
-  let dateTime: string | null = null;
+  let offsetTimeOriginal: string | null = null;
   let dateTimeOriginal: string | null = null;
 
   const n0 = u16(ifd0);
@@ -138,8 +139,6 @@ export function parseExif(tiff: Buffer): ExifFacts {
       // See the invariant at the top of this file.
       hasGpsIfd = true;
       gpsEntryCount = entryCountAt(u32(e + 8));
-    } else if (tag === 0x0132) {
-      dateTime = readAscii(e);
     } else if (tag === 0x8769) {
       const sub = u32(e + 8);
       const n1 = entryCountAt(sub);
@@ -147,16 +146,14 @@ export function parseExif(tiff: Buffer): ExifFacts {
         const se = sub + 2 + j * 12;
         if (se + 12 > tiff.length) break;
         if (u16(se) === 0x9003) dateTimeOriginal = readAscii(se);
+        if (u16(se) === 0x9011) offsetTimeOriginal = readAscii(se);
       }
     }
   }
 
-  const raw = dateTimeOriginal ?? dateTime;
-  // EXIF dates are "YYYY:MM:DD HH:MM:SS" — not ISO, and not parseable as-is.
-  const captureTs =
-    raw && /^\d{4}:\d{2}:\d{2}/.test(raw)
-      ? `${raw.slice(0, 10).replace(/:/g, "-")}T${raw.slice(11) || "00:00:00"}Z`
-      : null;
+  // A timezone-free wall clock is not an instant. IFD0 DateTime describes
+  // modification, not capture; neither upload time nor GPS fills either gap.
+  const captureTs = originalCaptureInstant(dateTimeOriginal, offsetTimeOriginal);
 
   return { hasExif: true, hasGpsIfd, gpsEntryCount, captureTs };
 }
@@ -166,4 +163,14 @@ export function exifFactsFrom(buf: Buffer): ExifFacts | null {
   const tiff = findTiff(buf);
   if (tiff === null) return null;
   return tiff.length === 0 ? NO_EXIF : parseExif(tiff);
+}
+
+function originalCaptureInstant(raw: string | null, offset: string | null): string | null {
+  if (!raw || !offset || !/^\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2}$/.test(raw) || !/^[+-]\d{2}:\d{2}$/.test(offset)) return null;
+  const wall = raw.slice(0, 10).replace(/:/g, '-') + 'T' + raw.slice(11);
+  const local = Date.parse(wall + 'Z');
+  if (!Number.isFinite(local) || new Date(local).toISOString().slice(0, 19) !== wall) return null;
+  const hours = Number(offset.slice(1, 3)), minutes = Number(offset.slice(4));
+  if (hours > 14 || minutes > 59 || (hours === 14 && minutes !== 0)) return null;
+  return new Date(local - (offset[0] === '+' ? 1 : -1) * (hours * 60 + minutes) * 60_000).toISOString();
 }

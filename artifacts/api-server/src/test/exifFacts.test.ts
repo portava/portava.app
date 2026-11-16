@@ -69,16 +69,19 @@ interface FixtureOpts {
   le?: boolean;
   withGps?: boolean;
   withDto?: boolean;
+  offset?: string | null;
+  original?: string;
 }
 
 /** Assemble a TIFF block containing exactly the tags the parser claims to read. */
-function buildTiff({ le = true, withGps = true, withDto = true }: FixtureOpts = {}): Buffer {
+function buildTiff({ le = true, withGps = true, withDto = true, offset = "+00:00", original = "2021:07:14 09:30:00" }: FixtureOpts = {}): Buffer {
   const w16 = (b: Buffer, o: number, v: number) => (le ? b.writeUInt16LE(v, o) : b.writeUInt16BE(v, o));
   const w32 = (b: Buffer, o: number, v: number) => (le ? b.writeUInt32LE(v, o) : b.writeUInt32BE(v, o));
 
   const copyright = Buffer.from("fixture\0", "latin1");
   const dateTime = Buffer.from("2020:01:02 03:04:05\0", "latin1");
-  const dto = Buffer.from("2021:07:14 09:30:00\0", "latin1");
+  const dto = Buffer.from(`${original}\0`, "latin1");
+  const zone = offset === null ? null : Buffer.from(`${offset}\0`, "latin1");
 
   const rational = (pairs: Array<[number, number]>): Buffer => {
     const b = Buffer.alloc(pairs.length * 8);
@@ -94,7 +97,8 @@ function buildTiff({ le = true, withGps = true, withDto = true }: FixtureOpts = 
   const n0 = 2 + (withDto ? 1 : 0) + (withGps ? 1 : 0);
   const ifd0Off = 8;
   const exifOff = ifd0Off + 2 + n0 * 12 + 4;
-  const exifSize = withDto ? 2 + 12 + 4 : 0;
+  const nExif = zone ? 2 : 1;
+  const exifSize = withDto ? 2 + nExif * 12 + 4 : 0;
   const gpsOff = exifOff + exifSize;
   const nGps = 4;
   const gpsSize = withGps ? 2 + nGps * 12 + 4 : 0;
@@ -111,6 +115,7 @@ function buildTiff({ le = true, withGps = true, withDto = true }: FixtureOpts = 
   const copyrightAt = put(copyright);
   const dateTimeAt = put(dateTime);
   const dtoAt = withDto ? put(dto) : 0;
+  const zoneAt = withDto && zone ? put(zone) : 0;
   const latAt = withGps ? put(lat) : 0;
   const lonAt = withGps ? put(lon) : 0;
 
@@ -135,13 +140,18 @@ function buildTiff({ le = true, withGps = true, withDto = true }: FixtureOpts = 
   w32(b, e, 0);
 
   if (withDto) {
-    w16(b, exifOff, 1);
+    w16(b, exifOff, nExif);
     const se = exifOff + 2;
     w16(b, se, 0x9003);
     w16(b, se + 2, TYPE_ASCII);
     w32(b, se + 4, dto.length);
     w32(b, se + 8, dtoAt);
-    w32(b, se + 12, 0);
+    if (zone) {
+      w16(b, se + 12, 0x9011); w16(b, se + 14, TYPE_ASCII);
+      w32(b, se + 16, zone.length);
+      if (zone.length <= 4) zone.copy(b, se + 20); else w32(b, se + 20, zoneAt);
+    }
+    w32(b, se + nExif * 12, 0);
   }
 
   if (withGps) {
@@ -231,13 +241,20 @@ describe("exifFacts — presence and counts, never values", () => {
     assert.equal(facts.gpsEntryCount, 0);
   });
 
-  it("prefers DateTimeOriginal, falling back to DateTime", () => {
-    const withDto = exifFactsFrom(jpegWith(buildTiff({})));
-    assert.equal(withDto?.captureTs, "2021-07-14T09:30:00Z", "0x9003 wins when present");
-
-    const noDto = exifFactsFrom(jpegWith(buildTiff({ withDto: false })));
-    assert.equal(noDto?.captureTs, "2020-01-02T03:04:05Z", "falls back to IFD0 0x0132");
-  });
+  for (const le of [true, false]) {
+    it(`converts the original offset across day boundaries without using modification time (${le ? 'II' : 'MM'})`, () => {
+      assert.equal(exifFactsFrom(jpegWith(buildTiff({ le })))?.captureTs, '2021-07-14T09:30:00.000Z');
+      assert.equal(exifFactsFrom(jpegWith(buildTiff({ le, offset: '+14:00' })))?.captureTs, '2021-07-13T19:30:00.000Z');
+      assert.equal(exifFactsFrom(jpegWith(buildTiff({ le, offset: '-05:30' })))?.captureTs, '2021-07-14T15:00:00.000Z');
+      assert.equal(exifFactsFrom(jpegWith(buildTiff({ le, withDto: false })))?.captureTs, null, 'modification time is not capture time');
+      for (const offset of [null, '', 'Z', '+14:01', '+15:00', '+02:60', '02:00']) {
+        assert.equal(exifFactsFrom(jpegWith(buildTiff({ le, offset })))?.captureTs, null, String(offset));
+      }
+      for (const original of ['2021:02:29 09:30:00', '2021:07:14 24:00:00', '2021:07:14', '2021:13:14 09:30:00']) {
+        assert.equal(exifFactsFrom(jpegWith(buildTiff({ le, original })))?.captureTs, null, original);
+      }
+    });
+  }
 
   it("reports a stripped JPEG as clean, not as unscanned", () => {
     const buf = jpegStripped();

@@ -71,7 +71,7 @@ import {
  *
  * This is that writer. The upload route already holds the raw bytes and already
  * parses their EXIF — `lib/exifFacts` is the presence-and-count parser behind
- * `audit:storage-exif`, and it reads DateTimeOriginal/DateTime while
+ * `audit:storage-exif`, and it reads DateTimeOriginal/OffsetTimeOriginal while
  * deliberately never being able to produce a coordinate. Capture time is read
  * from the RAW buffer, before `processImage` strips the metadata.
  *
@@ -86,10 +86,10 @@ export const EARLIEST_PLAUSIBLE_CAPTURE_ISO = "1990-01-01T00:00:00.000Z";
 
 /**
  * How far ahead of the server clock a capture time may sit before it is
- * rejected. Device clocks drift and EXIF carries no timezone, so a photo taken
- * "now" in a UTC+14 timezone legitimately reads up to 14 h in the future once
- * exifFacts stamps the naive local time with a `Z`. 24 h covers that plus
- * ordinary skew without admitting a wrong-decade date.
+ * rejected. Keep the established 24-hour device-clock tolerance. EXIF dates
+ * require an explicit original offset and are converted to UTC before this
+ * check; missing timezone is unknown, never the server or device timezone.
+ * This bound tolerates clock skew without admitting a wrong-decade date.
  */
 export const CAPTURE_CLOCK_SKEW_MS = 24 * 60 * 60 * 1000;
 
