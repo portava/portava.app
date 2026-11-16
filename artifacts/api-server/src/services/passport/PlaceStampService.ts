@@ -19,8 +19,8 @@
  *   - Protected zones: the check-in point is classified against the active
  *     protected-zone policy (lib/protectedZoneStore, the one reader). Anything
  *     but `allow` — and a policy that could not be read — writes nothing.
- *     There is no per-traveller zone store in this tree yet; when one exists it
- *     joins this check.
+ *     Owner-designated protections use the existing mapPersonalProtection
+ *     reader with no cache; unreadable/incomplete personal policy writes nothing.
  *   - Why and when: source_type (the act) and awarded_at (the instant) are
  *     written on the stamp, as on every v1 stamp.
  *   - Ordering: `passport_place_stamps_enabled` (3800, seeded FALSE) is read
@@ -35,6 +35,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { loadActiveProtectedZones } from "../../lib/protectedZoneStore.js";
+import { loadPersonalProtectedZones, personalPointSuppressed } from "../../lib/mapPersonalProtection.js";
 import { classifyAgainstProtected } from "../../lib/protectedLocations.js";
 import { point, type MapObject } from "../../lib/mapObjects.js";
 import { createStamp } from "./PassportStampService.js";
@@ -89,6 +90,9 @@ export async function awardPlaceStampForCheckin(
       renderingPriority: 0,
     } as MapObject;
     if (classifyAgainstProtected(at, zones).action !== "allow") return "protected_zone";
+    const personal = await loadPersonalProtectedZones(sc, [c.userId]);
+    if (personal === null) return "zone_policy_unreadable";
+    if (personalPointSuppressed(personal.get(c.userId), c)) return "protected_zone";
 
     // The traveller's own default stamp visibility. createStamp falls back to
     // "public" when this read fails; a Place stamp does not — it is not written.

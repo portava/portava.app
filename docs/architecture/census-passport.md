@@ -2743,7 +2743,7 @@ longer wait on that acceptance. `head_commit` is NOT re-declared.*
 
 ### 33.1 What was built
 
-- **The writer:** `artifacts/api-server/src/services/passport/PlaceStampService.ts:71#export async function awardPlaceStampForCheckin(`.
+- **The writer:** `artifacts/api-server/src/services/passport/PlaceStampService.ts:72#export async function awardPlaceStampForCheckin(`.
   It is the only one, as `passportStampPlaceVocabulary.test.ts` case 7 now pins. It writes nothing when:
   - `passport_place_stamps_enabled` is off, absent or unreadable;
   - the check-in point is inside an active protected zone, or the zone policy cannot be read;
@@ -2760,7 +2760,7 @@ longer wait on that acceptance. `head_commit` is NOT re-declared.*
 - **The act:** a GPS-verified, non-suspicious hidden-gem visit, at the gem's `canonical_place_id`.
   Plan geofence check-ins carry no canonical place, and there is no QR check-in at a place in this tree,
   so neither earns one yet.
-- **Tests:** `artifacts/api-server/src/test/passportPlaceStamp.test.ts:138#describe("B. one Place stamp per person per place"`
+- **Tests:** `artifacts/api-server/src/test/passportPlaceStamp.test.ts:140#describe("B. one Place stamp per person per place"`
   (8 tests). Eight mutations were run, and each one turned a test red.
 
 ### 33.2 Restated, not moved
@@ -2792,7 +2792,7 @@ longer wait on that acceptance. `head_commit` is NOT re-declared.*
   false clause and an activation prerequisite. The guard now withholds it from every caller but the owner
   (`artifacts/api-server/src/services/passport/PassportPrivacyGuard.ts:163#if (stamp.stamp_type === "place" && callerCtx !== "owner") {`).
   One case per context, plus the hotel-blur and other-type cases:
-  `artifacts/api-server/src/test/passportPlaceStamp.test.ts:230#describe("G. verifier N1`.
+  `artifacts/api-server/src/test/passportPlaceStamp.test.ts:232#describe("G. verifier N1`.
   Removing the clause turns four cases red (public, circle, trip-crew, and a circle-only stamp seen by its circle). §32.2, §33.1, D-84, the `PlaceStampService` header and 3800's
   flag description are corrected.
 - **N5 — 3800 could have changed how a NULL-city stamp deduplicates.** Two definitions of
@@ -2801,7 +2801,7 @@ longer wait on that acceptance. `head_commit` is NOT re-declared.*
   `pg_get_indexdef` and accepts exactly those two forms, or the partial form of either on a replay. It
   rebuilds the same column list with the `'place'` predicate, and refuses anything else. The postcondition
   and the rollback know the same two partial forms. Test:
-  `artifacts/api-server/src/test/passportPlaceStamp.test.ts:198#describe("F. verifier N5`.
+  `artifacts/api-server/src/test/passportPlaceStamp.test.ts:200#describe("F. verifier N5`.
 - **Activation prerequisites, completed.** P61's activation list (§33.2) gains one item. The one writer runs
   from the hidden-gem verify-visit, which returns before it unless `hidden_gems_passport_enabled` is on.
   So activation needs 2880 and 3800 applied, and both `hidden_gems_passport_enabled` and
@@ -2820,7 +2820,7 @@ longer wait on that acceptance. `head_commit` is NOT re-declared.*
   `neighborhood` along with `place_id`, so it holds by construction
   (`artifacts/api-server/src/services/passport/PassportPrivacyGuard.ts:164#return { ...stamp, place_id: null, neighborhood: null };`).
   The owner keeps both. The N1 cases now assert it for public, circle and trip-crew callers, and for a
-  circle-only stamp (`artifacts/api-server/src/test/passportPlaceStamp.test.ts:230#describe("G. verifier N1`).
+  circle-only stamp (`artifacts/api-server/src/test/passportPlaceStamp.test.ts:232#describe("G. verifier N1`).
   Without the change those four cases turn red.
 - **3800's provenance.** 3800's header, `docs/migrations.md` and §34 said 0042 defines the COALESCE form of
   `passport_stamps_dedup_idx`. 0042 defines no such index. That form is named only as a sentence in 2880's
@@ -2869,7 +2869,7 @@ The only caller is still the GPS hidden-gem verify-visit route. The complete pat
 The route gates are at `artifacts/api-server/src/routes/hiddenGems.ts:958#if (!await isFlagEnabled(sc, "hidden_gems_enabled"))`,
 `artifacts/api-server/src/routes/hiddenGems.ts:961#if (!await isFlagEnabled(sc,` and
 `artifacts/api-server/src/routes/hiddenGems.ts:984#.from("feature_flags").select("enabled")`; the last gate is in
-`artifacts/api-server/src/services/passport/PlaceStampService.ts:71#export async function awardPlaceStampForCheckin(`.
+`artifacts/api-server/src/services/passport/PlaceStampService.ts:72#export async function awardPlaceStampForCheckin(`.
 The ON entries above are existing repository policy, not requests to flip additional flags.
 
 3. Exercise a successful, non-suspicious GPS visit to an active gem with a non-null canonical place;
@@ -2880,7 +2880,7 @@ The ON entries above are existing repository policy, not requests to flip additi
    D-84/OD-MAP-3 as implemented, or silently treat activation as resolving it. Plan geofences have no
    canonical place and there is no place QR check-in producer; neither earns a Place stamp today.
 
-Regression: `artifacts/api-server/src/test/passportPlaceStamp.test.ts:111#describe("H. P61 activation evidence`.
+Regression: `artifacts/api-server/src/test/passportPlaceStamp.test.ts:113#describe("H. P61 activation evidence`.
 It reads the sole producer's upstream flag names and requires all of them, plus the service flag,
 in the activation evidence. Before this correction it fails on the omitted base hidden-gem gate.
 The existing runtime cases still cover awarding, deduplication, fail-closed policy reads and redaction.
@@ -2982,3 +2982,26 @@ No row, total, scope-coverage floor or citation threshold is promoted by this re
 ### November 9 release evidence
 
 World and Saved Places expose eligible current saved collection/place records and Passport stamp artwork. The new recording receipt belongs to its video publication and does not grant a Passport achievement, Trust score, presence claim or country visit. These changes do not issue a travel award or supply new verification/legal evidence.
+
+### November 16 — P61 personal protected-place integration
+
+The missing-store statement in §37.2 is historical: migration 4008 now supplies
+`map_personal_protected_places`, and the shared `mapPersonalProtection` reader is
+already used by Map consumers. The Place-stamp writer now uses that same reader
+before calling `createStamp`. It suppresses the owner's protected point and
+refuses unreadable, incomplete or malformed personal policy. Other owners'
+designations do not affect the award; a changed designation affects the next
+read without a personal-policy cache. No new store, writer, migration or flag
+activation is introduced.
+
+The three new regression cases fail against the prior writer, which awards in
+all three prohibited scenarios. The repaired writer, existing vocabulary and
+shared personal-protection suites pass 38 tests with zero failures or skips.
+These are local behavioral tests with database doubles, not deployed or device
+proof. All four gates in §37.2 still apply, and the intended environment must
+also have migration 4008. The integrated GPS visit, deduplication and visibility
+journey remains to be verified on the intended release.
+
+| ID | Was | Now | Current requirement |
+|---|---|---|---|
+| P61 | **W** | **W** | The existing personal protected-place reader now gates the sole Place-stamp writer. Local negative controls and 38 focused tests pass. Migration, four-gate activation, integrated GPS/device and deployed privacy evidence remain outstanding; no activation or closure is claimed. |
