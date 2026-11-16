@@ -35,6 +35,7 @@ export function LensTabBar({ active, onSelect }: LensTabBarProps) {
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
+      style={styles.scroll}
       contentContainerStyle={styles.bar}
     >
       {LENSES.map((lens) => {
@@ -62,8 +63,10 @@ export function LensTabBar({ active, onSelect }: LensTabBarProps) {
 }
 
 const styles = StyleSheet.create({
+  scroll: { flexGrow: 0 },
   bar: { gap: space.sm, paddingHorizontal: space.lg, paddingVertical: space.sm },
   tab: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
