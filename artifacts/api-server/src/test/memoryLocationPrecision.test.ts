@@ -1,3 +1,5 @@
+import { memoryEditFixture } from './helpers/memoryEditFixture.js';
+import { makeKernelRpc } from './memoryCommandKernelFake.js';
 /**
  * §10 / §23 — the owner's location precision is a ceiling on publication.
  *
@@ -197,6 +199,7 @@ interface State {
 }
 
 function makeClient(state: State) {
+  const editRpc = makeKernelRpc({ tables: { memories: state.memories }, rpcCalls: [], failOn: new Set(), absent: false });
   function from(table: string) {
     const filters: Array<(r: any) => boolean> = [];
     let pendingUpdate: any = null;
@@ -236,7 +239,7 @@ function makeClient(state: State) {
   }
   return {
     from,
-    async rpc() { return { data: [], error: null }; },
+    async rpc(name: string, args: unknown) { return name === "memory_field_edits_ready" || name === "memory_kernel_execute" ? editRpc(name, args) : { data: [], error: null }; },
     auth: {
       getUser: async (t: string) => {
         const map: Record<string, string> = { "owner-tok": OWNER, "viewer-tok": VIEWER };
@@ -440,7 +443,7 @@ describe("the flag is a schema-presence gate: OFF must be the pre-2338 behaviour
       const res = await fetch(`${app.baseUrl}/api/memories/${MEM}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", connection: "close", Authorization: "Bearer owner-tok" },
-        body: JSON.stringify({ locationPrecision: "city" }),
+        body: JSON.stringify({ locationPrecision: "city", expected: { state: state.memories[0].state, ...(state.memories[0].location_precision !== undefined ? { locationPrecision: state.memories[0].location_precision } : {}) } }),
       });
       assert.equal(res.status, 200);
       assert.equal(state.memories[0].location_precision, undefined,
@@ -455,7 +458,7 @@ describe("the flag is a schema-presence gate: OFF must be the pre-2338 behaviour
       const res = await fetch(`${app.baseUrl}/api/memories/${MEM}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", connection: "close", Authorization: "Bearer owner-tok" },
-        body: JSON.stringify({ locationPrecision: "neighborhood" }),
+        body: JSON.stringify({ locationPrecision: "neighborhood", expected: { state: state.memories[0].state, ...(state.memories[0].location_precision !== undefined ? { locationPrecision: state.memories[0].location_precision } : {}) } }),
       });
       assert.equal(res.status, 200);
       assert.equal(state.memories[0].location_precision, "neighborhood");
@@ -517,12 +520,13 @@ describe("the flag is a schema-presence gate: OFF must be the pre-2338 behaviour
   });
 
   it("rejects a rung that is not on the ladder", async () => {
-    const app = await startApp(stateWith("exact", true));
+    const state = stateWith("exact", true);
+    const app = await startApp(state);
     try {
       const res = await fetch(`${app.baseUrl}/api/memories/${MEM}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", connection: "close", Authorization: "Bearer owner-tok" },
-        body: JSON.stringify({ locationPrecision: "street" }),
+        body: JSON.stringify({ locationPrecision: "street", expected: { state: state.memories[0].state, ...(state.memories[0].location_precision !== undefined ? { locationPrecision: state.memories[0].location_precision } : {}) } }),
       });
       assert.equal(res.status, 400);
     } finally { await app.close(); }
@@ -576,7 +580,7 @@ describe("the gate read FAILS: the read clamps, the write refuses — nothing is
       const res = await fetch(`${app.baseUrl}/api/memories/${MEM}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", connection: "close", Authorization: "Bearer owner-tok" },
-        body: JSON.stringify({ locationPrecision: "city" }),
+        body: JSON.stringify({ locationPrecision: "city", expected: { state: state.memories[0].state, ...(state.memories[0].location_precision !== undefined ? { locationPrecision: state.memories[0].location_precision } : {}) } }),
       });
       assert.equal(res.status, 503);
       assert.equal(state.memories[0].location_precision, "exact");

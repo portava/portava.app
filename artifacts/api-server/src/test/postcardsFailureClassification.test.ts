@@ -1,3 +1,4 @@
+import { activeMediaAccountRead } from './helpers/mediaAccountReadFixture.js';
 /**
  * A postcard upload that could not be CHECKED must not be reported as a
  * postcard that FAILED the check.
@@ -125,7 +126,7 @@ function fakeClient() {
       select(_c?: string, o?: any) { if (o?.count === 'exact' && o?.head) countMode = true; return b; },
       eq(c: string, v: any) { filtered = filtered.filter((r) => r[c] === v); return b; },
       neq(c: string, v: any) { filtered = filtered.filter((r) => r[c] !== v); return b; },
-      is(c: string, v: any) { filtered = filtered.filter((r) => r[c] === v); return b; },
+      is(c: string, v: any) { filtered = filtered.filter((r) => (r[c] ?? null) === v); return b; },
       in(c: string, v: any[]) { filtered = filtered.filter((r) => v.includes(r[c])); return b; },
       or() { return b; }, order() { return b; }, ilike() { return b; },
       limit(n: number) { filtered = filtered.slice(0, n); return b; },
@@ -166,6 +167,7 @@ function fakeClient() {
     else if (table === 'passport_postcards') postcards.push(row);
   }
   return {
+    rpc: activeMediaAccountRead,
     auth: {
       async getUser(token: string) {
         if (token !== TOKEN) return { data: { user: null }, error: new Error('bad token') };

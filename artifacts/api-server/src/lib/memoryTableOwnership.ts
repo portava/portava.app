@@ -152,8 +152,8 @@ export const MEMORY_TABLE_OWNERSHIP: readonly MemoryTableOwnership[] = [
       "no payload, and a key that cannot express 'same projection, different audience'. " +
       "That is why memory_derivative_registry is built BESIDE it rather than on it.",
   },
-  { table: "memory_items",    subsystem: "scrapbook", writer: "routes/memories.ts", reader: "routes/memories.ts",
-    appendOnly: false, canonical: true, liveInProduction: true, providedBy: "0067", notes: "The original Memories scrapbook." },
+  { table: "memory_items",    subsystem: "scrapbook", writer: "MemoryDomainService → public.insert_memory_media_item (insert); routes/memories.ts and kernel (edit/delete); reconcile_memory_media_binding (reviewed reference only)", reader: "routes/memories.ts; services/memory/memoryMediaBinding.ts (bounded admin review)",
+    appendOnly: false, canonical: true, liveInProduction: true, providedBy: "0067", notes: "The original Memories scrapbook. Pending migration 4041 shares the insertion owner between kernel and legacy commands, binding canonical media in the same transaction. Admin review reuses existing rows and the atomic reference/audit command without a separate inventory store or automatic backfill; rollout remains required." },
   { table: "memory_tags",     subsystem: "scrapbook", writer: "routes/memories.ts", reader: "routes/memories.ts",
     appendOnly: false, canonical: true, liveInProduction: true, providedBy: "0067", notes: "Participant tags; consent lives here." },
   { table: "memory_likes",    subsystem: "scrapbook", writer: "routes/memories.ts", reader: "routes/memories.ts",

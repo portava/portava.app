@@ -1,3 +1,5 @@
+import { memoryEditFixture } from './helpers/memoryEditFixture.js';
+import { makeKernelRpc } from './memoryCommandKernelFake.js';
 /**
  * §23 `canPublishMemory(userId, memoryId, audience)` — the audience predicate,
  * and the property that decides which audiences it may refuse.
@@ -162,7 +164,7 @@ function makeClient(db: Record<string, any[]>, failTables = new Set<string>()) {
   }
   return {
     from(table: string) { return chain(table); },
-    rpc: async () => ({ data: null, error: { message: "kernel rpc not applied here" } }),
+    rpc: makeKernelRpc({ tables: db, rpcCalls: [], failOn: new Set(), absent: false }),
     storage: { from: () => ({ remove: async () => ({ data: null, error: null }) }) },
     auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },
   } as any;
@@ -301,7 +303,8 @@ async function call(app: App, method: string, path: string, viewer: string, body
   const res = await fetch(app.baseUrl + path, {
     method,
     headers: { Authorization: `Bearer ${viewer}`, "Content-Type": "application/json", connection: "close" },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(method === "PATCH"
+      ? memoryEditFixture(app.db.memories!.find(row => row.id === path.split('/').at(-1)) ?? {}, body as Record<string, unknown>) : body),
   });
   const text = await res.text();
   let parsed: any = null;

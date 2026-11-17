@@ -599,6 +599,8 @@ export type AccountStatus = 'active' | 'deactivated' | 'pending_deletion';
 export interface AccountStatusResult {
   accountStatus: AccountStatus;
   deletionScheduledAt: string | null;
+  reactivateUntil?: string | null;
+  selfRecoverableUntil?: string | null;
 }
 
 /**
@@ -667,7 +669,7 @@ export async function getAccountStatus(): Promise<ProfileResult<AccountStatusRes
 
 // ── Account controls ──────────────────────────────────────────────────────────
 
-export async function deactivateAccount(): Promise<ProfileResult<{ deactivated: boolean }>> {
+export async function deactivateAccount(): Promise<ProfileResult<{ deactivated: boolean; reactivateUntil: string }>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
   const token = await freshToken();
   if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
@@ -741,7 +743,7 @@ export async function reactivateAccount(): Promise<ProfileResult<{ reactivated: 
   }
 }
 
-export async function requestAccountDeletion(): Promise<ProfileResult<{ deletionScheduled: boolean; scheduledAt: string | null }>> {
+export async function requestAccountDeletion(): Promise<ProfileResult<{ deletionScheduled: boolean; scheduledAt: string | null; selfRecoverableUntil: string | null }>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
   const token = await freshToken();
   if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
@@ -765,6 +767,7 @@ export async function requestAccountDeletion(): Promise<ProfileResult<{ deletion
 export interface DeletionRequestState {
   pending: boolean;
   scheduledAt: string | null;
+  selfRecoverableUntil: string | null;
 }
 
 /** Whether this account has a pending deletion request, and when it runs. */
@@ -784,7 +787,7 @@ export async function getAccountDeletionRequest(): Promise<ProfileResult<Deletio
     const body = (await res.json()) as any;
     return {
       ok: true,
-      data: { pending: body?.pending === true, scheduledAt: typeof body?.scheduledAt === 'string' ? body.scheduledAt : null },
+      data: { pending: body?.pending === true, scheduledAt: typeof body?.scheduledAt === 'string' ? body.scheduledAt : null, selfRecoverableUntil: typeof body?.selfRecoverableUntil === 'string' ? body.selfRecoverableUntil : null },
     };
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
@@ -793,7 +796,7 @@ export async function getAccountDeletionRequest(): Promise<ProfileResult<Deletio
 }
 
 /** Cancels a pending deletion request; the server makes the account active again. */
-export async function cancelAccountDeletion(): Promise<ProfileResult<{ cancelled: boolean }>> {
+export async function cancelAccountDeletion(): Promise<ProfileResult<{ cancelled: boolean; accountStatus: 'active' | 'deactivated' }>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
   const token = await freshToken();
   if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };

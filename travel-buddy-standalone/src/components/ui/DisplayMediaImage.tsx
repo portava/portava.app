@@ -32,6 +32,8 @@ import { color, radius, space, type as t, icon } from '../../theme/tokens.ts';
 import { type IdentityInput, fallbackInitials } from '../../utils/identity.ts';
 import { resolveDisplayMedia } from '../../lib/displayMedia.ts';
 import { hydrateMediaUrls, useHydratedMedia } from '../../services/mediaUrl.ts';
+import { hydratedMediaSource } from '../../services/mediaRequestSource.ts';
+import { resolveMediaRequestSources, type MediaRequestSource } from '../../services/mediaRequestSource.ts';
 import { _evictBatchSignEntry } from '../../lib/batchSignMedia.ts';
 import { isPrivateMediaRefOf, mediaSigningReference } from '../../services/playbackUri.ts';
 import { useMediaScopeKey } from '../../hooks/useMediaScopeKey.ts';
@@ -233,8 +235,8 @@ function ScopedMediaImage({
   const [phase, setPhase] = useState<Phase>(resolved ? 'loading' : 'error');
   const reHydrated = useRef(false);
   const onErrorRef = useRef(onError); onErrorRef.current = onError;
-  const [resolvedSource, setResolvedSource] = useState<{ uri: string } | null>(
-    resolved && !isPrivateMediaRefOf(resolved) ? { uri: resolved } : null,
+  const [resolvedSource, setResolvedSource] = useState<MediaRequestSource | null>(
+    resolved && !isPrivateMediaRefOf(resolved) ? hydratedMediaSource(resolved) : null,
   );
   const sourceRef = useRef(resolvedSource?.uri); sourceRef.current = resolvedSource?.uri;
   const [deadline] = useState(() => Date.now() + 12_000);
@@ -248,16 +250,16 @@ function ScopedMediaImage({
   }, [phase, deadline, current, retired]);
 
   // Hydrate via signed-URL layer — replaces the old mediaSource() useEffect.
-  const { resolved: hydratedMap } = useHydratedMedia(resolved ? [resolved] : []);
+  const { resolved: hydratedMap, sources } = useHydratedMedia(resolved ? [resolved] : []);
 
   useEffect(() => {
     if (!current() || !resolved) return;
     const hydratedUrl = hydratedMap[resolved];
-    if (typeof hydratedUrl === 'string') setResolvedSource({ uri: hydratedUrl });
+    if (typeof hydratedUrl === 'string') setResolvedSource(hydratedMediaSource(hydratedUrl, sources));
     else if (hydratedUrl === null) {
       retired.current = true; setResolvedSource(null); setPhase('error'); onErrorRef.current?.();
     }
-  }, [resolved, hydratedMap, current, retired]);
+  }, [resolved, hydratedMap, sources, current, retired]);
 
   const handleError = useCallback(() => {
     if (!current() || sourceRef.current !== resolvedSource?.uri) return;
@@ -268,11 +270,11 @@ function ScopedMediaImage({
     if (resolved && isPrivateMediaRefOf(resolved) && !reHydrated.current) {
       reHydrated.current = true;
       _evictBatchSignEntry(mediaSigningReference(resolved));
-      hydrateMediaUrls([resolved]).then(result => {
+      hydrateMediaUrls([resolved]).then(resolveMediaRequestSources).then(result => {
         if (!current()) return;
         const newUrl = result[resolved];
         if (!newUrl) fail();
-        else setResolvedSource({ uri: newUrl });
+        else setResolvedSource(newUrl);
       }).catch(fail);
     } else fail();
   }, [resolved, resolvedSource?.uri, current, retired]);
@@ -328,7 +330,7 @@ function ScopedMediaImage({
             source={resolvedSource}
             style={StyleSheet.absoluteFill}
             contentFit={contentFit}
-            cachePolicy="memory-disk"
+            cachePolicy={resolvedSource?.headers ? 'none' : 'memory-disk'}
             transition={200}
             placeholder={blurhash ? { blurhash } : undefined}
             accessibilityLabel={label}
@@ -406,19 +408,19 @@ function ScopedAvatar({ uri, user, size, style, bg, testID }: AvatarImageProps) 
 
   // Reset error state AND source when the URI changes so no stale relay URL
   // from the previous avatar is briefly shown for the new one.
-  const [resolvedSource, setResolvedSource] = useState<{ uri: string } | null>(
-    resolvedUri && !isPrivateMediaRefOf(resolvedUri) ? { uri: resolvedUri } : null,
+  const [resolvedSource, setResolvedSource] = useState<MediaRequestSource | null>(
+    resolvedUri && !isPrivateMediaRefOf(resolvedUri) ? hydratedMediaSource(resolvedUri) : null,
   );
 
   // Hydrate via signed-URL layer — replaces the old mediaSource() useEffect.
-  const { resolved: hydratedMap } = useHydratedMedia(resolvedUri ? [resolvedUri] : []);
+  const { resolved: hydratedMap, sources } = useHydratedMedia(resolvedUri ? [resolvedUri] : []);
 
   useEffect(() => {
     if (!current() || !resolvedUri) return;
     const hydratedUrl = hydratedMap[resolvedUri];
-    if (typeof hydratedUrl === 'string') setResolvedSource({ uri: hydratedUrl });
+    if (typeof hydratedUrl === 'string') setResolvedSource(hydratedMediaSource(hydratedUrl, sources));
     else if (hydratedUrl === null) { retired.current = true; setResolvedSource(null); setImgError(true); }
-  }, [resolvedUri, hydratedMap, current, retired]);
+  }, [resolvedUri, hydratedMap, sources, current, retired]);
 
   const handleAvatarError = useCallback(() => {
     if (!current()) return;
@@ -426,11 +428,11 @@ function ScopedAvatar({ uri, user, size, style, bg, testID }: AvatarImageProps) 
     if (resolvedUri && isPrivateMediaRefOf(resolvedUri) && !reHydrated.current) {
       reHydrated.current = true;
       _evictBatchSignEntry(mediaSigningReference(resolvedUri));
-      hydrateMediaUrls([resolvedUri]).then(result => {
+      hydrateMediaUrls([resolvedUri]).then(resolveMediaRequestSources).then(result => {
         if (!current()) return;
         const newUrl = result[resolvedUri];
         if (!newUrl) fail();
-        else setResolvedSource({ uri: newUrl });
+        else setResolvedSource(newUrl);
       }).catch(fail);
     } else fail();
   }, [resolvedUri, current, retired]);
@@ -453,7 +455,7 @@ function ScopedAvatar({ uri, user, size, style, bg, testID }: AvatarImageProps) 
           source={resolvedSource}
           style={[StyleSheet.absoluteFill, { borderRadius: size / 2 }]}
           contentFit="cover"
-          cachePolicy="memory-disk"
+          cachePolicy={resolvedSource?.headers ? 'none' : 'memory-disk'}
           transition={150}
           onError={handleAvatarError}
         />

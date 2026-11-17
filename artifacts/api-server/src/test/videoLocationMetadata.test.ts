@@ -1,3 +1,4 @@
+import { activeMediaAccountRead } from "./helpers/mediaAccountReadFixture.js";
 /**
  * Video location metadata — the container-level counterpart of the EXIF/GPS
  * strip that images already get.
@@ -185,6 +186,7 @@ function makeClient() {
     return b;
   }
   return {
+    rpc: activeMediaAccountRead,
     from: builder,
     storage: {
       from() {

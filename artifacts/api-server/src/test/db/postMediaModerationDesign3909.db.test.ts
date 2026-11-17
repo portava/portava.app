@@ -37,7 +37,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HAVE_DB, exec, psql, rows, scalar, seedUser, deleteUser } from "./localDb.js";
+import { HAVE_DB, exec, psql, rows, scalar, seedUser, deleteUser, cleanupSyntheticMedia } from "./localDb.js";
 import { amendBlock, postconditionBlocks } from "../../scripts/lib/migrationSqlBlocks.js";
 import { POSTCONDITION_AMENDMENTS } from "../../scripts/lib/postconditionAmendments.js";
 
@@ -122,8 +122,8 @@ describe("3909 — production's 2098 post_media moderation design, codified", { 
 
   after(() => {
     if (!OWNER) return;
-    exec(`DELETE FROM public.post_media WHERE user_id IN ('${OWNER}', '${OTHER}');
-          DELETE FROM public.post_media_moderation_ledger WHERE subject_user_id IN ('${OWNER}', '${OTHER}');
+    cleanupSyntheticMedia([OWNER, OTHER].filter(Boolean));
+    exec(`DELETE FROM public.post_media_moderation_ledger WHERE subject_user_id IN ('${OWNER}', '${OTHER}');
           DELETE FROM public.posts WHERE author_id IN ('${OWNER}', '${OTHER}');`);
     for (const u of [OWNER, OTHER]) if (u) deleteUser(u);
   });
@@ -250,7 +250,8 @@ describe('4034 cancellation serialization', { skip: !HAVE_DB }, () => { it('a cl
     await pending;
     await upload.query('ROLLBACK').catch(() => {});
     await Promise.all([cancel.end(),upload.end(),observer.end()]);
-    exec(`DELETE FROM public.post_media WHERE post_id='${post}'; DELETE FROM public.posts WHERE id='${post}';`);
+    cleanupSyntheticMedia([owner]);
+    exec(`DELETE FROM public.posts WHERE id='${post}';`);
     deleteUser(owner);
   }
 });

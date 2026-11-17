@@ -1,3 +1,5 @@
+import { memoryEditFixture } from './helpers/memoryEditFixture.js';
+import { makeKernelRpc, type KernelWriteTarget } from './memoryCommandKernelFake.js';
 /**
  * §3 `memory_corrections` (migration 3673) and §4's precedence on a Memory's
  * place. Census H28, H48, H49, H73, H242.
@@ -12,7 +14,7 @@
  *   - A failed corrections read makes the place UNREADABLE, never uncorrected.
  *     A full page is a failed read. An absent table (3673 not applied) is "no
  *     correction", which is true.
- *   - PATCH records the correction BEFORE it writes the Memory, and an
+ *   - PATCH commits the correction WITH the Memory through the existing kernel, and an
  *     unrecordable correction refuses the edit.
  *   - Owner only; the table is append-only.
  *
@@ -103,6 +105,10 @@ function correction(kind: "assert" | "reject", ref: { place_id?: string | null; 
 interface FakeOpts { absent?: Set<string>; failReads?: Set<string>; failWrites?: Set<string>; silentWrites?: Set<string> }
 interface Op { table: string; mode: string }
 function makeClient(store: Record<string, any[]>, ops: Op[], opts: FakeOpts = {}) {
+  const failOn = new Set<KernelWriteTarget>();
+  if (opts.failWrites?.has("memories:update")) failOn.add("state");
+  if (opts.failWrites?.has(`${TABLE}:insert`)) failOn.add("correction");
+  const kernel = makeKernelRpc({ tables: store, rpcCalls: [], failOn, absent: opts.absent?.has(TABLE) ?? false });
   let idN = 0;
   function chain(table: string) {
     const filters: Array<(r: any) => boolean> = []; let countExact = false;
@@ -152,7 +158,11 @@ function makeClient(store: Record<string, any[]>, ops: Op[], opts: FakeOpts = {}
   }
   return {
     from: (t: string) => chain(t),
-    rpc: async () => ({ data: null, error: { message: "rpc not modelled", code: "PGRST202" } }),
+    rpc: async (name: string, args: any) => {
+      // A lost/malformed command result is unavailable, never a recorded edit.
+      if (name === "memory_kernel_execute" && opts.silentWrites?.has(`${TABLE}:insert`)) return { data: null, error: null };
+      return kernel(name, args);
+    },
     auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },
   };
 }
@@ -184,7 +194,8 @@ async function call(a: App, method: string, p: string, actor = OWNER, body?: unk
   const res = await fetch(`${a.base}/api${p}`, {
     method,
     headers: { Authorization: `Bearer ${actor}`, "Content-Type": "application/json", "Idempotency-Key": `mc-${++keyN}`, connection: "close" },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(method === "PATCH"
+      ? memoryEditFixture(a.store.memories.find(row => row.id === p.split('/').at(-1)) ?? {}, body as Record<string, unknown>) : body),
   });
   const text = await res.text();
   let parsed: any = null; try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
@@ -384,18 +395,18 @@ describe("PATCH /memories/:id records a change of place as the owner's correctio
     assert.equal(mem(app).canonical_location_id, CANON_LOC);
   });
 
-  it("FAIL CLOSED: an insert that returns no row is not a recorded correction", async () => {
+  it("FAIL CLOSED: a malformed kernel receipt is not a recorded correction", async () => {
     app = await start({ silentWrites: new Set([`${TABLE}:insert`]) });
     const r = await call(app, "PATCH", `/memories/${MEM}`, OWNER, { placeId: PLACE_OPEN });
     assert.equal(r.status, 503, JSON.stringify(r.body));
     assert.equal(mem(app).place_id, "osm:node/123");
   });
 
-  it("3673 not applied: the edit goes ahead as before", async () => {
+  it("3673 not applied: the atomic editor refuses before changing fields", async () => {
     app = await start({ absent: new Set([TABLE]) });
     const r = await call(app, "PATCH", `/memories/${MEM}`, OWNER, { placeId: PLACE_OPEN });
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.equal(mem(app).place_id, PLACE_OPEN);
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+    assert.equal(mem(app).place_id, "osm:node/123");
   });
 
   it("placeCorrectionsForPatch: an explicit canonical location is asserted with the place", () => {
@@ -697,12 +708,12 @@ describe("H-15 — corrections never make a Memory's place permanently unreadabl
     assert.deepEqual(h.body.history.rows.map((r: any) => r.memory_id), [MEM]);
   });
 
-  it("a retry loop against a FAILING Memory write appends the correction once, not once per attempt (H-12 window stays as ruled)", async () => {
+  it("a retry loop against a FAILING atomic Memory edit leaves neither corrections nor changed fields", async () => {
     app = await start({ failWrites: new Set(["memories:update"]) });
     for (let i = 0; i < 5; i++) assert.ok((await call(app, "PATCH", `/memories/${MEM}`, OWNER, { placeId: PLACE_OPEN })).status >= 500);
-    assert.deepEqual(rows(app).map((r) => r.kind).sort(), ["assert", "reject", "reject"]);
+    assert.deepEqual(rows(app), [], "4042 rolls correction rows back with the failed canonical write");
     assert.equal(mem(app).place_id, "osm:node/123", "the write kept failing");
-    assert.equal((await menuOf(app)).place?.id, PLACE_OPEN, "H-12: the recorded correction stays; the owner's retry completes the change");
+    assert.equal((await menuOf(app)).place?.id, PLACE_CANON, "the original canonical match remains until the edit commits");
   });
 
   it("a second identical rejection appends nothing (the route answers 204 both times)", async () => {

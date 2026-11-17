@@ -1,3 +1,4 @@
+import { activeMediaAccountRead } from './helpers/mediaAccountReadFixture.js';
 import test from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
@@ -33,6 +34,7 @@ function fixture() {
       let single = false;
       let removing = false;
       const query = {
+        contains() { return query; },
         select() { return query; }, eq(key: string, value: unknown) { filters[key] = value; return query; },
         in() { return query; }, limit() { return query; }, or() { return query; }, order() { return query; },
         maybeSingle() { single = true; return query; }, delete() { removing = true; return query; },
@@ -43,7 +45,7 @@ function fixture() {
           else if (name === "media_attachments") rows = [{ entity_type: "post", entity_id: jobId }];
           else if (name === "post_media") rows = [{ post_id: jobId, processing_status: "ready", moderation_status: "approved" }];
           else if (name === "posts") rows = [{ id: jobId, author_id: owner, status: "active", post_status: "published" }];
-          else if (name === "stories") rows = [];
+          else if (["stories", "media_asset_lifecycle_events", "post_media_moderation_ledger"].includes(name)) rows = [];
           else if (name === "media_caption_manifests") rows = [{ asset_id: assetId, source_version: 1, revision_key: captionRevision, object_path: path }];
           else if (name === "media_dubbing_consents") rows = state.consent ? [state.consent] : [];
           else if (name === "media_dubbing_readable") rows = [];
@@ -58,6 +60,7 @@ function fixture() {
     },
     rpc(name: string, parameters: Record<string, unknown>) {
       const execute = async () => {
+        if (name === "account_recovery_status") return activeMediaAccountRead(name, parameters);
         state.rpcCalls.push(name);
         if (name === "media_dubbing_consent_state") {
           return { data: parameters.p_owner === owner ? { consentRevision: state.consent?.consent_revision ?? "0".repeat(64), optedIn: state.consent?.opted_in === true } : null, error: null };

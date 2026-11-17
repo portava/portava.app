@@ -57,13 +57,20 @@ export const MEDIA_CANONICAL: CapabilityDefinition = {
   providedBy: [
     "2250_media_asset_canonical_model.sql",
     "2470_media_asset_canonical_columns_flag_agnostic.sql (the same DDL without 2250's flag postcondition)",
+    "4038_postcard_canonical_lifecycle.sql (Postcard capture completion only)",
+    "4039_postcard_withdrawn_upload_cleanup.sql",
+    "4040_account_recovery_authority.sql",
+    "4041_media_recovery_retention.sql",
   ],
   requires: {
+    // Static declaration. Postcard completion probes this read-only function
+    // explicitly before any write; unrelated canonical writers need only columns.
+    functions: ["postcard_canonical_lifecycle_ready", "account_recovery_status"],
     tables: {
       media_assets: { columns: MEDIA_CANONICAL_ASSET_COLUMNS },
     },
   },
-  consumers: ["lib/mediaAssets.ts"],
+  consumers: ["lib/mediaAssets.ts", "lib/media/postcardCanonicalMedia.ts"],
   note:
     "A canonical media write that vanishes costs the user their upload's §6 record; " +
     "refusing keeps the legacy post_media/media_urls path authoritative until the columns exist.",
@@ -203,13 +210,20 @@ export const RENT_BUDDY_LEDGER_ESTIMATE: CapabilityDefinition = {
   note: "A booking can succeed without estimated earnings. The writer refuses before appending entries if the database cannot store the same rate on its summary row.",
 };
 
-/** 4036's STABLE SQL probe only reads the canonical kernel definition. */
+/** The service-only, read-only proof used by every Memory item command,
+ * including legacy mode. No feature flag is changed by this prerequisite. */
+export const MEMORY_ITEM_SOURCE_READY_FUNCTION = "memory_item_source_ready";
+/** H178: PATCH always uses the atomic kernel; the broader feature flag is not changed. */
+export const MEMORY_FIELD_EDITS_READY_FUNCTION = "memory_field_edits_ready";
+
+/** 4036 checks origin; pending 4041 also proves the shared source writer before
+ * candidate confirmation can claim an episode. */
 export const MEMORY_CANDIDATE_ORIGIN: CapabilityDefinition = {
   flag: "memory_kernel_enabled",
-  providedBy: ["4036_memory_candidate_source_origin.sql"],
-  requires: { tables: {}, functions: ["memory_candidate_origin_ready"], readOnlyBooleanProbe: { name: "memory_candidate_origin_ready", run: sc => sc.rpc("memory_candidate_origin_ready") } },
-  consumers: ["services/memory/episodeCandidates.ts"],
-  note: "Refuse candidate confirmation before claiming it if the canonical kernel cannot preserve suggested origin.",
+  providedBy: ["4036_memory_candidate_source_origin.sql", "4041_media_recovery_retention.sql", "4042_memory_field_conflicts.sql"],
+  requires: { tables: {}, functions: ["memory_candidate_origin_ready", "memory_item_source_ready", "insert_memory_media_item", "memory_field_edits_ready", "memory_kernel_execute"], readOnlyBooleanProbe: { name: "memory_candidate_origin_ready", run: sc => sc.rpc("memory_candidate_origin_ready") } },
+  consumers: ["services/memory/episodeCandidates.ts", "services/memory/MemoryDomainService.ts"],
+  note: "Refuse candidate confirmation before claiming it unless the kernel preserves suggested origin and the shared item source writer is ready. Every ADD_MEDIA also checks source readiness directly, with either kernel flag value.",
 };
 
 export const PASSPORT_MEMORY_SOURCES: CapabilityDefinition = {
@@ -223,7 +237,53 @@ export const PASSPORT_MEMORY_SOURCES: CapabilityDefinition = {
   note: "A missing private association schema is unavailable, never an unlinked Memory or a successful save. The command RPC itself is never used as a readiness probe.",
 };
 
+/** Caption erasure (media_captions_enabled) and other derivative cleaners share
+ * the permanent purge authority; generation flags never authorize deletion. */
+export const MEDIA_DERIVATIVE_ERASURE: CapabilityDefinition = {
+  flag: "media_captions_enabled",
+  providedBy: ["4041_media_recovery_retention.sql", "4040_account_recovery_authority.sql"],
+  requires: { tables: {}, functions: ["advance_media_object_purge", "postcard_canonical_lifecycle_ready", "account_recovery_status"],
+    readOnlyBooleanProbe: { name: "postcard_canonical_lifecycle_ready", run: sc => sc.rpc("postcard_canonical_lifecycle_ready") } },
+  consumers: ["lib/media/derivativeErasure.ts"],
+  note: "Permanent derivative erasure requires the installed retention protections and an exact source/version authorization from the existing purge owner. Readiness never grants erasure by itself.",
+};
+
+/** Telegraph's history-bound byte reader shares this prerequisite with every
+ * post-media reader. It does not make an expired membership or withdrawn source readable. */
+export const TELEGRAPH_MEDIA_RETENTION: CapabilityDefinition = {
+  flag: "telegraph_history_bound_enabled",
+  providedBy: ["4039_postcard_withdrawn_upload_cleanup.sql", "4040_account_recovery_authority.sql"],
+  requires: { tables: { post_media: { columns: ["deleted_at"] } }, functions: ["account_recovery_status"] },
+  consumers: ["lib/mediaAccess.ts"],
+  note: "Post-media authorization must distinguish withdrawn attachments from current ones before any owner or message-membership shortcut. Missing or unreadable withdrawal state denies access; all existing privacy and history bounds still apply.",
+};
+
+// These existing evidence readers reach the one media authorization owner.
+// The RPC's exact per-viewer receipt is checked there on every access; these
+// entries declare its rollout dependency, not new flags or alternate gates.
+const MEDIA_ACCOUNT_SNAPSHOT_FLAGS = [
+  "intel_capture_quick_signal", "intel_claim_projection_crowd", "intel_limited_live",
+  "intel_live_label_crowd", "live_places_enabled",
+] as const;
+
 export const CAPABILITIES: Readonly<Record<string, CapabilityDefinition>> = Object.freeze({
+  ...Object.fromEntries(MEDIA_ACCOUNT_SNAPSHOT_FLAGS.map(flag => [flag, {
+    flag, providedBy: ["4040_account_recovery_authority.sql"],
+    requires: {tables: {}, functions: ["account_recovery_status"]},
+    consumers: ["routes/placeLiving.ts"],
+    sharedFunctionGuards: ["lib/mediaAccess.ts"],
+    note: "Evidence media access requires an explicit current active-viewer snapshot; missing, malformed or unavailable account recovery authority denies before any signing or cached allow.",
+  } satisfies CapabilityDefinition])),
+  telegraph_forwarding_enabled: {
+    flag: "telegraph_forwarding_enabled",
+    providedBy: ["4040_account_recovery_authority.sql"],
+    requires: { tables: {}, functions: ["account_recovery_status"] },
+    consumers: ["routes/telegraphForward.ts"],
+    sharedFunctionGuards: ["lib/mediaAccess.ts"],
+    note: "Forwarded attachment uploads require the same exact active-account snapshot as every upload using guardUploadRequest; missing or unavailable authority denies before storage copies.",
+  },
+  [MEDIA_DERIVATIVE_ERASURE.flag]: MEDIA_DERIVATIVE_ERASURE,
+  [TELEGRAPH_MEDIA_RETENTION.flag]: TELEGRAPH_MEDIA_RETENTION,
   [MEMORY_CANDIDATE_ORIGIN.flag]: MEMORY_CANDIDATE_ORIGIN,
   [PASSPORT_MEMORY_SOURCES.flag]: PASSPORT_MEMORY_SOURCES,
   [RENT_BUDDY_LEDGER_ESTIMATE.flag]: RENT_BUDDY_LEDGER_ESTIMATE,

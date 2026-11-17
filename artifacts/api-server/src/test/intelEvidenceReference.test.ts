@@ -1,3 +1,5 @@
+import {activeMediaAccountRead} from './helpers/mediaAccountReadFixture.js';
+import { accountDeletionAuthorizationFixture, PERMANENT_DELETION_TEST_OPTIONS } from "./helpers/accountDeletionAuthorizationFixture.js";
 /**
  * intel_evidence.reference names no account — census-map §45.
  *
@@ -340,26 +342,28 @@ describe("B. the persisted evidence row names no account", () => {
 
 interface Op { table: string; op: string; filters: Array<[string, string, any]> }
 
-function bridgeClient(opts: { rows?: Record<string, any[]>; tokens?: Record<string, string[]>; bridgeFails?: boolean } = {}) {
+function bridgeClient(opts: { deletionUserId?: string; rows?: Record<string, any[]>; tokens?: Record<string, string[]>; bridgeFails?: boolean } = {}) {
   const rows: Record<string, any[]> = { ...(opts.rows ?? {}) };
   const ops: Op[] = [];
+  const authorize = opts.deletionUserId ? accountDeletionAuthorizationFixture(rows, opts.deletionUserId) : (_name: string, _args: Record<string, unknown>) => undefined;
   const removed: Array<{ bucket: string; paths: string[] }> = [];
   const authDeleted: string[] = [];
 
   function builder(table: string) {
-    const state = { op: "select", filters: [] as Array<[string, string, any]>, single: false, limit: 0 };
+    const state = { values: {} as Record<string, unknown>, op: "select", filters: [] as Array<[string, string, any]>, single: false, limit: 0 };
     const run = () => {
       ops.push({ table, op: state.op, filters: state.filters });
       let data: any[] = (rows[table] ?? []).filter((r) =>
         state.filters.every(([kind, c, v]) => (kind === "eq" ? r[c] === v : kind === "in" ? (v as any[]).includes(r[c]) : true)),
       );
+      if (table === "user_deletion_requests" && state.op === "update") for (const row of data) Object.assign(row, state.values);
       if (state.limit) data = data.slice(0, state.limit);
       return Promise.resolve(state.single ? { data: data[0] ?? null, error: null } : { data, error: null });
     };
     const target: any = {
       select() { return proxy; },
       delete() { state.op = "delete"; return proxy; },
-      update() { state.op = "update"; return proxy; },
+      update(values: Record<string, unknown>) { state.values = values; state.op = "update"; return proxy; },
       upsert() { state.op = "upsert"; return proxy; },
       insert() { state.op = "insert"; return proxy; },
       eq(c: string, v: any) { state.filters.push(["eq", c, v]); return proxy; },
@@ -381,6 +385,9 @@ function bridgeClient(opts: { rows?: Record<string, any[]>; tokens?: Record<stri
     _authDeleted: authDeleted,
     from: (t: string) => builder(t),
     rpc: async (fn: string, args: Record<string, any>) => {
+      if (fn === "account_recovery_status") return activeMediaAccountRead(fn, args);
+      const receipt = authorize(fn, args);
+      if (receipt) return receipt;
       ops.push({ table: `rpc:${fn}`, op: "rpc", filters: [] });
       if (opts.bridgeFails && (fn === CONSENTED_CONTRIBUTORS_RPC || fn === CONTRIBUTOR_TOKENS_FOR_ACTOR_RPC)) {
         return { data: null, error: { message: "connection reset", code: "08006" } };
@@ -507,6 +514,7 @@ describe("D. account deletion removes evidence objects through the sealed refere
 
   it("collects every object under every identity the account's rows carry, and nobody else's", async () => {
     const c = bridgeClient({
+      deletionUserId: USER,
       tokens: { [USER]: [TOKEN_NOW, TOKEN_LAST_WEEK] },
       rows: {
         intel_evidence: [
@@ -523,7 +531,7 @@ describe("D. account deletion removes evidence objects through the sealed refere
       },
     });
 
-    const out = await executeAccountDeletion(c as any, USER, { actorId: "admin-1" });
+    const out = await executeAccountDeletion(c as any, USER, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
     // Nothing else in this fake holds an object, so the removes are exactly these.
     assert.deepEqual(c._removed.map((r: any) => r.bucket).filter((b: string) => b !== POST_MEDIA_BUCKET), []);
@@ -540,6 +548,7 @@ describe("D. account deletion removes evidence objects through the sealed refere
 
   it("a sealed reference that does not open fails the step and warns, after collecting the rest", async () => {
     const c = bridgeClient({
+      deletionUserId: USER,
       tokens: { [USER]: [TOKEN_NOW] },
       rows: {
         intel_evidence: [
@@ -549,7 +558,7 @@ describe("D. account deletion removes evidence objects through the sealed refere
         ],
       },
     });
-    const out = await executeAccountDeletion(c as any, USER, { actorId: "admin-1" });
+    const out = await executeAccountDeletion(c as any, USER, PERMANENT_DELETION_TEST_OPTIONS);
     const s = stepOf(out, "collect_intel_evidence_paths");
     assert.equal(s?.ok, false, "an object the deletion cannot find is not a successful collection");
     assert.match(String(s?.error), /could not be opened/);
@@ -560,11 +569,12 @@ describe("D. account deletion removes evidence objects through the sealed refere
 
   it("with no key configured, sealed rows fail the step loudly rather than reading as 'no evidence'", async () => {
     const c = bridgeClient({
+      deletionUserId: USER,
       tokens: { [USER]: [TOKEN_NOW] },
       rows: { intel_evidence: [{ id: "e1", observation_id: OBS_1, actor_id: TOKEN_NOW, reference: sealOrThrow(`${POST_MEDIA_BUCKET}/${USER}/1.jpg`, OBS_1) }] },
     });
     delete process.env.INTEL_EVIDENCE_REFERENCE_KEY;
-    const out = await executeAccountDeletion(c as any, USER, { actorId: "admin-1" });
+    const out = await executeAccountDeletion(c as any, USER, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(stepOf(out, "collect_intel_evidence_paths")?.ok, false);
     assert.ok(out.warnings.some((w: string) => w.includes("intel evidence")));
   });

@@ -100,6 +100,17 @@ describe('Memory owner editor — explicit time correction through real transpor
     await save(); await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
     expect(patches()[0].body).not.toHaveProperty('startsAt'); expect(patches()[0].body).not.toHaveProperty('endsAt');
     expect(saved).toMatchObject({ startsAt, endsAt, title: 'New title' });
+    expect(patches()[0].body).toEqual({ title: 'New title', expected: { title: 'Coffee', state: 'published' } });
+  });
+
+  it('preserves the draft and original base after a conflict, without automatic overwrite or retry', async () => {
+    saveReply = async () => reply({ error: 'conflict', reason: 'MEMORY_FIELD_CONFLICT', message: 'Another edit changed this title. Reopen to review.' }, 409);
+    await openEditor(); await fireEvent.changeText(screen.getByPlaceholderText('Give this memory a name…'), 'My draft');
+    saved.title = 'Other device';
+    await save(); await screen.findByText('Another edit changed this title. Reopen to review.');
+    expect(screen.getByDisplayValue('My draft')).toBeTruthy(); expect(mockBack).not.toHaveBeenCalled();
+    expect(patches()).toHaveLength(1);
+    expect(patches()[0].body).toEqual({ title: 'My draft', expected: { title: 'Coffee', state: 'published' } });
   });
 
   it('closing without Save sends no write', async () => {
@@ -194,7 +205,7 @@ describe('Memory owner editor — explicit time correction through real transpor
 
   it('does not repair or reject old inverted times on an unrelated save', async () => {
     saved.startsAt = endsAt; saved.endsAt = startsAt;
-    await openEditor(); await save(); await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    await openEditor(); await fireEvent.changeText(screen.getByPlaceholderText('Give this memory a name…'), 'Unrelated title edit'); await save(); await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
     expect(saved).toMatchObject({ startsAt: endsAt, endsAt: startsAt });
     expect(patches()[0].body).not.toHaveProperty('startsAt');
   });
@@ -253,7 +264,7 @@ describe('Memory owner editor — explicit time correction through real transpor
   it('leaves a legacy sub-millisecond inversion untouched on an unrelated Save', async () => {
     saved.startsAt = '2026-03-02T19:00:12.123456789Z';
     saved.endsAt = '2026-03-02T19:00:12.123456788Z';
-    await openEditor(); await save(); await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    await openEditor(); await fireEvent.changeText(screen.getByPlaceholderText('Give this memory a name…'), 'Unrelated title edit'); await save(); await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
     expect(patches()[0].body).not.toHaveProperty('startsAt'); expect(patches()[0].body).not.toHaveProperty('endsAt');
     expect(saved).toMatchObject({ startsAt: '2026-03-02T19:00:12.123456789Z', endsAt: '2026-03-02T19:00:12.123456788Z' });
   });
@@ -262,13 +273,14 @@ describe('Memory owner editor — explicit time correction through real transpor
     await openEditor(); await fireEvent.press(screen.getByLabelText(`Clear ${bound}`));
     await fireEvent.press(screen.getByLabelText(`Restore saved ${bound}`));
     await save(); await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
-    expect(patches()[0].body).not.toHaveProperty('startsAt'); expect(patches()[0].body).not.toHaveProperty('endsAt');
+    expect(patches()).toHaveLength(0);
     expect(saved).toMatchObject({ startsAt, endsAt });
   });
 
   it('does not coerce a legacy unreadable timestamp on an unrelated Save', async () => {
     saved.startsAt = 'legacy unknown time';
     await openEditor(); expect(screen.getByText('Saved start: legacy unknown time')).toBeTruthy();
+    await fireEvent.changeText(screen.getByPlaceholderText('Give this memory a name…'), 'Unrelated title edit');
     await save(); await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
     expect(patches()[0].body).not.toHaveProperty('startsAt'); expect(saved.startsAt).toBe('legacy unknown time');
   });

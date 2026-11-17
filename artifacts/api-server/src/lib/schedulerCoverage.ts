@@ -71,7 +71,6 @@ export interface SchedulerRow {
  * Kept identical to `index.ts` by `check:scheduler-coverage`.
  */
 export const STARTED_SCHEDULERS: readonly SchedulerRow[] = [
-  { start: "startAccountDeletionScheduler" },
   { start: "startBuddyRequestSweeper", reportedAs: ["rentBuddyRequestSweeper"] },
   { start: "startCallSweepScheduler", reportedAs: ["callSweepScheduler"] },
   { start: "startCompassAbuseScanScheduler" },

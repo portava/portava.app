@@ -1,3 +1,4 @@
+import { memoryItemWriterFake } from '../../test/helpers/memoryItemWriterFake.js';
 /**
  * §20 / §28 — a Memory item may not claim another user's storage object.
  *
@@ -140,6 +141,9 @@ function makeClient(state: FakeState) {
   }
   return {
     from,
+    async rpc(name: string, args: unknown) {
+      return await memoryItemWriterFake({ from }, name, args) ?? { data: null, error: { message: `RPC not modelled: ${name}` } };
+    },
     auth: {
       getUser: async (tok: string) =>
         tok === "attacker-tok" ? { data: { user: { id: ATTACKER } }, error: null } : { data: { user: null }, error: { message: "invalid" } },

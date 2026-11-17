@@ -36,13 +36,14 @@
 
 import { requestDeadline } from './requestDeadline.ts';
 import { currentDiscoveryScope, isCurrentDiscoveryScope, onDiscoveryScopeChange, viewerKeyForToken } from '../services/discoveryViewerScope.ts';
+import { mediaBrowserOrigin } from '../services/mediaBrowserSession.ts';
 
 export const MEDIA_SIGN_TIMEOUT_MS = 10_000;
 let cacheViewer: string | null = null;
 onDiscoveryScopeChange(() => { _resetBatchSignCache(); });
 
 function signEndpoint(): string {
-  const base = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+  const base = process.env.EXPO_PUBLIC_API_BASE_URL || mediaBrowserOrigin() || '';
   if (!base || /[\s\\?#@]/.test(base)) throw new Error('Invalid media API origin');
   const url = new URL(base);
   const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);

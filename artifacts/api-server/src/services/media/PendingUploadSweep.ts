@@ -53,10 +53,9 @@ import { cleanupCancelledComposerUploads } from './CancelledComposerUploadCleanu
  *     path cannot be derived is KEPT and counted, never deleted blind.
  *     (`upload-url` now also refuses to mint a URL for a slot whose path did not
  *     record — see routes/postcards.ts.)
- *   • A ROW THAT COMPLETED MEANWHILE. Re-read as still `pending` immediately
- *     before its bytes are removed. This narrows, and does not close, the race
- *     with a /complete that finishes between that re-read and the removal; the
- *     original sweep had the whole batch as its window.
+ *   • A ROW THAT COMPLETED MEANWHILE. Re-read activity, then atomically withdraw
+ *     the expired pending source before removing its bytes. A completion or
+ *     renewal that wins that row lock causes withdrawal to refuse cleanup.
  *
  * ── WHAT IT DOES NOT DECIDE ─────────────────────────────────────────────────
  * The cutoff and the batch are the values the route shipped with. Neither is a
@@ -145,7 +144,7 @@ export async function sweepAbandonedPendingUploads(
     const { data, error } = await sc
       .from("post_media")
       .select("id, user_id, post_id, storage_path, storage_bucket, mime_type, created_at, updated_at")
-      .eq("processing_status", "pending")
+      .eq("processing_status", "pending").is("recovery_snapshot", null)
       .lt("created_at", cutoff)
       .order("created_at", { ascending: true })
       .limit(limit);
@@ -181,7 +180,7 @@ export async function sweepAbandonedPendingUploads(
         .from("post_media")
         .select("id, updated_at")
         .eq("id", row.id)
-        .eq("processing_status", "pending")
+        .eq("processing_status", "pending").is("recovery_snapshot", null)
         .maybeSingle();
       if (stillErr) {
         log.warn?.({ err: stillErr, mediaId: row.id }, "pending-upload sweep: re-read failed — row kept for retry");
@@ -191,6 +190,14 @@ export async function sweepAbandonedPendingUploads(
       if (!still) { completedMeanwhile++; continue; }
 
       const bucket = sc.storage.from(row.storage_bucket || PENDING_UPLOAD_BUCKET); const activity = await latestSlotActivityMs(bucket, path, [row.created_at, row.updated_at, (still as { updated_at?: string | null }).updated_at]); if (activity === "unreadable") { log.warn?.({ mediaId: row.id }, "pending-upload sweep: parts listing unreadable — row kept"); errors++; continue; } if (activity >= cutoffAt) { stillSending++; continue; } // §81: an owner still sending is never swept
+      // Claim the expired source under its row lock before touching Storage.
+      // Completion or renewal winning first makes this return false; withdrawal
+      // winning first prevents either from reviving or renewing the same slot.
+      const { data: claimed, error: claimErr } = await sc.rpc("withdraw_postcard_media", {
+        p_actor: row.user_id, p_post: row.post_id, p_media: row.id, p_before: cutoff,
+      });
+      if (claimErr) { errors++; log.warn?.({ err: claimErr, mediaId: row.id }, "pending-upload sweep: withdrawal failed — bytes retained"); continue; }
+      if (claimed !== true) { completedMeanwhile++; continue; }
       // `remove` REPORTS failure in `{ error }`; a missing object is not one.
       const { error: rmErr } = await bucket.remove([path, `${path}.feed.jpg`]);
       if (rmErr) {
@@ -270,13 +277,8 @@ export async function latestSlotActivityMs(
 export async function renewPendingSlot(
   sc: SupabaseClient,
   mediaId: string,
-  nowMs: number = Date.now(),
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const { error } = await sc
-    .from("post_media")
-    .update({ updated_at: new Date(nowMs).toISOString() })
-    .eq("id", mediaId)
-    .eq("processing_status", "pending");
-  if (error) return { ok: false, message: String(error.message ?? "post_media renewal failed") };
+  const { data, error } = await sc.rpc("renew_postcard_upload", { p_media: mediaId });
+  if (error || data !== true) return { ok: false, message: String(error?.message ?? "Upload is no longer accepting renewal") };
   return { ok: true };
 }

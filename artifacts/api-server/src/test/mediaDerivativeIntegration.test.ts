@@ -1,3 +1,4 @@
+import { mediaObjectPurgeFixture } from './helpers/mediaObjectPurgeFixture.js';
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
@@ -62,6 +63,8 @@ function fixture() {
     },
     async rpc(operation: string, args: Record<string, unknown> = {}) {
       calls.push({ operation, args });
+      if (operation === "postcard_canonical_lifecycle_ready") return {data:true,error:null};
+      if (operation === "advance_media_object_purge") return mediaObjectPurgeFixture(id => id === source.id ? source : undefined, [])(args);
       if (operation === "media_derivative_schema_status") return schemaError ? { data: null, error: { code: schemaError } }
         : { data: Object.fromEntries(["media_derivative_jobs", "media_caption_manifests", "media_visual_embeddings", "media_image_understanding_artifacts", "media_dubbing_artifacts"].map(table => [table, tables.has(table)])), error: null };
       return { data: operation === "media_derivative_cancel_asset" ? cancelAccepted

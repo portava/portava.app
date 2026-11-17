@@ -1,3 +1,4 @@
+import { accountDeletionAuthorizationFixture, PERMANENT_DELETION_TEST_OPTIONS } from "./helpers/accountDeletionAuthorizationFixture.js";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { eraseAccountMediaEvents } from '../services/accountDeletion/mediaEvents.js';
@@ -15,7 +16,8 @@ test('erasure pages explicitly, requires a complete receipt, and bounds one dele
 });
 test('account deletion stops before destroying canonical creator links when erasure is uncertain',async()=>{
  let queried=false;
- const result=await executeAccountDeletion({rpc:async()=>({error:{code:'PGRST202'},data:null}),from:()=>{queried=true;throw new Error('must not destroy content');}},actor,{source:'test'} as any);
+ const authorize=accountDeletionAuthorizationFixture({},actor);
+ const result=await executeAccountDeletion({rpc:async(name:string,args:any)=>authorize(name,args)??({error:{code:'PGRST202'},data:null}),from:()=>{queried=true;throw new Error('must not destroy content');}},actor,PERMANENT_DELETION_TEST_OPTIONS);
  assert.equal(result.ok,false);assert.equal(queried,false);assert.equal(result.steps[0].step,'erase_account_media_events');assert.equal(result.steps[0].ok,false);
 });
 test('retention distinguishes disabled policy, complete cleanup, failure and bounded backlog',async()=>{

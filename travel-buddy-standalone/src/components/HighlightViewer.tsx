@@ -30,6 +30,7 @@ import { Video, ResizeMode, type AVPlaybackStatus } from 'expo-av';
 import { getMediaFilter, buildCssFilter } from '../lib/media/filters.ts';
 import { DisplayMediaImage, AvatarImage } from './ui/DisplayMediaImage.tsx';
 import { useHydratedMedia } from '../services/mediaUrl.ts';
+import { hydratedMediaSource } from '../services/mediaRequestSource.ts';
 import { X, MessageCircle, Flag, Eye, Plus, Trash2, Volume2, VolumeX, Lock, Pin, Archive } from 'lucide-react-native';
 import { ActionStampIcon, ActionShareIcon } from './ui/ActionRowIcon.tsx';
 import { POST_ACTION_ICON_SIZE } from './PostActionRow.tsx';
@@ -169,7 +170,7 @@ export function HighlightViewer({
   // self-authenticating and needs no header, which is exactly what hydration
   // returns.
   const videoSourceUrl = isVideo ? (current?.mediaUrl ?? null) : null;
-  const { resolved: hydratedVideo } = useHydratedMedia(videoSourceUrl ? [videoSourceUrl] : []);
+  const { resolved: hydratedVideo, sources } = useHydratedMedia(videoSourceUrl ? [videoSourceUrl] : []);
   const hydratedVideoUri = videoSourceUrl ? hydratedVideo[videoSourceUrl] : undefined;
   // Until the resolve lands this is the raw value, which is correct for the
   // absolute URLs some older rows still hold.
@@ -520,7 +521,7 @@ export function HighlightViewer({
             // expo-av noticing a changed source prop mid-playback.
             key={`${current.id}:${playbackUri}`}
             ref={videoRef}
-            source={{ uri: playbackUri }}
+            source={hydratedMediaSource(playbackUri, sources) ?? undefined}
             style={StyleSheet.absoluteFill}
             resizeMode={ResizeMode.COVER}
             shouldPlay={!paused}

@@ -3032,3 +3032,36 @@ clone is created. These results do not prove the hosted migration or runtime.
 | ID | Was | Now | Current requirement |
 |---|---|---|---|
 | P77 | **W** | **W** | The source association and all five owner views are implemented with focused database/API/consumer proof. Integration, migration 4035 and the intended deployed two-account privacy journey remain unverified. No production flag was enabled. |
+
+### November 17 — P42 existing Discovery intent term reconciled
+
+The earlier statement that Discovery has no explicit-intent term is obsolete.
+Discovery A18 already records its integration. The existing loader prioritizes
+the request's mode, then reads the viewer's own active explicit Passport windows
+(`artifacts/api-server/src/lib/discoveryRankIntent.ts:121#export async function loadViewerIntent`).
+The term's full-fit weight is 0.75, above the combined generic-interest weights
+of 0.3 and 0.4 (`artifacts/api-server/src/lib/portavaRank.ts:879#export const INTENT_TERM_WEIGHT`).
+This reuses `availability_windows`; no new ranker, store, weight or activation
+was introduced in this verification.
+
+The existing Compass consumers, Passport visibility projection and Discovery
+tests pass 177 cases against the current local candidate. Six additional cases
+in the existing mounted Discovery suite prove that cached and cold served pages
+consume an active private Passport window without a request mode, keep its raw
+intent private, and omit the term for inferred, expired, other-user or disabled
+inputs (`artifacts/api-server/src/test/discoveryIntegrationHooks.test.ts:730#describe("P42/A18`).
+Removing the Passport fallback makes both positive route cases fail; the runtime
+source was restored byte-for-byte. There are 183 unique passing cases across
+these runs, not 177 plus the entire rerun of the 47-case route file.
+
+The November 14 schema snapshot records the intent flag as enabled, but that is
+historical evidence. Closure still requires current target identity, migration
+and flag verification plus an authorized served `rank_events` receipt. The
+program ledger groups P42 and Discovery A18 in DS-001, locally code-verified
+with the shared compiler and test-registration checks passing. Candidate
+integration and rollout remain pending; this census keeps its deployed verdict
+unchanged.
+
+| ID | Was | Now | Current requirement |
+|---|---|---|---|
+| P42 | **W** | **W** | Both Compass consumers and Discovery's existing explicit-intent term have current local proof, including served Passport-window fallback and refusal controls. The old missing-implementation claim is retired. Current deployed-state and served-receipt evidence remain unverified; no production flag was changed. |

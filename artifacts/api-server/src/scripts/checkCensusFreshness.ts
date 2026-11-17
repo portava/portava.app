@@ -4907,7 +4907,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // WHAT THIS DOES NOT DO: it does not re-grade anything, and it does not make
   // any verdict more likely to be right. It makes a change to a graded file
   // AUDIBLE. §18.4 of the census records what is still not certified.
-  "census-passport.md": [ "travel-buddy-standalone/src/features/passport/__tests__/AvailabilityScreen.readFailure.component.test.tsx",
+  "census-passport.md": [
+    "artifacts/api-server/src/lib/discoveryRankIntent.ts",
+    "artifacts/api-server/src/lib/portavaRank.ts",
+    "artifacts/api-server/src/test/discoveryIntegrationHooks.test.ts",
+    "travel-buddy-standalone/src/features/passport/__tests__/AvailabilityScreen.readFailure.component.test.tsx",
     // The Passport services themselves — the supply side every C verdict cites.
     "artifacts/api-server/src/services/passport/EventPassportService.ts",
     "artifacts/api-server/src/services/passport/OpenToPlansService.ts",

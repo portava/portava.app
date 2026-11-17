@@ -140,7 +140,7 @@ const LEGACY_SIDE = new Set([
 ]);
 
 /** Files that touch the COMMAND kernel's log. */
-const KERNEL_SIDE = new Set([ "test/memoryFromOwnMedia.pglite.test.ts" /* builds the command kernel log, memory_domain_events, as its fixture */, "migrations/3990_memory_snapshots.sql", "migrations/3992_memory_import_batches.sql", "migrations/3993_owner_resurfacing_policy.sql", "test/MemorySnapshot.pglite.test.ts", "test/memoryImportBatches.pglite.test.ts", "test/memoryImportBatches.postgres.test.ts", "test/resurfacingPolicyCommand.test.ts", "test/resurfacingPolicy.native.test.ts", "test/memoryTimeCorrection.test.ts",
+const KERNEL_SIDE = new Set([ "test/db/memoryFieldConflicts.db.test.ts" /* independent-session proof of the existing command event/receipt transaction */, "test/memoryFromOwnMedia.pglite.test.ts" /* builds the command kernel log, memory_domain_events, as its fixture */, "migrations/3990_memory_snapshots.sql", "migrations/3992_memory_import_batches.sql", "migrations/3993_owner_resurfacing_policy.sql", "test/MemorySnapshot.pglite.test.ts", "test/memoryImportBatches.pglite.test.ts", "test/memoryImportBatches.postgres.test.ts", "test/resurfacingPolicyCommand.test.ts", "test/resurfacingPolicy.native.test.ts", "test/memoryTimeCorrection.test.ts",
   // 4036's source-origin proof asserts the canonical command event and receipt;
   // it does not use the projection family's memory_events log.
   "test/db/memoryCandidateOrigin.db.test.ts",
@@ -154,6 +154,8 @@ const KERNEL_SIDE = new Set([ "test/memoryFromOwnMedia.pglite.test.ts" /* builds
   "lib/memoryOutbox.ts",
   "test/memoryCommandKernelFake.ts",
   "test/memoryCommandRoutes.test.ts",
+  "test/db/memoryCaptureUpload.db.test.ts", // current source-post commands prove event/receipt rollback
+  "test/db/postcardCanonicalLifecycle.db.test.ts", // shared Memory item writer: verifies kernel event atomicity and rollback, not the projection log
   "test/memoryOutbox.test.ts",
   // ADDED 2026-09-15 by the HIGHLIGHTS & MEMORIES lane. This suite asserts that
   // the §3 storage spine is DEPLOYED, reading the committed production snapshot

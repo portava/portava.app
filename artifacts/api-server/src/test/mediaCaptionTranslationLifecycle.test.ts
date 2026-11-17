@@ -1,3 +1,4 @@
+import { mediaObjectPurgeFixture } from './helpers/mediaObjectPurgeFixture.js';
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdtemp, mkdir, readdir, readFile, writeFile, unlink, rm } from "node:fs/promises";
@@ -66,6 +67,8 @@ async function fixture(run: (input: { state: any; source: any; sc: SupabaseClien
     async rpc(name: string, args: Record<string, unknown>) {
       state.calls.push(name);
       if (state.failRpc === name) return { data: null, error: new Error("RPC unavailable") };
+      if (name === "postcard_canonical_lifecycle_ready") return {data:true,error:null};
+      if (name === "advance_media_object_purge") return mediaObjectPurgeFixture(id => id === source.id ? source : undefined, [])(args);
       if (name.startsWith('media_caption_translation_artifact_')) return retained.rpc(name, args);
       if (name === "media_derivative_schema_status") return { data: { media_derivative_jobs: true, media_caption_manifests: true,
         media_dubbing_artifacts: false, media_image_understanding_artifacts: false, media_visual_embeddings: false }, error: null };

@@ -1,3 +1,5 @@
+import { installMediaDeliveryFixture, type MediaDeliveryRead } from "./helpers/mediaDeliveryFixture.js";
+import {activeMediaAccountRead} from './helpers/mediaAccountReadFixture.js';
 /**
  * mediaAccessFailClosed — the media guard measured on the FAILURE paths, and
  * the reachability of the guard itself.
@@ -47,7 +49,7 @@ import { _setTestServiceClient } from "../lib/supabase.js";
 import { authorizeMediaAccess, _clearMediaAccessCache } from "../lib/mediaAccess.js";
 import mediaFileRouter from "../routes/mediaFile.js";
 
-const SB = "http://sb.example.test";
+const SB = "https://sb.example.test";
 const OLD_SUPABASE_URL = process.env.SUPABASE_URL;
 
 const OWNER  = "a1000000-0000-4000-a000-000000000001";
@@ -85,8 +87,8 @@ interface FailFakeSpec {
  */
 function makeFailFake(spec: FailFakeSpec = {}) {
   const fail = spec.failTables ?? {};
-  const counters = { reads: 0, signs: 0 };
-  const signedPaths: Array<{ bucket: string; path: string; options: any }> = [];
+  const counters = { reads: 0, signs: 0, deliveries: 0 };
+  const deliveredPaths: Array<{ bucket: string; path: string; options: any }> = [];
 
   function from(table: string) {
     const filters: Array<(r: any) => boolean> = [];
@@ -102,6 +104,8 @@ function makeFailFake(spec: FailFakeSpec = {}) {
     const rows = () => src().filter((r: any) => filters.every((f) => f(r))).slice(0, limitN);
     const b: any = {
       select: () => b,
+      // These fixtures have no lifecycle receipts; containment therefore has no matches.
+      contains: () => b,
       eq: (c: string, v: any) => { filters.push((r) => r[c] === v); return b; },
       in: (c: string, v: any[]) => { filters.push((r) => v.includes(r[c])); return b; },
       is: (c: string, v: any) => { filters.push((r) => (v === null ? r[c] == null : r[c] === v)); return b; },
@@ -136,20 +140,10 @@ function makeFailFake(spec: FailFakeSpec = {}) {
 
   const client: any = {
     from,
+    rpc: async (name: string, args: {p_user?: unknown}) => activeMediaAccountRead(name, args),
     counters,
-    signedPaths,
-    storage: {
-      from(bucket: string) {
-        return {
-          createSignedUrl: async (p: string, ttl: number, options?: any) => {
-            counters.signs++;
-            signedPaths.push({ bucket, path: p, options });
-            const kind = options?.transform ? "render/image/sign" : "object/sign";
-            return { data: { signedUrl: `${SB}/storage/v1/${kind}/${bucket}/${p}?token=signed&ttl=${ttl}` }, error: null };
-          },
-        };
-      },
-    },
+    deliveredPaths,
+    storage: { from() { return { createSignedUrl() { counters.signs++; throw new Error("Provider signing must be retired"); } }; } },
     auth: {
       getUser: async (t: string) =>
         t === TOKEN
@@ -165,8 +159,12 @@ const publicPost = {
   post_status: "published", trip_id: null, media_urls: [BARE],
 };
 
-before(() => { process.env.SUPABASE_URL = SB; });
-after(() => { process.env.SUPABASE_URL = OLD_SUPABASE_URL; });
+let deliveryClient: ReturnType<typeof makeFailFake> | undefined;
+let restoreDelivery: () => void;
+before(() => { process.env.SUPABASE_URL = SB; restoreDelivery = installMediaDeliveryFixture(read => {
+  assert.ok(deliveryClient); deliveryClient.counters.deliveries++; deliveryClient.deliveredPaths.push(read);
+}); });
+after(() => { restoreDelivery(); process.env.SUPABASE_URL = OLD_SUPABASE_URL; });
 beforeEach(() => _clearMediaAccessCache());
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -289,19 +287,33 @@ describe("the guard is upstream of every signing on the relay", () => {
   // `requireUser` reads `_testReady === undefined` as NOT ready and answers 503,
   // which would look like a fail-closed 4xx to a test that only asserted
   // `status !== 200`.
-  function setClients(sc: any) { _setTestClient(sc, true); _setTestServiceClient(sc); }
+  function setClients(sc: any) { deliveryClient = sc; _setTestClient(sc, true); _setTestServiceClient(sc); }
 
   function req(method: string, p: string, body?: any): Promise<{ status: number; body: any; location?: string }> {
     return new Promise((resolve, reject) => {
       const url = new URL(p, base);
+      if (url.pathname.startsWith("/api/media/file/")) url.searchParams.set("viewer", VIEWER);
       const payload = body ? JSON.stringify(body) : null;
       const headers: Record<string, string> = { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" };
       if (payload) headers["content-length"] = String(Buffer.byteLength(payload));
       const r = http.request({ hostname: url.hostname, port: Number(url.port), path: url.pathname + url.search, method, headers }, (res) => {
         let raw = ""; res.on("data", (c) => (raw += c));
-        res.on("end", () => {
+        res.on("end", async () => {
           let parsed: any; try { parsed = JSON.parse(raw); } catch { parsed = raw; }
-          resolve({ status: res.statusCode ?? 0, body: parsed, location: res.headers.location as string | undefined });
+          try {
+            if (res.statusCode === 200 && parsed?.signed) {
+              assert.equal(parsed.delivery, "authenticated");
+              for (const locator of Object.values(parsed.signed)) {
+                if (typeof locator !== "string") continue;
+                assert.ok(locator.startsWith("/api/media/file/"));
+                assert.doesNotMatch(locator, /token=|storage\/v1/);
+                const bytes = await fetch(new URL(locator, base), { headers: { Authorization: `Bearer ${TOKEN}` }, redirect: "error" });
+                assert.equal(bytes.status, 200); assert.equal(await bytes.text(), "media-fixture-bytes");
+              }
+            }
+            assert.equal(deliveryClient?.counters.signs, 0, "provider signer is retired");
+            resolve({ status: res.statusCode ?? 0, body: parsed, location: res.headers.location as string | undefined });
+          } catch (error) { reject(error); }
         });
       });
       r.on("error", reject);
@@ -337,6 +349,7 @@ describe("the guard is upstream of every signing on the relay", () => {
     // validation and never reached the gate at all.
     assert.equal(r.status, 403, `expected 403, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.equal(r.body.error, "forbidden");
+    assert.equal(sc.counters.deliveries, 0);
     assert.equal(sc.counters.signs, 0, "a denied object must never be signed");
   });
 
@@ -349,6 +362,7 @@ describe("the guard is upstream of every signing on the relay", () => {
     setClients(sc);
     const r = await req("GET", `/api/media/file/post-media/${OBJ}`);
     assert.equal(r.status, 403, `expected 403, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(sc.counters.deliveries, 0);
     assert.equal(sc.counters.signs, 0);
   });
 
@@ -359,8 +373,8 @@ describe("the guard is upstream of every signing on the relay", () => {
     });
     setClients(sc);
     const r = await req("GET", `/api/media/file/post-media/${OBJ}`);
-    assert.equal(r.status, 302);
-    assert.equal(sc.counters.signs, 1);
+    assert.equal(r.status, 200);
+    assert.equal(sc.counters.deliveries, 1);
   });
 
   it("POST /media/sign: every denied url is null and NOTHING is signed", async () => {
@@ -372,6 +386,7 @@ describe("the guard is upstream of every signing on the relay", () => {
     const r = await req("POST", "/api/media/sign", { urls: [BARE, `${SB}/storage/v1/object/public/post-media/${OBJ}`] });
     assert.equal(r.status, 200);
     assert.equal(r.body.signed[BARE], null);
+    assert.equal(sc.counters.deliveries, 0);
     assert.equal(sc.counters.signs, 0, "no url in the batch was authorized, so none may be signed");
   });
 });
@@ -385,18 +400,32 @@ describe("transform parameters are bounded, and the two handlers agree", () => {
   // `requireUser` reads `_testReady === undefined` as NOT ready and answers 503,
   // which would look like a fail-closed 4xx to a test that only asserted
   // `status !== 200`.
-  function setClients(sc: any) { _setTestClient(sc, true); _setTestServiceClient(sc); }
+  function setClients(sc: any) { deliveryClient = sc; _setTestClient(sc, true); _setTestServiceClient(sc); }
   function req(method: string, p: string, body?: any): Promise<{ status: number; body: any; location?: string }> {
     return new Promise((resolve, reject) => {
       const url = new URL(p, base);
+      if (url.pathname.startsWith("/api/media/file/")) url.searchParams.set("viewer", VIEWER);
       const payload = body ? JSON.stringify(body) : null;
       const headers: Record<string, string> = { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" };
       if (payload) headers["content-length"] = String(Buffer.byteLength(payload));
       const r = http.request({ hostname: url.hostname, port: Number(url.port), path: url.pathname + url.search, method, headers }, (res) => {
         let raw = ""; res.on("data", (c) => (raw += c));
-        res.on("end", () => {
+        res.on("end", async () => {
           let parsed: any; try { parsed = JSON.parse(raw); } catch { parsed = raw; }
-          resolve({ status: res.statusCode ?? 0, body: parsed, location: res.headers.location as string | undefined });
+          try {
+            if (res.statusCode === 200 && parsed?.signed) {
+              assert.equal(parsed.delivery, "authenticated");
+              for (const locator of Object.values(parsed.signed)) {
+                if (typeof locator !== "string") continue;
+                assert.ok(locator.startsWith("/api/media/file/"));
+                assert.doesNotMatch(locator, /token=|storage\/v1/);
+                const bytes = await fetch(new URL(locator, base), { headers: { Authorization: `Bearer ${TOKEN}` }, redirect: "error" });
+                assert.equal(bytes.status, 200); assert.equal(await bytes.text(), "media-fixture-bytes");
+              }
+            }
+            assert.equal(deliveryClient?.counters.signs, 0, "provider signer is retired");
+            resolve({ status: res.statusCode ?? 0, body: parsed, location: res.headers.location as string | undefined });
+          } catch (error) { reject(error); }
         });
       });
       r.on("error", reject);
@@ -432,8 +461,8 @@ describe("transform parameters are bounded, and the two handlers agree", () => {
     setClients(sc);
     const r = await req("POST", "/api/media/sign", { urls: [BARE], transform: { width: 0.1 } });
     assert.equal(r.status, 200);
-    assert.equal(sc.counters.signs, 1);
-    const opts = sc.signedPaths[0].options;
+    assert.equal(sc.counters.deliveries, 1);
+    const opts = sc.deliveredPaths[0].options;
     assert.notEqual(
       opts?.transform?.width, 0,
       "width:0 must never reach createSignedUrl — a zero-pixel render is not a size",
@@ -446,14 +475,14 @@ describe("transform parameters are bounded, and the two handlers agree", () => {
     setClients(sc);
     const r = await req("POST", "/api/media/sign", { urls: [BARE], transform: { width: 0.5 } });
     assert.equal(r.status, 200);
-    assert.equal(sc.signedPaths[0].options?.transform?.width, 1);
+    assert.equal(sc.deliveredPaths[0].options?.transform?.width, 1);
   });
 
   it("POST /media/sign: width is capped at 3000 however large the ask", async () => {
     const sc = makeFailFake(allowSpec());
     setClients(sc);
     await req("POST", "/api/media/sign", { urls: [BARE], transform: { width: 10_000_000 } });
-    assert.equal(sc.signedPaths[0].options?.transform?.width, 3000);
+    assert.equal(sc.deliveredPaths[0].options?.transform?.width, 3000);
   });
 
   it("GET /media/file: width is capped at 3000 and never lands on 0", async () => {
@@ -462,8 +491,8 @@ describe("transform parameters are bounded, and the two handlers agree", () => {
       setClients(sc);
       _clearMediaAccessCache();
       const r = await req("GET", `/api/media/file/post-media/${OBJ}?width=${raw}`);
-      assert.equal(r.status, 302, `width=${raw} should still serve`);
-      const w = sc.signedPaths[0].options?.transform?.width;
+      assert.equal(r.status, 200, `width=${raw} should still serve`);
+      const w = sc.deliveredPaths[0].options?.transform?.width;
       assert.equal(w, expected, `width=${raw} produced ${w}`);
       assert.notEqual(w, 0, "the GET handler must never forward width:0 either");
     }
@@ -475,6 +504,7 @@ describe("transform parameters are bounded, and the two handlers agree", () => {
     const r = await req("POST", "/api/media/sign", { urls: Array.from({ length: 51 }, () => BARE) });
     assert.equal(r.status, 400, "51 urls must be refused, not served");
     assert.equal(r.body.error, "invalid_payload");
+    assert.equal(sc.counters.deliveries, 0);
     assert.equal(sc.counters.signs, 0);
   });
 });
@@ -529,7 +559,6 @@ describe("transform parameters are bounded, and the two handlers agree", () => {
  * previews use the separate job-ownership contract above.
  */
 const SIGNING_SITES: ReadonlySet<string> = new Set([
-  "routes/mediaFile.ts",
   "routes/postcards.ts",
   "routes/adminMedia.ts",
   "lib/media/adaptive/service.ts",
@@ -538,7 +567,6 @@ const SIGNING_SITES: ReadonlySet<string> = new Set([
   "lib/media/visualIndex/canonicalImageAcquisition.ts",
   "lib/media/generation/service.ts",
 ]);
-const RELAY_FILES: ReadonlySet<string> = new Set(["routes/mediaFile.ts"]);
 
 describe("no un-guarded signing site has appeared", () => {
   const SRC = path.resolve(import.meta.dirname, "..");
@@ -579,22 +607,15 @@ describe("no un-guarded signing site has appeared", () => {
     );
   });
 
-  it("every relay file imports the guard, and calls it before signing", () => {
-    let checked = 0;
-    for (const rel of RELAY_FILES) {
-      const body = fs.readFileSync(path.join(SRC, rel), "utf8");
-      checked++;
-      assert.match(body, /from "\.\.\/lib\/mediaAccess\.js"/, `${rel} must import lib/mediaAccess`);
-      const authorizeAt = body.indexOf("authorizeMediaAccess(sc");
-      const signAt = body.indexOf("createSignedUrl(");
-      assert.ok(authorizeAt > 0, `${rel} must call authorizeMediaAccess`);
-      assert.ok(signAt > 0, `${rel} must call createSignedUrl`);
-      // Both handlers call the guard; count them so a handler that stops
-      // calling it is caught even while the other still does.
-      const calls = body.match(/authorizeMediaAccess\(sc/g) ?? [];
-      assert.equal(calls.length, 2, `${rel} has 2 handlers that serve media; both must authorize (found ${calls.length})`);
-    }
-    assert.ok(checked > 0, "vacuous: no relay file was inspected");
+  it("both locator issuance and streamed bytes use current authorization, with no relay signer", () => {
+    const route = fs.readFileSync(path.join(SRC, "routes/mediaFile.ts"), "utf8");
+    const delivery = fs.readFileSync(path.join(SRC, "lib/media/privateMediaDelivery.ts"), "utf8");
+    assert.doesNotMatch(route, /createSignedUrls?\s*\(/);
+    assert.match(route, /requireMediaViewer\(req, res\)/);
+    assert.match(route, /deliverPrivateMedia\(req, res, sc, user.id/);
+    assert.equal((route.match(/authorizeMediaAccess\(sc/g) ?? []).length, 1, "batch resolution retains its own authorization");
+    assert.ok(delivery.indexOf("authorizeMediaAccess(sc") < delivery.indexOf("(options.fetch ?? fetch)"));
+    assert.ok(delivery.indexOf("authorizeMediaAccess(sc") > 0);
   });
 });
 

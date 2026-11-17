@@ -68,7 +68,7 @@ function req(
 
 type FakeRow = Record<string, any>;
 
-function makeFakeClient(tables: Record<string, FakeRow[]>) {
+function makeFakeClient(tables: Record<string, FakeRow[]>, reactivationReceipt: unknown = { ok: true, alreadyReactivated: true }) {
   const buildQuery = (table: string, rows: FakeRow[]) => {
     let _rows = [...rows];
     let _count = false;
@@ -129,6 +129,7 @@ function makeFakeClient(tables: Record<string, FakeRow[]>) {
           error: null,
         }),
     },
+    rpc: async (name: string) => { assert.equal(name, 'reactivate_self_deactivated_account'); return { data: reactivationReceipt, error: null }; },
     from: (table: string) => buildQuery(table, tables[table] ?? []),
     storage: { from: () => ({ remove: () => Promise.resolve({}) }) },
   };
@@ -237,7 +238,7 @@ describe("Profile Phase 3 — targeted QA", () => {
   // ── (b) /me/reactivate — state constraints ────────────────────────────────────
 
   describe("POST /me/reactivate", () => {
-    it("returns 403 when account_status is not 'deactivated' (e.g. active)", async () => {
+    it("returns idempotent success when account is already active", async () => {
       const client = makeFakeClient({
         users: [{ id: CALLER_ID }],
         profiles: [{ id: CALLER_ID, account_status: "active" }],
@@ -246,14 +247,14 @@ describe("Profile Phase 3 — targeted QA", () => {
       _setTestServiceClient(client as any);
 
       const { status } = await req("POST", "/me/reactivate");
-      assert.equal(status, 403, "Active account must not be reactivated");
+      assert.equal(status, 200, "An already-active retry is idempotent");
     });
 
     it("returns 403 when account_status is 'suspended'", async () => {
       const client = makeFakeClient({
         users: [{ id: CALLER_ID }],
         profiles: [{ id: CALLER_ID, account_status: "suspended" }],
-      });
+      }, { ok: false, error: "recovery_forbidden" });
       _setTestClient(client as any, true);
       _setTestServiceClient(client as any);
 
@@ -265,7 +266,7 @@ describe("Profile Phase 3 — targeted QA", () => {
       const client = makeFakeClient({
         users: [{ id: CALLER_ID }],
         profiles: [{ id: CALLER_ID, account_status: "banned" }],
-      });
+      }, { ok: false, error: "recovery_forbidden" });
       _setTestClient(client as any, true);
       _setTestServiceClient(client as any);
 
@@ -277,7 +278,7 @@ describe("Profile Phase 3 — targeted QA", () => {
       const client = makeFakeClient({
         users: [{ id: CALLER_ID }],
         profiles: [], // no profile row
-      });
+      }, { ok: false, error: "profile_unavailable" });
       _setTestClient(client as any, true);
       _setTestServiceClient(client as any);
 
@@ -286,35 +287,17 @@ describe("Profile Phase 3 — targeted QA", () => {
     });
 
     it("returns 200 and reactivated:true when account_status is 'deactivated'", async () => {
-      let profileStatus = "deactivated";
-      const baseClient = makeFakeClient({
-        users: [{ id: CALLER_ID }],
-        profiles: [{ id: CALLER_ID, account_status: "deactivated" }],
-        user_account_states: [],
-        profile_privacy_settings: [],
-      });
-      // Override update to mutate profileStatus and succeed
-      const client = {
-        ...baseClient,
-        from: (table: string) => {
-          const q = baseClient.from(table);
-          if (table === "profiles") {
-            const origUpdate = q.update.bind(q);
-            q.update = (row: any) => {
-              if (row.account_status) profileStatus = row.account_status;
-              return { eq: () => Promise.resolve({ data: null, error: null }) };
-            };
-          }
-          return q;
-        },
-      };
+      const client = makeFakeClient({
+        users: [{ id: CALLER_ID }], profiles: [{ id: CALLER_ID, account_status: 'deactivated' }],
+        user_account_states: [], user_deletion_requests: [],
+      }, { ok: true, alreadyReactivated: false });
       _setTestClient(client as any, true);
       _setTestServiceClient(client as any);
 
       const { status, body } = await req("POST", "/me/reactivate");
       assert.equal(status, 200, "Deactivated account should reactivate");
       assert.equal(body.reactivated, true);
-      assert.equal(profileStatus, "active", "Profile status should be updated to active");
+      // Actual profile state and privacy restoration are proved against PostgreSQL.
     });
   });
 

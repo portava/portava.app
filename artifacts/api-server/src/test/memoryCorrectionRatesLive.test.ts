@@ -1,3 +1,5 @@
+import { memoryEditFixture } from './helpers/memoryEditFixture.js';
+import { makeKernelRpc } from './memoryCommandKernelFake.js';
 /**
  * §24 `place_correction_rate` and `participant_correction_rate` are counted on
  * the LIVE command paths — census-highlights-memories H215 / H216 (lane R,
@@ -108,6 +110,7 @@ interface Builder extends PromiseLike<Result> {
 }
 
 function makeClient(state: State) {
+  const editRpc = makeKernelRpc({ tables: Object.fromEntries(Object.entries(state).filter(([, v]) => Array.isArray(v))), rpcCalls: [], failOn: new Set(), absent: false });
   function from(table: string): Builder {
     const filters: Array<(r: Row) => boolean> = [];
     let pendingUpdate: Row | null = null;
@@ -162,7 +165,7 @@ function makeClient(state: State) {
 
   return {
     from,
-    async rpc(fn: string): Promise<Result> { return { data: null, error: { message: `unknown rpc ${fn}` }, count: null }; },
+    async rpc(fn: string, args: unknown) { return fn === "memory_field_edits_ready" || fn === "memory_kernel_execute" ? editRpc(fn,args) : { data: null, error: { message: `unknown rpc ${fn}` }, count: null }; },
     auth: {
       getUser: async (tok: string) =>
         tok === "owner-tok"
@@ -222,7 +225,7 @@ async function patchReq(
   const res = await fetch(`${base}${path}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", connection: "close", Authorization: `Bearer ${token}` },
-    body: JSON.stringify(body),
+    body: JSON.stringify(/^\/api\/memories\/[^/]+$/.test(path) && body && typeof body === "object" ? memoryEditFixture(memory(), body as Record<string, unknown>) : body),
   });
   return { status: res.status, body: (await res.json().catch(() => null)) as JsonBody };
 }

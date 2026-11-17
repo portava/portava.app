@@ -22,6 +22,7 @@ export const HAVE_DB = LOCAL_DB_URL !== "";
 export interface PsqlResult { status: number; stdout: string; stderr: string }
 
 let databaseUrlOverride: string | null = null;
+const seededFixtureUsers = new Map<string, string>();
 
 /**
  * Point every call made by THIS test process at another database on the same
@@ -123,7 +124,57 @@ export function seedUser(label: string): string {
     `INSERT INTO auth.users (id, email) VALUES ('${id}', '${handle}@local.test');\n` +
     `INSERT INTO public.profiles (id, handle, name) VALUES ('${id}', '${handle}', '${label}');`,
   );
+  seededFixtureUsers.set(id, currentDatabaseUrl());
   return id;
+}
+
+/** Fixture teardown only: never use this to exercise a product deletion.
+ * Local, process-seeded owners only. Table locks keep temporary guard changes
+ * invisible to other writers; failure rolls back rows AND trigger state.
+ * Every other trigger, FK, and moderation protection remains enabled.
+ */
+export function cleanupSyntheticMedia(userIds: readonly string[]): void {
+  const ids = [...new Set(userIds)];
+  if (!ids.length) return;
+  const target = currentDatabaseUrl();
+  const url = new URL(target);
+  if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) throw new Error('fixture cleanup requires a local database');
+  if (ids.some(id => seededFixtureUsers.get(id) !== target)) throw new Error('fixture cleanup requires users seeded by this process in this database');
+  const database = decodeURIComponent(url.pathname.slice(1));
+  if (!/^[a-zA-Z0-9_]+$/.test(database)) throw new Error('fixture cleanup database identity is invalid');
+  const cluster = process.env.PORTAVA_TEST_CLUSTER_ID;
+  if (cluster !== undefined && !/^[0-9]+$/.test(cluster)) throw new Error('fixture cleanup cluster identity is invalid');
+  const who = ids.map(id => `'${id}'`).join(',');
+  const catalog = `SELECT COALESCE(jsonb_agg(jsonb_build_object('relation',t.tgrelid::regclass::text,'name',t.tgname,
+    'enabled',t.tgenabled,'definition',pg_get_triggerdef(t.oid),'function',pg_get_functiondef(t.tgfoid)) ORDER BY t.tgrelid,t.tgname),'[]'::jsonb)
+    FROM pg_trigger t JOIN (VALUES ('public.post_media'::regclass,'postcard_retention_source_guard'),
+      ('public.media_assets'::regclass,'retained_media_purge_guard')) g(relation,name)
+      ON t.tgrelid=g.relation AND t.tgname=g.name`;
+  exec(`DO $fixture_media_cleanup$
+    DECLARE before_guards jsonb; after_guards jsonb; guard jsonb;
+    BEGIN
+      IF current_database()<>'${database}' ${cluster ? `OR (SELECT system_identifier::text FROM pg_control_system())<>'${cluster}'` : ''} THEN
+        RAISE EXCEPTION 'fixture database identity changed';
+      END IF;
+      LOCK TABLE public.media_assets,public.post_media IN ACCESS EXCLUSIVE MODE;
+      PERFORM 1 FROM auth.users WHERE id IN (${who}) FOR SHARE;
+      IF (SELECT count(*) FROM auth.users WHERE id IN (${who}) AND email LIKE '%@local.test')<>${ids.length} THEN
+        RAISE EXCEPTION 'fixture cleanup requires existing synthetic identities';
+      END IF;
+      ${catalog} INTO before_guards;
+      FOR guard IN SELECT value FROM jsonb_array_elements(before_guards) LOOP
+        IF guard->>'enabled' NOT IN ('O','A') THEN RAISE EXCEPTION 'fixture retention guard is not enabled'; END IF;
+        EXECUTE format('ALTER TABLE %s DISABLE TRIGGER %I',guard->>'relation',guard->>'name');
+      END LOOP;
+      DELETE FROM public.media_assets WHERE owner_user_id IN (${who});
+      DELETE FROM public.post_media WHERE user_id IN (${who});
+      FOR guard IN SELECT value FROM jsonb_array_elements(before_guards) LOOP
+        EXECUTE format('ALTER TABLE %s ENABLE %s TRIGGER %I',guard->>'relation',
+          CASE WHEN guard->>'enabled'='A' THEN 'ALWAYS' ELSE '' END,guard->>'name');
+      END LOOP;
+      ${catalog} INTO after_guards;
+      IF before_guards IS DISTINCT FROM after_guards THEN RAISE EXCEPTION 'fixture retention guards changed'; END IF;
+    END;$fixture_media_cleanup$;`, { single: true });
 }
 
 /** Remove this synthetic owner's reservations before trips: the append-only event guard

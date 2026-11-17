@@ -34,6 +34,7 @@ export interface AdminProfile {
 }
 
 export interface AccountStateRow {
+  id?: string;
   state: string;
   reason: string | null;
   expires_at: string | null;
@@ -125,6 +126,14 @@ export const suspendUser = (userId: string, reason: string, expiresAt?: string |
 
 export const banUser = (userId: string, reason: string, reportId?: string) =>
   action<{ ok: true; banned: true }>(userId, 'ban', reason, reportLinkFields(reportId));
+
+/** The admin may restore a personally or administratively deactivated profile. */
+export async function reactivateUserProfile(userId: string, reason: string, deactivationId: string | null): Promise<AdminApiResult<{ reactivated: true; alreadyReactivated: boolean }>> {
+  const result = await action<{ reactivated: boolean; alreadyReactivated: boolean }>(userId, 'reactivate-profile', reason, { deactivationId });
+  if (!result.ok) return result;
+  if (result.data?.reactivated !== true || typeof result.data.alreadyReactivated !== 'boolean') return { ok: false, error: 'Profile reactivation could not be confirmed. Refresh the account.' };
+  return { ok: true, data: { reactivated: true, alreadyReactivated: result.data.alreadyReactivated } };
+}
 
 export const restoreUser = (userId: string, reason: string | null) =>
   action<{ ok: true; restored: true }>(userId, 'restore', reason);

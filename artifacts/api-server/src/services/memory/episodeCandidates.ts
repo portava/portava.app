@@ -55,6 +55,7 @@
  * unreadable ⇒ `unavailable` (503). Nothing is written to a half-deployed spine.
  */
 import { createHash } from "node:crypto";
+import { derivedUuid } from "./memoryIdentity.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { probeHighlightObject } from "../highlights/highlightSchemaAvailability.js";
@@ -627,13 +628,7 @@ export async function rejectCandidate(sc: SupabaseClient, input: { ownerId: stri
  * merely unlikely: two taps, two devices, a retry after a lost response, a
  * retry after a failed link write — all reach one row.
  */
-export function derivedUuid(namespace: string, name: string): string {
-  const h = createHash("sha256").update(`${namespace}\u0000${name}`).digest();
-  h[6] = (h[6]! & 0x0f) | 0x50;
-  h[8] = (h[8]! & 0x3f) | 0x80;
-  const x = h.subarray(0, 16).toString("hex");
-  return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20, 32)}`;
-}
+export { derivedUuid } from "./memoryIdentity.js";
 export const candidateMemoryId = (episodeId: string) => derivedUuid("portava:memory-candidate:memory", episodeId);
 export const candidateItemId = (memoryId: string, assetId: string) => derivedUuid("portava:memory-candidate:item", `${memoryId}:${assetId}`);
 /** The §19 key the Memory create carries: one per candidate, whatever key the client sent. */
@@ -864,7 +859,7 @@ export async function confirmCandidate(
       const itemId = candidateItemId(memoryId!, m.id);
       if (haveIds.has(itemId) || haveUrls.has(url)) continue;
       if (classifyMemoryMediaUrl(url, input.ownerId).verdict === "foreign_storage") continue;
-      const item = { id: itemId, memory_id: memoryId, media_url: url, media_type: m.mime_type ?? "image/jpeg", caption: null, position };
+      const item = { id: itemId, memory_id: memoryId, expected_asset_id: m.id, media_url: url, media_type: m.mime_type ?? "image/jpeg", caption: null, position };
       const added = await dispatchMemoryCommand<{ id: string }>({
         sc,
         commandType: "ADD_MEDIA",
@@ -872,13 +867,6 @@ export async function confirmCandidate(
         actorUserId: input.ownerId,
         idempotencyKey: `memory-candidate-item:${itemId}`,
         payload: { media_type: item.media_type, position, write: item },
-        legacy: async () => {
-          const { data, error } = await sc.from("memory_items").insert(item).select("id").single();
-          if (!error) return { ok: true, body: { id: String((data as { id: string }).id) } };
-          // A concurrent completer attached this exact photo already.
-          if (String((error as { code?: string }).code ?? "") === "23505") return { ok: true, body: { id: itemId } };
-          return { ok: false, http: { code: "db_error", message: error.message } };
-        },
       });
       if (!added.ok) {
         const detail = "rejection" in added ? added.rejection.reason : added.http.message;

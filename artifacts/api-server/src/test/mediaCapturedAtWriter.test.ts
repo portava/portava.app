@@ -1,3 +1,4 @@
+import { activeMediaAccountRead } from "./helpers/mediaAccountReadFixture.js";
 /**
  * media_assets.captured_at — the column that had no writer (Wall §16, Media §6).
  *
@@ -208,6 +209,7 @@ function makeClient(flags: Record<string, boolean>) {
     return b;
   }
   const client: any = {
+    rpc: activeMediaAccountRead,
     from: builder,
     storage: {
       from(bucket: string) {

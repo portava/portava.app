@@ -1,3 +1,4 @@
+import { activeMediaAccountRead } from './helpers/mediaAccountReadFixture.js';
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -16,9 +17,11 @@ function fixture(change?: "withdraw" | "replace" | "error") {
     consentRevision: "b".repeat(64), revisionKey: "c".repeat(64) } };
   let readable = [original];
   const client = {
+    rpc: activeMediaAccountRead,
     from(table: string) {
       let single = false;
       const query = {
+        contains() { return query; },
         select() { return query; }, eq() { return query; }, in() { return query; }, limit() { return query; }, order() { return query; },
         maybeSingle() { single = true; return query; },
         then(resolve: (value: unknown) => unknown) {
@@ -30,7 +33,7 @@ function fixture(change?: "withdraw" | "replace" | "error") {
           else if (table === "media_attachments") rows = [{ entity_type: "post", entity_id: postId }];
           else if (table === "post_media") rows = [{ post_id: postId, processing_status: "ready", moderation_status: "approved" }];
           else if (table === "posts") rows = [{ id: postId, author_id: ownerId, status: "active", post_status: "published" }];
-          else if (table === "stories") rows = [];
+          else if (["stories", "media_asset_lifecycle_events", "post_media_moderation_ledger"].includes(table)) rows = [];
           else if (table === "media_caption_manifests") {
             manifestReads++;
             rows = [{ asset_id: assetId, source_version: 1, revision_key: captionRevision, object_path: `manual-captions/${assetId}/v1-${captionRevision}.json` }];

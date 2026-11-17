@@ -53,8 +53,8 @@ job (`services/stories/storyRetention.ts`) work in production. The scan now reco
 | U24 | routes/profile.ts:260 | GET /api/me/profile/analytics | `postImpressions7d` is always 0 | only `docs/migrations/0070` (not a migration in the chain) → **not pending** | **no** (listed) |
 | U25 | routes/rentABuddyMarketplace.ts:2821 | PATCH /api/rent-a-buddy/admin/fee-rules (admin) | Was 500. **Now 503, naming 3601. Nothing is written (this change)** | 3601 → **held** H1 | **no** (held) |
 | U26 | routes/reviews.ts:958,987 *(branch)* | admin reported-review removal (context + remove) | 503 | 3994_reported_review_audited_removal → main 295 | **yes** |
-| U27 | routes/routePlan.ts:423 | POST /api/route-plans/:id/accept | 404 "Route plan not found" for every plan | 2224_route_hop_signal → main 020 | **yes** |
-| U28 | routes/routePlan.ts:515 | POST /api/route-plans/:id/complete | 404 for every plan | 2224 → main 020 | **yes** |
+| U27 | routes/routePlan.ts:427 | POST /api/route-plans/:id/accept | 404 "Route plan not found" for every plan | 2224_route_hop_signal → main 020 | **yes** |
+| U28 | routes/routePlan.ts:519 | POST /api/route-plans/:id/complete | 404 for every plan | 2224 → main 020 | **yes** |
 | U33 | routes/verification.ts:251 | POST /api/verification/session (keyed provider only) | 500 after a provider session was created (orphaned) | 3930_identity_verifications_provider_mode → main 270 | **yes** |
 | U34 | routes/wishlist.ts:49 | POST /api/wishlist (OSM place); Telegraph discovery_save_place | The save succeeds, but no `discovery_places` row or `saved_count` bump is ever written | 2121 → main 001 | **yes** |
 | U35 | server/trips/planItemAudience.ts:122 | PATCH /api/trips/:tripId/plan/items/:itemId (narrow case) | 503. The write may be half-applied | 3727_trip_plan_item_audience → main 234 | **yes** |

@@ -364,7 +364,8 @@ describe("the tree as it stands", () => {
   it("every scheduler in the registry has a file, so reachability is not silently empty", () => {
     const tree = readTree();
     assert.deepEqual(tree.ownerless, [], "these start…() functions are listed but no file exports them");
-    assert.equal(tree.owners.size, 74); // Includes the event-driven generation worker, layover metrics, debug-sample purge and scheduler heartbeat; exact inventory, not a ceiling.
+    assert.equal(tree.owners.size, 73); // Automatic account deletion retired; includes the event-driven generation worker, layover metrics, debug-sample purge and scheduler heartbeat; exact inventory, not a ceiling.
+    assert.equal(tree.owners.has("startAccountDeletionScheduler"), false);
     assert.ok(tree.owners.has("startHiggsfieldGenerationWorker"));
     assert.ok(tree.owners.has("startLayoverMetricsScheduler"));
     assert.ok(tree.reachable.size > 100, `only ${tree.reachable.size} files reachable — the import walk is broken`);

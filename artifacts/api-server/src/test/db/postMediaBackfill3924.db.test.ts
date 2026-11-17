@@ -20,7 +20,7 @@
 import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { HAVE_DB, exec, rows, scalar, seedUser, deleteUser, psql } from "./localDb.js";
+import { HAVE_DB, exec, rows, scalar, seedUser, deleteUser, cleanupSyntheticMedia, psql } from "./localDb.js";
 
 const MIGRATION = readFileSync(new URL("../../migrations/3924_post_media_backfill_create_path_uploads.sql", import.meta.url), "utf8");
 const ROLLBACK = readFileSync(new URL("../../../../../db/rollback/2026-10-24-3924-post-media-backfill-create-path-uploads-rollback.sql", import.meta.url), "utf8");
@@ -44,8 +44,8 @@ describe("3924 — create-path uploads move from media_urls into post_media", { 
     exec(`INSERT INTO storage.objects (bucket_id, name, metadata) VALUES ('post-media', '${name}', '{"mimetype":"${mime}","size":${size}}'::jsonb);`);
   }
   function cleanup(): void {
-    exec(`DELETE FROM public.post_media WHERE post_id IN ('${P(1)}','${P(2)}','${P(3)}','${P(4)}','${P(5)}');
-          DELETE FROM public.posts WHERE id IN ('${P(1)}','${P(2)}','${P(3)}','${P(4)}','${P(5)}');`);
+    cleanupSyntheticMedia([a,b].filter(Boolean));
+    exec(`DELETE FROM public.posts WHERE id IN ('${P(1)}','${P(2)}','${P(3)}','${P(4)}','${P(5)}');`);
   }
 
   before(() => {
@@ -109,7 +109,12 @@ describe("3924 — create-path uploads move from media_urls into post_media", { 
     exec(`INSERT INTO public.post_media (post_id, user_id, media_type, storage_bucket, storage_path, public_url, mime_type, processing_status, moderation_status, sort_order)
           VALUES ('${P(3)}', '${a}', 'image', 'post-media', '${a}/3.jpg', 'post-media/${a}/3.jpg', 'image/jpeg', 'ready', 'pending', 0),
                  ('${P(3)}', '${a}', 'image', 'post-media', '${a}/4.jpg', 'post-media/${a}/4.jpg', 'image/jpeg', 'ready', 'rejected', 1);`);
-    exec(ROLLBACK);
+    // 3924 rollback predates retained deletion. Isolate only the newer guard
+    // inside that synthetic historical transaction; never edit the release SQL.
+    assert.equal(scalar(`SELECT count(*) FROM post_media WHERE user_id NOT IN ('${a}','${b}')`),'0');
+    exec(ROLLBACK.replace(/^BEGIN;$/m,'BEGIN; ALTER TABLE public.post_media DISABLE TRIGGER postcard_retention_source_guard;')
+      .replace(/^COMMIT;$/m,'ALTER TABLE public.post_media ENABLE TRIGGER postcard_retention_source_guard; COMMIT;'));
+    assert.equal(scalar("SELECT tgenabled FROM pg_trigger WHERE tgrelid='public.post_media'::regclass AND tgname='postcard_retention_source_guard'"),'O');
     assert.equal(rows(`SELECT 1 FROM public.post_media WHERE post_id = '${P(3)}'`).length, 2, "a post with a rejected row is left alone");
     assert.equal(scalar(`SELECT media_urls::text FROM public.posts WHERE id = '${P(3)}'`), "{https://images.example.com/only.jpg}", "nothing moderated goes back into the array");
     assert.equal(scalar(`SELECT media_urls::text FROM public.posts WHERE id = '${P(1)}'`), `{post-media/${a}/1792727980484.mov}`);

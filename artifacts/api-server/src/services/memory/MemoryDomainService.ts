@@ -1,3 +1,4 @@
+import { MEMORY_ITEM_SOURCE_READY_FUNCTION, MEMORY_FIELD_EDITS_READY_FUNCTION } from "../../lib/capability/registry.js";
 /**
  * MemoryDomainService — §2's first bounded service.
  *
@@ -25,7 +26,8 @@
  * The decision. Every function below answers "may this actor apply this command
  * to this Memory, and what is the resulting state?" and then applies it through
  * ONE path: the kernel RPC when `memory_kernel_enabled` is on, the pre-existing
- * direct write when it is off. The route above it validates the payload,
+ * writer when it is off. ADD_MEDIA shares one SQL insertion owner on both
+ * paths. The route above it validates the payload,
  * establishes the actor, and renders the result. It contains no rule.
  *
  * WHAT IT DOES NOT OWN
@@ -46,6 +48,8 @@
  * code never does is answer success while claiming an audit that did not happen.
  */
 import { randomUUID } from "node:crypto";
+import { prepareMemoryItemWrite } from "./memoryMediaBinding.js";
+import { derivedUuid } from "./memoryIdentity.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   assertLifecycleTransition,
@@ -155,9 +159,10 @@ export type MemoryFailureClass =
   | "lifecycle"
   | "idempotency"
   | "infrastructure"
+  | "conflict"
   | "unclassified";
 
-const VALIDATION_REASONS = new Set(["MEMORY_COMMAND_MALFORMED", "MEMORY_COMMAND_UNKNOWN_TYPE", "invalid_payload", "MEMORY_MERGE_INVALID", "MEMORY_SPLIT_INVALID"]); // the last two: MERGE_MEMORY / SPLIT_MEMORY (3676)
+const VALIDATION_REASONS = new Set(["MEMORY_EDIT_BASE_REQUIRED", "MEMORY_COMMAND_MALFORMED", "MEMORY_COMMAND_UNKNOWN_TYPE", "invalid_payload", "MEMORY_MERGE_INVALID", "MEMORY_SPLIT_INVALID"]); // the last two: MERGE_MEMORY / SPLIT_MEMORY (3676)
 // HIGHLIGHT_AUTH_NOT_OWNER is classed `authorization` even though the HTTP
 // answer it produces is a 404 — the class describes what KIND of thing went
 // wrong, which is the question a dashboard asks, and the status code describes
@@ -167,12 +172,13 @@ const VALIDATION_REASONS = new Set(["MEMORY_COMMAND_MALFORMED", "MEMORY_COMMAND_
 const AUTHORIZATION_REASONS = new Set(["MEMORY_AUTH_NOT_OWNER", "MEMORY_AUTH_NOT_PARTICIPANT", "MEMORY_AUTH_IDEMPOTENCY_KEY_FOREIGN", "HIGHLIGHT_AUTH_NOT_OWNER", "forbidden", "MEMORY_MERGE_AUDIENCE_MISMATCH"]); // the last: §23 — a merge may not move content to another audience (3676), a policy refusal, not a malformed request
 const NOT_FOUND_REASONS = new Set(["MEMORY_NOT_FOUND", "MEMORY_ITEM_NOT_FOUND", "MEMORY_TAG_NOT_FOUND", "HIGHLIGHT_NOT_FOUND", "not_found"]);
 const LIFECYCLE_REASONS = new Set(["MEMORY_LIFECYCLE_TERMINAL", "MEMORY_LIFECYCLE_INVALID_TRANSITION", "MEMORY_LIFECYCLE_UNKNOWN_STATE", "RESURFACING_NOT_PRIVATE"]);
-const IDEMPOTENCY_REASONS = new Set(["MEMORY_IDEMPOTENCY_KEY_REUSED"]);
-const INFRASTRUCTURE_REASONS = new Set(["MEMORY_KERNEL_UNAVAILABLE", "db_error", "server_not_configured", "HIGHLIGHT_LIFETIME_UNAVAILABLE", "RESURFACING_NOT_DEPLOYED"]);
+const IDEMPOTENCY_REASONS = new Set(["MEMORY_IDEMPOTENCY_KEY_REUSED", "MEMORY_ITEM_ALREADY_LINKED"]);
+const INFRASTRUCTURE_REASONS = new Set(["MEMORY_KERNEL_UNAVAILABLE", "degraded_unavailable", "db_error", "server_not_configured", "HIGHLIGHT_LIFETIME_UNAVAILABLE", "RESURFACING_NOT_DEPLOYED"]);
 
 export function failureClassOf(a: Pick<CommandAudit, "outcome" | "reason">): MemoryFailureClass | null {
   if (a.outcome !== "rejected") return null;
   const reason = a.reason ?? "";
+  if (reason === "MEMORY_FIELD_CONFLICT" || reason === "conflict") return "conflict";
   if (VALIDATION_REASONS.has(reason)) return "validation";
   if (AUTHORIZATION_REASONS.has(reason)) return "authorization";
   if (NOT_FOUND_REASONS.has(reason)) return "not_found";
@@ -434,6 +440,8 @@ export function authorizeParticipantCommand(
 // ── Dispatch ─────────────────────────────────────────────────────────────────
 
 export interface DispatchInput<T> {
+  /** H178: PATCH uses the existing transactional kernel regardless of other command flags. */
+  atomicEdit?: boolean;
   sc: SupabaseClient | any;
   commandType: MemoryCommandType;
   memoryId: string | null;
@@ -448,11 +456,11 @@ export interface DispatchInput<T> {
   idempotencyKey: string; /** CREATE_MEMORY confirming a §7 candidate; reported to §24's H218 count. */ fromCandidate?: boolean;
   payload: Record<string, unknown>;
   /**
-   * The pre-kernel direct write, run ONLY when `memory_kernel_enabled` is off.
-   * It is the code that shipped before this lane, moved verbatim, so the
-   * flag-off behaviour is byte-identical to what it was.
+   * Other commands retain their pre-kernel writer when the flag is off.
+   * ADD_MEDIA always uses insert_memory_media_item and ignores this callback;
+   * its canonical source reference is committed with the item.
    */
-  legacy: () => Promise<{ ok: true; body: T } | { ok: false; http: CommandHttpError }>;
+  legacy?: () => Promise<{ ok: true; body: T; duplicate?: boolean } | { ok: false; http: CommandHttpError }>;
   /**
    * A malformed Idempotency-Key envelope that must refuse ONLY on the kernel
    * path (400 invalid_payload). The create doors (CREATE_HIGHLIGHT, 3677) never
@@ -479,7 +487,8 @@ export interface DispatchInput<T> {
  *              row are the function's, in one transaction (§17). A replay of the
  *              same key returns the ORIGINAL result from the receipt; this code
  *              cannot recompute it and does not try.
- * KERNEL OFF — the legacy direct write, and an audit line marked
+ * KERNEL OFF — the command writer (shared SQL insertion for ADD_MEDIA),
+ *              and an audit line marked
  *              `durable:false`. No event is emitted, and nothing here pretends
  *              one was: `eventId` is null in the outcome.
  *
@@ -490,13 +499,50 @@ export interface DispatchInput<T> {
  */
 export async function dispatchMemoryCommand<T>(input: DispatchInput<T>): Promise<CommandOutcome<T>> {
   const commandId = randomUUID();
-  const kernel = await memoryKernelClient(input.sc);
+  const refuseBeforeDispatch = (http: CommandHttpError): CommandOutcome<T> => {
+    auditCommand({ commandId, commandType: input.commandType, memoryId: input.memoryId,
+      highlightId: input.highlightId ?? null, actorUserId: input.actorUserId,
+      idempotencyKey: input.idempotencyKey, outcome: "rejected", reason: http.code,
+      durable: false, sourceVersion: input.sourceVersion ?? null });
+    return { ok: false, http };
+  };
+  let payload = input.payload;
+  let itemWrite: Record<string, unknown> | null = null;
+  if (input.commandType === "ADD_MEDIA") {
+    try { itemWrite = prepareMemoryItemWrite(input.payload.write); }
+    catch { return refuseBeforeDispatch({ code: "invalid_payload", message: "That photo link cannot be attached." }); }
+    try {
+      const ready = await input.sc.rpc(MEMORY_ITEM_SOURCE_READY_FUNCTION);
+      if (!ready || ready.error !== null || ready.data !== true) return refuseBeforeDispatch({ code: "degraded_unavailable", message: "Memory media is not available right now." });
+    } catch { return refuseBeforeDispatch({ code: "degraded_unavailable", message: "Memory media is not available right now." }); }
+    payload = { ...input.payload, write: itemWrite };
+  }
+  if (input.atomicEdit) {
+    try {
+      const ready = await input.sc.rpc(MEMORY_FIELD_EDITS_READY_FUNCTION);
+      if (ready.error || ready.data !== true) return refuseBeforeDispatch({ code: "degraded_unavailable", message: "Memory editing is temporarily unavailable. Your changes have not been saved." });
+    } catch { return refuseBeforeDispatch({ code: "degraded_unavailable", message: "Memory editing is temporarily unavailable. Your changes have not been saved." }); }
+  }
+  const kernel = input.atomicEdit ? input.sc : await memoryKernelClient(input.sc);
 
   if (!kernel) {
-    const legacy = await input.legacy();
+    let legacy: { ok: true; body: T; duplicate?: boolean } | { ok: false; http: CommandHttpError };
+    if (itemWrite) {
+      const write = { ...itemWrite, id: itemWrite.id ?? derivedUuid("portava:memory-item:command", `${input.actorUserId}:${input.memoryId}:${input.idempotencyKey}`) };
+      try {
+        const result = await input.sc.rpc("insert_memory_media_item", { p_actor: input.actorUserId, p_memory: input.memoryId, p_write: write });
+        if (result.error || !result.data?.item || result.data.item.id !== write.id || result.data.item.memory_id !== input.memoryId
+          || typeof result.data.duplicate !== "boolean") {
+          legacy = { ok: false, http: { code: result.error?.code === "23505" ? "conflict" : "degraded_unavailable", message: "That photo could not be attached to this Memory." } };
+        } else legacy = { ok: true, body: result.data.item as T, duplicate: result.data.duplicate };
+      } catch { legacy = { ok: false, http: { code: "degraded_unavailable", message: "That photo could not be attached to this Memory." } }; }
+    } else {
+      if (!input.legacy) return dbError("Memory command writer unavailable");
+      legacy = await input.legacy();
+    }
     if (input.legacyUnaudited) {
       return legacy.ok
-        ? { ok: true, body: legacy.body, duplicate: false, commandId, eventId: null, idempotencyKey: input.idempotencyKey }
+        ? { ok: true, body: legacy.body, duplicate: legacy.duplicate ?? false, commandId, eventId: null, idempotencyKey: input.idempotencyKey }
         : legacy;
     }
     if (!legacy.ok) {
@@ -513,10 +559,10 @@ export async function dispatchMemoryCommand<T>(input: DispatchInput<T>): Promise
       commandId, commandType: input.commandType, memoryId: input.memoryId,
       highlightId: input.highlightId ?? null,
       actorUserId: input.actorUserId, idempotencyKey: input.idempotencyKey, fromCandidate: input.fromCandidate,
-      outcome: "accepted", eventId: null, durable: false,
+      outcome: legacy.duplicate ? "duplicate" : "accepted", eventId: null, durable: false,
       sourceVersion: input.sourceVersion ?? null,
     });
-    return { ok: true, body: legacy.body, duplicate: false, commandId, eventId: null, idempotencyKey: input.idempotencyKey };
+    return { ok: true, body: legacy.body, duplicate: legacy.duplicate ?? false, commandId, eventId: null, idempotencyKey: input.idempotencyKey };
   }
 
   if (input.kernelEnvelopeError) {
@@ -530,7 +576,7 @@ export async function dispatchMemoryCommand<T>(input: DispatchInput<T>): Promise
     actorUserId: input.actorUserId,
     idempotencyKey: input.idempotencyKey,
     type: input.commandType,
-    payload: input.payload,
+    payload,
   });
 
   if (!result.ok) {
@@ -541,9 +587,9 @@ export async function dispatchMemoryCommand<T>(input: DispatchInput<T>): Promise
       outcome: "rejected", reason: result.reason,
       sourceVersion: input.sourceVersion ?? null,
       // The kernel wrote its own audit row for every rejection it evaluated.
-      // MEMORY_KERNEL_UNAVAILABLE is the one reason where it did not, because
-      // the function never ran — that one is log-only and says so.
-      durable: result.reason !== "MEMORY_KERNEL_UNAVAILABLE",
+      // Unavailable calls and duplicate-source SQL errors do not commit an audit
+      // row; their application rejection is log-only and says so.
+      durable: result.reason !== "MEMORY_KERNEL_UNAVAILABLE" && result.reason !== "MEMORY_ITEM_ALREADY_LINKED",
     });
     return { ok: false, rejection: result };
   }

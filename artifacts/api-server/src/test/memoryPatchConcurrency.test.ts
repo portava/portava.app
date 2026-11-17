@@ -1,54 +1,10 @@
+import { memoryEditFixture } from './helpers/memoryEditFixture.js';
+import { makeKernelRpc } from './memoryCommandKernelFake.js';
 /**
- * PATCH /memories/:id under a concurrent write — the §5 guard, re-asserted at
- * the moment it is acted on.
- *
- * Highlights/Memories Development Architecture Spec v1
- *   §5   the Memory lifecycle machine.
- *   §17  "All canonical writes should cross an explicit command boundary for
- *        authorization, invariants, idempotency, audit …"
- *   §19  "Concurrent edits should resolve at command/field level, not blind row
- *        last-write-wins."
- *
- * WHAT WAS WRONG, AND IT IS LIVE
- * ------------------------------
- * The handler does this, in this order:
- *
- *     loadMemoryForCommand(sc, id)             <- reads `state`
- *     guardLifecycle(existing.state, d.state)  <- decides on the value it read
- *     …
- *     .update(patch).eq("id", id).eq("owner_id", user.id)   <- asserts NEITHER
- *
- * The write never says "and only if the row is still in the state I judged".
- * `assertLifecycleTransition` treats `deleted` and `removed` as TERMINAL and its
- * own comment says why that matters: "a plain PATCH {"state":"published"} put
- * moderator-removed content back into the discovery feed". The guard stops that
- * when the row is already terminal WHEN IT IS READ. It does nothing at all when
- * the row becomes terminal in the microseconds between the read and the write —
- * and the DELETE handler next door, which sets exactly that state, is an
- * ordinary authenticated route the same owner can call from a second device.
- *
- * So: publish on the phone, delete on the laptop, and the Memory comes back
- * published — past a guard that ran, passed, and was never re-asserted. That is
- * the "blind row last-write-wins" §19 names, on the one field where losing is
- * not a lost edit but a revoked deletion.
- *
- * WHY THE FIX IS A `state` COMPARE-AND-SWAP AND NOT AN `If-Match` HEADER.
- * Census §C.8 raised this as owner decision D-C1 — "should PATCH reject an edit
- * whose base the client did not state?" — and left the row NB because a
- * client-supplied precondition breaks every client that does not send one. The
- * server does not need the client for this: it already READ the base. Pinning
- * the write to the value the guard was evaluated against needs no header, no
- * migration and no client change, and it conflicts ONLY with a concurrent write
- * that moved that same field — which is field-level resolution, not row-level.
- * A concurrent edit to `title` still merges, and the last test here pins that
- * so the fix cannot quietly become a whole-row precondition later.
- *
- * D-C1 IS NOT CLOSED BY THIS. Two concurrent edits of the same non-lifecycle
- * field still resolve by last-write-wins with no detection, because the server
- * has no base for those the client did not state. That is what keeps the census
- * row short of BUILT-AND-CORRECT.
- *
- * Run: node --import tsx/esm --test src/test/memoryPatchConcurrency.test.ts
+ * H178 route interleavings: the client supplies its original field base and the
+ * existing kernel refuses a competing lifecycle or field edit. Independent
+ * fields still merge. This replaces the former state-only legacy CAS test;
+ * actual PostgreSQL sessions and rollback are proved in memoryFieldConflicts.db.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -104,6 +60,7 @@ function baseState(over: Partial<State> = {}): State {
 }
 
 function makeClient(state: State) {
+  const editRpc = makeKernelRpc({ tables: Object.fromEntries(Object.entries(state).filter(([, v]) => Array.isArray(v))), rpcCalls: [], failOn: new Set(), absent: false });
   function from(table: string) {
     const filters: Array<(r: Row) => boolean> = [];
     let pendingUpdate: any = null;
@@ -171,7 +128,7 @@ function makeClient(state: State) {
 
   return {
     from,
-    async rpc(fn: string) { return { data: null, error: { message: `unknown rpc ${fn}` } }; },
+    async rpc(fn: string, args: unknown) { return fn === "memory_field_edits_ready" || fn === "memory_kernel_execute" ? editRpc(fn,args) : { data: null, error: { message: `unknown rpc ${fn}` } }; },
     auth: {
       getUser: async (tok: string) =>
         tok === "owner-tok"
@@ -225,7 +182,7 @@ async function patchReq(
   const res = await fetch(`${base}${path}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", connection: "close", Authorization: "Bearer owner-tok" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(/^\/api\/memories\/[^/]+$/.test(path) && body && typeof body === "object" ? memoryEditFixture(memory(), body as Record<string, unknown>) : body),
   });
   return { status: res.status, body: (await res.json().catch(() => null)) as JsonBody };
 }

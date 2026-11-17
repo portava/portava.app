@@ -706,7 +706,7 @@ Nothing in this section exists. The evidence is one grep, run over
 | TR73 | `occurredAt` distinct from `recordedAt` | **C** | **Moved N→C.** `2420_trip_kernel_foundation.sql:112#occurred_at` is the client-observed instant and `:113#recorded_at` is when the database wrote it. Two columns, distinct, exactly as §4.3 asks. |
 | TR74 | Outbox pattern for asynchronous consumers | **C** | **Moved N→C.** `2420_trip_kernel_foundation.sql:156#trip_outbox`, written in the same transaction as the event (`2590:818#trip_outbox`) and indexed on the unpublished set. |
 | TR75 | Workers publish/retry idempotently | **W** | Two trip workers exist and both are real: `server/trips/projectionWorkers/tripReminderScheduler.ts` (with `is_sent` + `reminder_delivered_at` + `reminder_retry_count`, migrations `0138`–`0140`) and `server/trips/projectionWorkers/tripCrewLiveShareScheduler.ts`. They are timer-driven pollers over their own tables, not outbox consumers, and the reminder one is idempotent by a `is_sent` flag rather than by event id. |
-| TR76 | Consumers persist processed event IDs or use deterministic projection version checks | **C** | **Moved N→C.** A projection worker exists and is registered: `lib/mapTripProjectionWorker.ts:82#runTripMapProjectionPass` drains unpublished outbox rows in `aggregate_version` order per trip and stamps `published_at`; `:126#startTripMapProjectionScheduler` is called at `index.ts:210#startTripOutboxWorker`. |
+| TR76 | Consumers persist processed event IDs or use deterministic projection version checks | **C** | **Moved N→C.** A projection worker exists and is registered: `lib/mapTripProjectionWorker.ts:82#runTripMapProjectionPass` drains unpublished outbox rows in `aggregate_version` order per trip and stamps `published_at`; `:126#startTripMapProjectionScheduler` is called at `index.ts:209#startTripOutboxWorker`. |
 
 ### §5 Database Schema
 
@@ -3826,7 +3826,7 @@ their own FIRST: `trip_operational_projections_enabled`
 (`domain/trips/policies/tripOperationalProjections.ts:29#TRIP_OPERATIONAL_PROJECTIONS_FLAG`,
 definition `:31#TRIP_OPERATIONAL_PROJECTIONS`, gate
 `:72#tripOperationalProjectionsGate`, registered at
-`lib/capability/registry.ts:252#[TRIP_OPERATIONAL_PROJECTIONS.flag]: TRIP_OPERATIONAL_PROJECTIONS,`), seeded
+`lib/capability/registry.ts:312#[TRIP_OPERATIONAL_PROJECTIONS.flag]: TRIP_OPERATIONAL_PROJECTIONS,`), seeded
 FALSE by `2778_trip_operational_projections_flag.sql`. The gate is a pure
 helper in the ratchet's sense, so the builders that call it first
 (`domain/trips/projections/TripFreedomProjection.ts:162#tripOperationalProjectionsGate`)
@@ -4268,8 +4268,8 @@ scenario or replay test existed.
   **tampered** snapshot fails to verify (`:149#snapshot`); RLS hides a private
   trip and its events from a non-member (`:163#RLS`).
 - A CI job runs it on a `postgis/postgis:16-3.4` service container
-  (`.github/workflows/ci.yml:906#api-server-local-db:`); the verdict job requires
-  it (`.github/workflows/ci.yml:1700-1709#ci-verdict:`). The same files sit in the ordinary `test` list and skip there without a
+  (`.github/workflows/ci.yml:897#api-server-local-db:`); the verdict job requires
+  it (`.github/workflows/ci.yml:1727-1736#ci-verdict:`). The same files sit in the ordinary `test` list and skip there without a
   database, exactly as `tripKernelLive.test.ts` skips without credentials.
 
 **What it does not prove.** Drift. `docs/ci/BOOTSTRAP.md` §1's argument
@@ -5117,7 +5117,7 @@ re-derives and cites rather than argues.
   `trip_map_projection_applied` and retried by `attempts`
   (`src/migrations/2520_trip_map_projection_worker.sql:53#trip_map_projection_applied`),
   is scheduled at boot (`lib/mapTripProjectionWorker.ts:126#startTripMapProjectionScheduler`,
-  `src/index.ts:210#startTripOutboxWorker()`), and §41's pipeline
+  `src/index.ts:209#startTripOutboxWorker()`), and §41's pipeline
   test drains it twice on a real database and the second drain applies
   nothing (`src/test/db/tripKernelPipeline.db.test.ts:127#§19.4`).
 
@@ -5388,7 +5388,7 @@ mutations are named with the rows.
   its own so one failure does not stop the other, DISABLED / NO_CLIENT /
   ERROR told apart; 2792 seeds the flag FALSE with both functions as its
   precondition (`migrations/2792_trip_retention_sweep_flag.sql:36#trip_retention_sweep_enabled`);
-  `index.ts` starts it (`src/index.ts:126#startTripProjectionWorkers();`).
+  `index.ts` starts it (`src/index.ts:125#startTripProjectionWorkers();`).
   `test/tripRetentionScheduler.test.ts:53#BOTH` pins the flag gate, both rpc
   names, the string-count coercion and the partial failure. Mutation: the
   flag check removed (2 red).
@@ -6556,7 +6556,7 @@ code changes in this section.
   writer are one worker
   (`lib/mapTripProjectionWorker.ts:126#startTripOutboxWorker as startTripMapProjectionScheduler`),
   started beside the reminder, live-share and retention schedulers
-  (`src/index.ts:210#startTripOutboxWorker();`); the reservation
+  (`src/index.ts:209#startTripOutboxWorker();`); the reservation
   extractor is the one integration adapter
   (`routes/tripReservations.ts:157#extractReservations(text)`). What §24
   names exists piece by piece; the `server/trips/` layout, with an outbox
@@ -6794,7 +6794,7 @@ share a suffix — was found by the compiler and fixed by hand
   (`server/trips/projectionWorkers/index.ts:29#export const TRIP_PROJECTION_WORKERS`,
   `server/trips/projectionWorkers/index.ts:35#export function startTripProjectionWorkers(`);
   `src/index.ts` starts the two things
-  (`src/index.ts:210#startTripOutboxWorker();`, `src/index.ts:126#startTripProjectionWorkers();`)
+  (`src/index.ts:209#startTripOutboxWorker();`, `src/index.ts:125#startTripProjectionWorkers();`)
   where it used to start four. `integrationAdapters/` holds the reservation
   extractor (`server/trips/integrationAdapters/reservationExtract.ts:87#export async function extractReservations(`),
   consumed by the reservations route
@@ -6899,7 +6899,7 @@ state, which is why TR437 moves to W and not to C.
 - **A route plan on a trip is a view over the plan.** Under the gate,
   `POST /route-plans` with a `tripId` refuses any stop that is not one of
   that trip's plan items — `409`, reason `TRIP_IDENTITY_STOP_NOT_IN_PLAN`
-  (`routes/routePlan.ts:122#TRIP_IDENTITY_STOP_NOT_IN_PLAN`,
+  (`routes/routePlan.ts:126#TRIP_IDENTITY_STOP_NOT_IN_PLAN`,
   `domain/trips/contracts/tripReasonCodes.ts:110#"TRIP_IDENTITY_STOP_NOT_IN_PLAN"`) —
   so the route optimizer orders the trip's own places and cannot introduce
   a second set. Where the gate is closed (every deployment today) a route
@@ -10219,7 +10219,7 @@ PostgREST. One rule now decides it:
 `artifacts/api-server/src/server/trips/privateAnchorShares.ts:272#export async function withheldPlanItemStopIds(` — the
 route's owner sees every stop of it; anyone else gets a plan-item stop only when `canSeePlanItemLocation` admits the
 item; an unreadable read withholds. The route read serves a withheld stop as a slot and drops every leg touching it
-(`artifacts/api-server/src/routes/routePlan.ts:886#const withheldStopIds = await withheldPlanItemStopIds(`); the map
+(`artifacts/api-server/src/routes/routePlan.ts:890#const withheldStopIds = await withheldPlanItemStopIds(`); the map
 leaves it off (`artifacts/api-server/src/server/trips/readRoutes/tripMapProjection.ts:360#const withheld = await withheldPlanItemStopIds(`).
 The client door: `artifacts/api-server/src/migrations/3978_route_stops_private_plan_item_door.sql:143#CREATE POLICY "route_stops_member_select" ON public.route_stops`
 and its leg twin carry the same rule through
@@ -11669,11 +11669,11 @@ ever showed who had joined. The stops read beside it also left its error unread,
 this read), so none moves.
 
 **What changed, with no migration.** The members are read with no embed, and a failed read is `db_error`
-(`artifacts/api-server/src/routes/routePlan.ts:691#if (membersErr) {`). So is a failed stops read
-(`artifacts/api-server/src/routes/routePlan.ts:697#if (stopsErr) {`). Then ONE batched `.in("id", ids)` read of
+(`artifacts/api-server/src/routes/routePlan.ts:695#if (membersErr) {`). So is a failed stops read
+(`artifacts/api-server/src/routes/routePlan.ts:701#if (stopsErr) {`). Then ONE batched `.in("id", ids)` read of
 `public.profiles`, on the service client as `GET /trips/:tripId/members` reads its crew, finds the members
-(`artifacts/api-server/src/routes/routePlan.ts:704#const memberProfiles = await readRoutePlanMemberProfiles(`, helper
-`artifacts/api-server/src/routes/routePlan.ts:950#async function readRoutePlanMemberProfiles(`). The response shape is
+(`artifacts/api-server/src/routes/routePlan.ts:708#const memberProfiles = await readRoutePlanMemberProfiles(`, helper
+`artifacts/api-server/src/routes/routePlan.ts:954#async function readRoutePlanMemberProfiles(`). The response shape is
 unchanged, and so is the universal display-name rule.
 
 **Two decisions (routine, recorded here).**

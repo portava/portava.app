@@ -221,6 +221,36 @@ describe("the scan on a fixture tree", () => {
   });
 });
 
+describe("shared RPC guard reachability", () => {
+  it("requires the declared RPC in this consumer's actual flag closure", () => {
+    const root = mkdtempSync(join(tmpdir(), "shared-guard-"));
+    try {
+      mkdirSync(join(root, "lib")); mkdirSync(join(root, "routes"));
+      const guard = join(root, "lib", "guard.ts");
+      const route = join(root, "routes", "consumer.ts");
+      writeFileSync(guard, `import { probeSchemaReadiness } from "./capability/schemaCapability.js";
+export async function authorize(sc) { const r = await sc.rpc("account_recovery_status", {}); return r.error === null && r.data?.mediaAccessAllowed === true; }`);
+      const connected = `import { authorize } from "../lib/guard.js";
+export async function route(sc) { if (!await isFlagEnabled(sc, "shared_enabled")) return false; return authorize(sc); }`;
+      writeFileSync(route, connected);
+      const def: CapabilityDefinition = { flag: "shared_enabled", providedBy: ["fixture.sql"],
+        requires: { tables: {}, functions: ["account_recovery_status"] },
+        consumers: ["routes/consumer.ts"], sharedFunctionGuards: ["lib/guard.ts"], note: "fixture" };
+      const check = (definition = def) => evaluateRegistry({ shared_enabled: definition }, loadFixtureSnapshot(),
+        scanFlagReads(root, []), { table: () => true, column: () => true, fn: () => true },
+        rel => { try { return readFileSync(join(root, rel), "utf8"); } catch { return null; } })[0]!.badConsumers;
+      assert.deepEqual(check(), []);
+      assert.ok(check({ ...def, sharedFunctionGuards: ["lib/missing.ts"] }).length);
+      assert.ok(check({ ...def, requires: { tables: {}, functions: ["different_rpc"] } }).length);
+      assert.ok(check({ ...def, requires: { tables: { messages: { columns: ["body"] } }, functions: ["account_recovery_status"] } }).length);
+      writeFileSync(route, connected.replace("return authorize(sc)", "return true"));
+      assert.ok(check().length, "an imported but uncalled guard does not protect the consumer");
+      writeFileSync(route, connected.replace('"shared_enabled"', '"other_enabled"'));
+      assert.ok(check().length, "another flag's closure cannot prove this consumer");
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+});
+
 describe("the real tree against the real snapshot", () => {
   it("is non-vacuous and reproduces the founding case as GUARDED", () => {
     const snap = loadProductionSnapshot(SNAPSHOT);

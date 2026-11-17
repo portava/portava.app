@@ -1,14 +1,4 @@
-/**
- * Admin — Account deletions: the screen that runs one real deletion through the
- * admin route before the scheduled worker is switched on (migration 2073).
- *
- * Run with: pnpm test:component
- *
- * Pinned: a failed read is an error, not "nobody is waiting"; nothing is
- * deleted without the confirm; a run shows every step the cascade reported and
- * the row leaves only on success; a refusal stays on the row; the worker's
- * flag state is said in words.
- */
+/** Admin recovery and explicit irreversible deletion through canonical commands. */
 import React from 'react';
 import { Alert } from 'react-native';
 import { fireEvent, render, screen } from '@testing-library/react-native';
@@ -43,6 +33,8 @@ jest.mock('../../../src/services/adminConsole', () => ({
   ...jest.requireActual('../../../src/services/adminConsole'),
   listDeletionRequests: jest.fn(),
   executeDeletionRequest: jest.fn(),
+  recoverDeletionRequest: jest.fn(),
+  reconcileDeletionRequest: jest.fn(),
 }));
 
 import * as svc from '../../../src/services/adminConsole';
@@ -52,7 +44,8 @@ const m = svc as jest.Mocked<typeof svc>;
 
 const REQ = {
   id: 'u-del', user_id: 'u-del', status: 'pending',
-  requested_at: '2026-10-01T00:00:00Z', scheduled_at: '2026-10-31T00:00:00Z',
+  requested_at: '2026-10-01T00:00:00Z', scheduled_at: null,
+  recovery_generation: '11111111-1111-4111-8111-111111111111', recovery_verified: true, execution_started_at: null,
 };
 
 let alertSpy: jest.SpyInstance;
@@ -74,20 +67,43 @@ describe('Account deletions', () => {
     expect(screen.queryByTestId('deletions-empty')).toBeNull();
   });
 
-  it('says the worker is off and how to turn it on safely', async () => {
-    m.listDeletionRequests.mockResolvedValue({ ok: true, data: [] });
-    await render(<AdminDeletionRequestsScreen />);
-    await screen.findByTestId('deletions-empty');
-    expect(screen.getByText(/Automatic deletion is OFF/)).toBeTruthy();
-    expect(screen.getByText(/Run one request here first/)).toBeTruthy();
-  });
-
-  it('says when the worker is on', async () => {
+  it('states the owner and admin recovery rules even if the old worker flag is on', async () => {
     mockWorkerOn = true;
     m.listDeletionRequests.mockResolvedValue({ ok: true, data: [] });
+    await render(<AdminDeletionRequestsScreen />); await screen.findByTestId('deletions-empty');
+    expect(screen.getByText(/Users can recover their own profiles for 90 days/)).toBeTruthy();
+    expect(screen.queryByText(/Automatic deletion is ON/)).toBeNull();
+  });
+
+  it('requires a reason, restores the selected generation, and removes the row only after success', async () => {
+    m.listDeletionRequests.mockResolvedValue({ ok: true, data: [REQ] });
+    m.recoverDeletionRequest.mockResolvedValue({ ok: true, data: { recovered: true, accountStatus: 'active' } });
     await render(<AdminDeletionRequestsScreen />);
-    await screen.findByTestId('deletions-empty');
-    expect(screen.getByText(/Automatic deletion is ON/)).toBeTruthy();
+    const recover = await screen.findByTestId('deletion-recover-u-del');
+    await fireEvent.press(recover); expect(m.recoverDeletionRequest).not.toHaveBeenCalled();
+    await fireEvent.changeText(screen.getByTestId('deletion-reason-u-del'), 'Owner requested recovery');
+    await fireEvent.press(recover); await screen.findByTestId('deletion-recovered');
+    expect(m.recoverDeletionRequest).toHaveBeenCalledWith('u-del', REQ.recovery_generation, 'Owner requested recovery');
+    expect(screen.queryByTestId('deletion-u-del')).toBeNull(); expect(m.executeDeletionRequest).not.toHaveBeenCalled();
+  });
+
+  it('failed recovery retains the row and explains the refusal', async () => {
+    m.listDeletionRequests.mockResolvedValue({ ok: true, data: [REQ] });
+    m.recoverDeletionRequest.mockResolvedValue({ ok: false, error: 'Permanent deletion has started' });
+    await render(<AdminDeletionRequestsScreen />);
+    await fireEvent.changeText(await screen.findByTestId('deletion-reason-u-del'), 'Owner requested recovery');
+    await fireEvent.press(screen.getByTestId('deletion-recover-u-del'));
+    await screen.findByText(/Action not completed: Permanent deletion has started/); expect(screen.getByTestId('deletion-u-del')).toBeTruthy();
+  });
+
+  it('an executing or unverified deletion cannot be presented as recoverable', async () => {
+    for (const row of [{ ...REQ, status: 'executing', execution_started_at: '2026-11-16T12:00:00Z' }, { ...REQ, recovery_verified: false }]) {
+      m.listDeletionRequests.mockResolvedValue({ ok: true, data: [row] });
+      const view = await render(<AdminDeletionRequestsScreen />);
+      await fireEvent.changeText(await screen.findByTestId('deletion-reason-u-del'), 'Review recovery');
+      await fireEvent.press(screen.getByTestId('deletion-recover-u-del')); expect(m.recoverDeletionRequest).not.toHaveBeenCalled();
+      await view.unmount();
+    }
   });
 
   it('runs a due request only through the confirm, shows every step, and drops the row', async () => {
@@ -102,12 +118,13 @@ describe('Account deletions', () => {
       },
     });
     await render(<AdminDeletionRequestsScreen />);
-    expect(await screen.findByText(/Due now/)).toBeTruthy();
+    expect(await screen.findByText(/Recoverable by an admin/)).toBeTruthy();
+    await fireEvent.changeText(screen.getByTestId('deletion-reason-u-del'), 'Approved permanent deletion');
     await fireEvent.press(screen.getByTestId('deletion-run-u-del'));
     expect(alertSpy).toHaveBeenCalledTimes(1);
     await screen.findByTestId('deletion-result');
-    expect(m.executeDeletionRequest).toHaveBeenCalledWith('u-del');
-    expect(screen.getByText('Deleted. Every step finished.')).toBeTruthy();
+    expect(m.executeDeletionRequest).toHaveBeenCalledWith('u-del', REQ.recovery_generation, 'Approved permanent deletion');
+    expect(screen.getByText('Permanent deletion verified.')).toBeTruthy();
     expect(screen.getByTestId('deletion-step-posts')).toBeTruthy();
     expect(screen.getByTestId('deletion-step-auth_user')).toBeTruthy();
     expect(screen.queryByTestId('deletion-u-del')).toBeNull();
@@ -117,7 +134,8 @@ describe('Account deletions', () => {
     alertSpy.mockImplementation(() => {});
     m.listDeletionRequests.mockResolvedValue({ ok: true, data: [REQ] });
     await render(<AdminDeletionRequestsScreen />);
-    await fireEvent.press(await screen.findByTestId('deletion-run-u-del'));
+    await fireEvent.changeText(await screen.findByTestId('deletion-reason-u-del'), 'Approved permanent deletion');
+    await fireEvent.press(screen.getByTestId('deletion-run-u-del'));
     expect(m.executeDeletionRequest).not.toHaveBeenCalled();
     expect(screen.getByTestId('deletion-u-del')).toBeTruthy();
   });
@@ -126,8 +144,34 @@ describe('Account deletions', () => {
     m.listDeletionRequests.mockResolvedValue({ ok: true, data: [REQ] });
     m.executeDeletionRequest.mockResolvedValue({ ok: false, error: 'Account deletion did not complete — auth_user: not found' });
     await render(<AdminDeletionRequestsScreen />);
-    await fireEvent.press(await screen.findByTestId('deletion-run-u-del'));
-    await screen.findByText(/Not deleted: Account deletion did not complete/);
+    await fireEvent.changeText(await screen.findByTestId('deletion-reason-u-del'), 'Approved permanent deletion');
+    await fireEvent.press(screen.getByTestId('deletion-run-u-del'));
+    await screen.findByText(/Action not completed: Account deletion did not complete/);
     expect(screen.getByTestId('deletion-u-del')).toBeTruthy();
   });
+  it('checks a stable receipt after the user FK disappeared without dispatching another erase', async () => {
+    const row = { ...REQ, id: 'receipt-1', deletion_request_id: 'receipt-1', user_id: null, status: 'executing', can_reconcile: true };
+    m.listDeletionRequests.mockResolvedValue({ ok: true, data: [row] });
+    m.reconcileDeletionRequest.mockResolvedValue({ ok: true, data: { completed: true } });
+    await render(<AdminDeletionRequestsScreen />);
+    const check = await screen.findByTestId('deletion-reconcile-receipt-1');
+    await fireEvent.press(check); expect(m.reconcileDeletionRequest).not.toHaveBeenCalled();
+    await fireEvent.changeText(screen.getByTestId('deletion-reason-receipt-1'),'Verify interrupted result');
+    await fireEvent.press(screen.getByTestId('deletion-run-receipt-1')); await fireEvent.press(screen.getByTestId('deletion-recover-receipt-1'));
+    await fireEvent.press(check); await screen.findByText('Permanent deletion was verified.');
+    expect(m.reconcileDeletionRequest).toHaveBeenCalledWith('receipt-1',REQ.recovery_generation,'Verify interrupted result');
+    expect(m.executeDeletionRequest).not.toHaveBeenCalled(); expect(m.recoverDeletionRequest).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('deletion-receipt-1')).toBeNull(); expect(alertSpy).not.toHaveBeenCalled();
+  });
+  it('retains an unsettled receipt and does not offer another deletion', async () => {
+    const row = { ...REQ, id: 'receipt-2', deletion_request_id: 'receipt-2', user_id: null, status: 'executing', can_reconcile: true };
+    m.listDeletionRequests.mockResolvedValue({ ok: true, data: [row] });
+    m.reconcileDeletionRequest.mockResolvedValue({ ok: false, error: 'Auth result remains unknown' });
+    await render(<AdminDeletionRequestsScreen />);
+    await fireEvent.changeText(await screen.findByTestId('deletion-reason-receipt-2'),'Verify result');
+    await fireEvent.press(screen.getByTestId('deletion-reconcile-receipt-2'));
+    await screen.findByText('Action not completed: Auth result remains unknown');
+    expect(screen.getByTestId('deletion-receipt-2')).toBeTruthy(); expect(m.executeDeletionRequest).not.toHaveBeenCalled();
+  });
+
 });

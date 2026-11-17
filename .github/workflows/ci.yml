@@ -856,15 +856,6 @@ jobs:
           set -euo pipefail
           bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:media-translation-native 2>&1 | tee "$RUNNER_TEMP/media-translation-native.log"
 
-      - name: Require native account media erasure suite
-        timeout-minutes: 5
-        shell: bash
-        env:
-          PORTAVA_TEST_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}
-          TMPDIR: /tmp
-        run: |
-          set -euo pipefail
-          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:account-media-native 2>&1 | tee "$RUNNER_TEMP/account-media-native.log"
 
       - name: Cache pinned media encoding source archives
         uses: actions/cache@v4
@@ -1028,6 +1019,42 @@ jobs:
         run: |
           set -euo pipefail
           bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:db-local
+
+      - name: Require native account media erasure suite
+        timeout-minutes: 5
+        shell: bash
+        env:
+          LOCAL_DB_URL: postgresql://postgres:postgres@localhost:5432/portava_local
+          PORTAVA_TEST_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          PORTAVA_TEST_POSTGRES_MAJOR: '16'
+          TMPDIR: /tmp
+        run: |
+          set -euo pipefail
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:account-media-native 2>&1 | tee "$RUNNER_TEMP/account-media-native.log"
+
+      - name: Require reusable memory import SQL suite
+        timeout-minutes: 5
+        shell: bash
+        env:
+          LOCAL_DB_URL: postgresql://postgres:postgres@localhost:5432/portava_local
+          PORTAVA_TEST_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          PORTAVA_TEST_POSTGRES_MAJOR: '16'
+          TMPDIR: /tmp
+        run: |
+          set -euo pipefail
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:memory-import-sql 2>&1 | tee "$RUNNER_TEMP/memory-import-sql.log"
+
+      - name: Require reusable Memory source-post SQL suite
+        timeout-minutes: 5
+        shell: bash
+        env:
+          LOCAL_DB_URL: postgresql://postgres:postgres@localhost:5432/portava_local
+          PORTAVA_TEST_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          PORTAVA_TEST_POSTGRES_MAJOR: '16'
+          TMPDIR: /tmp
+        run: |
+          set -euo pipefail
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:memory-own-media-sql 2>&1 | tee "$RUNNER_TEMP/memory-own-media-sql.log"
 
   standalone-checks:
     name: standalone · check:all (guards + node:test + jest)

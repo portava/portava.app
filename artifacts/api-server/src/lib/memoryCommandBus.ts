@@ -547,12 +547,15 @@ export interface MemoryCommand {
 }
 
 export type MemoryKernelReason =
+  | "MEMORY_FIELD_CONFLICT"
+  | "MEMORY_EDIT_BASE_REQUIRED"
   | "RESURFACING_NOT_PRIVATE"
   | "RESURFACING_NOT_DEPLOYED"
   | "MEMORY_COMMAND_MALFORMED"
   | "MEMORY_COMMAND_UNKNOWN_TYPE"
   | "MEMORY_NOT_FOUND"
   | "MEMORY_ITEM_NOT_FOUND"
+  | "MEMORY_ITEM_ALREADY_LINKED"
   | "MEMORY_TAG_NOT_FOUND"
   | "MEMORY_AUTH_NOT_OWNER"
   | "MEMORY_AUTH_NOT_PARTICIPANT"
@@ -728,6 +731,13 @@ export async function executeMemoryCommand(sc: any, cmd: MemoryCommand): Promise
     // every client shape this process constructs.
     error = e;
   }
+  // This existing uniqueness rule is a domain conflict. Other unique or
+  // transport failures remain unavailable rather than being guessed as retries.
+  if (cmd.type === "ADD_MEDIA" && error?.code === "23505"
+    && String(error.message ?? "").includes('"memory_items_source_post_media_uniq"')) {
+    countRejection("MEMORY_ITEM_ALREADY_LINKED");
+    return { ok: false, reason: "MEMORY_ITEM_ALREADY_LINKED", contractVersion: null };
+  }
   if (error || !data || typeof data !== "object") {
     countRejection("MEMORY_KERNEL_UNAVAILABLE");
     return {
@@ -799,6 +809,10 @@ export function sendMemoryCommandRejection(
         to: r.to,
       });
       return;
+    case "MEMORY_FIELD_CONFLICT":
+    case "MEMORY_EDIT_BASE_REQUIRED":
+      res.status(409).json({ error: "conflict", message: "This Memory changed while you were editing it. Reopen it and review your changes before saving.", reason: r.reason });
+      return;
     case "MEMORY_LIFECYCLE_TERMINAL":
       res.status(409).json({
         error: "invalid_state_transition",
@@ -822,6 +836,9 @@ export function sendMemoryCommandRejection(
     case "MEMORY_AUTH_NOT_PARTICIPANT":
     case "MEMORY_AUTH_IDEMPOTENCY_KEY_FOREIGN":
       res.status(403).json({ error: "forbidden", message: "Not permitted on this memory", reason: r.reason });
+      return;
+    case "MEMORY_ITEM_ALREADY_LINKED":
+      res.status(409).json({ error: "conflict", message: "That post photo is already in this Memory.", reason: r.reason });
       return;
     case "MEMORY_IDEMPOTENCY_KEY_REUSED":
       // The actor already used this key for a DIFFERENT command. Returning the

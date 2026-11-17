@@ -33,6 +33,7 @@ import { fileURLToPath } from "node:url";
 import { CAPABILITIES, MEDIA_CANONICAL, MEDIA_CANONICAL_ASSET_COLUMNS, capabilityFor } from "../lib/capability/registry.js";
 import { CANONICAL_ASSET_SCHEMA_COLUMNS } from "../lib/media/mediaSchemaCapability.js";
 import { CANONICAL_ASSET_COLUMNS_ADDED_BY_2250 } from "../lib/mediaAssets.js";
+import { reachesSharedFunctionGuard, scanFlagReads } from "../lib/capability/prerequisitesCore.js";
 import { buildCanonicalSchema, hasColumn, stripSqlComments } from "../scripts/lib/canonicalSchema.js";
 
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -87,15 +88,17 @@ describe("capability registry — every entry is consumed, seeded and declared",
   });
 
   it("every entry names a consumer that exists, names the flag, and reaches lib/capability", () => {
+    const scan = scanFlagReads(SRC);
+    const readConsumer = (rel: string) => { try { return readFileSync(join(SRC, rel), "utf8"); } catch { return null; } };
     for (const def of entries) {
       assert.ok(def.consumers.length > 0, `${def.flag}: a capability with no consumer guards nothing`);
       for (const rel of def.consumers) {
         const p = join(SRC, rel);
         assert.ok(existsSync(p), `${def.flag}: consumer ${rel} does not exist`);
         const src = readFileSync(p, "utf8");
-        assert.ok(src.includes(def.flag), `${def.flag}: consumer ${rel} never names the flag`);
+        assert.ok(src.includes(def.flag) || reachesSharedFunctionGuard(def, rel, scan, readConsumer), `${def.flag}: consumer ${rel} never names the flag`);
         assert.ok(
-          /capability\/|SchemaCapability/.test(src),
+          /capability\/|SchemaCapability/.test(src) || reachesSharedFunctionGuard(def, rel, scan, readConsumer),
           `${def.flag}: consumer ${rel} does not import lib/capability or a *SchemaCapability wrapper`,
         );
       }
@@ -157,7 +160,7 @@ describe("Memory source capability refusal", () => {
       if (!name) continue;
       assert.ok(def.requires.functions?.includes(name));
       const sql = def.providedBy.map(file => readFileSync(join(MIGRATIONS, file), "utf8")).join("\n");
-      assert.ok(sql.includes(`FUNCTION public.${name}()\nRETURNS boolean LANGUAGE sql STABLE`));
+      assert.match(sql, new RegExp(`FUNCTION public\\.${name}\\(\\)\\s+RETURNS boolean LANGUAGE sql STABLE`));
     }
   });
   it("missing or unreadable Passport storage remains unavailable before private reads or commands", async () => {

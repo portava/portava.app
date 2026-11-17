@@ -1,4 +1,6 @@
-/** Postcard completion composes the existing canonical and moderation owners. */
+/** Postcard completion under media_canonical_enabled composes the existing
+ * canonical and moderation owners. It checks the read-only lifecycle proof
+ * before the shared mediaSchemaCapability column probe or any completion write. */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { casUpdateMediaAsset } from '../mediaAssets.js';
 import { probeCanonicalAssetSchema } from './mediaSchemaCapability.js';

@@ -23,7 +23,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HAVE_DB, exec, rows, scalar, seedUser, deleteUser } from "./localDb.js";
+import { HAVE_DB, exec, rows, scalar, seedUser, deleteUser, cleanupSyntheticMedia } from "./localDb.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const S2337 = readFileSync(resolve(__dir, "../../migrations/2337_trip_crew_rls_membership_convergence.sql"), "utf8");
@@ -68,8 +68,8 @@ describe("census-telegraph T220 — 3903/3904/3905: the SQL layer asks authz.is_
 
   after(() => {
     if (!OWNER) return;
+    cleanupSyntheticMedia([OWNER, VIEWER].filter(Boolean));
     exec(`DELETE FROM public.blocks WHERE blocker_id IN ('${OWNER}', '${VIEWER}') OR blocked_id IN ('${OWNER}', '${VIEWER}');
-          DELETE FROM public.post_media WHERE user_id IN ('${OWNER}', '${VIEWER}');
           DELETE FROM public.posts WHERE author_id IN ('${OWNER}', '${VIEWER}');`);
     for (const u of [OWNER, VIEWER]) if (u) deleteUser(u);
   });

@@ -1,3 +1,4 @@
+import { activeMediaAccountRead } from "./helpers/mediaAccountReadFixture.js";
 /**
  * VERIFICATION LANE V1 — privacy / authorization.
  *
@@ -150,7 +151,7 @@ function makeClient() {
     _db: db,
     _inserted: inserted,
     from,
-    rpc: async () => ({ data: null, error: { message: "rpc not modelled" } }),
+    rpc: activeMediaAccountRead,
     // Any bearer token IS a user id here, which is what makes the no-token case
     // below a real test of `requireUser` rather than of the fake.
     auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },

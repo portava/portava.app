@@ -115,10 +115,7 @@ describe('edit screen — census H40 / H71', () => {
     expect(await screen.findByText('Old Cafe · Hanoi, Vietnam')).toBeTruthy();
     await screen.findByTestId('memory-type-picker');
     await fireEvent.press(screen.getByTestId('memory-edit-save-btn'));
-    await waitFor(() => expect(patches(calls)).toHaveLength(1));
-    expect(patches(calls)[0]!.body).not.toHaveProperty('memoryType');
-    expect(patches(calls)[0]!.body).not.toHaveProperty('placeDisplayNameAtOccurrence');
-    expect(patches(calls)[0]!.body.placeId).toBe('fsq:old-cafe');
+    expect(patches(calls)).toHaveLength(0);
   });
 
   it('a type the person chose is sent', async () => {
@@ -146,6 +143,7 @@ describe('edit screen — census H40 / H71', () => {
     await screen.findByText('Old Cafe · Hanoi, Vietnam');
     await waitFor(() => expect(calls.some((c) => c.url === 'https://api.test/api/memory-types')).toBe(true));
     expect(screen.queryByTestId('memory-type-picker')).toBeNull();
+    await fireEvent.changeText(screen.getByPlaceholderText('Give this memory a name…'), 'Unrelated edit');
     await fireEvent.press(screen.getByTestId('memory-edit-save-btn'));
     await waitFor(() => expect(patches(calls)).toHaveLength(1));
     expect(patches(calls)[0]!.body).not.toHaveProperty('memoryType');

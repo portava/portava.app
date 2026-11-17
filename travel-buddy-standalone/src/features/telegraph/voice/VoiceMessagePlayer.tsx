@@ -39,6 +39,7 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { Play, Pause, AlertCircle } from 'lucide-react-native';
 import { useHydratedMedia } from '../../../services/mediaUrl.ts';
+import { useMediaScopeKey } from '../../../hooks/useMediaScopeKey.ts';
 import { space, radius, type as t } from '../../../theme/tokens.ts';
 import { useTelegraphPalette, type TelegraphPalette } from '../theme/telegraphTheme.ts';
 import {
@@ -78,7 +79,10 @@ export interface VoiceSoundHandle {
 
 async function loadExpoAvSound(uri: string): Promise<VoiceSoundHandle> {
   const { Audio } = await import('expo-av');
-  const { sound } = await Audio.Sound.createAsync({ uri }, { shouldPlay: false });
+  const { resolveMediaRequestSources } = await import('../../../services/mediaRequestSource.ts');
+  const source = (await resolveMediaRequestSources({ voice: uri })).voice;
+  if (!source) throw new Error('Voice media is unavailable');
+  const { sound } = await Audio.Sound.createAsync(source, { shouldPlay: false });
   return sound as unknown as VoiceSoundHandle;
 }
 
@@ -95,6 +99,10 @@ export function VoiceMessagePlayer({
   const urlList = React.useMemo(() => [url], [url]);
   const { resolved, loading: signing } = useHydratedMedia(urlList);
   const signedUrl = resolved[url] ?? null;
+  const scopeKey = useMediaScopeKey();
+  const sourceKey = JSON.stringify([scopeKey, signedUrl]);
+  const currentSourceKey = React.useRef(sourceKey);
+  currentSourceKey.current = sourceKey;
 
   const [playing, setPlaying] = React.useState(false);
   const [positionMillis, setPositionMillis] = React.useState(0);
@@ -104,6 +112,7 @@ export function VoiceMessagePlayer({
   const [barWidth, setBarWidth] = React.useState(0);
 
   const soundRef = React.useRef<VoiceSoundHandle | null>(null);
+  const soundSourceKey = React.useRef<string | null>(null);
   const mountedRef = React.useRef(true);
 
   React.useEffect(() => {
@@ -118,6 +127,14 @@ export function VoiceMessagePlayer({
     };
   }, []);
 
+  React.useEffect(() => {
+    const old = soundRef.current;
+    soundRef.current = null;
+    soundSourceKey.current = null;
+    if (old) void old.unloadAsync().catch(() => {});
+    setPlaying(false); setPositionMillis(0); setFailed(false);
+  }, [sourceKey]);
+
   const bars = React.useMemo(() => {
     const down = downsampleWaveform(waveform ?? [], WAVEFORM_BARS);
     // §11.3: a missing derivative degrades, it does not block. A voice note
@@ -127,17 +144,17 @@ export function VoiceMessagePlayer({
   }, [waveform]);
 
   const ensureSound = React.useCallback(async (): Promise<VoiceSoundHandle | null> => {
-    if (soundRef.current) return soundRef.current;
+    if (soundRef.current && soundSourceKey.current === sourceKey) return soundRef.current;
     if (!signedUrl) return null;
     try {
       const make = createSound ?? loadExpoAvSound;
       const sound = await make(signedUrl);
-      if (!mountedRef.current) {
+      if (!mountedRef.current || currentSourceKey.current !== sourceKey) {
         void sound.unloadAsync().catch(() => {});
         return null;
       }
       sound.setOnPlaybackStatusUpdate((status: any) => {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || currentSourceKey.current !== sourceKey) return;
         if (status?.isLoaded === false) return;
         if (typeof status?.positionMillis === 'number') setPositionMillis(status.positionMillis);
         if (status?.didJustFinish) {
@@ -148,12 +165,13 @@ export function VoiceMessagePlayer({
         }
       });
       soundRef.current = sound;
+      soundSourceKey.current = sourceKey;
       return sound;
     } catch {
-      if (mountedRef.current) setFailed(true);
+      if (mountedRef.current && currentSourceKey.current === sourceKey) setFailed(true);
       return null;
     }
-  }, [signedUrl, createSound]);
+  }, [signedUrl, createSound, sourceKey]);
 
   const onToggle = React.useCallback(async () => {
     if (busy) return;

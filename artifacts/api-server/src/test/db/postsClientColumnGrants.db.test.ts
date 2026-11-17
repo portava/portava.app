@@ -47,19 +47,21 @@
  * G1-5 re-applies 3801 after 3362 to reach today's catalog. 3801's own suite is
  * postsReleaseTimingColumns.db.test.ts.
  */
-import { describe, it, before, after } from "node:test";
+import { describe, it, before, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HAVE_DB, exec, psql, rows, scalar, seedUser, deleteUser } from "./localDb.js";
+import { HAVE_DB, exec, psql, rows, scalar, seedUser, deleteUser, cleanupSyntheticMedia } from "./localDb.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 // The historical migrations deliberately reject any column they have never
 // classified. Replay them on their original table shape inside ROLLBACK.
 const POSTCARD_PRIVATE_COLUMNS = ["postcard_draft_state", "postcard_requested_visibility", "postcard_draft_operation_id", "postcard_publish_on_complete", "postcard_cleanup_pending", "composer_upload_operation_id", "composer_publication_operation_id"];
-const HISTORICAL_POSTS = ["post_reference_id", ...POSTCARD_PRIVATE_COLUMNS]
+// 4038's update trigger depends on a later column. Remove it only within
+// the historical transaction; afterEach proves the complete catalog returns.
+const HISTORICAL_POSTS = "DROP TRIGGER IF EXISTS postcard_assets_withdrawn ON public.posts;\n" + ["post_reference_id", ...POSTCARD_PRIVATE_COLUMNS]
   .map(column => `ALTER TABLE public.posts DROP COLUMN IF EXISTS ${column};`).join("\n");
 const MIGRATION = resolve(__dir, "../../migrations/3362_posts_client_column_grants.sql");
 const M3801 = resolve(__dir, "../../migrations/3801_posts_release_timing_columns_withheld.sql");
@@ -197,6 +199,7 @@ function unwrapped(path: string): string {
 
 /** One line of JSON: the table ACL, every column ACL, and the policy catalog of posts. */
 const SNAPSHOT = `SELECT json_build_object(
+  'triggers', (SELECT json_agg(json_build_array(tgname, tgenabled, pg_get_triggerdef(oid)) ORDER BY tgname) FROM pg_trigger WHERE tgrelid='public.posts'::regclass AND NOT tgisinternal),
   'relacl', (SELECT relacl::text FROM pg_class WHERE oid = 'public.posts'::regclass),
   'attacl', (SELECT json_object_agg(attname, attacl::text ORDER BY attnum) FROM pg_attribute
               WHERE attrelid = 'public.posts'::regclass AND attnum > 0 AND NOT attisdropped),
@@ -207,7 +210,10 @@ const SNAPSHOT = `SELECT json_build_object(
 )::text;`;
 
 describe("census-media §44 — 3362: the columns of posts a client role may read", { skip: !HAVE_DB }, () => {
+  let originalCatalog: string;
+  afterEach(() => assert.equal(exec(SNAPSHOT)[0], originalCatalog, 'historical rehearsal must restore current columns, grants, policies and enabled triggers'));
   before(() => {
+    originalCatalog = exec(SNAPSHOT)[0]!;
     A = seedUser("g1author");
     F = seedUser("g1follower");
     S = seedUser("g1stranger");
@@ -247,8 +253,8 @@ describe("census-media §44 — 3362: the columns of posts a client role may rea
 
   after(() => {
     if (!A) return;
-    exec(`DELETE FROM public.post_media WHERE user_id IN ('${A}', '${F}', '${S}');
-          DELETE FROM public.posts WHERE author_id IN ('${A}', '${F}', '${S}');
+    cleanupSyntheticMedia([A, F, S].filter(Boolean));
+    exec(`DELETE FROM public.posts WHERE author_id IN ('${A}', '${F}', '${S}');
           DELETE FROM public.user_follows WHERE follower_id = '${F}';`);
     for (const u of [A, F, S]) if (u) deleteUser(u);
   });

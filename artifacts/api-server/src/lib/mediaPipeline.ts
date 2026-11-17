@@ -1,3 +1,5 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { mediaAccountAllowsAccess } from "./mediaAccess.js";
 /**
  * mediaPipeline — the single source of truth for what may be uploaded.
  *
@@ -92,6 +94,7 @@ export const UPLOAD_RATE_WINDOW_MS = 5 * 60_000;
 const UPLOAD_LIMITER_ID = "media_upload";
 
 export type PolicyFailure =
+  | { code: "forbidden"; message: string }
   | { code: "feature_disabled"; message: string }
   | { code: "rate_limited"; message: string; retryAfterMs: number }
   | { code: "invalid_payload"; message: string };
@@ -99,8 +102,8 @@ export type PolicyFailure =
 export type PolicyResult<T> = { ok: true; value: T } | { ok: false; failure: PolicyFailure };
 
 /**
- * Gate that must pass before ANY upload is accepted or any signed upload URL is
- * minted: the emergency stop, then the per-user rate limit.
+ * Shared gate for upload transports: emergency stop, current active-account
+ * authority, then the per-user rate limit.
  *
  * The kill switch is read with isKillSwitchEngaged, so an unreadable flag
  * ENGAGES the stop rather than disengaging it.
@@ -114,6 +117,10 @@ export async function guardUploadRequest(
       ok: false,
       failure: { code: "feature_disabled", message: "Media uploads are temporarily disabled" },
     };
+  }
+
+  if (!await mediaAccountAllowsAccess(sc as SupabaseClient, userId)) {
+    return { ok: false, failure: { code: "forbidden", message: "An active account is required to upload media." } };
   }
 
   const rl = checkRateLimit(UPLOAD_LIMITER_ID, userId, UPLOAD_RATE_LIMIT, UPLOAD_RATE_WINDOW_MS);

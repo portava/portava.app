@@ -4,6 +4,9 @@ import { Image as ExpoImage } from 'expo-image';
 import type { ImageContentFit } from 'expo-image';
 import type { ImageStyle, StyleProp, ViewStyle } from 'react-native';
 import { useHydratedMedia } from '../services/mediaUrl.ts';
+import { hydratedMediaSource } from '../services/mediaRequestSource.ts';
+import type { MediaRequestSource } from '../services/mediaRequestSource.ts';
+import { useMediaScopeKey } from '../hooks/useMediaScopeKey.ts';
 import { MediaFallback } from './ui/DisplayMediaImage.tsx';
 import { resolveFilterStyle } from '../lib/media/filters.ts';
 import { aspect as aspectTokens } from '../theme/tokens.ts';
@@ -111,7 +114,8 @@ export function CachedImage({
     Platform.OS === 'web' ? 'web' : 'native',
   );
 
-  const { resolved: hydrated } = useHydratedMedia(uri ? [uri] : []);
+  const { resolved: hydrated, sources } = useHydratedMedia(uri ? [uri] : []);
+  const scopeKey = useMediaScopeKey();
   const [failed, setFailed] = useState(false);
 
   // Latest onError, held in a ref so the hydration effect below can call it
@@ -123,8 +127,8 @@ export function CachedImage({
 
   // Initialised with the plain URI so the common case paints without waiting
   // on the async resolve; useHydratedMedia swaps in the signed URL.
-  const [resolvedSource, setResolvedSource] = useState<{ uri: string } | null>(
-    uri ? { uri } : null,
+  const [resolvedSource, setResolvedSource] = useState<MediaRequestSource | null>(
+    hydratedMediaSource(uri),
   );
 
   // When `uri` changes to a different value (e.g. a caller that pre-hydrates
@@ -136,11 +140,12 @@ export function CachedImage({
   // path), it re-latched `failed = true` and the flag was never cleared again
   // once `uri` stabilized — even after this component's own hydration below
   // resolved the correct signed URL, permanently blanking the tile.
-  const prevUri = useRef(uri);
-  if (prevUri.current !== uri) {
-    prevUri.current = uri;
+  const identity = JSON.stringify([uri, scopeKey]);
+  const prevUri = useRef(identity);
+  if (prevUri.current !== identity) {
+    prevUri.current = identity;
     setFailed(false);
-    setResolvedSource(uri ? { uri } : null);
+    setResolvedSource(hydratedMediaSource(uri));
   }
 
   // ## Null policy (deliberate, and deliberately different from DisplayMediaImage)
@@ -170,7 +175,7 @@ export function CachedImage({
       // here, a fast 404/onError on the initial bare-path source (before the
       // signed URL arrives) latches failed=true permanently; the signed URL update
       // to resolvedSource is silently discarded and the tile stays blank.
-      setResolvedSource({ uri: next });
+      setResolvedSource(hydratedMediaSource(next, sources));
       setFailed(false);
     } else if (next === null) {
       // Server explicitly rejected the URL — this IS final, so the parent is
@@ -180,7 +185,7 @@ export function CachedImage({
       onErrorRef.current?.();
     }
     // undefined = still resolving; keep the plain URI.
-  }, [uri, hydrated]);
+  }, [uri, hydrated, sources]);
 
   if (!uri || failed || !resolvedSource) {
     return (
@@ -195,7 +200,7 @@ export function CachedImage({
       source={resolvedSource}
       style={filterStyle ? StyleSheet.absoluteFill : (sizedStyle as any)}
       contentFit={contentFit}
-      cachePolicy="disk"
+      cachePolicy={resolvedSource.headers ? 'none' : 'disk'}
       transition={200}
       onLoad={onLoad ? () => onLoad() : undefined}
       onError={() => {

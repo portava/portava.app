@@ -1,3 +1,4 @@
+import { memoryEditBase } from '../services/memory/memoryEditBase.js';
 /**
  * Memory System routes
  *
@@ -54,7 +55,7 @@ import {
 } from "../lib/mediaLocationVisibility.js";
 import {
   MEMORY_LOCATION_PRECISIONS,
-  normalizeMemoryPrecision,
+
   normalizeMemoryPrecisionForWrite,
   publicationPrecision,
   resolveMemoryLocationCeiling,
@@ -69,7 +70,7 @@ import {
   readMemoryCommandEnvelope,
   sendMemoryCommandRejection,
 } from "../lib/memoryCommandBus.js";
-import { asHistoricalMemoryPayload } from "../services/memory/historicalTruth.js";
+import { readPrimaryMemoryFacts, projectPrimaryMemory } from "../services/memoryProjections/primaryMemoryProjection.js";
 // §13 compression hierarchy — see GET /memories/graph below.
 // §18 projection registry — see GET /trips/:tripId/memories/recap below. Until
 // this import existed, NOTHING outside src/test/ and the certification suite
@@ -101,7 +102,7 @@ import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLif
 import {
   classifyMemoryMediaUrl, memoryItemMediaUrlAccepted, MEMORY_MEDIA_URL_REFUSAL,
   FOREIGN_MEDIA_REFUSAL,
-} from "../services/memory/memoryMediaOrigin.js"; import { configuredStorageOrigin } from "../lib/mediaUrl.js"; import { MEMORY_TYPES, OCCURRENCE_NAME_MAX, TRIP_MEMORY_TYPE, canonicalPayloadFor, canonicalPayloadOf, memoryTypeForWrite, occurrenceNameForWrite, ownerTypeChoiceRefusal, readCanonicalGates, readStoredCanonicalFields, reconcileCanonicalFields, withCanonicalPayload, type CanonicalGates, type CanonicalPayload } from "../services/memory/memoryCanonicalFields.js"; // §4 MemoryType (3803, H40) and §9 occurrence-time place text (3804, H71); on this line so no cited line moves
+} from "../services/memory/memoryMediaOrigin.js"; import { appStorageUrlInfo, configuredStorageOrigin } from "../lib/mediaUrl.js"; import { MEMORY_TYPES, OCCURRENCE_NAME_MAX, TRIP_MEMORY_TYPE, canonicalPayloadFor, memoryTypeForWrite, occurrenceNameForWrite, ownerTypeChoiceRefusal, readCanonicalGates, readStoredCanonicalFields, reconcileCanonicalFields, withCanonicalPayload, type CanonicalGates, type CanonicalPayload } from "../services/memory/memoryCanonicalFields.js"; // §4 MemoryType (3803, H40) and §9 occurrence-time place text (3804, H71); on this line so no cited line moves
 import {
   authorizeParticipantCommand,
   commandTypeForPatch,
@@ -279,7 +280,7 @@ const createMemorySchema = z.object({
   taggedUserIds: z.array(z.string().uuid()).max(50).optional().default([]), memoryType: z.enum(MEMORY_TYPES).optional(), placeDisplayNameAtOccurrence: z.string().max(OCCURRENCE_NAME_MAX).nullable().optional(), // §4 the owner's MemoryType (omitted = the 3803 DEFAULT, Q-H40); §9 a provider pick's name as the owner saw it (3804)
 });
 
-const patchMemorySchema = z.object({
+const memoryEditFieldsSchema = z.object({
   title: z.string().max(300).nullable().optional(),
   caption: z.string().max(2000).nullable().optional(),
   visibility: z.enum(VISIBILITY_VALUES).optional(),
@@ -297,8 +298,12 @@ const patchMemorySchema = z.object({
   state: z.enum(["draft", "published", "archived"]).optional(), memoryType: z.enum(MEMORY_TYPES).nullable().optional(), placeDisplayNameAtOccurrence: z.string().max(OCCURRENCE_NAME_MAX).nullable().optional(), // §4 MemoryType (null = no type); §9 occurrence text, applied ONLY with a change of place (memoryCanonicalFields)
 });
 
+const patchMemorySchema = memoryEditFieldsSchema.extend({
+  expected: memoryEditFieldsSchema.extend({ state: z.enum(["draft", "published", "archived", "removed", "deleted"]).optional() }).strict().optional(),
+}).strict();
+
 const addItemSchema = z.object({
-  mediaUrl: z.string().url().refine((v) => memoryItemMediaUrlAccepted(v, configuredStorageOrigin()), { message: MEMORY_MEDIA_URL_REFUSAL }), // lane M's appMediaRef rule (verifier M3 D82-1): https, or http only on the configured storage origin; data:, blob:, javascript: and the rest are 400 before anything is written
+  mediaUrl: z.string().refine((v) => Boolean(appStorageUrlInfo(v)) || memoryItemMediaUrlAccepted(v, configuredStorageOrigin()), { message: MEMORY_MEDIA_URL_REFUSAL }), // Accept the canonical bare key returned by /media/upload and the existing absolute-URL policy; SQL verifies canonical ownership.
   mediaType: z.string().min(1).max(100).default("image/jpeg"),
   caption: z.string().max(500).nullable().optional(),
   position: z.number().int().min(0).default(0),
@@ -1804,7 +1809,7 @@ router.patch("/memories/:id", async (req, res) => {
     return;
   }
 
-  if (Object.keys(parsed.data).length === 0) {
+  if (Object.keys(parsed.data).every(key => key === "expected")) {
     sendError(res, "invalid_payload", "At least one field must be provided");
     return;
   }
@@ -1822,7 +1827,9 @@ router.patch("/memories/:id", async (req, res) => {
   const existing = loaded.row;
   if (existing.owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
 
-  const d = parsed.data; if (await refuseWideningKeptPrivate(sc, res, sendError, id, user.id, d.visibility)) return; const canonGates: CanonicalGates = await readCanonicalGates(sc); const patchTypeRefusal = ownerTypeChoiceRefusal(canonGates.memoryType, d.memoryType); if (patchTypeRefusal) { sendError(res, patchTypeRefusal.code, patchTypeRefusal.message); return; } // §AJ (3671): a KEEP_PRIVATE_FOREVER Memory is not widened past only_me; unreadable controls refuse (one line: cited by line) — and §4 (3803): an owner's type is refused, never dropped, when it cannot be kept
+  const d = parsed.data;
+  if (!d.expected) { sendError(res, "conflict", "Reopen this Memory before saving so your changes can be checked.", { exposeDetail: true, reason: "MEMORY_EDIT_BASE_REQUIRED" }); return; }
+ if (await refuseWideningKeptPrivate(sc, res, sendError, id, user.id, d.visibility)) return; const canonGates: CanonicalGates = await readCanonicalGates(sc); const patchTypeRefusal = ownerTypeChoiceRefusal(canonGates.memoryType, d.memoryType); if (patchTypeRefusal) { sendError(res, patchTypeRefusal.code, patchTypeRefusal.message); return; } // §AJ (3671): a KEEP_PRIVATE_FOREVER Memory is not widened past only_me; unreadable controls refuse (one line: cited by line) — and §4 (3803): an owner's type is refused, never dropped, when it cannot be kept
 
   // §21. The audience as it stands BEFORE the command, snapshotted rather than
   // re-read from `existing` afterwards. `existing` is the row object the write
@@ -1897,10 +1904,11 @@ router.patch("/memories/:id", async (req, res) => {
   // change, a place correction, or a plain field edit. The name reaches the
   // audit row and the domain event's payload, which is what makes §24's
   // place_correction_rate countable at all.
-  const commandType = commandTypeForPatch(d); const placeCorrections = placeCorrectionsForPatch(existing, d); if (placeCorrections.length > 0) { const recorded = await recordPlaceCorrections(sc, { memoryId: id, ownerId: user.id, source: "memory_edit", rows: placeCorrections }); if (!recorded.ok && recorded.reason !== "not_deployed") { req.log.error({ memoryId: id, detail: recorded.detail }, "memories: the place correction could not be recorded — the edit is refused"); sendError(res, "degraded_unavailable", "Your change of place could not be recorded, so this Memory was not changed. Please try again."); return; } } // §AO (3673): a change of place is recorded as the owner's correction BEFORE the Memory is written; 3673 unapplied ⇒ the edit goes ahead as before (one line: cited by line)
+  const commandType = commandTypeForPatch(d); // Corrections now commit inside the same kernel transaction as this edit.
 
   const outcome = await dispatchMemoryCommand<any>({
     sc,
+    atomicEdit: true,
     commandType,
     memoryId: id,
     actorUserId: user.id,
@@ -1909,90 +1917,12 @@ router.patch("/memories/:id", async (req, res) => {
     sourceVersion: existing.updated_at ?? null,
     payload: {
       patch,
+      expected: memoryEditBase(d.expected),
       from_state: lifecycle.fromState,
       to_state: lifecycle.toState,
-      select: precisionEnabled ? MEMORY_SELECT_WITH_PRECISION : MEMORY_SELECT,
+      select: (precisionEnabled ? MEMORY_SELECT_WITH_PRECISION : MEMORY_SELECT) + ",memory_type,place_display_name_at_occurrence",
     },
-    legacy: async () => {
-      // §19 "Concurrent edits should resolve at command/field level, not blind
-      // row last-write-wins", and the §5 guard above is what makes it urgent.
-      //
-      // THE WRITE RE-ASSERTS THE VALUE THE GUARD WAS JUDGED ON. Before this,
-      // `guardLifecycle` decided on `existing.state` and the UPDATE filtered on
-      // `id` and `owner_id` only — so a row that became TERMINAL between the
-      // read and the write took the transition anyway. That is not theoretical:
-      // `DELETE /memories/:id` sets `state='deleted'` and is an ordinary
-      // authenticated route the same owner can call from a second device, so
-      // "publish on the phone, delete on the laptop" republished a deleted
-      // Memory past a guard that had already refused exactly that arrow. The
-      // same window is what would let a racing owner edit overwrite a
-      // moderator's `state='removed'`, which is the case
-      // `assertLifecycleTransition`'s own comment exists to prevent.
-      //
-      // PINNED TO `state` AND NOTHING ELSE, WHICH IS THE FIELD-LEVEL HALF OF
-      // §19's sentence. A precondition on the whole row (an `updated_at`
-      // compare-and-swap) would refuse a caption edit racing a title edit —
-      // two commands that are not in competition — and §19 asks for the
-      // opposite. So a concurrent edit to any other field still merges, and a
-      // concurrent edit to THIS field is the one that conflicts.
-      //
-      // No client contract changes: the precondition is the server's own read,
-      // not a header the caller must learn to send. Census owner decision D-C1
-      // (should a client be REQUIRED to state its base?) is untouched and still
-      // open — two concurrent edits of the same non-lifecycle field still
-      // resolve by last-write-wins, because for those the server has no base.
-      let write = sc
-        .from("memories")
-        .update(patch)
-        .eq("id", id)
-        .eq("owner_id", user.id);
-      write = existing.state == null
-        ? (write as any).is("state", null)
-        : (write as any).eq("state", existing.state);
-      // `.select()` WITHOUT `.single()`: zero matched rows must be an empty
-      // array this code can inspect, not PGRST116 — "nobody changed anything"
-      // and "somebody changed it first" are different answers and only one of
-      // them is an error.
-      const { data, error } = await write
-        .select((precisionEnabled ? MEMORY_SELECT_WITH_PRECISION : MEMORY_SELECT) as any);
-      if (error) {
-        req.log.error({ err: error }, "memories: patch failed");
-        return { ok: false, http: { code: "db_error", message: error.message } };
-      }
-      const written = (data ?? []) as any[];
-      if (written.length === 0) {
-        // Say WHY. A zero-row update on a precondition is almost always a
-        // conflict, but "almost always" is how a database outage gets reported
-        // to a user as somebody else's edit, so the row is re-read and the
-        // three outcomes are answered separately.
-        const { data: current, error: reErr } = await sc
-          .from("memories")
-          .select("id, state")
-          .eq("id", id)
-          .eq("owner_id", user.id)
-          .maybeSingle();
-        if (reErr) {
-          req.log.error({ err: reErr, memoryId: id }, "memories: patch matched zero rows and the re-read failed");
-          return { ok: false, http: { code: "db_error", message: "The memory could not be updated. Please try again.", exposeDetail: true } };
-        }
-        if (!current) {
-          return { ok: false, http: { code: "not_found", message: "Memory not found" } };
-        }
-        req.log.warn(
-          { memoryId: id, expectedState: existing.state, actualState: (current as any).state },
-          "memories: patch refused — the Memory changed while the command was being judged",
-        );
-        return {
-          ok: false,
-          http: {
-            code: "conflict",
-            message: "This Memory changed while you were editing it. Reload it and try again.",
-            exposeDetail: true,
-          },
-        };
-      }
-      return { ok: true, body: written[0] };
-    },
+
   });
 
   if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
@@ -2022,7 +1952,11 @@ router.patch("/memories/:id", async (req, res) => {
     });
   }
 
-  const patchedCanon = await reconcileCanonicalFields(sc, { memoryId: id, ownerId: user.id, gates: canonGates, intended: { memoryType: d.memoryType, occurrenceName: patchOccurrenceName } }); if (!patchedCanon.ok) { req.log.error({ memoryId: id, detail: patchedCanon.detail }, "memories: patch could not confirm the type / occurrence name — refusing rather than answering as if it held"); sendError(res, "degraded_unavailable", "Your change was saved, but some details could not be confirmed. Please try again."); return; } res.json({ memory: mapMemory(withCanonicalPayload(outcome.body as object, patchedCanon.payload), user.id) }); // §4/§9 (3803/3804): what the route meant, on the kernel path too
+  res.json({ memory: mapMemory(withCanonicalPayload(outcome.body as object, {
+    ...(canonGates.memoryType === "on" ? { memoryType: outcome.body.memory_type } : {}),
+    ...(canonGates.occurrenceName === "on" ? { placeDisplayNameAtOccurrence: outcome.body.place_display_name_at_occurrence } : {}),
+  }), user.id) });
+
 });
 
 // ── DELETE /memories/:id ──────────────────────────────────────────────────────
@@ -2219,24 +2153,6 @@ router.post("/memories/:id/items", async (req, res) => {
         caption: parsed.data.caption ?? null,
         position: parsed.data.position,
       },
-    },
-    legacy: async () => {
-      const { data, error } = await sc
-        .from("memory_items")
-        .insert({
-          memory_id: id,
-          media_url: parsed.data.mediaUrl,
-          media_type: parsed.data.mediaType,
-          caption: parsed.data.caption ?? null,
-          position: parsed.data.position,
-        })
-        .select("id, media_url, media_type, caption, position, created_at")
-        .single();
-      if (error) {
-        req.log.error({ err: error }, "memories: add item failed");
-        return { ok: false, http: { code: "db_error", message: error.message } };
-      }
-      return { ok: true, body: data };
     },
   });
 
@@ -3226,50 +3142,9 @@ router.get("/users/:userId/memories", async (req, res) => {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function mapMemory(r: any, viewerId?: string) {
-  // The allow/hide lists are the owner's private audience choices — literally the
-  // set of user ids they hid this memory FROM. They must never reach another
-  // viewer (audit MEM·M2). Fail-safe: only the owner sees them; any caller that
-  // does not pass a viewer gets them omitted.
-  const isOwner = viewerId != null && viewerId === r.owner_id;
-  // §1 / §14 — every Memory this domain serves says, on the datum, that it is a
-  // record of the past and establishes nothing about now. Applied by the
-  // serializer, so no handler can forget it and none can override it: see
-  // services/memory/historicalTruth.ts. THIS IS THE ONLY SERIALIZATION POINT
-  // for a canonical Memory in this file — every route below returns
-  // mapMemory(...) or spreads it — which is what makes one call here a property
-  // of the domain rather than of whichever handler remembered.
-  return asHistoricalMemoryPayload({
-    id: r.id,
-    ownerId: r.owner_id,
-    title: r.title ?? null,
-    caption: r.caption ?? null,
-    visibility: r.visibility,
-    ...(isOwner
-      ? { allowedUserIds: r.allowed_user_ids ?? [], hiddenUserIds: r.hidden_user_ids ?? [] }
-      : {}),
-    // §10 location_precision is the OWNER'S publication policy, and like the
-    // allow/hide lists it is a private choice about an audience rather than a
-    // fact about the Memory: telling a viewer "you are being shown this at city
-    // level" discloses that the owner narrowed it for them. Owner only, and
-    // omitted entirely when the column was not selected (flag off) so that an
-    // absent column never serializes as a fabricated 'exact'.
-    ...(isOwner && r.location_precision !== undefined
-      ? { locationPrecision: normalizeMemoryPrecision(r.location_precision) }
-      : {}),
-    tripId: r.trip_id ?? null,
-    eventId: r.event_id ?? null,
-    placeId: r.place_id ?? null,
-    locationCity: r.location_city ?? null,
-    locationCountry: r.location_country ?? null,
-    locationLat: r.location_lat != null ? Number(r.location_lat) : null,
-    locationLng: r.location_lng != null ? Number(r.location_lng) : null,
-    canonicalLocationId: r.canonical_location_id ?? null, ...canonicalPayloadOf(r), // H40/H71: ONLY what memoryCanonicalFields attached for this viewer — a raw memory_type / occurrence-name column on the row (the kernel returns the whole row) is never serialized
-    startsAt: r.starts_at ?? null,
-    endsAt: r.ends_at ?? null,
-    state: r.state,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at ?? null,
-  });
+  // All primary read and command responses cross the same H1 fact/projection
+  // boundary. Existing callers still authorize and coarsen location first.
+  return projectPrimaryMemory(readPrimaryMemoryFacts(r), viewerId);
 }
 
 function mapItem(r: any) {
@@ -3847,8 +3722,8 @@ async function protectRecapRows(sc: any, rows: any[], viewerId: string): Promise
 // ── POST /memories/:id/items/from-post — census-media MD385, ruling D-26j ─────
 // "Save to a Memory" from the caller's OWN post. Appended at the end of the
 // file so no cited line above moves. The decisions are
-// services/memory/memoryFromOwnMedia.ts's; the one write is here, because this
-// file is memory_items' declared writer (lib/memoryTableOwnership.ts).
+// services/memory/memoryFromOwnMedia.ts's; insertion is dispatched through
+// MemoryDomainService and the shared SQL item writer (lib/memoryTableOwnership.ts).
 import {
   gateMemoryFromOwnMedia,
   resolveOwnPostMedia,
@@ -3916,51 +3791,10 @@ router.post("/memories/:id/items/from-post", async (req, res) => {
       position: parsed.data.position,
       write: { memory_id: id, media_url: mediaUrl, media_type: mediaType, caption: parsed.data.caption ?? null, position: parsed.data.position, source_post_id: postId }, // 3911: the source link in the kernel's own INSERT, judged there by 3999's guard
     },
-    legacy: async () => {
-      const { data, error } = await sc
-        .from("memory_items")
-        .insert({
-          memory_id: id,
-          media_url: mediaUrl,
-          media_type: mediaType,
-          caption: parsed.data.caption ?? null,
-          position: parsed.data.position,
-          source_post_id: postId,
-        })
-        .select("id, media_url, media_type, caption, position, created_at, source_post_id")
-        .single();
-      if (error) {
-        req.log.error({ err: error, memoryId: id }, "memories from-post: insert refused");
-        return { ok: false, http: { code: error.code === "23505" ? "conflict" : "db_error", message: error.code === "23505" ? "That photo is already in this Memory" : error.message } };
-      }
-      return { ok: true, body: data };
-    },
   });
   if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
 
-  // 2711's ADD_MEDIA wrote the five columns it knew and no source link; 3911's
-  // writes the link in the same INSERT, so this follow-up runs only against 2711:
-  // the link is written here, and if it cannot be the item is taken back out.
-  let row = outcome.body as any;
-  if (row?.source_post_id !== postId) {
-    const linked = await sc.from("memory_items").update({ source_post_id: postId })
-      .eq("id", row?.id).eq("memory_id", id).select("id, media_url, media_type, caption, position, created_at, source_post_id");
-    if (linked.error || !Array.isArray(linked.data) || linked.data.length !== 1) {
-      req.log.error({ err: linked.error, memoryId: id, itemId: row?.id }, "memories from-post: the source link could not be written — removing the item");
-      const undo = await dispatchMemoryCommand<any>({
-        sc, commandType: "REMOVE_MEDIA", memoryId: id, actorUserId: user.id,
-        idempotencyKey: `${idempotencyKey}:from-post-unlinked`, payload: { item_id: row?.id },
-        legacy: async () => {
-          const { error } = await sc.from("memory_items").delete().eq("id", row?.id).eq("memory_id", id);
-          return error ? { ok: false, http: { code: "db_error", message: error.message } } : { ok: true, body: null };
-        },
-      });
-      if (!undo.ok) req.log.error({ memoryId: id, itemId: row?.id }, "memories from-post: the unlinked item could not be removed");
-      sendError(res, "degraded_unavailable", "Could not save that photo to your Memory. Please try again.");
-      return;
-    }
-    row = linked.data[0];
-  }
+  const row = outcome.body;
 
   recordMemoryCreatedFromMediaSignal(sc, { userId: user.id, postId }); void enqueueMemoryItemRenditions(sc, { mediaUrl, mediaType, ownerId: user.id }, { log: req.log }); // H182 (wave 5): the copied photo gets its ladder too
   res.status(201).json({ item: { ...mapItem(row), sourcePostId: postId } });

@@ -1,3 +1,5 @@
+import { activeMediaAccountRead } from './helpers/mediaAccountReadFixture.js';
+import { mediaObjectPurgeFixture } from './helpers/mediaObjectPurgeFixture.js';
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -83,6 +85,13 @@ async function fixture() {
       renditions: [360, 720].map(height => ({ height, width: height * 16 / 9, bitrateKbps: height,
       peakBitrateKbps: height, durationSeconds: 4, playlist: height === 360 ? "v0.m3u8" : "v1.m3u8" })) };
   };
+  const purge = mediaObjectPurgeFixture(id => id === asset.id ? asset : undefined, []);
+  db.client.rpc = ((name: string, args: Record<string, unknown>) => {
+    if (name === "account_recovery_status") return Promise.resolve(activeMediaAccountRead(name, args));
+    if (name === "postcard_canonical_lifecycle_ready") return Promise.resolve({data:true,error:null});
+    assert.equal(name, "advance_media_object_purge");
+    return Promise.resolve(purge(args));
+  }) as unknown as typeof db.client.rpc;
   const processor = createSelfHostedAdaptive(db.client, config, jobs, { download, encode });
   const runtime = { ...processor, async processJob(input: AdaptiveLease) {
     const workerModule = process.env.ADAPTIVE_SHARED_WORKER_PATH ?? "../lib/media/jobs/worker.js";
@@ -157,6 +166,7 @@ test("stateful processing publishes actual files only once, and erases after dur
   assert.deepEqual(await readdir(join(context.root, "staging")), []);
   assert.equal((await context.runtime.adapter.ladder({ assetId: ASSET })).ok, true);
   assert.equal((await context.runtime.readFile(OWNER, ASSET, 7, "v0-00000.ts"))?.toString(), "0123456789");
+  Object.assign(context.asset, { deleted_at: new Date().toISOString(), moderation_status: "owner_deleted", purge_status: "pending" });
   await context.runtime.eraseAsset(ASSET);
   assert.equal(context.state.cancelled, true);
   assert.deepEqual(await readdir(join(context.root, "outputs")), []);
@@ -164,9 +174,25 @@ test("stateful processing publishes actual files only once, and erases after dur
   assert.equal(await context.runtime.playback(OWNER, ASSET), null);
 });
 
+test("adaptive erasure preserves recoverable files and never cancels jobs on refused authority", async () => {
+  const context = await fixture();
+  await context.runtime.processJob(context.job);
+  for (const purge_status of ["not_requested", "retained"]) {
+    Object.assign(context.asset, { deleted_at: new Date().toISOString(), moderation_status: "owner_deleted", purge_status });
+    await assert.rejects(context.runtime.eraseAsset(ASSET), /authority unavailable/);
+    assert.equal(context.state.cancelled, false);
+    assert.equal((await readdir(join(context.root, "outputs"))).length, 1);
+  }
+  context.failReads.media_assets = true;
+  await assert.rejects(context.runtime.eraseAsset(ASSET), /source unavailable/);
+  assert.equal(context.state.cancelled, false);
+  assert.equal((await readdir(join(context.root, "outputs"))).length, 1);
+});
+
 test("eraser never deletes artifacts if durable cancellation fails", async () => {
   const context = await fixture();
   await context.runtime.processJob(context.job);
+  Object.assign(context.asset, { deleted_at: new Date().toISOString(), moderation_status: "owner_deleted", purge_status: "pending" });
   context.jobs.cancelAsset = async () => { throw new Error("database unavailable"); };
   await assert.rejects(context.runtime.eraseAsset(ASSET));
   assert.equal((await readdir(join(context.root, "outputs"))).length, 1);
@@ -210,6 +236,7 @@ test("ambiguous finish acknowledgement never destroys a durably published artifa
   await assert.rejects(context.runtime.processJob(context.job), /connection lost/);
   assert.equal(context.state.published, 1);
   assert.equal((await context.runtime.readFile(OWNER, ASSET, 7, "v0-00000.ts"))?.toString(), "0123456789");
+  Object.assign(context.asset, { deleted_at: new Date().toISOString(), moderation_status: "owner_deleted", purge_status: "pending" });
   await context.runtime.eraseAsset(ASSET);
   assert.deepEqual(await readdir(join(context.root, "outputs")), []);
 });

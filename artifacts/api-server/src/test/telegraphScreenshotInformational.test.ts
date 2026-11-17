@@ -485,3 +485,12 @@ describe("T408 pass 13 — the API's route messages are copy; its log lines are 
     assert.ok(dropped.length > 0, "the drop removes no claim-shaped log line on the real tree — the case would be vacuous");
   });
 });
+
+// OpenSSL names secure allocations; these are not Android screen-capture APIs.
+describe("capture API identifier boundaries", () => {
+  it("rejects Android's flag while distinguishing OpenSSL allocation identifiers", () => {
+    assert.deepEqual(screenshotApisIn("#define BUF_MEM_FLAG_SECURE 0x01\n#define PEM_FLAG_SECURE 0x1"), []);
+    assert.ok(screenshotApisIn("window.addFlags(FLAG_SECURE)").includes("FLAG_SECURE"));
+    assert.ok(screenshotApisIn("WindowManager.LayoutParams.FLAG_SECURE").includes("FLAG_SECURE"));
+  });
+});

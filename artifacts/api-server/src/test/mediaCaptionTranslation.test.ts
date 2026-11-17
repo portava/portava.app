@@ -1,3 +1,4 @@
+import { activeMediaAccountRead } from './helpers/mediaAccountReadFixture.js';
 import assert from 'node:assert/strict';
 import { after, afterEach, before, beforeEach, mock, test } from 'node:test';
 import http from 'node:http';
@@ -80,6 +81,7 @@ beforeEach(() => {
   const originalFrom = fake.client.from.bind(fake.client);
   fake.client.from = (name: string) => name === 'media_caption_translation_artifacts' ? retained.query() : originalFrom(name);
   fake.client.rpc = async (name: string, args: any) => {
+    if (name === 'account_recovery_status') return activeMediaAccountRead(name, args);
     calls.push(name);
     if (name.startsWith('media_caption_translation_artifact_')) return retained.rpc(name, args);
     if (name === 'media_caption_translation_revoke') {

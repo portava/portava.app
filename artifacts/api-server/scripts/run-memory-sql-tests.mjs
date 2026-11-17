@@ -9,7 +9,6 @@ const apiRoot = resolve(dirname(scriptPath), "..");
 const requiredSuites = new Map([
   ["src/test/MemorySnapshot.pglite.test.ts", "MemorySnapshot persisted HTTP/provider/SQL path (isolated single-connection PGlite)"],
   ["src/test/memoryVideoSegments.pglite.test.ts", "3991 executable isolated SQL contract"],
-  ["src/test/memoryImportBatches.pglite.test.ts", "H37 durable owner-selected existing-memory backfill (isolated PostgreSQL)"],
   ["src/test/MemorySnapshotLockFixture.test.ts", "MemorySnapshot native fixture compatibility (PGlite, NOT concurrency proof)"],
 ]);
 const eventTypes = new Set(["test:start", "test:pass", "test:fail", "test:summary"]);

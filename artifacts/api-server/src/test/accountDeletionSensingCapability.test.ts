@@ -18,6 +18,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { accountDeletionAuthorizationFixture, PERMANENT_DELETION_TEST_OPTIONS } from "./helpers/accountDeletionAuthorizationFixture.js";
 import { executeAccountDeletion } from "../services/accountDeletion/AccountDeletionService.js";
 
 const USER_ID = "22222222-2222-2222-2222-222222222222";
@@ -27,12 +28,14 @@ function makeStub(opts: { sensingError?: Record<string, any> } = {}) {
   const deletes: { table: string; filters: any[] }[] = [];
   const authDeleted: string[] = [];
 
+  const rows: Record<string, any[]> = {};
+  const authorize = accountDeletionAuthorizationFixture(rows, USER_ID);
   function builder(table: string) {
     const q: any = {
       _op: "select", _filters: [] as any[], _limit: undefined as number | undefined, _single: false,
-      select() { q._op = "select"; return q; },
+      select() { return q; },
       delete() { q._op = "delete"; return q; },
-      update() { q._op = "update"; return q; },
+      update(v: any) { q._op = "update"; q._values = v; return q; },
       insert() { q._op = "insert"; return q; },
       upsert() { q._op = "upsert"; return q; },
       eq(c: string, v: any) { q._filters.push(["eq", c, v]); return q; },
@@ -43,6 +46,11 @@ function makeStub(opts: { sensingError?: Record<string, any> } = {}) {
       maybeSingle() { q._single = true; return q._run(); },
       then(resolve: any, reject: any) { return q._run().then(resolve, reject); },
       _run() {
+        if (table === "user_deletion_requests" && q._op === "update") {
+          const matched = rows[table]!.filter(row => q._filters.every(([op, col, value]: any[]) => op === "eq" && row[col] === value));
+          for (const row of matched) Object.assign(row, q._payload);
+          return Promise.resolve({ data: matched, error: null });
+        }
         if (q._op === "delete") {
           deletes.push({ table, filters: q._filters.slice() });
           if (SENSING_TABLES.includes(table) && opts.sensingError) {
@@ -62,7 +70,7 @@ function makeStub(opts: { sensingError?: Record<string, any> } = {}) {
     _deletes: deletes,
     _authDeleted: authDeleted,
     from: (t: string) => builder(t),
-    rpc: async (fn: string) => ({ data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null }),
+    rpc: async (fn: string, args: Record<string, unknown>) => authorize(fn, args) ?? ({ data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null }),
     storage: { from: () => ({ remove: async () => ({ data: [], error: null }) }) },
     auth: { admin: { deleteUser: async (id: string) => { authDeleted.push(id); return { data: {}, error: null }; } } },
   };
@@ -74,7 +82,7 @@ const sensingDeletes = (c: ReturnType<typeof makeStub>) =>
 describe("executeAccountDeletion — sensing capability state", () => {
   it("erases both 2956 tables, scoped to the departing actor", async () => {
     const c = makeStub();
-    const out = await executeAccountDeletion(c as any, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c as any, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     const tables = sensingDeletes(c).map((d) => d.table).sort();
     assert.deepEqual(tables, [...SENSING_TABLES].sort(),
@@ -92,7 +100,7 @@ describe("executeAccountDeletion — sensing capability state", () => {
     // account is a privacy failure, and the request must stay retryable rather
     // than be marked complete.
     const c = makeStub({ sensingError: { code: "42501", message: "permission denied" } });
-    const out = await executeAccountDeletion(c as any, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c as any, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.equal(out.ok, false);
     assert.equal(out.steps.find((s) => s.step === "erase_sensing_credentials_and_devices")?.ok, false);
@@ -108,7 +116,7 @@ describe("executeAccountDeletion — sensing capability state", () => {
     // deletion that is otherwise complete.
     for (const code of ["PGRST205", "42P01"]) {
       const c = makeStub({ sensingError: { code, message: "relation does not exist" } });
-      const out = await executeAccountDeletion(c as any, USER_ID, { actorId: null });
+      const out = await executeAccountDeletion(c as any, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
       assert.equal(out.steps.find((s) => s.step === "erase_sensing_credentials_and_devices")?.ok, true,
         `${code} was treated as an erasure failure`);
       assert.ok(out.steps.some((s) => s.step === "anonymise_profile"),

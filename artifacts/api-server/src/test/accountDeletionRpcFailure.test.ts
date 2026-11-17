@@ -24,6 +24,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { accountDeletionAuthorizationFixture, PERMANENT_DELETION_TEST_OPTIONS } from "./helpers/accountDeletionAuthorizationFixture.js";
 import { executeAccountDeletion } from "../services/accountDeletion/AccountDeletionService.js";
 
 const USER_ID = "11111111-1111-1111-1111-111111111111";
@@ -39,15 +40,17 @@ function makeStub() {
   const tombstoneAttempts: string[] = [];
   const authDeleted: string[] = [];
 
+  const rows: Record<string, any[]> = {};
+  const authorize = accountDeletionAuthorizationFixture(rows, USER_ID);
   function builder(table: string) {
     const q: any = {
       _op: "select",
       _filters: [] as any[],
       _limit: undefined as number | undefined,
       _single: false,
-      select() { q._op = "select"; return q; },
+      select() { return q; },
       delete() { q._op = "delete"; return q; },
-      update() { q._op = "update"; return q; },
+      update(v: any) { q._op = "update"; q._values = v; return q; },
       insert() { q._op = "insert"; return q; },
       upsert() { q._op = "upsert"; return q; },
       eq(c: string, v: any) { q._filters.push(["eq", c, v]); return q; },
@@ -61,6 +64,11 @@ function makeStub() {
       maybeSingle() { q._single = true; return q._run(); },
       then(resolve: any, reject: any) { return q._run().then(resolve, reject); },
       _run() {
+        if (table === "user_deletion_requests" && q._op === "update") {
+          const matched = rows[table]!.filter(row => q._filters.every(([op, col, value]: any[]) => op === "eq" && row[col] === value));
+          for (const row of matched) Object.assign(row, q._values);
+          return Promise.resolve({ data: matched, error: null });
+        }
         if (table === "posts" && q._op === "delete") {
           const id = q._filters.find((f: any[]) => f[0] === "eq" && f[1] === "id")?.[2];
           if (id) deletedPosts.push(id);
@@ -91,6 +99,8 @@ function makeStub() {
     _authDeleted: authDeleted,
     from: (t: string) => builder(t),
     rpc: async (fn: string, args: Record<string, unknown>) => {
+      const receipt = authorize(fn, args);
+      if (receipt) return receipt;
       if (fn === "tombstone_post") {
         tombstoneAttempts.push(args.p_post_id as string);
         // Function absent in an under-migrated environment.
@@ -107,7 +117,7 @@ describe("executeAccountDeletion — tombstone_post RPC failure", () => {
   it("still deletes every non-tombstone post and records the posts step as failed", async () => {
     const c = makeStub();
 
-    const out = await executeAccountDeletion(c as any, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c as any, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     // The delete-branch posts must be gone even though the FIRST post (A) failed
     // on the tombstone branch — the loop did not abort on it.

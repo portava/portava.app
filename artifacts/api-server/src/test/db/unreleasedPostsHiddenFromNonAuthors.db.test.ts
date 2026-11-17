@@ -40,7 +40,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { HAVE_DB, exec, rows, scalar, seedUser, deleteUser } from "./localDb.js";
+import { HAVE_DB, exec, rows, scalar, seedUser, deleteUser, cleanupSyntheticMedia } from "./localDb.js";
 
 type Who = "anon" | "stranger" | "friend" | "author" | "uploader";
 
@@ -111,9 +111,9 @@ describe("3925 — an unreleased post and its post_media are the author's alone 
 
   after(() => {
     if (!U.author) return;
+    cleanupSyntheticMedia(Object.values(U).filter(Boolean));
     const ids = Object.values(U).filter(Boolean).map((u) => `'${u}'`).join(", ");
     exec(`SET LOCAL ROLE service_role;
-          DELETE FROM public.post_media WHERE post_id IN (SELECT id FROM public.posts WHERE author_id IN (${ids})) OR user_id IN (${ids});
           DELETE FROM public.posts WHERE author_id IN (${ids});
           DELETE FROM public.user_follows WHERE follower_id IN (${ids}) OR following_id IN (${ids});
           DELETE FROM public.trip_members WHERE trip_id = '${TRIP}';
@@ -136,7 +136,8 @@ describe("3925 — an unreleased post and its post_media are the author's alone 
     assert.match(posts!.qual, /author_id = \( SELECT auth\.uid\(\)/);
     assert.match(posts!.qual, /post_status IS NULL/);
     assert.match(posts!.qual, /post_status = 'published'::delayed_post_status/);
-    assert.match(media!.qual, /user_id = \( SELECT auth\.uid\(\)/);
+    assert.match(media!.qual, /\( SELECT auth\.uid\(\) AS uid\) = user_id/);
+    assert.match(media!.qual, /deleted_at IS NULL/, "withdrawn rows remain hidden even from their owner");
     assert.match(media!.qual, /EXISTS \( SELECT 1\s+FROM posts p\s+WHERE \(p\.id = post_media\.post_id\)\)/);
   });
 

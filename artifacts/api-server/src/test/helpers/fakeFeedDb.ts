@@ -1,3 +1,4 @@
+import {activeMediaAccountRead} from './mediaAccountReadFixture.js';
 /**
  * fakeFeedDb — an in-memory PostgREST double for the media and post FEED
  * routes, built for census-media §47's question: what does a route say when a
@@ -239,7 +240,7 @@ export function makeFeedDb(spec: FakeFeedDbSpec): FakeFeedDb {
 
   const client = {
     from: (t: string) => builder(t),
-    rpc: (fn: string) => Promise.resolve({ data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn}`, details: null, hint: null }, count: null }),
+    rpc: (fn: string, args: {p_user?: unknown} = {}) => Promise.resolve(fn === "account_recovery_status" ? activeMediaAccountRead(fn,args) : { data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn}`, details: null, hint: null }, count: null }),
     auth: {
       getUser: async (token: string) =>
         spec.users[token]

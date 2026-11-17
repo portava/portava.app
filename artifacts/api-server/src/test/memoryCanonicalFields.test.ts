@@ -1,3 +1,4 @@
+import { memoryEditFixture } from './helpers/memoryEditFixture.js';
 /**
  * Census-highlights-memories H40 (§4 `MemoryType`, migration 3803) and H71
  * (§9 "Entity merges may repoint canonical identity while preserving
@@ -221,6 +222,7 @@ function makeClient(store: Record<string, any[]>, ops: Op[], w: World) {
   /** 2711's memory_kernel_execute, as far as these fields go: a FIXED column list, defaults, the trigger, an idempotent receipt. */
   async function rpc(fn: string, args: any) {
     ops.push({ table: `rpc:${fn}`, mode: "rpc", payload: args });
+    if (fn === "memory_field_edits_ready") return { data: w.migrated.type && w.migrated.name, error: null };
     if (fn !== "memory_kernel_execute") return { data: null, error: { code: "PGRST202", message: `${fn} not modelled` } };
     const c = args.p_command;
     const receipts = (store.memory_command_receipts ??= []);
@@ -238,7 +240,7 @@ function makeClient(store: Record<string, any[]>, ops: Op[], w: World) {
       row = store.memories.find((m) => m.id === c.memory_id);
       if (!row) return { data: { ok: false, reason: "MEMORY_NOT_FOUND" }, error: null };
       const next = { ...row };
-      for (const k of KERNEL_INSERT_COLUMNS) if (c.payload.patch && k in c.payload.patch) next[k] = c.payload.patch[k];
+      for (const k of [...KERNEL_INSERT_COLUMNS, "memory_type", "place_display_name_at_occurrence"]) if (c.payload.patch && k in c.payload.patch) next[k] = c.payload.patch[k];
       if (w.migrated.name && c.payload.patch && "place_id" in c.payload.patch) occurrenceTrigger("UPDATE", row, next, store);
       Object.assign(row, next);
     }
@@ -277,6 +279,10 @@ async function start(w: World): Promise<App> {
 }
 let keyN = 0;
 async function call(a: App, method: string, p: string, actor = OWNER, body?: unknown, key?: string) {
+  if (method === "PATCH" && /^\/memories\/[^/]+$/.test(p) && body && typeof body === "object") {
+    const row = a.store.memories.find(m => m.id === p.split('/').at(-1));
+    if (row) body = memoryEditFixture(row, body as Record<string, unknown>);
+  }
   const res = await fetch(`${a.base}/api${p}`, {
     method,
     headers: { Authorization: `Bearer ${actor}`, "Content-Type": "application/json", "Idempotency-Key": key ?? `mcf-${++keyN}`, connection: "close" },
@@ -314,7 +320,7 @@ describe("H40/H71: before 3803/3804 are applied nothing names either column (pro
     assert.equal("memoryType" in g.body.memory, false);
     assert.equal("placeDisplayNameAtOccurrence" in g.body.memory, false);
     const p = await call(app, "PATCH", `/memories/${MEM_PICK}`, OWNER, { placeId: "fsq:other", placeDisplayNameAtOccurrence: "Other" });
-    assert.equal(p.status, 200, JSON.stringify(p.body));
+    assert.equal(p.status, 503, JSON.stringify(p.body)); // H178: historical schema cannot accept an unguarded edit.
     const t = await call(app, "POST", `/trips/${TRIP}/memory`, OWNER);
     assert.equal(t.status, 201, JSON.stringify(t.body));
     assert.deepEqual(named(app, "memory_type").map((o) => o.mode), []);
@@ -390,7 +396,7 @@ describe("H40: applied, flag ON — the owner's type is stored and served", () =
     assert.equal(p.status, 200, JSON.stringify(p.body));
     assert.equal(p.body.memory.memoryType, "MILESTONE");
     assert.equal(mem(app, MEM_CAT).memory_type, "MILESTONE");
-    assert.equal(app.ops.filter((o) => o.table === "memories" && o.mode === "update").length, 1, "the legacy PATCH needed a follow-up write: its UPDATE did not carry the type");
+    assert.equal(app.ops.filter((o) => o.table === "memories" && o.mode === "update").length, 0, "PATCH must not use a direct or follow-up canonical writer");
     const q = await call(app, "PATCH", `/memories/${MEM_CAT}`, OWNER, { memoryType: null });
     assert.equal(q.body.memory.memoryType, null);
     assert.equal(mem(app, MEM_CAT).memory_type, null);

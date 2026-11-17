@@ -5820,7 +5820,7 @@ tree; the full-suite record is in the lane report.
    `components/map/MapSearchSheet.tsx` is one of them — a 300 ms per-keystroke debounce over a request,
    with no abort — and it is classified as an engine, not exempted.
 4. **Withdrawal always available.** The opt-in rows render for every signed-in person, not behind the
-   client's flag map (`travel-buddy-standalone/app/settings/index.tsx:631#{(configured && isAuthed) && <InputAssistanceSettings />}`);
+   client's flag map (`travel-buddy-standalone/app/settings/index.tsx:633#{(configured && isAuthed) && <InputAssistanceSettings />}`);
    proven with an EMPTY client flag map and a consent on record
    (`travel-buddy-standalone/src/platform/input-assistance/components/__tests__/inputAssistanceSettings.component.test.tsx:34#flag turned OFF by the owner, client flag map EMPTY`).
 5. **The disclosure is now true of the data.** A consented `downstream_task_completed` is counted into

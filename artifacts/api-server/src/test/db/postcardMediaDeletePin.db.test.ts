@@ -21,7 +21,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { HAVE_DB, exec, psql, scalar, seedUser, deleteUser } from "./localDb.js";
+import { HAVE_DB, exec, psql, scalar, seedUser, deleteUser, cleanupSyntheticMedia } from "./localDb.js";
 import { isModerationPinnedPostMedia } from "../../routes/postcards.js";
 
 const CANDIDATES = ["pending", "approved", "flagged", "rejected", "processing", "active", "limited", "removed", "owner_deleted"];
@@ -41,13 +41,13 @@ describe("postcard media DELETE — the route's pin is the database's pin", { sk
 
   after(() => {
     if (!OWNER) return;
-    exec(`DELETE FROM public.post_media WHERE user_id = '${OWNER}';
-          DELETE FROM public.post_media_moderation_ledger WHERE subject_user_id = '${OWNER}';
+    cleanupSyntheticMedia([OWNER].filter(Boolean));
+    exec(`DELETE FROM public.post_media_moderation_ledger WHERE subject_user_id = '${OWNER}';
           DELETE FROM public.posts WHERE author_id = '${OWNER}';`);
     deleteUser(OWNER);
   });
 
-  it("P1 — for every status the CHECK admits, RLS lets the owner delete exactly when the route does", () => {
+  it("P1 — the historical RLS pin still matches owner withdrawal moderation, independently of the newer retention guard", () => {
     let admitted = 0;
     let pinned = 0;
     for (const status of CANDIDATES) {
@@ -63,6 +63,9 @@ describe("postcard media DELETE — the route's pin is the database's pin", { sk
         -- post_media, so the service-client routes are the ONLY delete door and the
         -- policy is never consulted for a client. To read the policy's answer,
         -- grant DELETE inside this rolled-back transaction only.
+        -- Isolate the historical policy inside this rollback, retaining the
+        -- current trigger for every committed operation and all other tests.
+        ALTER TABLE public.post_media DISABLE TRIGGER postcard_retention_source_guard;
         GRANT DELETE ON public.post_media TO authenticated;
         ${asOwner(OWNER)}WITH d AS (DELETE FROM public.post_media WHERE storage_path = '${key}' RETURNING 1) SELECT 'deleted=' || count(*) FROM d;
         ROLLBACK;`);
@@ -75,6 +78,7 @@ describe("postcard media DELETE — the route's pin is the database's pin", { sk
       assert.equal(dbDeleted, !routePinned, `'${status}': the database ${dbDeleted ? "lets the owner delete it" : "pins it"}, the route ${routePinned ? "pins it" : "deletes it"}`);
     }
     assert.ok(admitted >= 4, `anti-vacuity: at least 0103's four statuses ran (${admitted})`);
+    assert.equal(scalar("SELECT tgenabled FROM pg_trigger WHERE tgrelid='public.post_media'::regclass AND tgname='postcard_retention_source_guard'"),'O','historical rollback restores the current retention guard');
     assert.ok(pinned >= 2, `anti-vacuity: rejected and flagged were both exercised (${pinned})`);
   });
 

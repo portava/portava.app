@@ -1,3 +1,6 @@
+import { memoryEditFixture } from './helpers/memoryEditFixture.js';
+import { makeKernelRpc } from './memoryCommandKernelFake.js';
+import { memoryItemWriterFake } from "./helpers/memoryItemWriterFake.js";
 /**
  * §24 false_memory_rate (census H217) and do_again_conversion (census H222),
  * census-highlights-memories §BK.
@@ -482,6 +485,7 @@ interface FakeOpts {
 
 /** A table-backed PostgREST stand-in that APPLIES writes; 2320's replay and dedupe keys modelled. Unknown tables read empty. */
 function makeClient(store: Store, opts: FakeOpts) {
+  const editRpc = makeKernelRpc({ tables: store, rpcCalls: [], failOn: new Set(), absent: false });
   function chain(table: string) {
     const filters: Array<(r: any) => boolean> = [];
     let single = false, wantRows = false, exactCount = false;
@@ -565,15 +569,15 @@ function makeClient(store: Store, opts: FakeOpts) {
   }
   return {
     from: (t: string) => chain(t),
-    rpc: async (name: string) => name === "memory_candidate_origin_ready"
-      ? { data: true, error: null } : { data: null, error: { message: "rpc not modelled" } },
+    rpc: async (name: string,args:unknown) => name === "memory_field_edits_ready" || name === "memory_kernel_execute" ? editRpc(name,args) : name === "memory_candidate_origin_ready"
+      ? { data: true, error: null } : (await memoryItemWriterFake({from:chain},name,args))??{ data: null, error: { message: "rpc not modelled" } },
     auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },
   };
 }
 
 const media = (n: number, captured: string) => ({
   id: `30000000-0000-4000-8000-${String(n).padStart(12, "0")}`, owner_user_id: OWNER, media_type: "image", mime_type: "image/jpeg",
-  public_url: `https://cdn.example.test/u/${OWNER}/p${n}.jpg`, captured_at: captured, source_type: "user", moderation_status: "approved",
+  storage_bucket:"post-media",storage_path:`${OWNER}/p${n}.jpg`,public_url: `post-media/${OWNER}/p${n}.jpg`, captured_at: captured, source_type: "user", moderation_status: "approved",
   processing_status: "ready", deleted_at: null, provenance: null, created_at: "2026-03-02T22:00:00.000Z",
 });
 
@@ -638,6 +642,11 @@ async function start(opts: FakeOpts & { mutate?: (s: Store) => void } = {}): Pro
 }
 
 async function call(app: App, method: string, p: string, actor: string, body?: unknown) {
+  if (method === "PATCH" && /^\/api\/memories\/[^/]+$/.test(p) && body && typeof body === "object") {
+    const row = app.store.memories.find(m => m.id === p.split('/').at(-1));
+    if (row) body = memoryEditFixture(row, body as Record<string, unknown>);
+  }
+
   const res = await fetch(app.base + p, {
     method,
     headers: { Authorization: `Bearer ${actor}`, "Content-Type": "application/json", connection: "close" },

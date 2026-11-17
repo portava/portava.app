@@ -1,3 +1,4 @@
+import { memoryEditPatch } from '../../src/services/memoryEditPatch.ts';
 /**
  * Memory edit screen — /memory/edit?id=<uuid>
  *
@@ -180,6 +181,7 @@ function OwnerMemoryEditor({ id, ownerId, isTargetCurrent }: {
   // Track whether the place was intentionally cleared (null after load).
   // We need to send explicit nulls when the user clears an existing location.
   const originalHadLocation = useRef(false);
+  const loadedBase = useRef<Memory | null>(null);
   const saveLock = useRef(false);
   const lifecycle = useRef<AbortController | null>(null);
   const [request, setRequest] = useState<MemoryOwnerRequest | null>(null);
@@ -202,7 +204,7 @@ function OwnerMemoryEditor({ id, ownerId, isTargetCurrent }: {
       setRequest(null); setTitle(''); setCaption(''); setPlace(null); setPlacePickerOpen(false);
       setStartTime(memoryTimeDraft(null)); setEndTime(memoryTimeDraft(null));
       setVisibility('friends_only'); setMemoryType(null); setSaveError(''); setSaving(false);
-      lastSave.current = null;
+      lastSave.current = null; loadedBase.current = null;
       setLoadError('This editing session changed. Reopen the Memory.'); setLoading(false);
     };
     const scope: MemoryOwnerRequest = { memoryId: id, ownerId, signal: controller.signal,
@@ -220,6 +222,7 @@ function OwnerMemoryEditor({ id, ownerId, isTargetCurrent }: {
       setLoading(false);
       if (!result.ok) { setLoadError(result.message); return; }
       const m = result.memory;
+      loadedBase.current = m;
       setTitle(m.title ?? '');
       setCaption(m.caption ?? '');
       setStartTime(memoryTimeDraft(m.startsAt)); setEndTime(memoryTimeDraft(m.endsAt));
@@ -234,7 +237,7 @@ function OwnerMemoryEditor({ id, ownerId, isTargetCurrent }: {
   // ── Save ────────────────────────────────────────────────────────────────────
 
   const handleSave = useCallback(async () => {
-    if (!request || !request.isCurrent() || request.signal.aborted || saveLock.current) return;
+    if (!request || !request.isCurrent() || request.signal.aborted || saveLock.current || !loadedBase.current) return;
     const startResult = memoryTimeValue(startTime, 'start');
     const endResult = memoryTimeValue(endTime, 'end');
     if (!startResult.ok) { setSaveError(startResult.message); return; }
@@ -267,14 +270,15 @@ function OwnerMemoryEditor({ id, ownerId, isTargetCurrent }: {
             }
           : {};
 
-      const patch = {
-        title: title.trim() || null,
-        caption: caption.trim() || null,
+      const patch = memoryEditPatch(loadedBase.current, {
+        ...(title !== (loadedBase.current.title ?? '') ? { title: title.trim() || null } : {}),
+        ...(caption !== (loadedBase.current.caption ?? '') ? { caption: caption.trim() || null } : {}),
         visibility,
         ...(startResult.value !== undefined ? { startsAt: startResult.value } : {}),
         ...(endResult.value !== undefined ? { endsAt: endResult.value } : {}),
-        ...locationPayload, ...(typeTouched.current ? { memoryType } : {}), ...(placeTouched.current && place ? { placeDisplayNameAtOccurrence: occurrenceNameOfPick(place) } : {}), // a type is sent only when changed (the server refuses one while types are off); a place's name only with a NEWLY picked place
-      };
+        ...(placeTouched.current ? locationPayload : {}), ...(typeTouched.current ? { memoryType } : {}), ...(placeTouched.current && place ? { placeDisplayNameAtOccurrence: occurrenceNameOfPick(place) } : {}), // a type is sent only when changed (the server refuses one while types are off); a place's name only with a NEWLY picked place
+       });
+      if (!patch) { router.back(); return; }
       const intent = JSON.stringify(patch);
       if (lastSave.current?.intent !== intent) lastSave.current = { intent, operationId: newMemoryOperationId('memory-edit') };
       const result = await updateMemory(id, { ...patch, operationId: lastSave.current.operationId }, request);
@@ -415,7 +419,7 @@ function OwnerMemoryEditor({ id, ownerId, isTargetCurrent }: {
               <Pressable
                 onPress={(e) => {
                   e.stopPropagation();
-                  setPlace(null);
+                  placeTouched.current = true; setPlace(null);
                 }}
                 hitSlop={10}
                 testID="memory-edit-location-clear"

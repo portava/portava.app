@@ -44,7 +44,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HAVE_DB, exec, psql, scalar, seedUser, deleteUser } from "./localDb.js";
+import { HAVE_DB, exec, psql, scalar, seedUser, deleteUser, cleanupSyntheticMedia } from "./localDb.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const MIGRATION = resolve(__dir, "../../migrations/3365_post_media_write_boundary.sql");
@@ -129,8 +129,8 @@ describe("census-media §44.18.3 — 3365: post_media's client writes, 2158's en
 
   after(() => {
     if (!A) return;
-    exec(`DELETE FROM public.post_media WHERE user_id IN ('${A}', '${V}');
-          DELETE FROM public.posts WHERE author_id IN ('${A}', '${V}');
+    cleanupSyntheticMedia([A, V].filter(Boolean));
+    exec(`DELETE FROM public.posts WHERE author_id IN ('${A}', '${V}');
           DELETE FROM public.places WHERE id = '${PLACE}';`);
     for (const u of [A, V]) if (u) deleteUser(u);
   });
@@ -178,14 +178,14 @@ describe("census-media §44.18.3 — 3365: post_media's client writes, 2158's en
     assert.deepEqual(pre.writes.authenticated.table, ["DELETE", "INSERT"], "anti-vacuity: the production shape is what the integrator read");
   });
 
-  it("G5-3 — the service role still writes post_media in full", () => {
-    const out = exec(`SET LOCAL ROLE service_role;
+  it("G5-3 — the service role still writes processor metadata, and fixture changes roll back", () => {
+    const out = exec(`BEGIN; SET LOCAL ROLE service_role;
       INSERT INTO public.post_media (post_id, user_id, media_type, mime_type, storage_path, processing_status, moderation_status, canonical_place_id, feed_url)
       VALUES ('${POST}', '${A}', 'image', 'image/jpeg', '${A}/g5-svc.jpg', 'ready', 'approved', '${PLACE}', 'f');
       UPDATE public.post_media SET processing_status = 'failed' WHERE storage_path = '${A}/g5-svc.jpg';
       SELECT 'svc=' || processing_status || '/' || moderation_status || '/' || (canonical_place_id IS NOT NULL) FROM public.post_media WHERE storage_path = '${A}/g5-svc.jpg';
-      DELETE FROM public.post_media WHERE storage_path = '${A}/g5-svc.jpg';
-      SELECT 'left=' || count(*) FROM public.post_media WHERE storage_path = '${A}/g5-svc.jpg';`, { single: true });
+      ROLLBACK;
+      SELECT 'left=' || count(*) FROM public.post_media WHERE storage_path = '${A}/g5-svc.jpg';`);
     assert.deepEqual(out, ["svc=failed/approved/true", "left=0"]);
   });
 

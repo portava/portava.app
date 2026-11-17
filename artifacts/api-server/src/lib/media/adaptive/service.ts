@@ -4,6 +4,8 @@ import { join } from "node:path";
 import type { MediaTranscoder, TranscodeSubject } from "../vendors/mediaTranscoder.js";
 import { refused } from "../vendors/vendorCommon.js";
 import { AdaptiveArtifacts } from "./artifacts.js";
+import { requireDerivativeErasure } from "../derivativeErasure.js";
+import { withMediaCleanup } from "../../../services/media/MediaCleanupTransport.js";
 import { adaptiveEnabled, authorizeAdaptive, canonicalSource, sameSource } from "./canonical.js";
 import { encodeLadder } from "./encoder.js";
 import type { AdaptiveJobs, AdaptiveLease } from "./jobs.js";
@@ -166,6 +168,11 @@ export function createSelfHostedAdaptive(sc: SupabaseClient, config: AdaptiveCon
 
   async function eraseAsset(assetId: string): Promise<void> {
     if (!validAssetId(assetId)) throw new Error("invalid asset id");
+    await withMediaCleanup(sc, async client => {
+      const { data, error } = await client.from("media_assets").select("id,version,storage_bucket,storage_path").eq("id", assetId).maybeSingle();
+      if (error || !data || data.id !== assetId) throw new Error("Adaptive erasure source unavailable");
+      await requireDerivativeErasure(client, data);
+    });
     await jobs.cancelAsset(assetId);
     await artifacts.erase(assetId);
   }

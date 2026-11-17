@@ -1,3 +1,5 @@
+import { memoryEditFixture } from '../../test/helpers/memoryEditFixture.js';
+import { makeKernelRpc } from '../../test/memoryCommandKernelFake.js';
 /**
  * §21 / §28.8 — a Memory whose audience narrows must not survive in a cached
  * Compass projection.
@@ -172,6 +174,7 @@ function makeClient(state: FakeState, failTables: Set<string> = new Set()) {
 
   return {
     from,
+    rpc: makeKernelRpc({ tables: state, rpcCalls: [], failOn: new Set(), absent: false }),
     auth: {
       getUser: async (tok: string) => {
         const map: Record<string, { id: string }> = {
@@ -198,13 +201,13 @@ async function startApp(state: FakeState, logged: Array<{ obj: any; msg: string 
     next();
   });
   app.use("/api", memoriesRouter);
-  return new Promise<{ baseUrl: string; close: () => Promise<void> }>((resolve, reject) => {
+  return new Promise<{ baseUrl: string; state: FakeState; close: () => Promise<void> }>((resolve, reject) => {
     const srv = http.createServer(app);
     srv.listen(0, "127.0.0.1", () => {
       const { port } = srv.address() as { port: number };
       srv.unref();
       resolve({
-        baseUrl: `http://127.0.0.1:${port}`,
+        baseUrl: `http://127.0.0.1:${port}`, state,
         close: () => new Promise<void>((res, rej) => { srv.closeAllConnections(); srv.close((e) => (e ? rej(e) : res())); }),
       });
     });
@@ -212,11 +215,11 @@ async function startApp(state: FakeState, logged: Array<{ obj: any; msg: string 
   });
 }
 
-async function patch(base: string, path: string, tok: string, body: unknown) {
-  const res = await fetch(`${base}${path}`, {
+async function patch(app: Awaited<ReturnType<typeof startApp>>, path: string, tok: string, body: unknown) {
+  const res = await fetch(`${app.baseUrl}${path}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}`, connection: "close" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(memoryEditFixture(app.state.memories!.find(row => row.id === path.split("/").at(-1)) ?? {}, body as Record<string, unknown>)),
   });
   return { status: res.status, body: await res.json().catch(() => null) };
 }
@@ -372,7 +375,7 @@ describe("PATCH /api/memories/:id revokes cached Compass projections", () => {
     const app = await startApp(state);
     try {
       assert.ok(cachedUsers(state).has(LIKER), "precondition: the liker has a cached feed");
-      const { status } = await patch(app.baseUrl, `/api/memories/${MEM_ID}`, "owner-tok", { visibility: "only_me" });
+      const { status } = await patch(app, `/api/memories/${MEM_ID}`, "owner-tok", { visibility: "only_me" });
       assert.equal(status, 200);
       assert.equal(cachedUsers(state).has(LIKER), false, "the liker's cached Compass feed must be gone");
       assert.equal(cachedUsers(state).has(OWNER), false, "the owner's own cached feed must be gone");
@@ -383,7 +386,7 @@ describe("PATCH /api/memories/:id revokes cached Compass projections", () => {
     const state = baseState({ visibility: "trip_crew" });
     const app = await startApp(state);
     try {
-      const { status } = await patch(app.baseUrl, `/api/memories/${MEM_ID}`, "owner-tok", { visibility: "only_me" });
+      const { status } = await patch(app, `/api/memories/${MEM_ID}`, "owner-tok", { visibility: "only_me" });
       assert.equal(status, 200);
       assert.equal(cachedUsers(state).has(CREW), false, "the crew member's cached Compass feed must be gone");
     } finally { await app.close(); }
@@ -393,7 +396,7 @@ describe("PATCH /api/memories/:id revokes cached Compass projections", () => {
     const state = baseState();
     const app = await startApp(state);
     try {
-      const { status } = await patch(app.baseUrl, `/api/memories/${MEM_ID}`, "owner-tok", { caption: "a new caption" });
+      const { status } = await patch(app, `/api/memories/${MEM_ID}`, "owner-tok", { caption: "a new caption" });
       assert.equal(status, 200);
       assert.deepEqual(
         [...cachedUsers(state)].sort(),
@@ -418,7 +421,7 @@ describe("PATCH /api/memories/:id revokes cached Compass projections", () => {
     const state = baseState();
     const app = await startApp(state);
     try {
-      await patch(app.baseUrl, `/api/memories/${MEM_ID}`, "owner-tok", { visibility: "only_me" });
+      await patch(app, `/api/memories/${MEM_ID}`, "owner-tok", { visibility: "only_me" });
       const reasons = new Set((state.compass_cache_invalidations ?? []).map((r) => r.reason as string));
       assert.ok(
         reasons.has("memory_visibility_changed"),
@@ -442,7 +445,7 @@ describe("§24 privacy_revocation_latency is emitted by the routes (H219)", () =
     const lines: Array<{ obj: any; msg: string }> = [];
     const app = await startApp(baseState(), lines);
     try {
-      const { status } = await patch(app.baseUrl, `/api/memories/${MEM_ID}`, "owner-tok", { visibility: "only_me" });
+      const { status } = await patch(app, `/api/memories/${MEM_ID}`, "owner-tok", { visibility: "only_me" });
       assert.equal(status, 200);
       const s = latencySamples(lines);
       assert.equal(s.length, 1);
@@ -462,7 +465,7 @@ describe("§24 privacy_revocation_latency is emitted by the routes (H219)", () =
     const lines: Array<{ obj: any; msg: string }> = [];
     const app = await startApp(baseState(), lines);
     try {
-      await patch(app.baseUrl, `/api/memories/${MEM_ID}`, "owner-tok", { caption: "a new caption" });
+      await patch(app, `/api/memories/${MEM_ID}`, "owner-tok", { caption: "a new caption" });
       assert.equal(latencySamples(lines).length, 0, "a metric for a revocation that did not happen is noise");
     } finally { await app.close(); }
   });

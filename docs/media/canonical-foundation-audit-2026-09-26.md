@@ -125,17 +125,17 @@ position, cover and a per-attachment visibility override.
   - It applies the shared kill switch and rate budget at `artifacts/api-server/src/routes/posts.ts:102#const guard = await guardUploadRequest(sc, user.id);`.
   - The bytes, not the header, decide the type: `artifacts/api-server/src/routes/posts.ts:136#const verified = verifyUploadedBytes(rawBody, declaredInfo.mediaType);`.
 - **One policy covers both transports:**
-  - `artifacts/api-server/src/lib/mediaPipeline.ts:108#export async function guardUploadRequest(`;
-  - `artifacts/api-server/src/lib/mediaPipeline.ts:184#export function verifyUploadedBytes(`;
-  - `artifacts/api-server/src/lib/mediaPipeline.ts:60#export const MEDIA_SIZE_LIMITS`.
+  - `artifacts/api-server/src/lib/mediaPipeline.ts:111#export async function guardUploadRequest(`;
+  - `artifacts/api-server/src/lib/mediaPipeline.ts:191#export function verifyUploadedBytes(`;
+  - `artifacts/api-server/src/lib/mediaPipeline.ts:62#export const MEDIA_SIZE_LIMITS`.
 - **Resumable postcard upload** (lane D, census-media §22):
   - `artifacts/api-server/src/routes/postcardMediaTransport.ts:212#/postcards/:id/media/:mediaId/upload-session`;
-  - `artifacts/api-server/src/routes/postcardMediaTransport.ts:253#/postcards/:id/media/:mediaId/upload-session/assemble`;
+  - `artifacts/api-server/src/routes/postcardMediaTransport.ts:259#/postcards/:id/media/:mediaId/upload-session/assemble`;
   - `artifacts/api-server/src/lib/postcardMediaTransport.ts:231#export async function assembleParts(`;
   - `artifacts/api-server/src/lib/postcardMediaTransport.ts:114#export function summarizeParts(`.
   - The client ships it off: `travel-buddy-standalone/src/services/media/uploadTransportFlag.ts:19#const DEFAULT_ENABLED = false;`.
 - **Poster uploads** cap their body while it is still being read:
-  - `artifacts/api-server/src/routes/postcardMediaTransport.ts:136#export function collectBody(limitBytes: number) {`;
+  - `artifacts/api-server/src/routes/postcardMediaTransport.ts:142#export function collectBody(limitBytes: number) {`;
   - `artifacts/api-server/src/lib/postcardMediaTransport.ts:63#export const POSTER_MAX_BYTES = 5 * 1024 * 1024;`.
 
 **What the spec requires.** §37 covers upload, resume and retry, and background
@@ -165,7 +165,7 @@ upload. §40 covers the client upload service.
   - written as the stored duration: `artifacts/api-server/src/lib/mediaVideoPoster.ts:175#export async function recordMeasuredDuration(`.
 - **Video posters.**
   - The general route: `artifacts/api-server/src/routes/mediaVideoPoster.ts:46#/media/upload/poster`.
-  - The postcard route: `artifacts/api-server/src/routes/postcardMediaTransport.ts:176#/postcards/:id/media/:mediaId/poster`.
+  - The postcard route: `artifacts/api-server/src/routes/postcardMediaTransport.ts:182#/postcards/:id/media/:mediaId/poster`.
   - Both record the poster on the asset: `artifacts/api-server/src/lib/mediaVideoPoster.ts:138#export async function recordPosterOnAsset(`.
 - **Readiness.** A row with both dimensions is written `ready`, and one without
   them is written `processing`:
@@ -271,9 +271,9 @@ the same override to the bytes regardless of the flag.
   - `owner_deleted` is terminal: `artifacts/api-server/src/services/media/MediaModerationService.ts:83#owner_deleted: [],`;
   - the distribution predicate is `artifacts/api-server/src/services/media/MediaModerationService.ts:96#export function isDistributableModerationState(`.
 - **The admin route calls it:**
-  - after a post-media decision: `artifacts/api-server/src/routes/adminMedia.ts:880#canonicalOutcome = await applyCanonicalModerationDecision(sc, {`;
+  - after a post-media decision: `artifacts/api-server/src/routes/adminMedia.ts:834#canonicalOutcome = await applyCanonicalModerationDecision(sc, {`;
   - after a deletion: `artifacts/api-server/src/routes/adminMedia.ts:841#decision: "remove"`.
-  - If a restrictive decision fails to reach the canonical row, the route logs at error level: `artifacts/api-server/src/routes/adminMedia.ts:888#the canonical asset did NOT follow`.
+  - If a restrictive decision fails to reach the canonical row, the route logs at error level: `artifacts/api-server/src/routes/adminMedia.ts:842#the canonical asset did NOT follow`.
 - **Migration 3321** (portava-ci only):
   - the §36 default: `artifacts/api-server/src/migrations/3321_media_moderation_canonical_state.sql:73#SET DEFAULT 'processing'`;
   - a trigger that stores each legacy spelling as its §36 value: `artifacts/api-server/src/migrations/3321_media_moderation_canonical_state.sql:95#CREATE TRIGGER media_assets_canonical_moderation`;
@@ -343,7 +343,7 @@ The census records the C grade with this condition attached (census-media §27).
     body in memory. Nothing in this tree bounds it; any proxy limit in front of
     the server is outside the tree.
   - The tree already has a bounded collector, which the poster routes use:
-    `artifacts/api-server/src/routes/postcardMediaTransport.ts:136#export function collectBody(limitBytes: number) {`.
+    `artifacts/api-server/src/routes/postcardMediaTransport.ts:142#export function collectBody(limitBytes: number) {`.
 - **F2. An owner's retry parks the asset in `queued`, and nothing claims queued
   work.**
   - The retry writes `artifacts/api-server/src/services/media/MediaLifecycleService.ts:382#processing_status: "queued",`.

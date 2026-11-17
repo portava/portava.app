@@ -82,6 +82,9 @@ export interface CapabilityDefinition {
    * readiness to nobody and is exactly the mistake this contract exists to end.
    */
   readonly consumers: readonly string[];
+  /** Shared RPC guards reached by the consumer’s scanned flag closure.
+   * Only function-only requirements may use this alternative to a direct capability import. */
+  readonly sharedFunctionGuards?: readonly string[];
   /** What refusing protects. Prose for the refusal log line. */
   readonly note: string;
 }

@@ -1,3 +1,4 @@
+import {activeMediaAccountRead} from './helpers/mediaAccountReadFixture.js';
 /**
  * Media §37 — the video pipeline's server half: duration + display size read
  * from the container (MD276), a poster for every postcard video (MD275), and a
@@ -235,9 +236,9 @@ function makeClient() {
     };
     const run = () => {
       if (patch) {
-        for (const r of rows()) Object.assign(r, patch);
+        const changed = rows(); for (const r of changed) Object.assign(r, patch);
         state.updates.push({ table, patch });
-        return { data: null, error: null };
+        return { data: returning ? changed : null, error: null };
       }
       if (del) {
         const keep = (r: any) => !filters.every((f) => f(r));
@@ -248,13 +249,14 @@ function makeClient() {
       return { data: rows(), error: null };
     };
     const b: any = {
-      select() { if (del) returning = true; return b; },
+      select() { if (del || patch) returning = true; return b; },
       update(p: any) { patch = p; return b; },
       delete() { del = true; return b; },
       eq(c: string, v: any) { filters.push((r) => r[c] === v); return b; },
       neq(c: string, v: any) { filters.push((r) => r[c] !== v); return b; },
       in(c: string, vs: any[]) { filters.push((r) => vs.includes(r[c])); return b; },
       or() { return b; }, is() { return b; }, not() { return b; }, lt() { return b; }, gte() { return b; },
+      contains() { return b; },
       order() { return b; }, limit() { return b; },
       maybeSingle() { return Promise.resolve({ data: rows()[0] ?? null, error: null }); },
       single() { return Promise.resolve({ data: rows()[0] ?? null, error: null }); },
@@ -264,6 +266,18 @@ function makeClient() {
   }
   return {
     from: builder,
+    async rpc(name: string, args: any) {
+      if (name === "account_recovery_status") return activeMediaAccountRead(name, args);
+      if (name === 'withdraw_postcard_media') {
+        const row = state.postMedia.find(r => r.id === args.p_media && r.post_id === args.p_post && r.user_id === args.p_actor && r.moderation_status === args.p_expected_moderation);
+        if (!row || ['flagged','rejected','limited'].includes(row.moderation_status)) return { data: false, error: null };
+        Object.assign(row, { deleted_at: new Date().toISOString(), processing_status: 'pending', public_url: '', thumbnail_url: null, feed_url: null }); return { data: true, error: null };
+      }
+      if (name !== 'renew_postcard_upload') return { data: null, error: { message: 'unhandled RPC' } };
+      const row = state.postMedia.find(r => r.id === args.p_media && r.processing_status === 'pending' && !r.deleted_at);
+      if (!row) return { data: false, error: null };
+      row.updated_at = new Date().toISOString(); return { data: true, error: null };
+    },
     storage: {
       from(bucket: string) {
         const key = (p: string) => `${bucket}/${p}`;
@@ -563,13 +577,15 @@ describe("MD281 on the wire — a resumable part upload into the postcard slot",
     assert.equal(state.postMedia.length, 1, "the owner's row is still there");
   });
 
-  it("deleting the media removes its poster and any parts with it", async () => {
+  it("deleting media retains its original, poster and parts while denying new byte access", async () => {
     state.objects.set(`post-media/${SLOT_PATH}`, Buffer.from("x"));
     state.objects.set(`post-media/${SLOT_PATH}.poster.jpg`, Buffer.from("p"));
     state.objects.set(`post-media/${partPathFor(SLOT_PATH, 0)}`, Buffer.from("a"));
     const r = await json("DELETE", `/api/postcards/${POST}/media/${MEDIA}`, {});
     assert.ok(r.status < 300, JSON.stringify(r.body));
-    assert.deepEqual([...state.objects.keys()], []);
+    assert.deepEqual([...state.objects.keys()], [`post-media/${SLOT_PATH}`,`post-media/${SLOT_PATH}.poster.jpg`,`post-media/${partPathFor(SLOT_PATH,0)}`]);
+    assert.ok(state.postMedia[0].deleted_at);assert.equal(state.postMedia[0].storage_path,SLOT_PATH);
+    assert.equal(await authorizeMediaAccess(makeClient() as unknown as Parameters<typeof authorizeMediaAccess>[0], USER, "post-media", SLOT_PATH), false);
   });
 });
 

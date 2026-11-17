@@ -1,3 +1,5 @@
+import { memoryEditFixture } from './helpers/memoryEditFixture.js';
+import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -102,9 +104,11 @@ async function start(kernelOn = false) {
 type App = Awaited<ReturnType<typeof start>>;
 let app: App | undefined;
 async function call(body: unknown, actor: string | null = ownerId, method = "PATCH", path = `/api/memories/${memoryId}`) {
-  const headers: Record<string, string> = { "Content-Type": "application/json", "Idempotency-Key": "time-editor-fixture", connection: "close" };
+  const headers: Record<string, string> = { "Content-Type": "application/json", "Idempotency-Key": randomUUID(), connection: "close" };
   if (actor) headers.Authorization = `Bearer ${actor}`;
-  const response = await fetch(app!.base + path, { method, headers, body: JSON.stringify(body) });
+  // Capture the editor base before dispatch; the shared writer checks it atomically.
+  const payload = method === "PATCH" ? memoryEditFixture(memory(), body as Row) : body;
+  const response = await fetch(app!.base + path, { method, headers, body: JSON.stringify(payload) });
   return { status: response.status, body: await response.json() as any };
 }
 const memory = () => app!.state.tables.memories![0]!;
@@ -123,13 +127,9 @@ describe("H217 existing owner time PATCH contract — mounted router, synthetic 
       assert.equal(result.status, 200, JSON.stringify(result.body));
       assert.equal(result.body.memory.startsAt, corrected); assert.equal(result.body.memory.endsAt, endsAt);
       assert.equal(memory().starts_at, corrected); assert.deepEqual(evidence(), before);
-      if (kernelOn) {
-        assert.equal(app.state.rpcCalls[0]!.args.p_command.type, "UPDATE_MEMORY");
-        assert.equal(app.state.tables.memory_domain_events![0]!.type, "memory.corrected");
-      } else {
-        assert.deepEqual(app.writes.map(write => write.table), ["memories"]);
-        assert.equal(app.state.rpcCalls.length, 0);
-      }
+      assert.equal(app.state.rpcCalls.find(call => call.args?.p_command)?.args.p_command.type, "UPDATE_MEMORY");
+      assert.equal(app.state.tables.memory_domain_events![0]!.type, "memory.corrected");
+      assert.equal(app.writes.length, 0, "field edits always use the atomic command owner");
     });
 
     it(`preserves the current editor's audience command precedence with kernel=${kernelOn}`, async () => {
@@ -137,7 +137,7 @@ describe("H217 existing owner time PATCH contract — mounted router, synthetic 
       const result = await call({ title: "Coffee", caption: "Owner words", visibility: "only_me", endsAt: null });
       assert.equal(result.status, 200, JSON.stringify(result.body));
       assert.equal(memory().ends_at, null); assert.equal(memory().starts_at, startsAt);
-      if (kernelOn) assert.equal(app.state.rpcCalls[0]!.args.p_command.type, "CHANGE_VISIBILITY");
+      assert.equal(app.state.rpcCalls.find(call => call.args?.p_command)?.args.p_command.type, "CHANGE_VISIBILITY");
     });
 
     for (const field of ["startsAt", "endsAt"]) {

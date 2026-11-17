@@ -296,7 +296,7 @@ export async function storeVerifiedMediaUpload(req: any, res: any, sc: any, user
     if (operation && !await finishComposerUpload(sc, user.id, operation)) { await cleanComposerUpload(sc, user.id, operation, [path, `${basePath}.thumb.jpg`, `${basePath}.feed.jpg`]); sendError(res, 'conflict', 'Draft upload was cancelled.'); return; }
     const mediaRelayUrl = `${STORAGE_BUCKET}/${path}`;
 
-    // Canonical dual-write (flag-gated OFF; fail-soft — legacy flow unaffected).
+    // Register the canonical asset through the existing flag-gated writer.
     const canonicalWrite = canonicalModerationAtBirth(sc).then(async atBirth => {
       return recordMediaAssetDetailed(sc, { ...atBirth, preserveExisting: Boolean(operation),
       ownerUserId: user.id, sourceType: MEDIA_SOURCE_UNDECLARED, // §6 source: this route receives bytes and a Content-Type, never camera vs library (census-media §35, MD37)
@@ -327,6 +327,10 @@ export async function storeVerifiedMediaUpload(req: any, res: any, sc: any, user
       }
       await runMediaVendorIngest(sc, { assetId: asset.assetId, sourceVersion: asset.assetVersion, bucket: STORAGE_BUCKET, path, mediaType: sniffed.kind, durationMs: videoProbe?.durationMs ?? null });
     }).catch(() => { /* The draft response below requires its canonical receipt; legacy writes remain fail-soft. */ });
+    // Finish the existing registration before a client can attach the returned
+    // key to a Memory. A failed legacy registration still does not claim a
+    // canonical receipt; the item writer refuses missing required sources.
+    if (!operation) await canonicalWrite.catch(() => undefined);
     if (operation) {
       try {
         const receipt = await canonicalWrite;

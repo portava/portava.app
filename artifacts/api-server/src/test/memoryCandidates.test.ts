@@ -1,3 +1,4 @@
+import { memoryItemWriterFake } from "./helpers/memoryItemWriterFake.js";
 /**
  * §7 candidate inbox — /me/memory-candidates over the real router and a
  * table-backed fake that models migration 2320's constraints: the replay key,
@@ -39,11 +40,11 @@ const NODATE_TRIP = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 
 const m = (n: number) => `30000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const m_ = m;
-const url = (n: number) => `https://cdn.example.test/u/${OWNER}/p${n}.jpg`;
+const url = (n: number) => `post-media/${OWNER}/p${n}.jpg`;
 
 function media(n: number, captured: string | null, over: Record<string, unknown> = {}) {
   return {
-    id: m(n), owner_user_id: OWNER, media_type: "image", mime_type: "image/jpeg", public_url: url(n),
+    id: m(n), storage_bucket: "post-media", storage_path: `${OWNER}/p${n}.jpg`, owner_user_id: OWNER, media_type: "image", mime_type: "image/jpeg", public_url: url(n),
     captured_at: captured, source_type: "user", moderation_status: "approved", processing_status: "ready",
     deleted_at: null, provenance: null, created_at: "2026-03-02T22:00:00.000Z", ...over,
   };
@@ -184,8 +185,8 @@ function makeClient(store: Record<string, any[]>, opts: FakeOpts) {
   }
   return {
     from: (t: string) => chain(t),
-    rpc: async (name: string) => name === "memory_candidate_origin_ready"
-      ? { data: true, error: null } : { data: null, error: { message: "rpc not modelled" } },
+    rpc: async (name: string, args: unknown) => name === "memory_candidate_origin_ready"
+      ? { data: true, error: null } : (await memoryItemWriterFake({from:chain},name,args)) ?? { data: null, error: { message: "rpc not modelled" } },
     auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },
   };
 }

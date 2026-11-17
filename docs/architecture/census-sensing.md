@@ -1077,7 +1077,7 @@ the undecided decision. **S21**, **S28**, **S29** and **S32** stay as they
 are: on-device reduction, the nine device features, acoustic capture and the
 signal ingest are decisions #1, #2 and #6, and this lane does not take them.
 **S26** stays W: the anonymous half is closed (72 h structural, the sweep
-registered at `src/index.ts:162#startSensingRetentionScheduler();`) and the
+registered at `src/index.ts:161#startSensingRetentionScheduler();`) and the
 intel raw purge is behind `intel_contribution_retention_enabled`, FALSE in
 production, at 180 days. **S3** and **S106** stay W: `src/presence/domain/`
 is unchanged since Phase 0 — types and a transport interface, no store, no
@@ -1730,7 +1730,7 @@ so nothing ever entered the pipeline. This section builds the first two
 and feeds the third rather than replacing it: a candidate is FILED into the
 review queue the platform already has, `moderation_reports`, as a
 system-originated `place` / `safety_concern` row — the queue
-`routes/admin.ts:2107#/admin/moderation/reports` already serves — and
+`routes/admin.ts:2122#/admin/moderation/reports` already serves — and
 asserts nothing. One migration, 2803, seeds a flag FALSE; no table, no
 column. Every rule went red under a mutation before its commit; the
 mutations are listed in §5.3.
@@ -1789,7 +1789,7 @@ mutations are listed in §5.3.
   (`lib/safetyCandidate.ts:256#reporter_id`; `lib/safetyCandidate.ts:260#category`;
   `lib/safetyCandidate.ts:72#SAFETY_CANDIDATE_DETAILS_PREFIX`;
   `test/safetyCandidate.test.ts:141#no reporter`). That is the queue
-  `routes/admin.ts:2107#/admin/moderation/reports` serves to reviewers
+  `routes/admin.ts:2122#/admin/moderation/reports` serves to reviewers
   today, with its `place` filter; the row shape is one the table already
   admits, verified on the object rather than assumed — 2803's preconditions
   read the table's own CHECK constraints and the column's nullability and
@@ -4832,7 +4832,7 @@ S92 reads: *"the bridge is a graph-edge projection and `grep` over
 exists (+243) and its own first line calls itself *"S92's arrow, built from the
 session's OUTCOME"*. It is imported at
 `artifacts/api-server/src/lib/memoryProjectionScheduler.ts:52#}`, and the
-scheduler is started from `artifacts/api-server/src/index.ts:64#startMemoryProjectionScheduler` (its import) and called at `:193#startMemoryProjectionScheduler();` (corrected 2026-09-27; was `:58#import`, right when written, until dbf804b9f added a line above it on 2026-09-26; line 58 is now `registerScopedTrustApplier`'s import, which the one-word anchor still passed. The new anchor names the import rather than the word `import` because a snapshot copy under files/ ends in the same path, so this citation is checked on its first word only).
+scheduler is started from `artifacts/api-server/src/index.ts:63#startMemoryProjectionScheduler` (its import) and called at `:192#startMemoryProjectionScheduler();` (corrected 2026-09-27; was `:58#import`, right when written, until dbf804b9f added a line above it on 2026-09-26; line 58 is now `registerScopedTrustApplier`'s import, which the one-word anchor still passed. The new anchor names the import rather than the word `import` because a snapshot copy under files/ ends in the same path, so this citation is checked on its first word only).
 
 The row's RED WHEN — *S54 exists AND memory eligibility is computed from a
 session's OUTCOME rather than from a graph edge* — has **fired on the code**.
@@ -5189,7 +5189,7 @@ canonical intel evidence — account deletion, through `erase_intel_for_actor`
 — and the anonymous path's `purge_sensing_contributions_for_token()` has no
 route and no caller. So the reach runs inside the deletion, BEFORE the erase
 removes the observations the question is keyed on:
-`` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1211#{ name: "sensing_revocation_reach", subject: "sensing lineage reach — sessions resting on the erased evidence" },` ``,
+`` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1242#{ name: "sensing_revocation_reach", subject: "sensing lineage reach — sessions resting on the erased evidence" },` ``,
 through the service's one pager, calling
 `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:141#export async function enumerateSensingRevocationReach(` ``,
 which is now `sessionRevocationReach`'s first non-test importer.
@@ -5225,8 +5225,8 @@ outcome says `persisted` or `column_absent` —
 
 **Fail-closed, and shown to be.** Any unreadable precondition throws, the
 deletion STEP fails and warns, and the erase still runs. Seven cases in
-`` `artifacts/api-server/src/test/accountDeletionSensingRevocationReach.test.ts:236#describe("S112 — the reach is enumerated at subject granularity, before the erase"` ``
-and `` `artifacts/api-server/src/test/accountDeletionSensingRevocationReach.test.ts:339#describe("S112 — the account-deletion run is the production caller"` ``,
+`` `artifacts/api-server/src/test/accountDeletionSensingRevocationReach.test.ts:240#describe("S112 — the reach is enumerated at subject granularity, before the erase"` ``
+and `` `artifacts/api-server/src/test/accountDeletionSensingRevocationReach.test.ts:343#describe("S112 — the account-deletion run is the production caller"` ``,
 registered and run; three mutations, each reverted: moving the step after the
 erase reds 1 of 7; no longer excluding the account's own sessions reds 3;
 answering "reached nothing" on a failed read reds 2. The nine deletion suites
@@ -5405,7 +5405,7 @@ revoke is not a ban). The production points:
 | a member pauses one Circle context / pauses all / the session-end pause | `revokeCirclePresence` / `revokeAllCirclePresence` — helpers on the shaper, one line per handler. | `` `artifacts/api-server/src/routes/circle.ts:1345#revokeCirclePresence(user.id, type, id);` ``; `` `artifacts/api-server/src/lib/circleResponseShaper.ts:65#export function revokeCirclePresence(` `` |
 | the sweep deletes an expired row, or a trip or event ends | per row / `revokeCircleContext` per ended context | `` `artifacts/api-server/src/routes/circle.ts:2275#for (const tid of endedTripIds) revokeCircleContext("trip", tid);` `` |
 | an admin disables a context, or engages the kill switch | `revokeCircleContext` / `revokeEveryCirclePresence` | `` `artifacts/api-server/src/routes/circle.ts:2186#if (enabled) revokeEveryCirclePresence();` `` |
-| an account is deleted | `revokeSubject(user)` — every source, every scope; logged, deliberately NOT a receipt count (one process's cache is not a durable deletion). | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1350#{ userId, revokedPresenceEstimates: presenceFusion.revokeSubject(userId) },` `` |
+| an account is deleted | `revokeSubject(user)` — every source, every scope; logged, deliberately NOT a receipt count (one process's cache is not a durable deletion). | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1381#{ userId, revokedPresenceEstimates: presenceFusion.revokeSubject(userId) },` `` |
 
 **Mutation results, measured on the suite of 45** (each mutation applied,
 run, and reverted; the file was diffed clean afterwards):
@@ -5571,7 +5571,7 @@ refuses any `%observation%` column on `sensing_anon_contributions`.
 | Without 3311 (production today) the writer retries WITHOUT the column and logs it once — provenance degrades to "unrecorded", projection does not stop | `` `artifacts/api-server/src/lib/intelProjection.ts:520#async function writeWithProvenanceFallback<T extends Record<string, unknown>>(` ``; `` `artifacts/api-server/src/lib/intelProjection.ts:531#      { event: "intel.projection.provenance_unavailable", what, err: firstError },` `` |
 | The reach finds EXACTLY the snapshots resting on the erased ids, and reports which granularity it used | `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:218#            .overlaps("input_observation_ids", part)` ``; `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:106#  provenance: "exact" | "subject";` `` |
 | After the erase, every affected (subject, zone) is RE-PROJECTED from the evidence that remains, through the real aggregator and writer; any row that still names an erased id is RETRACTED in place and a retraction version is appended saying why | `` `artifacts/api-server/src/services/accountDeletion/sensingErasureRecompute.ts:118#export async function recomputeSnapshotsAfterErasure(` ``; `` `artifacts/api-server/src/services/accountDeletion/sensingErasureRecompute.ts:189#      .update({ privacy_eligible: false, expires_at: nowIso, input_observation_ids: [] })` ``; `` `artifacts/api-server/src/services/accountDeletion/sensingErasureRecompute.ts:210#      privacy_reason: "input_erased",` `` |
-| The deletion runs it as its own step, after the erase, and warns if any retraction failed | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1293#    const recomputeOk = await step(steps, "recompute_intel_snapshots_after_erase", async () => {` `` |
+| The deletion runs it as its own step, after the erase, and warns if any retraction failed | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1324#    const recomputeOk = await step(steps, "recompute_intel_snapshots_after_erase", async () => {` `` |
 
 **The effect, verified end to end rather than counted.** The last describe of
 `` `artifacts/api-server/src/test/sensingErasureRecompute.test.ts:216#describe("END TO END — the real aggregator and writer, a real erasure, a verified effect", () => {` ``
@@ -5900,10 +5900,10 @@ session: closing it.
 | The column, NOT NULL, GIN-indexed; and the projector's watermark no longer retracts a session memory it never wrote | `` `artifacts/api-server/src/migrations/3314_memory_projection_claim_refs.sql:113#      AND subject_type IS DISTINCT FROM 'experience_session'` `` |
 | The deletion reach enumerates other people's memories resting on the account's evidence, by overlap, and says when the column is absent | `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:283#            .overlaps("claim_refs", part)` ``; `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:128#  memoryStore: "persisted" | "column_absent";` `` |
 | After the snapshot recompute, each reached memory is RETAINED and its refs to withdrawn snapshots are removed, with the change recorded in its provenance | `` `artifacts/api-server/src/services/accountDeletion/sensingErasureRecompute.ts:261#export async function pruneMemoryLineageAfterErasure(` `` |
-| The deletion runs it as its own step, after the recompute, and fails the step on any failure | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1306#    const lineageOk = await step(steps, "prune_memory_lineage_after_erase", async () => {` `` |
+| The deletion runs it as its own step, after the recompute, and fails the step on any failure | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1337#    const lineageOk = await step(steps, "prune_memory_lineage_after_erase", async () => {` `` |
 
 **The effect, verified rather than counted.**
-`` `artifacts/api-server/src/test/accountDeletionSensingRevocationReach.test.ts:377#  it("AFTER the recompute, the reached memory is RETAINED and its references to WITHDRAWN snapshots are removed — its reference to a standing one is kept", async () => {` ``
+`` `artifacts/api-server/src/test/accountDeletionSensingRevocationReach.test.ts:381#  it("AFTER the recompute, the reached memory is RETAINED and its references to WITHDRAWN snapshots are removed — its reference to a standing one is kept", async () => {` ``
 drives reach, recompute and prune over one mutating database;
 `` `artifacts/api-server/src/test/sensingErasureRecompute.test.ts:311#  it("a memory resting on a snapshot the recompute RETRACTED loses that reference, keeps the others, and records that its lineage changed", async () => {` ``
 does it through the real aggregator and writer. Against real PostgreSQL, with
@@ -6081,9 +6081,9 @@ or written to any database.
 
 SEN-F06's admin half ("admin promotes the test city scope … withdraw the scope and the label
 disappears") had routes and a runbook (`docs/architecture/intel-live-scope-promotion-runbook.md`)
-but no screen: `artifacts/api-server/src/routes/admin.ts:3424#router.get("/admin/intel/live-scopes"`,
-`artifacts/api-server/src/routes/admin.ts:3478#router.post("/admin/intel/live-scopes/promote"` and
-`artifacts/api-server/src/routes/admin.ts:3523#router.post("/admin/intel/live-scopes/withdraw"`.
+but no screen: `artifacts/api-server/src/routes/admin.ts:3447#router.get("/admin/intel/live-scopes"`,
+`artifacts/api-server/src/routes/admin.ts:3501#router.post("/admin/intel/live-scopes/promote"` and
+`artifacts/api-server/src/routes/admin.ts:3546#router.post("/admin/intel/live-scopes/withdraw"`.
 They are unchanged by this lane: admin-only (`requireAdmin`), gated on
 `intel_live_scope_admin_surface_enabled` and, for writes, `intel_live_scope_promotion_enabled`, and
 each write is logged with the admin's id and name.

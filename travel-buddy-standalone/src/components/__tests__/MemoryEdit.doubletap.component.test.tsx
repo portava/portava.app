@@ -150,6 +150,7 @@ async function renderAndLoad() {
   });
   // Verify the form is visible after loading.
   screen.getByTestId('memory-edit-save-btn');
+  await fireEvent.changeText(screen.getByPlaceholderText('Give this memory a name…'), 'Actual edit');
 }
 
 /**

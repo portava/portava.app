@@ -1,12 +1,248 @@
 [
-  {"file": "src/lib/media/postcardCanonicalMedia.ts", "verdict": "fail-soft", "names": ["function postcard_canonical_lifecycle_ready"], "why": "4038 is unshipped. The service-only STABLE SQL readiness probe reads installed function/trigger definitions and enabled state; no business writes. Missing/false/unreadable/malformed results refuse completion before canonical or Storage writes. Mounted PostgreSQL proof in postcardCaptureUpload.db.test.ts disables, replaces and removes protection and observes503 with zero effects. This is a rollout blocker, not an applied-schema claim."},
-  {"file": "src/services/media/MediaLifecycleService.ts", "verdict": "unreachable", "names": ["function retire_media_asset"], "why": "4037 is unshipped. softDeleteMediaAsset currently has no non-test caller (repository search verified); the existing export now delegates to the atomic owner instead of compensating application writes. Missing/unreadable RPC refuses with no fallback or purge. Actual PostgreSQL ownership, audit rollback and independent-session idempotency proved in mediaAssetRetirement.db.test.ts. Reclassify when a production caller is wired; no deployed deletion claim."},
-  {"file": "src/lib/capability/registry.ts", "verdict": "fail-soft", "names": ["function memory_candidate_origin_ready"], "why": "4036 readiness probe only: STABLE SQL reads pg_get_functiondef and returns boolean. The shared schema probe treats absent RPC, false, malformed response and unreadability as unavailable. confirmCandidate requires ready with force:true before claiming or creating; memoryCandidateOrigin.db.test.ts proves absent-function no effects. This is not a speculative command, and rollout remains pending."},
-  {"file": "src/routes/passportStamps.ts", "verdict": "gated", "names": ["function passport_memory_source_set"], "why": "4035 not deployed: PASSPORT_MEMORY_SOURCES schema probe checks the association table and both columns before the command. Missing/unreadable schema returns503 with zero command calls; mounted PostgreSQL bridge proof in passportMemorySources.db.test.ts. A missing command after table readiness also returns503, never success. Rollout remains pending."},
-  {"file": "src/services/passport/PassportMemoryPeople.ts", "verdict": "gated", "names": ["table passport_memory_sources"], "why": "4035 not deployed: PASSPORT_MEMORY_SOURCES probe runs before owner/link reads. Missing/unreadable storage returns explicit unavailable for every requested ID, never unlinked. capabilityRegistry.test.ts proves no private reads occur; real canonical-reader acceptance remains in passportMemorySources.db.test.ts. No cached participant projection."},
-  {"file": "src/lib/rentBuddyEarningsLedger.ts", "verdict": "gated", "names": ["column rent_buddy_earnings_ledger.platform_fee_basis_points"], "why": "lines 210: rent_buddy_enabled = FALSE (same five gated booking paths); additionally unreachable behind the entries append and the fee-schedule read (confidence: high)"},
-  {"file": "src/lib/rentBuddyFeeSchedule.ts", "verdict": "fail-soft", "names": ["column rent_buddy_fee_rules.platform_fee_basis_points"], "why": "lines 309: 3601 is HELD for production (owner hold D-OWNER1004-14; not in the 2026-10-17 apply packet). resolveFeeSchedule's select fails 42703 and, since wave 5 (2026-10-17), returns read_failed WITH schemaAbsent (isFeeScheduleSchemaAbsent: the error names platform_fee_basis_points). The one ungated caller, GET /api/rent-a-buddy/me/earnings/summary (routes/rentABuddyMarketplace.ts, no rent_buddy_enabled check), answers 503 degraded_unavailable FEE_SCHEDULE_NOT_DEPLOYED with no fee figure (was 500 db_error) — the correct answer: the rate is unknowable without the column, and none is invented. The other callers (routes/rentABuddy.ts dashboard earnings summary, lib/rentBuddyEarningsLedger.ts) are behind rent_buddy_enabled = FALSE. Proven in rentBuddyFeeScheduleNotDeployed.test.ts on schemaStrictSupabase. (confidence: high)"},
-  {"file": "src/routes/profile.ts", "verdict": "UNGATED", "names": ["column post_impressions.viewed_at"], "why": "lines 260: GET /api/me/profile/analytics: post_impressions exists in prod but has created_at, not viewed_at; .gte('viewed_at') fails 42703 -> countOrZero logs warn and returns 0 (profile.ts:2326-2328) -> 200 with postImpressions7d always 0. (confidence: high)"},
-  {"file": "src/routes/rentABuddyMarketplace.ts", "verdict": "fail-soft", "names": ["column rent_buddy_fee_rules.platform_fee_basis_points"], "why": "lines 2821: PATCH /api/rent-a-buddy/admin/fee-rules (admin only; exempt from rent_buddy_enabled): 3601 is HELD for production, so the upsert fails PGRST204/42703 on the first row and, since wave 5 (2026-10-17), the route answers 503 degraded_unavailable FEE_SCHEDULE_NOT_DEPLOYED_ADMIN ('... migration 3601, held by the owner. Nothing was saved.') instead of 500 db_error; nothing is written (no fee row, no audit row). Proven in rentBuddyFeeScheduleNotDeployed.test.ts on schemaStrictSupabase. (confidence: high)"},
-  {"file": "src/services/stamps/ContentStampService.ts", "verdict": "fail-soft", "names": ["function count_content_stamps_received"], "why": "lines 200: GET /api/me/passport/stats (routes/passportStamps.ts:505), GET /api/users/:username/passport (routes/passport.ts:178), GET /api/me/profile (routes/profile.ts:379) via measureStampsEarned -> PGRST202 (not logged) -> paged keyset fallback over posts + content_stamps counts (ContentStampService.ts:209-238). Fail-soft; CORRECT count. (confidence: high)"}
+  {
+    "file": "src/lib/media/postcardCanonicalMedia.ts",
+    "verdict": "fail-soft",
+    "names": [
+      "function postcard_canonical_lifecycle_ready"
+    ],
+    "why": "4038 is unshipped. The service-only STABLE SQL readiness probe reads installed function/trigger definitions and enabled state; no business writes. Missing/false/unreadable/malformed results refuse completion before canonical or Storage writes. Mounted PostgreSQL proof in postcardCaptureUpload.db.test.ts disables, replaces and removes protection and observes503 with zero effects. This is a rollout blocker, not an applied-schema claim."
+  },
+  {
+    "file": "src/services/media/MediaLifecycleService.ts",
+    "verdict": "unreachable",
+    "names": [
+      "function retire_media_asset"
+    ],
+    "why": "4037 is unshipped. softDeleteMediaAsset currently has no non-test caller (repository search verified); the existing export now delegates to the atomic owner instead of compensating application writes. Missing/unreadable RPC refuses with no fallback or purge. Actual PostgreSQL ownership, audit rollback and independent-session idempotency proved in mediaAssetRetirement.db.test.ts. Reclassify when a production caller is wired; no deployed deletion claim."
+  },
+  {
+    "file": "src/lib/capability/registry.ts",
+    "verdict": "fail-soft",
+    "names": [
+      "function memory_candidate_origin_ready",
+      "function postcard_canonical_lifecycle_ready"
+    ],
+    "why": "4036 readiness probe only: STABLE SQL reads pg_get_functiondef and returns boolean. The shared schema probe treats absent RPC, false, malformed response and unreadability as unavailable. confirmCandidate requires ready with force:true before claiming or creating; memoryCandidateOrigin.db.test.ts proves absent-function no effects. This is not a speculative command, and rollout remains pending. Read-only postcard_canonical_lifecycle_ready probe: absent, malformed, false or unreadable is missing/unknown and prevents derivative erasure. This declaration neither enables a flag nor claims4041 installed. No production application or original834 closure is claimed."
+  },
+  {
+    "file": "src/routes/passportStamps.ts",
+    "verdict": "gated",
+    "names": [
+      "function passport_memory_source_set"
+    ],
+    "why": "4035 not deployed: PASSPORT_MEMORY_SOURCES schema probe checks the association table and both columns before the command. Missing/unreadable schema returns503 with zero command calls; mounted PostgreSQL bridge proof in passportMemorySources.db.test.ts. A missing command after table readiness also returns503, never success. Rollout remains pending."
+  },
+  {
+    "file": "src/services/passport/PassportMemoryPeople.ts",
+    "verdict": "gated",
+    "names": [
+      "table passport_memory_sources"
+    ],
+    "why": "4035 not deployed: PASSPORT_MEMORY_SOURCES probe runs before owner/link reads. Missing/unreadable storage returns explicit unavailable for every requested ID, never unlinked. capabilityRegistry.test.ts proves no private reads occur; real canonical-reader acceptance remains in passportMemorySources.db.test.ts. No cached participant projection."
+  },
+  {
+    "file": "src/lib/rentBuddyEarningsLedger.ts",
+    "verdict": "gated",
+    "names": [
+      "column rent_buddy_earnings_ledger.platform_fee_basis_points"
+    ],
+    "why": "lines 210: rent_buddy_enabled = FALSE (same five gated booking paths); additionally unreachable behind the entries append and the fee-schedule read (confidence: high)"
+  },
+  {
+    "file": "src/lib/rentBuddyFeeSchedule.ts",
+    "verdict": "fail-soft",
+    "names": [
+      "column rent_buddy_fee_rules.platform_fee_basis_points"
+    ],
+    "why": "lines 309: 3601 is HELD for production (owner hold D-OWNER1004-14; not in the 2026-10-17 apply packet). resolveFeeSchedule's select fails 42703 and, since wave 5 (2026-10-17), returns read_failed WITH schemaAbsent (isFeeScheduleSchemaAbsent: the error names platform_fee_basis_points). The one ungated caller, GET /api/rent-a-buddy/me/earnings/summary (routes/rentABuddyMarketplace.ts, no rent_buddy_enabled check), answers 503 degraded_unavailable FEE_SCHEDULE_NOT_DEPLOYED with no fee figure (was 500 db_error) \u2014 the correct answer: the rate is unknowable without the column, and none is invented. The other callers (routes/rentABuddy.ts dashboard earnings summary, lib/rentBuddyEarningsLedger.ts) are behind rent_buddy_enabled = FALSE. Proven in rentBuddyFeeScheduleNotDeployed.test.ts on schemaStrictSupabase. (confidence: high)"
+  },
+  {
+    "file": "src/routes/profile.ts",
+    "verdict": "UNGATED",
+    "names": [
+      "column post_impressions.viewed_at"
+    ],
+    "why": "lines 260: GET /api/me/profile/analytics: post_impressions exists in prod but has created_at, not viewed_at; .gte('viewed_at') fails 42703 -> countOrZero logs warn and returns 0 (profile.ts:2326-2328) -> 200 with postImpressions7d always 0. (confidence: high)"
+  },
+  {
+    "file": "src/routes/rentABuddyMarketplace.ts",
+    "verdict": "fail-soft",
+    "names": [
+      "column rent_buddy_fee_rules.platform_fee_basis_points"
+    ],
+    "why": "lines 2821: PATCH /api/rent-a-buddy/admin/fee-rules (admin only; exempt from rent_buddy_enabled): 3601 is HELD for production, so the upsert fails PGRST204/42703 on the first row and, since wave 5 (2026-10-17), the route answers 503 degraded_unavailable FEE_SCHEDULE_NOT_DEPLOYED_ADMIN ('... migration 3601, held by the owner. Nothing was saved.') instead of 500 db_error; nothing is written (no fee row, no audit row). Proven in rentBuddyFeeScheduleNotDeployed.test.ts on schemaStrictSupabase. (confidence: high)"
+  },
+  {
+    "file": "src/services/stamps/ContentStampService.ts",
+    "verdict": "fail-soft",
+    "names": [
+      "function count_content_stamps_received"
+    ],
+    "why": "lines 200: GET /api/me/passport/stats (routes/passportStamps.ts:505), GET /api/users/:username/passport (routes/passport.ts:178), GET /api/me/profile (routes/profile.ts:379) via measureStampsEarned -> PGRST202 (not logged) -> paged keyset fallback over posts + content_stamps counts (ContentStampService.ts:209-238). Fail-soft; CORRECT count. (confidence: high)"
+  },
+  {
+    "file": "src/services/accountDeletion/AccountDeletionService.ts",
+    "verdict": "fail-soft",
+    "names": [
+      "function account_deletion_terminal_ready"
+    ],
+    "why": "4043 terminal readiness is a read-only probe. Missing, false or unreadable readiness refuses before claim or erasure; the protocol-1 claim gates every subsequent dispatch/settlement/finalization. Exact request/token/generation and authoritative Auth absence are required; no missing-RPC legacy fallback or time-based redispatch. Existing native/account SQL proofs cover these refusals. Old deployed workers still require quiescence. No production application or original834 closure is claimed."
+  },
+  {
+    "file": "src/services/accountDeletion/AccountDeletionService.ts",
+    "verdict": "gated",
+    "names": [
+      "function claim_account_permanent_deletion",
+      "function finish_account_deletion_attempt",
+      "function prepare_account_auth_deletion",
+      "function settle_account_auth_deletion"
+    ],
+    "why": "4043 terminal readiness is a read-only probe. Missing, false or unreadable readiness refuses before claim or erasure; the protocol-1 claim gates every subsequent dispatch/settlement/finalization. Exact request/token/generation and authoritative Auth absence are required; no missing-RPC legacy fallback or time-based redispatch. Existing native/account SQL proofs cover these refusals. Old deployed workers still require quiescence. No production application or original834 closure is claimed."
+  },
+  {
+    "file": "src/lib/mediaAccess.ts",
+    "verdict": "fail-soft",
+    "names": [
+      "function account_recovery_status"
+    ],
+    "why": "Fresh account status is an authorization read, not a mutation. Missing or malformed status denies access; TELEGRAPH_MEDIA_RETENTION probes post_media.deleted_at before owner/audience shortcuts. An unreadable withdrawn-state read denies rather than treating a retained attachment as active. Deployment before4039/4040 would make media unavailable, so schema-first rollout remains mandatory. No production application or original834 closure is claimed."
+  },
+  {
+    "file": "src/lib/mediaAccess.ts",
+    "verdict": "gated",
+    "names": [
+      "column post_media.deleted_at"
+    ],
+    "why": "Fresh account status is an authorization read, not a mutation. Missing or malformed status denies access; TELEGRAPH_MEDIA_RETENTION probes post_media.deleted_at before owner/audience shortcuts. An unreadable withdrawn-state read denies rather than treating a retained attachment as active. Deployment before4039/4040 would make media unavailable, so schema-first rollout remains mandatory. No production application or original834 closure is claimed."
+  },
+  {
+    "file": "src/routes/profile.ts",
+    "verdict": "fail-soft",
+    "names": [
+      "function account_recovery_status",
+      "function reactivate_self_deactivated_account",
+      "function request_recoverable_account_deletion",
+      "function set_account_self_deactivation",
+      "column user_deletion_requests.recovery_generation",
+      "column user_deletion_requests.recovery_verified"
+    ],
+    "why": "The recovery routes require the4040 owner RPCs and generation-bearing receipt. Every queried error or malformed command result returns an explicit error/unavailable response before any legacy write or success acknowledgement; the status endpoint never invents an active account, and a failed recovery receipt read refuses. These account paths remain unavailable without4040; this entry records a fail-closed rollout dependency, not feature availability or successful deployment. No production application or original834 closure is claimed."
+  },
+  {
+    "file": "src/services/media/MediaLifecycleService.ts",
+    "verdict": "fail-soft",
+    "names": [
+      "function activate_media_restoration",
+      "function advance_media_object_purge",
+      "function advance_media_original_retention",
+      "function advance_media_restoration_copy",
+      "function cancel_media_restoration",
+      "column media_assets.recovery_generation",
+      "column media_assets.recovery_snapshot",
+      "function postcard_canonical_lifecycle_ready",
+      "function prepare_media_original_retention",
+      "function prepare_media_restoration",
+      "function verify_media_restoration_dependencies"
+    ],
+    "why": "4041 retention/restoration uses its canonical receipts. Each operation checks the read/RPC error and exact source/generation/token response before storage transition or acknowledgement. Missing snapshot/generation refuses; readiness failure blocks protected storage paths. Unknown storage operations stay held and cannot be retried on elapsed time alone. Separate native/full-chain proofs cover schema protection; unshipped migrations remain an availability/release blocker. No production application or original834 closure is claimed."
+  },
+  {
+    "file": "src/lib/media/derivativeErasure.ts",
+    "verdict": "gated",
+    "names": [
+      "function advance_media_object_purge"
+    ],
+    "why": "The forced MEDIA_DERIVATIVE_ERASURE schema/readiness probe must succeed before advance_media_object_purge. Exact manifest identity and generation are checked before derivative bytes may be erased. Missing protection refuses; no alternative erasure path. No production application or original834 closure is claimed."
+  },
+  {
+    "file": "src/services/memory/MemoryDomainService.ts",
+    "verdict": "fail-soft",
+    "names": [
+      "function memory_field_edits_ready",
+      "function memory_item_source_ready"
+    ],
+    "why": "memory_item_source_ready and memory_field_edits_ready are read-only readiness probes. False, absent or unreadable probes refuse before item insertion or atomic edit. insert_memory_media_item is reached only after item-source readiness and its exact identity/duplicate receipt is validated; there is no direct-write fallback for a missing RPC. No production application or original834 closure is claimed."
+  },
+  {
+    "file": "src/services/memory/MemoryDomainService.ts",
+    "verdict": "gated",
+    "names": [
+      "function insert_memory_media_item"
+    ],
+    "why": "memory_item_source_ready and memory_field_edits_ready are read-only readiness probes. False, absent or unreadable probes refuse before item insertion or atomic edit. insert_memory_media_item is reached only after item-source readiness and its exact identity/duplicate receipt is validated; there is no direct-write fallback for a missing RPC. No production application or original834 closure is claimed."
+  },
+  {
+    "file": "src/services/memory/memoryMediaBinding.ts",
+    "verdict": "fail-soft",
+    "names": [
+      "column memory_items.media_asset_id",
+      "function memory_unbound_reference_snapshot",
+      "function reconcile_memory_media_binding"
+    ],
+    "why": "The paged inventory and unbound snapshot reads throw on absent schema instead of reporting an empty inventory; snapshot fingerprints and full-page coverage must agree. The explicit admin reconciliation RPC is the sole binding writer and errors/refusals do not acknowledge a bind.4041 rollout is still required. No production application or original834 closure is claimed."
+  },
+  {
+    "file": "src/lib/media/restoredMediaSource.ts",
+    "verdict": "fail-soft",
+    "names": [
+      "column post_media.deleted_at"
+    ],
+    "why": "Restored-source resolution is read-only; missing/unreadable post_media withdrawal state returns no usable source. It never restores an old URL on absence and grants no reader access.4039/4041 remain rollout prerequisites. No production application or original834 closure is claimed."
+  },
+  {
+    "file": "src/routes/adminMedia.ts",
+    "verdict": "fail-soft",
+    "names": [
+      "column post_media.deleted_at",
+      "column post_media.recovery_snapshot",
+      "function withdraw_postcard_media"
+    ],
+    "why": "Admin withdrawal reads current deleted_at/recovery_snapshot and refuses failed reads before calling the one withdrawal RPC. Missing RPC/false receipt fails the request; the resulting retained row is reread before acknowledgement. No hard-delete fallback is used when the migration is missing. No production application or original834 closure is claimed."
+  },
+  {
+    "file": "src/routes/postcardMediaTransport.ts",
+    "verdict": "fail-soft",
+    "names": [
+      "column post_media.deleted_at"
+    ],
+    "why": "Upload-authority row lookup includes deleted_at IS NULL; missing column is an unavailable read, never an active upload lease. No bytes are written on failed authority resolution.4039 schema must be present before cutover. No production application or original834 closure is claimed."
+  },
+  {
+    "file": "src/routes/postcards.ts",
+    "verdict": "fail-soft",
+    "names": [
+      "column post_media.deleted_at",
+      "function withdraw_postcard_media"
+    ],
+    "why": "Completion checks active account and current non-deleted attachment; missing withdrawal state refuses before completion writes. Owner withdrawal uses the canonical RPC, and an error/false receipt refuses acknowledgement without a direct delete fallback.4039/4040 remain required rollout dependencies. No production application or original834 closure is claimed."
+  },
+  {
+    "file": "src/services/media/PendingUploadSweep.ts",
+    "verdict": "fail-soft",
+    "names": [
+      "column post_media.recovery_snapshot",
+      "function renew_postcard_upload",
+      "function withdraw_postcard_media"
+    ],
+    "why": "The sweep includes retained-state predicates and checks read errors; unavailable schema stops that page rather than treating retained rows as abandoned uploads. Withdrawal and renewal use existing atomic RPCs and require affirmative results. No storage cleanup is authorized by a failed/missing receipt. No production application or original834 closure is claimed."
+  },
+  {
+    "file": "src/routes/admin.ts",
+    "verdict": "fail-soft",
+    "names": [
+      "function reactivate_deactivated_account_admin",
+      "column user_deletion_requests.execution_subject_id",
+      "column user_deletion_requests.recovery_generation",
+      "column user_deletion_requests.recovery_verified"
+    ],
+    "why": "Admin recovery and terminal-receipt inventory require4040/4043. Inventory read errors are reported, not converted to an empty queue; recovery requires an exact generation/reason and affirmative RPC result. No successful state change or Auth deletion is inferred from missing schema. This is explicit unavailability pending rollout, not admin acceptance proof. No production application or original834 closure is claimed."
+  },
+  {
+    "file": "src/services/accountDeletion/AccountRecoveryService.ts",
+    "verdict": "fail-soft",
+    "names": [
+      "function recover_deleted_account"
+    ],
+    "why": "The sole recover_deleted_account call validates required actor/user/generation/reason, returns unavailable for an error/malformed receipt, and has no legacy state-update fallback.4040 executes owner/admin authorization and serialized restore atomically; missing migration cannot report recovery. No production application or original834 closure is claimed."
+  }
 ]

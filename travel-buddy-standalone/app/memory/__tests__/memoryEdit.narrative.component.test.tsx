@@ -45,7 +45,7 @@ function deferred<Value>() {
 }
 
 function memory(id = memoryId, owner = ownerId) {
-  return { id, ownerId: owner, title: 'Coffee', caption: 'My own words', visibility: 'only_me',
+  return { id, ownerId: owner, allowedUserIds: [], hiddenUserIds: [], title: 'Coffee', caption: 'My own words', visibility: 'only_me',
     locationCity: 'Hanoi', locationCountry: 'Vietnam', locationLat: 21.03, locationLng: 105.85,
     placeId: 'fsq:old-cafe', canonicalLocationId: null, memoryType: 'MOMENT',
     placeDisplayNameAtOccurrence: 'Old Cafe', state: 'published' };
@@ -72,6 +72,8 @@ const previews = () => calls.filter(call => call.url.endsWith('/narrative'));
 async function openEditor() {
   const mounted = await render(<EditMemoryScreen />);
   await screen.findByDisplayValue('My own words');
+  // Save/race cases need a real edit; unchanged Save intentionally sends nothing.
+  await fireEvent.changeText(screen.getByPlaceholderText('Give this memory a name…'), 'Edited title');
   return mounted;
 }
 
@@ -125,8 +127,9 @@ describe('Memory owner editor — deterministic draft adoption', () => {
     await fireEvent.press(screen.getByTestId('memory-edit-save-btn'));
     await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
     expect(patches()).toHaveLength(1);
-    expect(patches()[0].body).toMatchObject({ title: 'New title', caption: 'Edited by me', visibility: 'friends_only',
-      placeId: 'fsq:old-cafe', locationCity: 'Hanoi', locationCountry: 'Vietnam', locationLat: 21.03, locationLng: 105.85 });
+    expect(patches()[0].body).toMatchObject({ title: 'New title', caption: 'Edited by me', visibility: 'friends_only' });
+    expect(patches()[0].body).not.toHaveProperty('placeId');
+    expect(patches()[0].body?.expected).toMatchObject({ title: 'Coffee', caption: 'My own words', visibility: 'only_me' });
     expect(patches()[0].body).not.toHaveProperty('memoryType');
     expect(patches()[0].body).not.toHaveProperty('placeDisplayNameAtOccurrence');
     expect(calls.every(call => !call.url.includes('/ai') && !call.url.includes('consent'))).toBe(true);
@@ -203,8 +206,9 @@ describe('Memory owner editor — deterministic draft adoption', () => {
     await fireEvent.press(screen.getByTestId('memory-edit-location-clear'), { stopPropagation: jest.fn() });
     await fireEvent.press(screen.getByTestId('memory-edit-save-btn'));
     await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
-    expect(patches()[0].body).toMatchObject({ caption: 'My own words', visibility: 'only_me',
-      locationCity: null, locationCountry: null, locationLat: null, locationLng: null, placeId: null, canonicalLocationId: null });
+    expect(patches()[0].body).toMatchObject({ locationCity: null, locationCountry: null, locationLat: null, locationLng: null, placeId: null });
+    expect(patches()[0].body).not.toHaveProperty('caption'); expect(patches()[0].body).not.toHaveProperty('visibility');
+    expect(patches()[0].body?.expected).toMatchObject({ canonicalLocationId: null, placeId: 'fsq:old-cafe' });
     expect(previews()).toHaveLength(0);
   });
 

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { requireDerivativeErasure } from "../../lib/media/derivativeErasure.js";
 import { authorizeMediaAccess } from "../../lib/mediaAccess.js";
 import { appStorageUrlInfo, configuredStorageOrigin } from "../../lib/mediaUrl.js";
 import { randomBytes } from "node:crypto";
@@ -7,7 +8,7 @@ import type { ApiErrorCode } from "../../lib/http.js";
 
 const ASSET_COLUMNS = "id, owner_user_id, storage_bucket, storage_path, media_type, duration_ms, version, deleted_at, purge_status, processing_status, moderation_status";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const MAX_ARTIFACT_BYTES = MAX_VTT_BYTES * 6 + 4096;
+export const MAX_CAPTION_ARTIFACT_BYTES = MAX_VTT_BYTES * 6 + 4096;
 
 export class CaptionError extends Error {
   constructor(public code: ApiErrorCode, message: string) { super(message); }
@@ -178,15 +179,22 @@ async function readVariants(sc: SupabaseClient, viewerId: string, asset: Caption
   await requirePrivateCaptionStorage(sc);
   const { data, error } = await sc.storage.from("post-media").download(manifest.object_path);
   if (error || !data) throw new CaptionError("degraded_unavailable", "Captions could not be loaded.");
-  let document: { source?: CaptionAsset; tracks?: CaptionVariant[]; consent?: unknown; deleted?: unknown } | null = null;
-  if (data) {
-    if (data.size > MAX_ARTIFACT_BYTES) throw new CaptionError("invalid_payload", "Invalid caption track.");
-    try { document = JSON.parse(await data.text()); } catch { throw new CaptionError("invalid_payload", "Invalid caption track."); }
-  }
+  if (data.size > MAX_CAPTION_ARTIFACT_BYTES) throw new CaptionError("invalid_payload", "Invalid caption track.");
+  const bytes = new Uint8Array(await data.arrayBuffer());
   await recheckCaptionAsset(sc, viewerId, asset);
   const current = await readCaptionManifest(sc, asset.id);
   if (current?.revision_key !== revisionKey || current.object_path !== manifest.object_path) throw new CaptionError("conflict", "Captions changed. Reload before continuing.");
-  if (!document) throw new CaptionError("invalid_payload", "Invalid caption track.");
+  return { tracks: validateCaptionArtifact(bytes, asset), revisionKey };
+}
+
+/** One validator for ordinary reads and explicitly reviewed retained files.
+ * The caller owns authorization; validation never grants consent or publishes. */
+export function validateCaptionArtifact(bytes: Uint8Array, asset: CaptionAsset): CaptionVariant[] {
+  if (bytes.byteLength > MAX_CAPTION_ARTIFACT_BYTES) throw new CaptionError("invalid_payload", "Invalid caption track.");
+  let document: { source?: CaptionAsset; tracks?: CaptionVariant[]; consent?: unknown; deleted?: unknown } | null;
+  try { document = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
+  catch { throw new CaptionError("invalid_payload", "Invalid caption track."); }
+  if (!document || document.deleted === true) throw new CaptionError("invalid_payload", "Invalid caption track.");
   if (!document.source || !sameAsset(document.source, asset)) {
     throw new CaptionError("conflict", "Captions do not belong to this video generation.");
   }
@@ -198,7 +206,28 @@ async function readVariants(sc: SupabaseClient, viewerId: string, asset: Caption
     if (languages.has(track.language) || !parseWebVtt(track.vtt, asset.duration_ms).ok) throw new CaptionError("invalid_payload", "Invalid caption track.");
     languages.add(track.language);
   }
-  return { tracks: document.tracks, revisionKey };
+  return document.tracks;
+}
+
+/** Rebind already reviewed tracks without editing their text, revision or AI
+ * provenance. This only encodes bytes; publication still belongs to manifest CAS. */
+export function rebaseCaptionArtifact(bytes: Uint8Array, source: CaptionAsset, target: CaptionAsset): Uint8Array {
+  if (target.id !== source.id || target.owner_user_id !== source.owner_user_id || target.storage_bucket !== source.storage_bucket
+    || target.media_type !== source.media_type || target.duration_ms !== source.duration_ms || target.version <= source.version) {
+    throw new CaptionError("conflict", "Invalid caption restoration target.");
+  }
+  liveVideo(target);
+  const tracks = validateCaptionArtifact(bytes, source);
+  const rebased = Buffer.from(JSON.stringify({ source: target, tracks, consent: true }));
+  validateCaptionArtifact(rebased, target);
+  return rebased;
+}
+
+/** Single private caption upload writer. Callers establish their own live edit
+ * or durable recovery authority before dispatch; uploads never overwrite. */
+export async function uploadCaptionArtifact(sc: SupabaseClient, asset: CaptionAsset, revisionKey: string, bytes: Uint8Array) {
+  return sc.storage.from("post-media").upload(captionArtifactPath(asset.id, asset.version, revisionKey), bytes,
+    { contentType: "application/json", upsert: false, cacheControl: "0" });
 }
 
 export async function readCaptionSnapshot(sc: SupabaseClient, viewerId: string, assetId: string, sourceVersion: number): Promise<CaptionSnapshot> {
@@ -240,9 +269,9 @@ export async function writeAuthoredCaptions(sc: SupabaseClient, ownerId: string,
   const oldManifest = await readCaptionManifest(sc, assetId);
   await recheckCaptionAsset(sc, ownerId, asset);
   const bytes = Buffer.from(JSON.stringify({ source: asset, tracks, consent: true }));
-  if (bytes.length > MAX_ARTIFACT_BYTES) throw new CaptionError("invalid_payload", "Combined caption tracks are too large.");
+  if (bytes.length > MAX_CAPTION_ARTIFACT_BYTES) throw new CaptionError("invalid_payload", "Combined caption tracks are too large.");
   await requirePrivateCaptionStorage(sc);
-  const { error } = await sc.storage.from("post-media").upload(path, bytes, { contentType: "application/json", upsert: false, cacheControl: "0" });
+  const { error } = await uploadCaptionArtifact(sc, asset, revisionKey, bytes);
   if (error) throw new CaptionError("conflict", "Captions were not saved. Reload and retry.");
   try {
     await recheckCaptionAsset(sc, ownerId, asset);
@@ -281,27 +310,34 @@ export async function deleteAuthoredCaptions(sc: SupabaseClient, ownerId: string
   return { assetId, version, revisionKey, cues: [], vtt: null, cleanupPending };
 }
 
-export async function purgeAuthoredCaptionTracks(sc: SupabaseClient, assetId: string): Promise<void> {
+export async function purgeAuthoredCaptionTracks(sc: SupabaseClient, assetId: string, objectPaths?: readonly string[]): Promise<void> {
   const asset = await readCaptionAsset(sc, assetId);
   if (asset.deleted_at === null && asset.purge_status === "not_requested") throw new CaptionError("conflict", "Mark the source deleted before lifecycle erasure.");
+  const delegated = new Set(objectPaths ?? await requireDerivativeErasure(sc, asset));
   const manifest = await readCaptionManifest(sc, assetId);
   if (!(await commitManifest(sc, asset, manifest?.revision_key ?? EMPTY_CAPTION_REVISION, randomBytes(32).toString("hex"), null))) throw new Error("Caption erasure state changed");
-  return eraseCaptionArtifacts(sc, assetId);
+  return eraseCaptionArtifacts(sc, assetId, delegated);
 }
 
-async function eraseCaptionArtifacts(sc: SupabaseClient, assetId: string, keepPath?: string): Promise<void> {
+async function eraseCaptionArtifacts(sc: SupabaseClient, assetId: string, delegated: ReadonlySet<string>): Promise<void> {
   captionArtifactPath(assetId, 1);
   const prefix = `manual-captions/${assetId}`;
+  let offset = 0;
   for (let page = 0; page < 32; page++) {
-    const { data, error } = await sc.storage.from("post-media").list(prefix, { limit: 100, offset: 0 });
+    const { data, error } = await sc.storage.from("post-media").list(prefix, { limit: 100, offset });
     if (error || !data) throw new Error("Caption erasure could not be verified");
     if (data.length === 0) return;
     if (data.some((entry) => !/^(?:v[1-9]\d*(?:-[a-f0-9]{64})?|asr-v[1-9]\d*-(?:[a-f0-9-]{36}-)?[a-f0-9]{64})\.json$/.test(entry.name))) throw new Error("Unexpected caption artifact");
     const current = await readCaptionManifest(sc, assetId);
-    const paths = data.map((entry) => `${prefix}/${entry.name}`).filter((path) => path !== keepPath && path !== current?.object_path);
-    if (paths.length === 0) return;
-    const removed = await sc.storage.from("post-media").remove(paths);
-    if (removed.error) throw new Error("Caption erasure failed");
+    // Reserved restoration paths have their own one-dispatch purge receipts.
+    // Never let this directory cleanup compete with that object owner.
+    const paths = data.map((entry) => `${prefix}/${entry.name}`).filter((path) => !delegated.has(path) && path !== current?.object_path);
+    if (paths.length) {
+      const removed = await sc.storage.from("post-media").remove(paths);
+      if (removed.error) throw new Error("Caption erasure failed");
+    }
+    offset += data.length - paths.length;
+    if (data.length < 100) return;
   }
   throw new Error("Caption erasure requires another bounded pass");
 }

@@ -572,6 +572,12 @@ describe("MediaLifecycleService — owner-only deletion and retry", () => {
     assert.deepEqual(await retryMediaProcessing(assetClient({ id: ASSET, owner_user_id: OWNER }), ASSET, STRANGER), { ok: false, alreadyQueued: false });
   });
 
+  it("a new retained deletion never starts Storage cleanup", async () => {
+    const client = { rpc: async () => ({ data: { ok: true, alreadyDeleted: false, purgeScheduled: false }, error: null }),
+      from: () => { throw new Error("No cleanup or compensating write"); }, storage: { from: () => { throw new Error("No storage deletion"); } } };
+    assert.deepEqual(await softDeleteMediaAsset(client as never, ASSET, OWNER), { ok: true, alreadyDeleted: false, purgeScheduled: false });
+  });
+
   it("a repeated atomic retirement returns without scheduling another purge", async () => {
     const client = { rpc: async () => ({ data: { ok: true, alreadyDeleted: true, purgeScheduled: false }, error: null }), from: () => { throw new Error("No second purge"); } };
     assert.deepEqual(await softDeleteMediaAsset(client as never, ASSET, OWNER), { ok: true, alreadyDeleted: true, purgeScheduled: false });

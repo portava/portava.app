@@ -220,6 +220,8 @@ const ABSENT_DEPENDENCIES:Readonly<Record<string,readonly string[]>>={
   '3898':['3827','3828'], // lifecycle state + active snapshot columns
   '3907':['3899'], // objective fact kind CHECK
   '3908':['2860','2992','3623','3828','3871','3873','3895'], // declared durable fanout schema/watch prerequisites
+  '4043':['4040','4041'], // terminal account receipt requires retained-media inventory
+  '4042':['4041','3913'], // guarded edits extend the existing complete Memory kernel
   '3951':['2700','2992'], '3996':['2984'], // 3951: the certified table + snapshot identity (census-layover §83 L25); 3996: crew membership composite FK
 };
 export function pressedMigrationOmissions(order:readonly string[],without:readonly string[]):Map<string,readonly string[]> {

@@ -38,6 +38,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { accountDeletionAuthorizationFixture, PERMANENT_DELETION_TEST_OPTIONS } from "./helpers/accountDeletionAuthorizationFixture.js";
 import {
   executeAccountDeletion,
   POST_MEDIA_BUCKET,
@@ -67,6 +68,8 @@ function makeClient(opts: {
   const storageRemoved: Array<{ bucket: string; paths: string[] }> = [];
   const authDeleted: string[] = [];
 
+  const authorize = accountDeletionAuthorizationFixture(rows, USER_ID);
+
   function builder(table: string) {
     const q: any = {
       _op: "select",
@@ -74,7 +77,7 @@ function makeClient(opts: {
       _values: undefined as any,
       _single: false,
       _limit: 0,
-      select() { q._op = "select"; return q; },
+      select() { return q; },
       delete() { q._op = "delete"; return q; },
       update(v: any) { q._op = "update"; q._values = v; return q; },
       upsert(v: any) { q._op = "upsert"; q._values = v; return q; },
@@ -91,6 +94,11 @@ function makeClient(opts: {
       single() { q._single = true; return q._run(); },
       then(resolve: any, reject: any) { return q._run().then(resolve, reject); },
       _run() {
+        if (table === "user_deletion_requests" && q._op === "update") {
+          const matched = rows[table]!.filter(row => q._filters.every(([op, col, value]: any[]) => op === "eq" && row[col] === value));
+          for (const row of matched) Object.assign(row, q._values);
+          return Promise.resolve({ data: matched, error: null });
+        }
         ops.push({ table, op: q._op, filters: q._filters, values: q._values });
         const key = `${table}.${q._op}`;
         if (fail[key] || fail[table]) {
@@ -111,6 +119,8 @@ function makeClient(opts: {
     _authDeleted: authDeleted,
     from: (t: string) => builder(t),
     rpc: async (fn: string, args: Record<string, unknown>) => {
+      const receipt = authorize(fn, args);
+      if (receipt) return receipt;
       ops.push({ table: `rpc:${fn}`, op: "rpc", values: args });
       return { data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null };
     },
@@ -157,7 +167,7 @@ describe("account deletion — intel_evidence media objects", () => {
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: "admin-1" });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     const removed = removedPaths(c);
@@ -190,7 +200,7 @@ describe("account deletion — intel_evidence media objects", () => {
       rows: { intel_evidence: [{ reference: `${POST_MEDIA_BUCKET}/${USER_ID}/x.jpg` }] },
     });
 
-    await executeAccountDeletion(c, USER_ID, { actorId: null });
+    await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     const readAt = indexOfOp(c, "intel_evidence", "select");
     const erasedAt = indexOfOp(c, "rpc:erase_intel_for_actor", "rpc");
@@ -218,7 +228,7 @@ describe("account deletion — intel_evidence media objects", () => {
       },
     });
 
-    await executeAccountDeletion(c, USER_ID, { actorId: null });
+    await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.deepEqual(removedIn(c, PROFILE_MEDIA_BUCKET), [`avatars/${USER_ID}/a.jpg`]);
     assert.deepEqual(
@@ -231,7 +241,7 @@ describe("account deletion — intel_evidence media objects", () => {
   it("deletes cleanly for an actor with no evidence at all", async () => {
     const c = makeClient({ rows: { intel_evidence: [] } });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.equal(out.ok, true, JSON.stringify(out.steps));
     assert.equal(stepOf(out, "collect_intel_evidence_paths")?.ok, true);
@@ -256,7 +266,7 @@ describe("account deletion — intel_evidence media objects", () => {
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.equal(out.ok, true);
     assert.deepEqual(removedPaths(c), [`${USER_ID}/real.jpg`]);
@@ -289,7 +299,7 @@ describe("account deletion — intel_evidence media objects", () => {
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     // Only ever the two app buckets are touched.
     for (const r of c._storageRemoved) {
@@ -314,7 +324,7 @@ describe("account deletion — intel_evidence media objects", () => {
       fail: { "intel_evidence.select": "connection reset" },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     const s = stepOf(out, "collect_intel_evidence_paths");
     assert.ok(s, "the step must be recorded even when it fails");
@@ -342,7 +352,7 @@ describe("account deletion — intel_evidence media objects", () => {
       },
     });
 
-    await executeAccountDeletion(c, USER_ID, { actorId: null });
+    await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     const removed = removedPaths(c);
     assert.ok(removed.includes(`${USER_ID}/9.jpg`), "original");

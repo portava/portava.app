@@ -21,6 +21,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, type ImageStyle, type StyleProp, type ViewStyle } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { useHydratedMedia } from '../../services/mediaUrl.ts';
+import { hydratedMediaSource } from '../../services/mediaRequestSource.ts';
+import type { MediaRequestSource } from '../../services/mediaRequestSource.ts';
+import { useMediaScopeKey } from '../../hooks/useMediaScopeKey.ts';
 
 export interface CallAvatarProps {
   uri?: string | null;
@@ -50,34 +53,37 @@ export function CallAvatar({
 }: CallAvatarProps) {
   const box = { width: size, height: size, borderRadius: size / 2 };
 
-  const { resolved: hydrated } = useHydratedMedia(uri ? [uri] : []);
+  const { resolved: hydrated, sources } = useHydratedMedia(uri ? [uri] : []);
+  const scopeKey = useMediaScopeKey();
   const [failed, setFailed] = useState(false);
 
-  const prevUri = useRef(uri);
-  if (prevUri.current !== uri) {
-    prevUri.current = uri;
+  const identity = JSON.stringify([uri, scopeKey]);
+  const prevUri = useRef(identity);
+  if (prevUri.current !== identity) {
+    prevUri.current = identity;
     setFailed(false);
   }
 
-  const [source, setSource] = useState<{ uri: string } | null>(uri ? { uri } : null);
+  const [source, setSource] = useState<MediaRequestSource | null>(hydratedMediaSource(uri));
   useEffect(() => {
     if (!uri) { setSource(null); return; }
     const next = hydrated[uri];
-    if (typeof next === 'string') setSource({ uri: next });
+    if (typeof next === 'string') setSource(hydratedMediaSource(next, sources));
     else if (next === null) { setSource(null); setFailed(true); }
+    else setSource(hydratedMediaSource(uri));
     // undefined = still resolving; hold the plain URI so the common case paints
     // immediately, matching Avatar/CachedImage.
-  }, [uri, hydrated]);
+  }, [uri, hydrated, sources, scopeKey]);
 
   if (uri && !failed && source) {
     return (
       <ExpoImage
-        source={source}
+        source={hydratedMediaSource(source?.uri, sources)}
         // Layout-only by contract, as in ui/Avatar — the ViewStyle/ImageStyle
         // split is only about `overflow: 'scroll'`, which nothing passes here.
         style={[box, s.dark, style as StyleProp<ImageStyle>]}
         contentFit="cover"
-        cachePolicy="memory-disk"
+        cachePolicy={source?.headers ? 'none' : 'memory-disk'}
         transition={150}
         onError={() => setFailed(true)}
         accessible={!!accessibilityLabel}

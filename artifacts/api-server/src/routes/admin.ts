@@ -1,3 +1,4 @@
+import { recoverDeletedAccount, recoveryRefusalMessage } from '../services/accountDeletion/AccountRecoveryService.js';
 /**
  * Admin geo controls
  *
@@ -32,7 +33,7 @@ import {
 import { logger } from "../lib/logger";
 import { clearReminderDedup } from "../server/trips/projectionWorkers/tripReminderScheduler";
 import { invalidateCompassHomeCache } from "./compassHome.js";
-import { executeAccountDeletion } from "../services/accountDeletion/AccountDeletionService.js";
+import { executeAccountDeletion, reconcileAccountDeletion } from "../services/accountDeletion/AccountDeletionService.js";
 import { runSchemaDriftCheck, getCachedSchemaDriftResult } from "../lib/schemaDriftCheck";
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
@@ -1385,7 +1386,7 @@ router.get("/admin/users", async (req, res) => {
   // Fetch supplementary context in parallel
   const [accountStateRes, reportCountRes, onboardingRes] = await Promise.all([
     sc.from("user_account_states")
-      .select("state, reason, expires_at, created_at")
+      .select("id, state, reason, expires_at, created_at")
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(5),
@@ -1453,7 +1454,7 @@ router.get("/admin/users/:userId/summary", async (req, res) => {
       .eq("id", userId)
       .maybeSingle(),
     sc.from("user_account_states")
-      .select("state, reason, expires_at, set_by, created_at")
+      .select("id, state, reason, expires_at, set_by, created_at")
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(10),
@@ -1811,6 +1812,20 @@ router.post("/admin/users/:userId/ban", async (req, res) => {
     req.log?.error?.({ err: applied.sessionLockError, userId }, "ban: auth session lock failed — API refusal holds");
   }
   res.json({ ok: true, banned: true, sessionLock: applied.sessionLock });
+});
+
+/** Reactivate a deactivated profile without lifting an independent sanction. */
+router.post('/admin/users/:userId/reactivate-profile', async (req, res) => {
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
+  if (!admin) return;
+  const parsed = z.object({ deactivationId: z.string().uuid().nullable(), reason: z.string().trim().min(3).max(1000) }).safeParse(req.body);
+  if (!z.string().uuid().safeParse(req.params.userId).success || !parsed.success) { sendError(res, 'invalid_payload', 'Select the current deactivation and provide a recovery reason.'); return; }
+  const { data, error } = await admin.sc.rpc('reactivate_deactivated_account_admin', { p_actor: admin.userId, p_user: req.params.userId, p_state_id: parsed.data.deactivationId, p_reason: parsed.data.reason });
+  if (error || !data || typeof data !== 'object') { sendError(res, 'upstream_error', 'Profile reactivation could not be confirmed.'); return; }
+  if (data.ok !== true) { sendError(res, 'conflict', recoveryRefusalMessage(String(data.error))); return; }
+  if (typeof data.alreadyReactivated !== 'boolean') { sendError(res, 'upstream_error', 'Profile reactivation receipt is invalid.'); return; }
+  invalidateCompassHomeCache(req.params.userId);
+  res.json({ reactivated: true, alreadyReactivated: data.alreadyReactivated });
 });
 
 /** POST /admin/users/:userId/restore — lift suspension or ban */
@@ -2517,17 +2532,42 @@ router.get("/admin/deletion-requests", async (req, res) => {
 
   const { data, error } = await sc
     .from("user_deletion_requests")
-    .select("user_id, requested_at, scheduled_at, status")
-    .eq("status", "pending")
-    .order("scheduled_at", { ascending: true })
+    .select("deletion_request_id, user_id, requested_at, scheduled_at, status, recovery_generation, recovery_verified, execution_started_at, execution_subject_id")
+    .in("status", ["pending", "executing", "failed"])
+    .order("requested_at", { ascending: true })
     .limit(limit);
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  // Table is keyed by user_id (no surrogate id column); expose it as `id`
-  // so existing admin clients keep working.
-  const rows = (data ?? []).map((r: any) => ({ id: r.user_id, ...r }));
+  // The stable receipt survives the profile FK becoming NULL after Auth erase.
+  const rows = (data ?? []).map(({ execution_subject_id, ...r }: any) => ({
+    ...r, id: r.deletion_request_id, can_reconcile: r.status === "executing" && !!execution_subject_id,
+  }));
   void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
   res.json({ requests: rows, total: rows.length });
+});
+
+const accountRecoveryCommand = z.object({ generation: z.string().uuid(), reason: z.string().trim().min(3).max(1000) });
+router.post('/admin/deletion-requests/:id/recover', async (req, res) => {
+  const admin = await requireAdmin(req, res, { withDisplayName: true }); if (!admin) return;
+  const body = accountRecoveryCommand.safeParse(req.body);
+  if (!body.success || !z.string().uuid().safeParse(req.params.id).success) { sendError(res, 'invalid_payload', 'Select the current deletion and enter a recovery reason.'); return; }
+  const result = await recoverDeletedAccount(admin.sc, { actorId: admin.userId, userId: String(req.params.id), generation: body.data.generation, reason: body.data.reason });
+  if (result.kind === 'unavailable') { sendError(res, 'upstream_error', 'Recovery could not be confirmed. Refresh before retrying.'); return; }
+  if (result.kind === 'refused') { sendError(res, 'conflict', recoveryRefusalMessage(result.reason)); return; }
+  invalidateCompassHomeCache(String(req.params.id));
+  res.json({ ok: true, recovered: true, alreadyRecovered: result.alreadyRecovered, accountStatus: result.accountStatus });
+});
+
+/** Result reconciliation performs no provider or domain erase. */
+router.post('/admin/deletion-requests/:id/reconcile', async (req, res) => {
+  const admin = await requireAdmin(req, res, { withDisplayName: true }); if (!admin) return;
+  const body = accountRecoveryCommand.safeParse(req.body);
+  if (!body.success || !z.string().uuid().safeParse(req.params.id).success) { sendError(res, 'invalid_payload', 'Select the current receipt and enter a reconciliation reason.'); return; }
+  const result = await reconcileAccountDeletion(admin.sc, String(req.params.id), {
+    actorId: admin.userId, generation: body.data.generation, reason: body.data.reason,
+  });
+  if (!result.ok) { sendError(res, 'conflict', `Deletion remains held: ${result.error}`, { exposeDetail: true }); return; }
+  res.json(result);
 });
 
 /** POST /admin/deletion-requests/:id/execute — anonymize user data and mark completed */
@@ -2536,29 +2576,12 @@ router.post("/admin/deletion-requests/:id/execute", async (req, res) => {
   if (!admin) return;
   const { sc, userId: adminUserId } = admin;
 
-  const { data: reqRow, error: reqErr } = await sc
-    .from("user_deletion_requests")
-    .select("user_id, status")
-    .eq("user_id", req.params.id)
-    .eq("status", "pending")
-    .maybeSingle();
-
-  if (reqErr) { sendError(res, "db_error", reqErr.message); return; }
-  if (!reqRow) { sendError(res, "not_found", "Deletion request not found or already executed"); return; }
-
-  const userId = (reqRow as any).user_id as string;
-
-  // Audit first (fail-closed)
-  const auditR = await logModerationAction(sc, userId, adminUserId, "account_deleted", "Account deletion executed");
-  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
-
-  // The full cascade lives in AccountDeletionService so this manual path and
-  // the scheduled worker can never drift apart. It removes posts + media (DB
-  // rows and Storage objects), message ciphertext, verification rows, and the
-  // auth user (the email), then anonymises the profile tombstone.
+  const body = accountRecoveryCommand.safeParse(req.body);
+  if (!body.success || !z.string().uuid().safeParse(req.params.id).success) { sendError(res, 'invalid_payload', 'Select the current deletion and enter a permanent deletion reason.'); return; }
+  const userId = String(req.params.id);
+  // The shared owner commits the authorization audit and claim before erasure.
   const outcome = await executeAccountDeletion(sc, userId, {
-    actorId: adminUserId,
-    reason: "Account deletion executed",
+    actorId: adminUserId, generation: body.data.generation, reason: body.data.reason,
   });
 
   // Profile city/visibility changed — drop any cached Compass Home payload
@@ -3125,7 +3148,7 @@ router.get("/admin/users/:userId/moderation-summary", async (req, res) => {
       .eq("id", userId)
       .maybeSingle(),
     sc.from("user_account_states")
-      .select("state, reason, expires_at, set_by, created_at")
+      .select("id, state, reason, expires_at, set_by, created_at")
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(10),

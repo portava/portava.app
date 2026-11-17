@@ -6035,7 +6035,7 @@ No table, column, row, grant, policy or flag.
 **Who it could break, re-verified.** No caller can observe a change.
 - It is `service_role` only (2338), and it already read `blocks` past RLS.
 - Its one caller is `GET /memories`, on the service client, and only while `memory_public_feed_projection_enabled` is
-  on (`artifacts/api-server/src/routes/memories.ts:648#memory_public_feed_projection_enabled`). 2338 seeded that flag
+  on (`artifacts/api-server/src/routes/memories.ts:653#memory_public_feed_projection_enabled`). 2338 seeded that flag
   FALSE.
 - The cost: one indexed probe of `blocks` per public Memory the scan reaches before the LIMIT.
 
@@ -6509,7 +6509,7 @@ row is read or written.
 **Who it could break, re-verified.** Nothing at the apply: the tables are new and empty, and the trigger writes only
 them.
 - The trigger fires on every soft delete of a Memory. The writers are the owner's delete
-  (`artifacts/api-server/src/routes/memories.ts:2091#.update({ state: "deleted"`), 2711's kernel delete
+  (`artifacts/api-server/src/routes/memories.ts:2032#.update({ state: "deleted"`), 2711's kernel delete
   (`artifacts/api-server/src/migrations/2711_memory_kernel_execute.sql:396#UPDATE public.memories SET state = 'deleted'`)
   and 3676's merge, for the Memories it absorbs
   (`artifacts/api-server/src/migrations/3676_memory_graph_kernel.sql:311#UPDATE public.memories SET state = 'deleted'`).
@@ -6734,9 +6734,9 @@ once, and the FK validates trivially.
   correction reproduced it in PGlite and left the fix to the lead.
 - Hard-deleting a post, as account erasure does, now also deletes the items made from it. A soft delete keeps them.
   Whether it should withdraw them is owner question MD385-Q1.
-- In code, only the from-post route
-  (`artifacts/api-server/src/routes/memories.ts:3938#if (row?.source_post_id !== postId) {`) and its schema probe name
-  the column. No other `memory_items` read selects it.
+- The from-post route supplies the source link to the existing command writer
+  (`artifacts/api-server/src/routes/memories.ts:3792#write: { memory_id: id`). The local recovery candidate also
+  reads source links when resolving retained media bindings; the earlier route-only reference claim is obsolete.
 
 **Without it.** With the flag off, the route refuses `feature_disabled` and reads nothing. With the flag on and the
 column absent, the probe answers that storage is absent
@@ -6769,10 +6769,10 @@ The gap numbers 3901–3906 sort before 3930 but are pressed after 3999; their e
 **Proof.**
 - `artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts` runs 3999 in PGlite 16.4 with the route over it,
   including the flag on without the column
-  (`artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:344#flag ON over a database without 3999`).
+  (`artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:338#flag ON over a database without 3999`).
 - A second suite in that file applies 3676 after 3999:
-  - `artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:496#3676 SPLIT_MEMORY moves a linked item whose source post was soft-deleted`;
-  - `artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:507#3676 MERGE_MEMORY absorbs a Memory holding a linked item whose source post is held`.
+  - `artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:490#3676 SPLIT_MEMORY moves a linked item whose source post was soft-deleted`;
+  - `artifacts/api-server/src/test/memoryFromOwnMedia.pglite.test.ts:501#3676 MERGE_MEMORY absorbs a Memory holding a linked item whose source post is held`.
 - census-media's 2026-10-17 correction records 18/18 after the re-parenting fix, with 11 of 12 trigger mutants killed.
   The survivor is equivalent.
 - The packet's PGlite 0.5.8 replica (PostgreSQL 18.3 compiled to WASM, in-process; nothing hosted): the file changed 10

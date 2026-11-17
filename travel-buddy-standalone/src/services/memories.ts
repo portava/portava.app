@@ -636,6 +636,8 @@ export async function deleteMemoryItem(
 // ── Update memory ─────────────────────────────────────────────────────────────
 
 export interface UpdateMemoryInput {
+  /** H178: original values for the changed fields and their dependencies. */
+  expected?: Record<string, unknown>;
   title?: string | null;
   caption?: string | null;
   startsAt?: string | null;

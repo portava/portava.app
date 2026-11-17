@@ -8,11 +8,10 @@ import { fileURLToPath } from "node:url";
 
 const apiRoot = fileURLToPath(new URL("../../", import.meta.url));
 const runnerPath = join(apiRoot, "scripts/run-memory-sql-tests.mjs");
-const files = ["src/test/MemorySnapshot.pglite.test.ts", "src/test/memoryVideoSegments.pglite.test.ts", "src/test/memoryImportBatches.pglite.test.ts", "src/test/MemorySnapshotLockFixture.test.ts"];
+const files = ["src/test/MemorySnapshot.pglite.test.ts", "src/test/memoryVideoSegments.pglite.test.ts", "src/test/MemorySnapshotLockFixture.test.ts"];
 const names = [
   "MemorySnapshot persisted HTTP/provider/SQL path (isolated single-connection PGlite)",
   "3991 executable isolated SQL contract",
-  "H37 durable owner-selected existing-memory backfill (isolated PostgreSQL)",
   "MemorySnapshot native fixture compatibility (PGlite, NOT concurrency proof)",
 ];
 const imports = 'import assert from "node:assert/strict"; import { describe, it } from "node:test";';
@@ -76,12 +75,12 @@ async function invoke(options: FixtureOptions = {}) {
 
 function assertExecuted(result: Awaited<ReturnType<typeof invoke>>) {
   assert.equal(result.status, 0, result.output);
-  assert.match(result.output, /memory-sql: PASS: 4 tests; all 4 SQL suites executed; no skips or todos/);
+  assert.match(result.output, /memory-sql: PASS: 3 tests; all 3 SQL suites executed; no skips or todos/);
   for (const file of files) assert.ok(result.output.includes(`${file}: suites=1 executed=1`), result.output);
 }
 
 describe("Memory SQL runner fail-closed executable controls", () => {
-  it("accepts all four explicitly named SQL suites, including nested assertions", async () => {
+  it("accepts all three explicitly named embedded SQL suites, including nested assertions", async () => {
     const result = await invoke({ source: healthy(names[0]!, 'describe("nested", () => { it("SQL assertion", () => assert.ok(true)); });') });
     assertExecuted(result);
   });
@@ -123,10 +122,10 @@ describe("Memory SQL runner fail-closed executable controls", () => {
 
   for (const [label, argumentsList] of [
     ["missing arguments", []],
-    ["legacy three-file invocation", files.slice(0, 3)],
-    ["duplicate file", [files[0]!, files[0]!, files[2]!, files[3]!]],
-    ["unrelated file", [files[0]!, files[1]!, "src/test/discoveryServeRetryIdentity.pglite.test.ts", files[3]!]],
-    ["path traversal", [files[0]!, files[1]!, "../src/test/memoryImportBatches.pglite.test.ts", files[3]!]],
+    ["incomplete invocation", files.slice(0, 2)],
+    ["duplicate file", [files[0]!, files[0]!, files[2]!]],
+    ["unrelated file", [files[0]!, files[1]!, "src/test/discoveryServeRetryIdentity.pglite.test.ts" ]],
+    ["path traversal", [files[0]!, files[1]!, "../src/test/memoryImportBatches.pglite.test.ts" ]],
   ] as const) {
     it(`rejects ${label} before running anything`, async () => {
       const result = await invoke({ argumentsList: [...argumentsList] });
@@ -143,7 +142,7 @@ describe("Memory SQL runner fail-closed executable controls", () => {
     assert.doesNotMatch(result.output, /memory-sql: PASS/);
   });
 
-  for (const fixtureIndex of [0, 3]) {
+  for (const fixtureIndex of [0, files.length - 1]) {
     it(`fails closed when required file ${files[fixtureIndex]} is missing`, async () => {
       const result = await invoke({ missingFile: true, fixtureIndex });
       assert.equal(result.status, 1, result.output);
@@ -167,7 +166,7 @@ describe("Memory SQL runner fail-closed executable controls", () => {
     ["duplicate expected suites", healthy(names[0]!) + `describe(${JSON.stringify(names[0])}, () => { it("duplicate", () => {}); });`, /Expected exactly one successful SQL suite/],
     ["early successful process exit", "process.exit(0);", /Zero executed SQL tests/],
   ];
-  for (const fixtureIndex of [0, 3]) {
+  for (const fixtureIndex of [0, files.length - 1]) {
     for (const [label, source, expected] of controls) {
       it(`rejects ${label} in ${files[fixtureIndex]}`, async () => {
         const result = await invoke({ source: source.replaceAll(names[0]!, names[fixtureIndex]!), fixtureIndex });

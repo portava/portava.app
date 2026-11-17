@@ -1,3 +1,5 @@
+import { mediaObjectPurgeFixture } from './mediaObjectPurgeFixture.js';
+import { accountDeletionAuthorizationFixture } from './accountDeletionAuthorizationFixture.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { decodeTranslationArtifact, translationArtifactPath } from '../../lib/media/captions/translationArtifactStore.js';
 
@@ -37,9 +39,12 @@ export function accountMediaFixture(initial: Record<string, Row[]> = {}) {
     feature_flags: ['media_derivative_jobs_enabled', 'media_caption_translation_enabled', 'media_dubbing_enabled'].map(flag => ({ flag, enabled: false })),
     ...structuredClone(initial),
   };
+  const purge = mediaObjectPurgeFixture(id => rows.media_assets!.find(row => row.id === id), rows.media_asset_lifecycle_events ??= [], () => state.versionIncrement);
+  const objects = new Set(rows.media_assets!.flatMap(row => [row.storage_path,row.thumbnail_path].filter(Boolean).map(path => `${row.storage_bucket}/${path}`)));
+  const authorization = accountDeletionAuthorizationFixture(rows, accountId);
   const operations: Operation[] = [];
   const state = {
-    rows, operations, authDeleted: [] as string[], signals: [] as AbortSignal[], versionIncrement: 3,
+    rows, operations, objects, authDeleted: [] as string[], signals: [] as AbortSignal[], versionIncrement: 3,
     schema: { media_derivative_jobs: true, media_caption_manifests: true, media_visual_embeddings: false, media_image_understanding_artifacts: false, media_dubbing_artifacts: true },
     before: (_operation: Operation): Reply | undefined | Promise<Reply | undefined> => undefined,
     after: (_operation: Operation, reply: Reply): Reply | Promise<Reply> => reply,
@@ -100,6 +105,9 @@ export function accountMediaFixture(initial: Record<string, Row[]> = {}) {
       operations.push(operation);
       const intercepted = await state.before(operation);
       if (intercepted) return intercepted;
+      if (name === 'advance_media_object_purge') return state.after(operation, purge(values));
+      const receipt = authorization(name, values);
+      if (receipt) return state.after(operation, receipt);
       let data: unknown = name === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : true;
       if (name === 'media_derivative_schema_status') data = state.schema;
       if (name === 'media_dubbing_retire') data = rows.media_dubbing_artifacts!.find(row => row.id === values.p_id) ?? null;
@@ -115,10 +123,13 @@ export function accountMediaFixture(initial: Record<string, Row[]> = {}) {
     storage: {
       async getBucket(id: string) { return { data: { id, public: false }, error: null }; },
       from(bucket: string) { return {
+        async info(path: string) { return objects.has(`${bucket}/${path}`) ? { data: { id: receiptId, version: 'synthetic', bucketId: bucket, name: path, size: 128 }, error: null } : { data: null, error: { status: 404, statusCode: 'NoSuchKey' } }; },
         async remove(paths: string[]) {
           const operation: Operation = { table: `storage:${bucket}`, action: 'remove', filters: [], paths };
           operations.push(operation);
-          return await state.before(operation) ?? { data: paths.map(name => ({ name })), error: null };
+          const reply=await state.before(operation);if(reply)return reply;
+          for(const path of paths)objects.delete(`${bucket}/${path}`);
+          return { data: paths.map(name => ({ name })), error: null };
         },
         async list() { return { data: [], error: null }; },
       }; },
@@ -185,8 +196,9 @@ export function accountMediaSqlFixture(executeSql: (statement: string) => Promis
     },
     async rpc(functionName: string, parameters: Row = {}) {
       // This fixture isolates canonical media storage; 4031 has its own real-SQL race suite.
+      if (['account_deletion_terminal_ready', 'claim_account_permanent_deletion', 'prepare_account_auth_deletion', 'settle_account_auth_deletion', 'finish_account_deletion_attempt'].includes(functionName)) return fallback.client.rpc(functionName, parameters);
       if (functionName === 'erase_media_events_for_actor') return { data: { deleted: 0, more: false }, error: null };
-      if (!functionName.startsWith('media_') && !functionName.startsWith('cas_media_')) return { data: true, error: null };
+      if (functionName !== 'advance_media_object_purge' && !functionName.startsWith('media_') && !functionName.startsWith('cas_media_')) return { data: true, error: null };
       const operation: Operation = { table: functionName, action: 'rpc', values: parameters, filters: [] };
       operations.push(operation); await state.before(operation);
       try {
@@ -197,6 +209,7 @@ export function accountMediaSqlFixture(executeSql: (statement: string) => Promis
     storage: {
       async getBucket(id: string) { return { data: { id, public: false }, error: null }; },
       from(bucket: string) { return {
+        async info(path: string) { return objects.has(`${bucket}/${path}`) ? { data: { id: '20000000-0000-4000-a000-000000000099', version: 'synthetic', bucketId: bucket, name: path, size: 100 }, error: null } : { data: null, error: { status: 404, statusCode: 'NoSuchKey' } }; },
         async remove(paths: string[]) {
           const operation: Operation = { table: `storage:${bucket}`, action: 'remove', paths, filters: [] };
           operations.push(operation); await state.before(operation);

@@ -19,6 +19,8 @@ describe("required CI test registration cannot substitute optional or missing ex
     assert.deepEqual([...requiredCiTestFiles(scripts, workflow)], [
       "src/test/mediaCaptionTranslationHardDelete.native.test.ts",
       "src/test/accountDeletionMediaBoundary.native.test.ts",
+      "src/test/memoryImportBatches.pglite.test.ts",
+      "src/test/memoryFromOwnMedia.pglite.test.ts",
       "src/test/mediaAdaptiveEncoding.real.test.ts",
       "src/test/inputOutcomeConsent.postgres.test.ts",
       "src/test/wallOutcomeConsent.postgres.test.ts",
@@ -26,7 +28,7 @@ describe("required CI test registration cannot substitute optional or missing ex
     ]);
   });
 
-  for (const script of ["test:account-media-native", "test:media-encoding", "test:input-outcome-native", "test:wall-outcome-native", "test:media-events-native"]) {
+  for (const script of ["test:memory-import-sql", "test:account-media-native", "test:media-encoding", "test:input-outcome-native", "test:wall-outcome-native", "test:media-events-native"]) {
     for (const [label, change] of [
       ["missing", () => ""],
       ["filtered", (command: string) => command + " --test-only"],
@@ -39,7 +41,7 @@ describe("required CI test registration cannot substitute optional or missing ex
   }
 
   for (const name of [
-    "Require native account media erasure suite", "Cache pinned media encoding source archives",
+    "Require native account media erasure suite", "Require reusable memory import SQL suite", "Cache pinned media encoding source archives",
     "Build verified media encoding tools", "Require real media encoding suite",
   ]) {
     for (const [label, replace] of [
@@ -173,6 +175,8 @@ describe("required CI test registration cannot substitute optional or missing ex
     assert.deepEqual([...requiredCiTestFiles(scripts, workflow.replace(boundary, late + boundary))], [
       "src/test/mediaCaptionTranslationHardDelete.native.test.ts",
       "src/test/accountDeletionMediaBoundary.native.test.ts",
+      "src/test/memoryImportBatches.pglite.test.ts",
+      "src/test/memoryFromOwnMedia.pglite.test.ts",
       "src/test/mediaAdaptiveEncoding.real.test.ts",
       "src/test/inputOutcomeConsent.postgres.test.ts",
       "src/test/wallOutcomeConsent.postgres.test.ts",

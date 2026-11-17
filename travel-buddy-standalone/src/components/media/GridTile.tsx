@@ -34,6 +34,7 @@ import { VideoBlurBackdrop } from '../ui/VideoBlurBackdrop.tsx';
 import { VerifiedLocationStamp } from './VerifiedLocationStamp.tsx';
 import { StampButton } from '../stamps/StampButton.tsx';
 import { useHydratedMedia } from '../../services/mediaUrl.ts';
+import { hydratedMediaSource } from '../../services/mediaRequestSource.ts';
 import { playbackUriState } from '../../services/playbackUri.ts';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -68,7 +69,7 @@ export interface GridTileProps {
 function GridTileInner({ item, index, cellWidth, cellHeight, onPress, isVisible = false }: GridTileProps) {
   const isVideo = item.mediaType === 'video';
   const isProcessing = item.processingStatus != null;
-  const { resolved } = useHydratedMedia(isVideo && !isProcessing ? [item.videoUrl] : []);
+  const { resolved, sources } = useHydratedMedia(isVideo && !isProcessing ? [item.videoUrl] : []);
   const playback = playbackUriState(item.videoUrl, resolved);
   const videoUri = isVideo && !isProcessing && playback.state === 'ready' ? playback.uri : null;
   const hasVideoUrl = videoUri !== null;
@@ -107,7 +108,7 @@ function GridTileInner({ item, index, cellWidth, cellHeight, onPress, isVisible 
           {needsLetterbox ? <VideoBlurBackdrop uri={posterUri} /> : null}
           <Video
             ref={videoRef}
-            source={{ uri: videoUri! }}
+            source={hydratedMediaSource(videoUri, sources) ?? undefined}
             style={StyleSheet.absoluteFill}
             resizeMode={resizeMode}
             shouldPlay={false}   // imperative control via useInViewAutoplay

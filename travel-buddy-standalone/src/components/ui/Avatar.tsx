@@ -26,6 +26,9 @@ import { Image as ExpoImage } from 'expo-image';
 import { Globe, Users } from 'lucide-react-native';
 import { color, type as t } from '../../theme/tokens.ts';
 import { useHydratedMedia } from '../../services/mediaUrl.ts';
+import { hydratedMediaSource } from '../../services/mediaRequestSource.ts';
+import type { MediaRequestSource } from '../../services/mediaRequestSource.ts';
+import { useMediaScopeKey } from '../../hooks/useMediaScopeKey.ts';
 
 /** What the avatar stands for. Drives the fallback glyph, not just the tint. */
 export type AvatarKind = 'person' | 'trip' | 'circle' | 'group';
@@ -85,35 +88,38 @@ export function Avatar({
   // private bucket) and neither loads in an <Image>. Hydration turns either
   // form into a signed URL; a null result means "not viewable", which lands on
   // the glyph/initials fallback below rather than an empty circle.
-  const { resolved: hydrated } = useHydratedMedia(uri ? [uri] : []);
+  const { resolved: hydrated, sources } = useHydratedMedia(uri ? [uri] : []);
+  const scopeKey = useMediaScopeKey();
   const [failed, setFailed] = useState(false);
 
-  const prevUri = useRef(uri);
-  if (prevUri.current !== uri) {
-    prevUri.current = uri;
+  const identity = JSON.stringify([uri, scopeKey]);
+  const prevUri = useRef(identity);
+  if (prevUri.current !== identity) {
+    prevUri.current = identity;
     setFailed(false);
   }
 
-  const [source, setSource] = useState<{ uri: string } | null>(uri ? { uri } : null);
+  const [source, setSource] = useState<MediaRequestSource | null>(hydratedMediaSource(uri));
   useEffect(() => {
     if (!uri) { setSource(null); return; }
     const next = hydrated[uri];
-    if (typeof next === 'string') setSource({ uri: next });
+    if (typeof next === 'string') setSource(hydratedMediaSource(next, sources));
     else if (next === null) { setSource(null); setFailed(true); }
+    else setSource(hydratedMediaSource(uri));
     // undefined = still resolving; keep the plain URI so the common case paints
     // immediately and component tests see a mounted image.
-  }, [uri, hydrated]);
+  }, [uri, hydrated, sources, scopeKey]);
 
   if (uri && !failed && source) {
     return (
       <ExpoImage
-        source={source}
+        source={hydratedMediaSource(source?.uri, sources)}
         // Layout-only by contract (see AvatarProps.style), so the ViewStyle /
         // ImageStyle split — which is only about `overflow: 'scroll'` — cannot
         // bite here. One prop has to serve both branches.
         style={[box, selected && s.selectedRing, style as StyleProp<ImageStyle>]}
         contentFit="cover"
-        cachePolicy="memory-disk"
+        cachePolicy={source?.headers ? 'none' : 'memory-disk'}
         transition={150}
         onError={() => setFailed(true)}
         accessible

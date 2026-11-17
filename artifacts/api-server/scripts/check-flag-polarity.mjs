@@ -690,6 +690,16 @@ const DISPOSITIONS = new Set([
 
 const INERT_SEEDED_FLAGS = [
   {
+    flag: 'account_deletion_worker_enabled', seededIn: '2073_account_deletion_worker_flag.sql:27', kind: 'CAPABILITY',
+    disposition: 'remove-from-seed',
+    reason:
+      'Retired by the owner retention rule: content and profiles remain recoverable until explicit admin ' +
+      'permanent deletion. The automatic worker is no longer started, its entry point is inert, and the ' +
+      'old cron route refuses. The canonical hidden-inert list removes this non-operational switch from ' +
+      'public/admin lists and refuses updates. Historical applied seed SQL is preserved; physical removal ' +
+      'of its row and quiescence of old deployed workers remain rollout work, not locally proven cleanup.',
+  },
+  {
     flag: 'rent_buddy_allow_bookings_without_kyc', seededIn: '2074_rent_buddy_kyc_gate_flag.sql:37', kind: 'CAPABILITY',
     disposition: 'remove-from-seed',
     reason:
@@ -1160,14 +1170,7 @@ const SHADOW_READERS = [
       'per-session consent still gates every action it takes. Reads only safe_return_* CAPABILITY flags ' +
       '(verified by hand at c89f09a77; the reader shape re-read at 6639d347).',
   },
-  {
-    file: 'lib/accountDeletionScheduler.ts',
-    fn: 'isFlagEnabled',
-    reason:
-      'Shadow. Reads the module-level FEATURE_FLAG const (account_deletion_worker_enabled), a CAPABILITY. ' +
-      'Verified by hand at c89f09a77. Named in the Phase 0 report as the shadow that a call-site-pattern ' +
-      'check would have scored as the shared helper.',
-  },
+
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

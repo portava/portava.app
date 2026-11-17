@@ -1,269 +1,59 @@
-/**
- * GET /api/me/account-status — account status gate tests
- *
- * Covers:
- *   1. Active account → returns { accountStatus: "active", deletionScheduledAt: null }
- *   2. Deactivated account (no deletion request) → returns { accountStatus: "deactivated" }
- *   3. Deactivated account WITH a pending deletion request → returns { accountStatus: "pending_deletion", deletionScheduledAt }
- *   4. POST /me/reactivate for a pending_deletion account → cancels the deletion request row
- *   5. Unauthenticated request → 401
- *
- * Run: node --import tsx/esm --test src/test/accountStatus.test.ts
- */
-import { describe, it, before, after, beforeEach } from "node:test";
-import assert from "node:assert/strict";
-import { createServer } from "node:http";
-import express from "express";
-import { _setTestClient } from "../lib/http.js";
-import { _setTestServiceClient } from "../lib/supabase.js";
-import profileRouter from "../routes/profile.js";
-
-// ── Stable UUIDs ──────────────────────────────────────────────────────────────
-
-const ME = "aa000000-0000-4000-a000-000000000001";
-const ME_TOK = "tok-me";
-
-const DELETION_DATE = "2026-08-05T00:00:00.000Z";
-
-// ── Minimal fake client ────────────────────────────────────────────────────────
-
-type FakeState = {
-  users: Record<string, { id: string }>;
-  profiles: any[];
-  user_deletion_requests?: any[];
-  user_account_states?: any[];
-  profile_privacy_settings?: any[];
-};
-
-function makeClient(state: FakeState) {
-  // Track updates for assertion
-  const updates: Array<{ table: string; patch: any; filters: Record<string, string> }> = [];
-
-  function tableRows(table: string): any[] {
-    return (state as any)[table] ?? [];
-  }
-
-  function makeBuilder(table: string) {
-    const filters: Array<(r: any) => boolean> = [];
-    const filterMap: Record<string, string> = {};
-    let pendingUpdate: any = null;
-    let upsertRow: any = null;
-    let isUpsert = false;
-
-    const builder: any = {
-      select()                    { return builder; },
-      eq(col: string, val: any)   {
-        filters.push((r) => String(r[col]) === String(val));
-        filterMap[col] = String(val);
-        return builder;
-      },
-      neq(col: string, val: any)  { filters.push((r) => r[col] !== val); return builder; },
-      limit()                     { return builder; },
-      order()                     { return builder; },
-      update(patch: any) {
-        pendingUpdate = patch;
-        return builder;
-      },
-      upsert(row: any) {
-        isUpsert = true;
-        upsertRow = row;
-        return builder;
-      },
-      maybeSingle() {
-        if (pendingUpdate) {
-          const rows = tableRows(table).filter((r) => filters.every((f) => f(r)));
-          if (rows[0]) Object.assign(rows[0], pendingUpdate);
-          return Promise.resolve({ data: rows[0] ? { ...rows[0] } : null, error: null });
-        }
-        const rows = tableRows(table).filter((r) => filters.every((f) => f(r)));
-        return Promise.resolve({ data: rows[0] ?? null, error: null });
-      },
-      single() {
-        const rows = tableRows(table).filter((r) => filters.every((f) => f(r)));
-        return Promise.resolve({ data: rows[0] ?? null, error: null });
-      },
-      then(onF: any, onR: any) {
-        if (isUpsert) {
-          return Promise.resolve({ data: [upsertRow], error: null }).then(onF, onR);
-        }
-        if (pendingUpdate) {
-          const rows = tableRows(table).filter((r) => filters.every((f) => f(r)));
-          updates.push({ table, patch: pendingUpdate, filters: filterMap });
-          // Mutate in-place for assertion helpers
-          rows.forEach((r) => Object.assign(r, pendingUpdate));
-          return Promise.resolve({ data: rows, error: null }).then(onF, onR);
-        }
-        const rows = tableRows(table).filter((r) => filters.every((f) => f(r)));
-        return Promise.resolve({ data: rows, error: null }).then(onF, onR);
-      },
-      catch() { return builder; },
-    };
-    return builder;
-  }
-
-  const client: any = {
-    auth: {
-      getUser: async (tok: string) => {
-        const u = state.users[tok] ?? null;
-        if (!u) return { data: { user: null }, error: { message: "invalid token" } };
-        return { data: { user: u }, error: null };
-      },
-    },
-    from: (table: string) => makeBuilder(table),
-    storage: {
-      createBucket: async () => ({ error: null }),
-      from: () => ({
-        upload: async () => ({ error: null }),
-        getPublicUrl: () => ({ data: { publicUrl: "" } }),
-      }),
-    },
-    __updates: updates,
-  };
-  return client;
-}
-
-function setup(state: FakeState) {
-  const client = makeClient(state);
-  _setTestClient(client, true);
-  _setTestServiceClient(client);
-  return client;
-}
-
-function baseState(extra: Partial<FakeState> = {}): FakeState {
-  return {
-    users: { [ME_TOK]: { id: ME } },
-    profiles: [{ id: ME, account_status: "active" }],
-    user_deletion_requests: [],
-    user_account_states: [],
-    profile_privacy_settings: [],
-    ...extra,
-  };
-}
-
-// ── Server setup ──────────────────────────────────────────────────────────────
-
-let base: string;
-let server: ReturnType<typeof createServer>;
-
+/** Account-status transport. Actual state transitions are proved in db/accountRecovery.db.test.ts. */
+import { after, before, describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { createServer, type Server } from 'node:http';
+import express from 'express';
+import { _setTestClient } from '../lib/http.js';
+import { _setTestServiceClient } from '../lib/supabase.js';
+import { makeFailClosedClient } from './helpers/failClosedSupabase.js';
+import profileRouter from '../routes/profile.js';
+import { logger } from '../lib/logger.js';
+const ME = 'aa000000-0000-4000-a000-000000000001', GEN = 'aa000000-0000-4000-a000-000000000002';
+const DEADLINE = '2027-11-16T12:00:00+00:00';
+let base: string, server: Server;
 before(async () => {
-  const app = express();
-  app.use(express.json());
-  app.use((req, _res, next) => {
-    (req as any).log = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
-    next();
-  });
-  app.use("/api", profileRouter);
-  server = createServer(app);
-  await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
-  const addr = server.address() as { port: number };
-  base = `http://127.0.0.1:${addr.port}/api`;
+  const app = express(); app.use(express.json()); app.use((req, _res, next) => { req.log = logger; next(); }); app.use(profileRouter);
+  server = createServer(app); await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
-
-after(() => server.close());
-
-function req(path: string, opts: { tok?: string | null; method?: string; body?: any } = {}) {
-  const { tok = ME_TOK, method = "GET", body } = opts;
-  const headers: Record<string, string> = {};
-  if (tok) headers["Authorization"] = `Bearer ${tok}`;
-  if (body !== undefined) headers["Content-Type"] = "application/json";
-  return fetch(`${base}${path}`, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+after(async () => { _setTestClient(null, false); _setTestServiceClient(null); await new Promise<void>(resolve => server.close(() => resolve())); });
+function install(status: string, command: string, receipt: unknown, deleted = false) {
+  const calls: unknown[] = [];
+  const client = makeFailClosedClient({ users: { token: ME }, rows: {
+    profiles: [{ id: ME, account_status: status }], user_account_states: [],
+    user_deletion_requests: deleted ? [{ user_id: ME, status: 'pending', recovery_generation: GEN }] : [],
+  }, rpc: { [command]: args => { calls.push(args); return { data: receipt, error: null }; } } });
+  _setTestClient(client, true); _setTestServiceClient(client); return calls;
 }
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
-describe("GET /api/me/account-status", () => {
-  it("returns active for a normal account", async () => {
-    setup(baseState());
-    const res = await req("/me/account-status");
-    assert.equal(res.status, 200);
-    const body = await res.json() as any;
-    assert.equal(body.accountStatus, "active");
-    assert.equal(body.deletionScheduledAt, null);
+async function call(path: string, method = 'GET', authenticated = true) {
+  const response = await fetch(base + path, { method, headers: authenticated ? { authorization: 'Bearer token' } : {} });
+  return { status: response.status, body: await response.json() as Record<string, unknown> };
+}
+describe('account status and recovery transport', () => {
+  for (const status of ['active', 'deactivated', 'pending_deletion']) it(`returns authoritative ${status} and its recovery deadline`, async () => {
+    const receipt = { accountStatus: status, deletionScheduledAt: null, reactivateUntil: status === 'deactivated' ? DEADLINE : null, selfRecoverableUntil: status === 'pending_deletion' ? DEADLINE : null };
+    const calls = install(status, 'account_recovery_status', receipt);
+    const response = await call('/me/account-status'); assert.equal(response.status, 200); assert.deepEqual(response.body, receipt); assert.deepEqual(calls, [{ p_user: ME }]);
   });
-
-  it("returns deactivated when profile is deactivated with no pending deletion", async () => {
-    setup(baseState({
-      profiles: [{ id: ME, account_status: "deactivated" }],
-    }));
-    const res = await req("/me/account-status");
-    assert.equal(res.status, 200);
-    const body = await res.json() as any;
-    assert.equal(body.accountStatus, "deactivated");
-    assert.equal(body.deletionScheduledAt, null);
+  it('does not confuse a missing profile with an active account', async () => {
+    install('active', 'account_recovery_status', null); assert.equal((await call('/me/account-status')).status, 404);
   });
-
-  it("returns pending_deletion with scheduled date when deletion request exists", async () => {
-    setup(baseState({
-      profiles: [{ id: ME, account_status: "deactivated" }],
-      user_deletion_requests: [
-        { user_id: ME, status: "pending", scheduled_at: DELETION_DATE },
-      ],
-    }));
-    const res = await req("/me/account-status");
-    assert.equal(res.status, 200);
-    const body = await res.json() as any;
-    assert.equal(body.accountStatus, "pending_deletion");
-    assert.equal(body.deletionScheduledAt, DELETION_DATE);
+  it('rejects a malformed successful status response', async () => {
+    install('active', 'account_recovery_status', { accountStatus: 'active' }); assert.equal((await call('/me/account-status')).status, 502);
   });
-
-  it("returns deactivated (not pending_deletion) when deletion request is cancelled", async () => {
-    setup(baseState({
-      profiles: [{ id: ME, account_status: "deactivated" }],
-      user_deletion_requests: [
-        { user_id: ME, status: "cancelled", scheduled_at: DELETION_DATE },
-      ],
-    }));
-    const res = await req("/me/account-status");
-    assert.equal(res.status, 200);
-    const body = await res.json() as any;
-    assert.equal(body.accountStatus, "deactivated");
-    assert.equal(body.deletionScheduledAt, null);
+  it('requires authentication before reading recovery details', async () => {
+    const calls = install('active', 'account_recovery_status', null); assert.equal((await call('/me/account-status', 'GET', false)).status, 401); assert.deepEqual(calls, []);
   });
-
-  it("returns 401 when unauthenticated", async () => {
-    setup(baseState());
-    const res = await req("/me/account-status", { tok: null });
-    assert.equal(res.status, 401);
+  it('routes a deleted-profile reactivation through the original recovery generation', async () => {
+    const calls = install('deactivated', 'recover_deleted_account', { ok: true, alreadyRecovered: false, accountStatus: 'active' }, true);
+    const response = await call('/me/reactivate', 'POST'); assert.equal(response.status, 200); assert.equal(response.body.reactivated, true);
+    assert.equal(calls.length, 1); assert.deepEqual(calls[0], { p_actor: ME, p_user: ME, p_generation: GEN, p_reason: 'Owner requested profile reactivation' });
   });
-});
-
-describe("POST /api/me/reactivate", () => {
-  it("marks account active and cancels a pending deletion request", async () => {
-    const deletionRow = { user_id: ME, status: "pending", scheduled_at: DELETION_DATE };
-    const client = setup(baseState({
-      profiles: [{ id: ME, account_status: "deactivated" }],
-      user_deletion_requests: [deletionRow],
-    }));
-
-    const res = await req("/me/reactivate", { method: "POST" });
-    assert.equal(res.status, 200);
-    const body = await res.json() as any;
-    assert.equal(body.reactivated, true);
-
-    // Wait briefly for fire-and-forget secondary writes
-    await new Promise((r) => setTimeout(r, 50));
-
-    // Deletion request should be cancelled
-    assert.equal(
-      deletionRow.status,
-      "cancelled",
-      "deletion request row should be updated to cancelled",
-    );
+  it('does not announce activation when deleted-profile recovery returns a previously deactivated profile', async () => {
+    install('deactivated', 'recover_deleted_account', { ok: true, alreadyRecovered: false, accountStatus: 'deactivated' }, true);
+    const response = await call('/me/reactivate', 'POST'); assert.equal(response.status, 200); assert.equal(response.body.reactivated, false); assert.equal(response.body.accountStatus, 'deactivated');
   });
-
-  it("reactivates a plain deactivated account (no deletion request)", async () => {
-    const profileRow = { id: ME, account_status: "deactivated" };
-    setup(baseState({
-      profiles: [profileRow],
-    }));
-    const res = await req("/me/reactivate", { method: "POST" });
-    assert.equal(res.status, 200);
-    const body = await res.json() as any;
-    assert.equal(body.reactivated, true);
-    assert.equal(profileRow.account_status, "active");
+  it('uses the personal-deactivation command for a personally deactivated account', async () => {
+    const calls = install('deactivated', 'reactivate_self_deactivated_account', { ok: true, alreadyReactivated: false });
+    assert.equal((await call('/me/reactivate', 'POST')).body.reactivated, true); assert.deepEqual(calls, [{ p_user: ME }]);
   });
 });

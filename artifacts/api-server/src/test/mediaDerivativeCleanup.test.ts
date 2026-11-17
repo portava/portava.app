@@ -1,3 +1,4 @@
+import { mediaObjectPurgeFixture } from './helpers/mediaObjectPurgeFixture.js';
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { randomUUID } from "node:crypto";
@@ -20,6 +21,7 @@ function fixture(root: string) {
     schema: true, installed: new Set(["media_derivative_jobs", "media_dubbing_artifacts"]), failTable: "", failRpc: "", failStorage: false, loseCompletion: false, ambiguousCompletion: false, cancelAccepted: true,
     hangTable: "", hangStorage: false, signals: [] as AbortSignal[], calls: [] as string[], removed: [] as string[], beforeRemove: () => {},
     audits: [] as Record<string, any>[] };
+  const purge = mediaObjectPurgeFixture(id => state.assets.find(row => row.id === id), state.audits);
   const client = {
     from(table: string) {
       const filters: ((row: Record<string, any>) => boolean)[] = [];
@@ -63,6 +65,12 @@ function fixture(root: string) {
       let data: unknown = name === "media_derivative_schema_status" ? Object.fromEntries([
         "media_derivative_jobs", "media_caption_manifests", "media_visual_embeddings", "media_image_understanding_artifacts", "media_dubbing_artifacts",
       ].map(table => [table, state.installed.has(table)])) : state.cancelAccepted;
+      if (name === "postcard_canonical_lifecycle_ready" && state.failRpc !== name) return Promise.resolve({data:true,error:null});
+      if (name === "advance_media_object_purge" && state.failRpc !== name) {
+        if (parameters.p_phase === "completed" && state.loseCompletion) return Promise.resolve({ data: null, error: new Error("synthetic lost completion CAS") });
+        const result=purge(parameters);
+        return Promise.resolve(parameters.p_phase === "completed" && state.ambiguousCompletion ? {data:null,error:new Error("ambiguous completion transport")} : result);
+      }
       const row = state.dubbing.find(row => row.id === parameters.p_id);
       const fenced = row && row.owner_user_id === parameters.p_owner && parameters.p_job === null && parameters.p_token === null;
       if (name === "media_dubbing_retire" && state.failRpc !== name) {
@@ -77,7 +85,12 @@ function fixture(root: string) {
       return { then: result.then.bind(result), abortSignal(signal: AbortSignal) { state.signals.push(signal); return this; } };
     },
     storage: {
-      from(bucket: string) { return { async remove(paths: string[]) {
+      from(bucket: string) { return {
+        async info(path: string) {
+          try {const stat=await lstat(join(root,bucket,path));return {data:{id:assetId,version:"synthetic",bucketId:bucket,name:path,size:stat.size},error:null};}
+          catch(error:any) {if(error.code!=="ENOENT")throw error;return {data:null,error:{status:404,statusCode:"NoSuchKey"}};}
+        },
+        async remove(paths: string[]) {
         state.calls.push(`remove:${bucket}`);
         state.beforeRemove();
         if (state.hangStorage) return await new Promise(() => {});
@@ -106,6 +119,16 @@ async function retained(input: ReturnType<typeof fixture> & { root: string }, co
     await writeFile(join(input.root, "dubbing-private", storage_path), "synthetic voice fixture");
   }
 }
+
+test("derivative purge ignores caller-supplied deletion state when the canonical source is retained", async () => withFixture(async input => {
+  await retained(input);
+  const path = input.state.dubbing[0].storage_path;
+  input.state.assets[0].purge_status = "retained";
+  await assert.rejects(purgeDerivedMedia(input.sc, source(), {}), /authority unavailable/);
+  assert.equal(await readFile(join(input.root, "dubbing-private", path), "utf8"), "synthetic voice fixture");
+  assert.equal(input.state.dubbing[0].cleanup_requested, false);
+  assert.deepEqual(input.state.calls, ["postcard_canonical_lifecycle_ready", "advance_media_object_purge"]);
+}));
 
 test("canonical deletion erases retained dubbing with generation OFF and no engine", async () => withFixture(async input => {
   await retained(input);
@@ -195,6 +218,8 @@ test("bounded cancellation reaches query transport and cannot start followup rem
 }));
 
 test("concurrent retries claim only one generation and stale pending is recoverable", async () => withFixture(async input => {
+  await mkdir(join(input.root,"post-media",ownerId),{recursive:true});
+  await writeFile(join(input.root,"post-media",source().storage_path),"synthetic original");
   input.state.schema = false;
   input.state.assets[0].purge_status = "pending";
   const results = await Promise.all([lifecycle.retryFailedMediaPurges(input.sc, { env: {} }), lifecycle.retryFailedMediaPurges(input.sc, { env: {} })]);
@@ -337,6 +362,8 @@ test("ambiguous purge completion does not roll back a possibly committed complet
 }));
 
 test("storage timeout remains retryable and never writes a success audit", async () => withFixture(async input => {
+  await mkdir(join(input.root,"post-media",ownerId),{recursive:true});
+  await writeFile(join(input.root,"post-media",source().storage_path),"synthetic original");
   input.state.schema = false;
   input.state.hangStorage = true;
   const started = Date.now();
@@ -348,11 +375,13 @@ test("storage timeout remains retryable and never writes a success audit", async
 }));
 
 test("source generation changed during storage removal cannot be completed or overwritten", async () => withFixture(async input => {
+  await mkdir(join(input.root,"post-media",ownerId),{recursive:true});
+  await writeFile(join(input.root,"post-media",source().storage_path),"synthetic original");
   input.state.schema = false;
   input.state.beforeRemove = () => { input.state.assets[0].version += 1; input.state.assets[0].purge_status = "not_requested"; };
   assert.equal((await lifecycle.retryFailedMediaPurges(input.sc, { env: {} })).completed, 0);
   assert.equal(input.state.assets[0].purge_status, "not_requested");
-  assert.equal(input.state.audits.length, 0);
+  assert.equal(input.state.audits.some(row => ["purge_failed","purge_succeeded"].includes(row.event_type)), false);
 }));
 
 test("old stale-pending rows are not starved by a failed-purge backlog", async () => withFixture(async input => {
@@ -414,11 +443,13 @@ test("orphan grace and confirmed cancellation are mandatory, not inferred from a
 }));
 
 test("generation-only races fence completion even when deletion status stays pending", async () => withFixture(async input => {
+  await mkdir(join(input.root,"post-media",ownerId),{recursive:true});
+  await writeFile(join(input.root,"post-media",source().storage_path),"synthetic original");
   input.state.schema = false;
   input.state.beforeRemove = () => { input.state.assets[0].version += 1; };
   assert.equal((await lifecycle.retryFailedMediaPurges(input.sc, { env: {} })).completed, 0);
   assert.equal(input.state.assets[0].purge_status, "pending");
-  assert.equal(input.state.audits.length, 0);
+  assert.equal(input.state.audits.some(row => ["purge_failed","purge_succeeded"].includes(row.event_type)), false);
 }));
 
 test("missing original adaptive or image volumes cannot be created empty and acknowledged erased", async () => withFixture(async input => {

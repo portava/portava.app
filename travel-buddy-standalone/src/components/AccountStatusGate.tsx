@@ -1,4 +1,4 @@
-import React, { useState, type PropsWithChildren } from 'react';
+import React, { useState, useEffect, type PropsWithChildren } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { color, space, type as typeTokens } from '../theme/tokens.ts';
 import { useSession } from '../context/SessionContext.tsx';
-import { reactivateAccount } from '../services/profile.ts';
+import { reactivateAccount, cancelAccountDeletion } from '../services/profile.ts';
 
 function formatDate(iso: string | null): string {
   if (!iso) return 'soon';
@@ -25,103 +25,62 @@ function formatDate(iso: string | null): string {
   }
 }
 
-function DeactivatedScreen() {
+function RecoveryScreen({ kind, deadline }: { kind: 'deactivation' | 'deletion'; deadline: string | null }) {
   const { signOut, refreshAccountStatus } = useSession();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now);
+  const deadlineMs = deadline ? Date.parse(deadline) : NaN;
+  const available = Number.isFinite(deadlineMs) && now < deadlineMs;
+  const personal = kind === 'deactivation';
+  useEffect(() => {
+    const remaining = deadlineMs - Date.now();
+    if (!(remaining > 0)) return;
+    const timer = setTimeout(() => setNow(Date.now()), Math.min(remaining, 2_147_483_647));
+    return () => clearTimeout(timer);
+  }, [deadlineMs, now]);
 
-  async function handleReactivate() {
+  async function handleRecovery() {
+    if (!(Date.now() < deadlineMs)) { setNow(Date.now()); return; }
     setLoading(true);
     setError(null);
-    const result = await reactivateAccount();
-    if (result.ok) {
-      await refreshAccountStatus();
-    } else {
-      setError(result.message ?? 'Could not reactivate. Please try again.');
-    }
-    setLoading(false);
+    try {
+      const result = personal ? await reactivateAccount() : await cancelAccountDeletion();
+      if (result.ok) await refreshAccountStatus();
+      else setError(result.message ?? 'Recovery could not be confirmed. Please try again.');
+    } catch {
+      setError('Recovery could not be confirmed. Please try again.');
+    } finally { setLoading(false); }
   }
 
   return (
     <SafeAreaView style={styles.root}>
       <ScrollView contentContainerStyle={styles.inner} bounces={false}>
-        <Text style={styles.icon}>🔒</Text>
-        <Text style={styles.heading}>Your account is deactivated</Text>
+        <Text style={styles.heading}>{personal ? 'Your account is deactivated' : 'Your profile is deleted'}</Text>
         <Text style={styles.body}>
-          Your account is currently deactivated. Your profile and trips are hidden from other
-          travelers. Tap below to restore your account instantly.
+          {personal
+            ? 'Your profile stays hidden until you reactivate it. You can reactivate a personally deactivated account for one year.'
+            : 'Your profile is hidden. You can recover it for 90 days unless an admin permanently deletes it. Admin recovery remains available until permanent deletion.'}
         </Text>
-
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-
+        <Text style={styles.body}>
+          {available
+            ? `${personal ? 'Reactivate' : 'Recover your profile'} before ${formatDate(deadline)}. Your privacy settings still apply.`
+            : deadline
+              ? 'Your self-service recovery period has ended. Contact an admin for help. Your account is not automatically permanently deleted.'
+              : 'Self-service recovery is unavailable. Contact an admin to check whether your account can be recovered.'}
+        </Text>
+        {error ? <Text style={styles.error} accessibilityRole="alert">{error}</Text> : null}
         <TouchableOpacity
-          style={[styles.primaryBtn, loading && styles.btnDisabled]}
-          onPress={handleReactivate}
-          disabled={loading}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: loading || !available }}
+          style={[styles.primaryBtn, (loading || !available) && styles.btnDisabled]}
+          onPress={handleRecovery}
+          disabled={loading || !available}
           activeOpacity={0.8}
         >
-          {loading ? (
-            <ActivityIndicator color={color.onInk} />
-          ) : (
-            <Text style={styles.primaryBtnLabel}>Reactivate my account</Text>
-          )}
+          {loading ? <ActivityIndicator color={color.onInk} /> : <Text style={styles.primaryBtnLabel}>{personal ? 'Reactivate my account' : 'Recover my profile'}</Text>}
         </TouchableOpacity>
-
-        <TouchableOpacity style={styles.secondaryBtn} onPress={signOut} activeOpacity={0.7}>
-          <Text style={styles.secondaryBtnLabel}>Sign out</Text>
-        </TouchableOpacity>
-      </ScrollView>
-    </SafeAreaView>
-  );
-}
-
-function PendingDeletionScreen({ scheduledAt }: { scheduledAt: string | null }) {
-  const { signOut, refreshAccountStatus } = useSession();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function handleCancelDeletion() {
-    setLoading(true);
-    setError(null);
-    const result = await reactivateAccount();
-    if (result.ok) {
-      await refreshAccountStatus();
-    } else {
-      setError(result.message ?? 'Could not cancel deletion. Please try again.');
-    }
-    setLoading(false);
-  }
-
-  return (
-    <SafeAreaView style={styles.root}>
-      <ScrollView contentContainerStyle={styles.inner} bounces={false}>
-        <Text style={styles.icon}>⚠️</Text>
-        <Text style={styles.heading}>Account scheduled for deletion</Text>
-        <Text style={styles.body}>
-          Your account is scheduled to be permanently deleted on{' '}
-          <Text style={styles.dateHighlight}>{formatDate(scheduledAt)}</Text>. After that date,
-          your profile, trips, and stamps cannot be recovered.
-        </Text>
-        <Text style={styles.body}>
-          Changed your mind? Tap below to cancel the deletion and restore your account.
-        </Text>
-
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-
-        <TouchableOpacity
-          style={[styles.primaryBtn, loading && styles.btnDisabled]}
-          onPress={handleCancelDeletion}
-          disabled={loading}
-          activeOpacity={0.8}
-        >
-          {loading ? (
-            <ActivityIndicator color={color.onInk} />
-          ) : (
-            <Text style={styles.primaryBtnLabel}>Cancel deletion</Text>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.secondaryBtn} onPress={signOut} activeOpacity={0.7}>
+        <TouchableOpacity accessibilityRole="button" style={styles.secondaryBtn} onPress={signOut} activeOpacity={0.7}>
           <Text style={styles.secondaryBtnLabel}>Sign out</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -179,7 +138,7 @@ function StatusErrorScreen() {
  *  - 'active'            → render children.
  */
 export function AccountStatusGate({ children }: PropsWithChildren) {
-  const { isAuthed, accountStatus, accountStatusLoaded, deletionScheduledAt } = useSession();
+  const { isAuthed, accountStatus, accountStatusLoaded, reactivateUntil, selfRecoverableUntil } = useSession();
 
   if (!isAuthed) {
     return <>{children}</>;
@@ -201,11 +160,11 @@ export function AccountStatusGate({ children }: PropsWithChildren) {
   }
 
   if (accountStatus === 'pending_deletion') {
-    return <PendingDeletionScreen scheduledAt={deletionScheduledAt} />;
+    return <RecoveryScreen kind="deletion" deadline={selfRecoverableUntil ?? null} />;
   }
 
   if (accountStatus === 'deactivated') {
-    return <DeactivatedScreen />;
+    return <RecoveryScreen kind="deactivation" deadline={reactivateUntil ?? null} />;
   }
 
   // Only positively confirmed 'active' renders the app.

@@ -1,3 +1,4 @@
+import { mediaAccountAllowsAccess } from "../lib/mediaAccess.js";
 /**
  * Postcards routes — structured media upload flow for Postcards.
  *
@@ -15,6 +16,7 @@
  *  - TODO: server-side thumbnail generation (currently the client uploads a thumbnail frame).
  */
 import { Router } from 'express';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { requireUser, sendError, safeSecretEquals, tripExists, isAcceptedTripMember } from '../lib/http.js';
 import { getServiceClient } from '../lib/supabase.js';
@@ -474,15 +476,19 @@ router.post('/postcards/:id/media/upload-url', async (req, res) => {
     return;
   }
 
-  // Create post_media row in pending state (storage_path filled after we have the mediaId)
+  // Reserve the ID and immutable locator in one write. Never mint upload
+  // authority for a slot whose final path was not durably recorded.
+  const mediaId = randomUUID();
+  const storagePath = `${user.id}/${postId}/${mediaId}.${mimeInfo.ext}`;
   const { data: mediaRow, error: mediaErr } = await sc
     .from('post_media')
     .insert({
+      id:                mediaId,
       post_id:           postId,
       user_id:           user.id,
       media_type:        mimeInfo.mediaType,
       storage_bucket:    STORAGE_BUCKET,
-      storage_path:      '',
+      storage_path:      storagePath,
       public_url:        '',
       mime_type:         mimeType,
       file_size_bytes:   fileSizeBytes,
@@ -490,7 +496,7 @@ router.post('/postcards/:id/media/upload-url', async (req, res) => {
       moderation_status: 'pending',
       sort_order:        existingCount,
     })
-    .select('id')
+    .select('id, storage_path')
     .single();
 
   if (mediaErr) {
@@ -499,15 +505,11 @@ router.post('/postcards/:id/media/upload-url', async (req, res) => {
     return;
   }
 
-  const mediaId = (mediaRow as any).id as string;
-  const storagePath = `${user.id}/${postId}/${mediaId}.${mimeInfo.ext}`;
-
-  // Backfill storage_path now that we have the mediaId
-  const { error: pathErr } = await sc
-    .from('post_media')
-    .update({ storage_path: storagePath })
-    .eq('id', mediaId);  // census-discovery §56 (DV-77): BOUND. A slot whose path did not record is one no sweep can find, so no URL is minted for it.
-  if (pathErr) { req.log.error({ err: pathErr, mediaId }, 'postcards: storage_path backfill failed — refusing rather than minting an untracked upload URL'); await sc.from('post_media').update({ processing_status: 'failed' }).eq('id', mediaId).then(undefined, () => {}); sendError(res, "db_error", "We couldn't prepare your upload. Please try again.", { exposeDetail: true }); return; }
+  if (!mediaRow || mediaRow.id !== mediaId || mediaRow.storage_path !== storagePath) {
+    req.log.error({ mediaId }, 'postcards: reservation receipt unconfirmed — refusing upload authority');
+    sendError(res, "db_error", "We couldn't confirm your upload reservation. Please try again.", { exposeDetail: true });
+    return;
+  }
 
   // Generate signed upload URL
   const { data: urlData, error: urlErr } = await sc.storage
@@ -675,6 +677,11 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+  if (!await mediaAccountAllowsAccess(sc, user.id)) {
+    sendError(res, 'forbidden', 'An active account is required to complete media.');
+    return;
+  }
+
 
   const parsed = completeSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -687,6 +694,7 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
   const { data: mediaRow, error: mediaErr } = await sc
     .from('post_media')
     .select('id, user_id, post_id, storage_path, storage_bucket, media_type, processing_status, moderation_status, width, height, mime_type, file_size_bytes')
+    .is('deleted_at', null)
     .eq('id', mediaId)
     .eq('post_id', postId)
     .maybeSingle();
@@ -1205,7 +1213,7 @@ export async function syncPostcardAfterMediaChange(sc: any, postId: string, user
 /* ============================================================================
  * DELETE /api/postcards/:id/media/:mediaId — owner-only removal
  * ============================================================================
- * Hard-deletes the post_media row, removes the storage object, and re-derives
+ * Withdraws the existing post_media row, retains its bytes, and re-derives
  * the parent post's media summary columns.
  */
 router.delete('/postcards/:id/media/:mediaId', async (req, res) => {
@@ -1251,34 +1259,21 @@ router.delete('/postcards/:id/media/:mediaId', async (req, res) => {
     }
   }
 
-  // Hard-delete from DB — after 2098's delete pin (isModerationPinnedPostMedia, at the tail): a pinned row is refused and NOTHING is written
+  // Withdraw atomically, retaining the existing slot for late signed PUT cleanup.
   if (isModerationPinnedPostMedia((mediaRow as any).moderation_status)) { sendError(res, 'conflict', POSTCARD_MEDIA_PINNED_MESSAGE()); return; }
-  const { data: deletedRows, error: deleteErr } = await sc
-    .from('post_media')
-    .delete()
-    .eq('id', mediaId).eq('moderation_status', String((mediaRow as any).moderation_status)).select('id'); // compare-and-set on the state just read: a verdict landing after the read is not deleted out from under it
+  const { data: withdrawn, error: deleteErr } = await sc.rpc('withdraw_postcard_media', {
+    p_actor: user.id, p_post: postId, p_media: mediaId,
+    p_expected_moderation: String((mediaRow as any).moderation_status),
+    ...(!isOwner ? { p_admin_reason: 'Administrator withdrew Postcard media' } : {}),
+  });
   if (deleteErr) {
     req.log.error({ err: deleteErr }, 'postcards: failed to delete media row');
     sendError(res, "db_error", "We couldn't remove that media. Please try again.", { exposeDetail: true });
     return;
   }
-  if (!Array.isArray(deletedRows) || deletedRows.length === 0) { sendError(res, 'conflict', POSTCARD_MEDIA_PINNED_MESSAGE()); return; } // the row changed or went since the read: nothing was deleted, and its objects are left as they are
-  // Remove from storage (best-effort — do not fail if storage removal fails).
-  // The 0208 feed variant goes with it: it is a derivative of this exact object
-  // and nothing else references it, so leaving it behind would be an ORPHAN
-  // OBJECT in check:media-objects' terms — wasted storage, and content believed
-  // deleted that is still fetchable. `remove` tolerates absent keys, so listing
-  // it unconditionally is safe for videos and pre-0208 rows alike.
-  const storagePath = (mediaRow as any).storage_path as string;
-  if (storagePath) {
-    await sc.storage
-      .from(STORAGE_BUCKET)
-      .remove([storagePath, `${storagePath}.feed.jpg`])
-      .then(undefined, () => {});
-    // The video poster and any resumable parts are derivatives of this exact
-    // object too (routes/postcardMediaTransport.ts); they go with it.
-    await removeTransportArtifacts(sc.storage.from(STORAGE_BUCKET), storagePath).then(undefined, () => {});
-  }
+  if (withdrawn !== true) { sendError(res, 'conflict', POSTCARD_MEDIA_PINNED_MESSAGE()); return; } // the row changed or went since the read: nothing was deleted, and its objects are left as they are
+  // Retain bytes for admin recovery. Abandoned, never-completed uploads remain
+  // the responsibility of the existing expiry sweep; completed slots are held.
 
   // Re-derive parent media counts
   const counts = await refreshMediaCounts(sc, postId); await repointPassportCover(sc, postId, counts, req, [String((mediaRow as any).public_url ?? '')].filter(Boolean)); // census-media §37.10 item 1: a cover that sat on the removed file moves (or clears) by the one cover rule
@@ -1646,7 +1641,7 @@ export default router;
 // placement does not change evaluation order.
 import { probeVideoContainer, resolveStoredDuration, type VideoProbe } from '../lib/videoMetadata.js';
 import { admissiblePosterPath } from '../lib/mediaPosterPath.js';
-import { removeTransportArtifacts } from '../lib/postcardMediaTransport.js';  import { sweepAbandonedPendingUploads, PENDING_UPLOAD_ORPHAN_CUTOFF_MS } from '../services/media/PendingUploadSweep.js';  // census-discovery §56 (DV-77)
+import { sweepAbandonedPendingUploads, PENDING_UPLOAD_ORPHAN_CUTOFF_MS } from '../services/media/PendingUploadSweep.js';  // census-discovery §56 (DV-77)
 
 // census-media §37 (MD269/MD283): the §36 safety-moderation stage decides the value /complete
 // writes. Off (the seed), it is 'approved', as before. Imported at the TAIL, like the block above.

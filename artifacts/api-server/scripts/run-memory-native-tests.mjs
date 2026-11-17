@@ -9,6 +9,20 @@ export { default } from "./run-memory-sql-tests.mjs";
 const scriptPath = realpathSync(fileURLToPath(import.meta.url));
 const apiRoot = resolve(dirname(scriptPath), "..");
 const manifests = {
+  "own-media-sql": {
+    file: "src/test/memoryFromOwnMedia.pglite.test.ts",
+    suite: "MD385 own-media historical SQL and deployment contract",
+    binaryVariable: "PORTAVA_TEST_POSTGRES_BIN",
+    reusable: true,
+    expectedTests: 17,
+  },
+  "import-sql": {
+    file: "src/test/memoryImportBatches.pglite.test.ts",
+    suite: "H37 durable owner-selected existing-memory backfill (isolated PostgreSQL)",
+    binaryVariable: "PORTAVA_TEST_POSTGRES_BIN",
+    reusable: true,
+    expectedTests: 25,
+  },
   "input-outcome": {
   "file": "src/test/inputOutcomeConsent.postgres.test.ts",
   "suite": "4029 PostgreSQL two-connection consent races (isolated socket-only database)",
@@ -120,6 +134,7 @@ const manifests = {
     file: "src/test/accountDeletionMediaBoundary.native.test.ts",
     suite: "Account Media deletion native source barrier",
     binaryVariable: "PORTAVA_TEST_POSTGRES_BIN",
+    reusable: true,
     expectedTests: 15,
   },
 };
@@ -131,17 +146,31 @@ function syntheticEnvironment(selected) {
   for (const name of ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "SystemRoot", "WINDIR", "COMSPEC"]) {
     if (process.env[name] !== undefined) environment[name] = process.env[name];
   }
-  for (const { binaryVariable } of selected) {
+  for (const { binaryVariable, reusable } of selected) {
     const supplied = process.env[binaryVariable];
     if (!supplied || !isAbsolute(supplied)) throw new Error(`${binaryVariable} must name an absolute trusted local PostgreSQL bin directory`);
     const directory = realpathSync(supplied);
     if (!statSync(directory).isDirectory()) throw new Error(`${binaryVariable} is not a directory`);
-    for (const name of ["initdb", "pg_ctl", "psql", "postgres"]) {
+    for (const name of (reusable ? ["psql", "pg_dump", "pg_restore"] : ["initdb", "pg_ctl", "psql", "postgres"])) {
       const binary = join(directory, name);
       if (!statSync(binary).isFile()) throw new Error(`${binaryVariable}/${name} is not a regular executable file`);
       accessSync(binary, constants.X_OK);
     }
     environment[binaryVariable] = directory;
+  }
+  // The account Media fixture leases the same database as pressed SQL suites.
+  // Forward only its explicit target identity; never provision another cluster.
+  if (selected.some(entry => entry.reusable)) {
+    let target;
+    try { target = new URL(process.env.LOCAL_DB_URL); } catch { throw new Error("A designated reusable database is required"); }
+    if (!["postgres:", "postgresql:"].includes(target.protocol) || !["localhost", "127.0.0.1", "[::1]"].includes(target.hostname)
+      || !["/portava_local", "/portava_ci_repairs"].includes(target.pathname)
+      || ["host", "hostaddr", "port", "service", "servicefile", "dbname", "database"].some(key => target.searchParams.has(key))) {
+      throw new Error("A designated reusable database is required; connection overrides are refused");
+    }
+    for (const name of ["LOCAL_DB_URL", "PORTAVA_TEST_CLUSTER_ID", "PRESSED_SNAPSHOT_ROOT", "PORTAVA_TEST_POSTGRES_MAJOR"]) {
+      if (process.env[name] !== undefined) environment[name] = process.env[name];
+    }
   }
   return {
     ...environment,

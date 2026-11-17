@@ -59,6 +59,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { accountDeletionAuthorizationFixture, PERMANENT_DELETION_TEST_OPTIONS } from "./helpers/accountDeletionAuthorizationFixture.js";
 import {
   executeAccountDeletion,
   COLLECTION_PAGE_SIZE,
@@ -127,6 +128,8 @@ function makeClient(opts: {
     return true;
   }
 
+  const authorize = accountDeletionAuthorizationFixture(rows, USER_ID);
+
   function builder(table: string) {
     const q: any = {
       _op: "select",
@@ -139,9 +142,9 @@ function makeClient(opts: {
       // media_urls, in section 1). That read is its own paged step, so it is
       // counted and logged under its own name — `posts.select` stays the
       // tombstone_or_delete_posts id read every assertion below is about.
-      select(cols?: string) { q._op = String(cols ?? "").includes("media_urls") ? UPLOAD_READ : "select"; return q; },
+      select(cols?: string) { if (q._op === "select") q._op = String(cols ?? "").includes("media_urls") ? UPLOAD_READ : "select"; return q; },
       delete() { q._op = "delete"; return q; },
-      update(v: any) { q._op = "update"; void v; return q; },
+      update(v: any) { q._op = "update"; q._values = v; return q; },
       upsert(v: any) { q._op = "upsert"; void v; return q; },
       insert(v: any) { q._op = "insert"; void v; return q; },
       eq(c: string, v: any) { q._filters.push(["eq", c, v]); return q; },
@@ -156,6 +159,11 @@ function makeClient(opts: {
       single() { q._single = true; return q._run(); },
       then(resolve: any, reject: any) { return q._run().then(resolve, reject); },
       _run() {
+        if (table === "user_deletion_requests" && q._op === "update") {
+          const matched = rows[table]!.filter(row => q._filters.every(([op, col, value]: any[]) => op === "eq" && row[col] === value));
+          for (const row of matched) Object.assign(row, q._values);
+          return Promise.resolve({ data: matched, error: null });
+        }
         const key = `${table}.${q._op}`;
         const page = readCount[key] ?? 0;
         readCount[key] = page + 1;
@@ -208,6 +216,8 @@ function makeClient(opts: {
     _authDeleted: authDeleted,
     from: (t: string) => builder(t),
     rpc: async (fn: string, args: Record<string, unknown>) => {
+      const receipt = authorize(fn, args);
+      if (receipt) return receipt;
       ops.push({ table: `rpc:${fn}`, op: "rpc" });
       rpcCalls.push({ fn, args });
       if (opts.rpcFail && fn === "tombstone_post") {
@@ -251,7 +261,7 @@ describe("account deletion — tombstone_or_delete_posts pages through every pos
     }));
     const c = makeClient({ rows: { posts } });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: "admin-1" });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
     assert.equal(stepOf(out, "tombstone_or_delete_posts").ok, true);
 
@@ -308,7 +318,7 @@ describe("account deletion — tombstone_or_delete_posts pages through every pos
     }));
     const c = makeClient({ rows: { posts, posts_comments } });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
     assert.equal(out.tombstonedCounts.posts, 3);
     assert.equal(out.deletedCounts.posts, TOTAL - 3);
@@ -326,7 +336,7 @@ describe("account deletion — tombstone_or_delete_posts pages through every pos
       id: seqId("post", i), author_id: USER_ID,
     }));
     const c = makeClient({ rows: { posts } });
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true);
     const reads = selectOps(c, "posts");
     assert.equal(reads.length, 2);
@@ -344,7 +354,7 @@ describe("account deletion — tombstone_or_delete_posts pages through every pos
     const posts = Array.from({ length: TOTAL }, (_, i) => ({ id: seqId("post", i), author_id: USER_ID }));
     const c = makeClient({ rows: { posts } });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     const firstDelete = c._ops.findIndex((o: Op) => o.table === "posts" && o.op === "delete");
@@ -371,7 +381,7 @@ describe("account deletion — a short post read is never reported as a clean on
     const posts = Array.from({ length: TOTAL }, (_, i) => ({ id: seqId("post", i), author_id: USER_ID }));
     const c = makeClient({ rows: { posts }, failFromPage: { "posts.select": 1 } });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     const st = stepOf(out, "tombstone_or_delete_posts");
     assert.equal(st.ok, false, "a read that failed halfway is not a completed deletion");
@@ -393,7 +403,7 @@ describe("account deletion — a short post read is never reported as a clean on
     }));
     const c = makeClient({ rows: { posts }, noRange: true });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.equal(stepOf(out, "tombstone_or_delete_posts").ok, true);
     const warning = out.warnings.find((w: string) => w.startsWith("posts may remain —"));
@@ -414,7 +424,7 @@ describe("account deletion — a short post read is never reported as a clean on
     // every time. The loop must terminate at the cap and say the deletion is
     // incomplete.
     const c = makeClient({ rows: { posts: [] }, ignoreRange: ["posts"] });
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.equal(stepOf(out, "tombstone_or_delete_posts").ok, true);
     assert.equal(c._reads["posts.select"], COLLECTION_MAX_PAGES);
@@ -432,7 +442,7 @@ describe("account deletion — delete_key_packages pages the device read", () =>
     const devices = Array.from({ length: TOTAL }, (_, i) => ({ id: seqId("dev", i), user_id: USER_ID }));
     const c = makeClient({ rows: { devices } });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     const st = stepOf(out, "delete_key_packages");
@@ -464,7 +474,7 @@ describe("account deletion — delete_key_packages pages the device read", () =>
     const devices = Array.from({ length: TOTAL }, (_, i) => ({ id: seqId("dev", i), user_id: USER_ID }));
     const c = makeClient({ rows: { devices } });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     const kpDeletes = deleteOps(c, "key_packages");
@@ -487,7 +497,7 @@ describe("account deletion — delete_key_packages pages the device read", () =>
     }));
     const c = makeClient({ rows: { devices }, failFromPage: { "devices.select": 1 } });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.equal(stepOf(out, "delete_key_packages").ok, false);
     assert.ok(
@@ -505,7 +515,7 @@ describe("account deletion — delete_key_packages pages the device read", () =>
       id: seqId("dev", i), user_id: USER_ID,
     }));
     const c = makeClient({ rows: { devices } });
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true);
 
     const idxKp = c._ops.findIndex((o: Op) => o.table === "key_packages" && o.op === "delete");
@@ -533,7 +543,7 @@ describe("account deletion — paging costs a light account exactly one request"
         devices: [{ id: seqId("dev", 0), user_id: USER_ID }],
       },
     });
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
     // A short page is the end of the data AND the end of the requests — a pager
     // that always probes for a page that cannot exist is a tax on every account.

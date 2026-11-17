@@ -4,8 +4,10 @@ import type { AVPlaybackSource } from 'expo-av';
 import { useSession } from '../context/SessionContext.tsx';
 import { useFeatureFlags } from '../context/FeatureFlagsContext.tsx';
 import { resolveAdaptivePlayback } from '../services/media/adaptive.ts';
+import { useMediaRequestSource } from './useMediaRequestSource.ts';
 
 export function useAdaptivePlayback(original: string, fallbackUri: string, active = true) {
+  const fallback = useMediaRequestSource(fallbackUri);
   const { userId } = useSession();
   const enabled = useFeatureFlags().isEnabled('media_transcoder_enabled') && Platform.OS !== 'web' && !!userId && active;
   const [foreground, setForeground] = useState(AppState.currentState !== 'background' && AppState.currentState !== 'inactive');
@@ -27,7 +29,7 @@ export function useAdaptivePlayback(original: string, fallbackUri: string, activ
     return () => { controller.abort(); clearTimeout(timer); };
   }, [enabled, foreground, rejected, identity, original]);
   const adaptive = enabled && foreground && rejected !== identity && ready?.identity === identity ? ready.value : null;
-  const source = useMemo<AVPlaybackSource>(() => adaptive ?? { uri: fallbackUri }, [adaptive, fallbackUri]);
+  const source = useMemo<AVPlaybackSource | undefined>(() => adaptive ?? fallback ?? undefined, [adaptive, fallback]);
   const rejectAdaptive = useCallback(() => {
     if (!adaptive) return false;
     setRejected(identity);

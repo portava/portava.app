@@ -1,3 +1,5 @@
+import { memoryEditFixture } from './helpers/memoryEditFixture.js';
+import { makeKernelRpc } from './memoryCommandKernelFake.js';
 /**
  * §11 per-Memory controls (migration 3671, `memory_resurfacing_preferences`).
  * Census H36 / H87 / H88 / H187 and KEEP_PRIVATE_FOREVER on a Memory.
@@ -96,7 +98,7 @@ function makeClient(store: Record<string, any[]>, opts: FakeOpts = {}) {
   }
   return {
     from: (t: string) => chain(t),
-    rpc: async () => ({ data: null, error: { message: "rpc not modelled", code: "PGRST202" } }),
+    rpc: makeKernelRpc({ tables: store, rpcCalls: [], failOn: new Set(), absent: false }),
     auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },
   };
 }
@@ -120,7 +122,8 @@ async function call(a: App, method: string, path: string, actor = OWNER, body?: 
   const res = await fetch(`${a.base}/api${path}`, {
     method,
     headers: { Authorization: `Bearer ${actor}`, "Content-Type": "application/json", "Idempotency-Key": `rc-${++keyN}`, connection: "close" },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(method === "PATCH"
+      ? memoryEditFixture(a.store.memories!.find(row => row.id === path.split('/').at(-1)) ?? {}, body as Record<string, unknown>) : body),
   });
   const text = await res.text();
   let parsed: any = null; try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }

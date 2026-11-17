@@ -11,6 +11,7 @@
  * Follows the same pattern as app/admin/place-images/index.tsx.
  * Requires admin role (enforced server-side).
  */
+import { MemoryMediaBindingsPanel } from '../../../src/components/admin/MemoryMediaBindingsPanel';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -59,9 +60,10 @@ import {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type TabKey = 'failures' | 'reported' | 'wrong_place' | 'gems_pending' | 'ai_provenance';
+type TabKey = 'failures' | 'reported' | 'wrong_place' | 'gems_pending' | 'ai_provenance' | 'memory_originals';
 
 const TABS: { key: TabKey; label: string }[] = [
+  { key: 'memory_originals', label: 'Memory originals' },
   { key: 'failures',     label: 'Processing' },
   { key: 'reported',     label: 'Reported' },
   { key: 'wrong_place',  label: 'Wrong Place' },
@@ -595,6 +597,7 @@ export default function AdminMediaScreen() {
 
       {/* Content */}
       <View style={{ flex: 1 }}>
+        {activeTab === 'memory_originals' && <MemoryMediaBindingsPanel />}
         {activeTab === 'failures'     && <FailuresTab />}
         {activeTab === 'reported'     && <ReportedTab />}
         {activeTab === 'wrong_place'  && <WrongPlaceTab />}

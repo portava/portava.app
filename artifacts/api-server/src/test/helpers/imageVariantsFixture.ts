@@ -1,3 +1,5 @@
+import { activeMediaAccountRead } from "./mediaAccountReadFixture.js";
+import { mediaObjectPurgeFixture } from './mediaObjectPurgeFixture.js';
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -37,13 +39,17 @@ export async function imageVariantsFixture() {
       const builder: any = thenable(result);
       Object.assign(builder, { select: () => builder, eq(column: string, value: unknown) { filters.push(row => row[column] === value); return builder; },
         in(column: string, values: unknown[]) { filters.push(row => values.includes(row[column])); return builder; },
+        contains(column: string, value: Record<string, unknown>) { filters.push(row => Object.entries(value).every(([key, expected]) => row[column]?.[key] === expected)); return builder; },
         limit(value: number) { cap = value; return builder; },
         async maybeSingle() { const reply = result(); return { data: reply.data?.[0] ?? null, error: reply.error }; },
         or() { return builder; } });
       return builder;
     },
-    rpc(name: string) { return thenable(() => {
+    rpc(name: string, args: Record<string, unknown> = {}) { return thenable(() => {
       if (failures.has(name)) return { data: null, error: { code: "synthetic_rpc_failed" } };
+      if (name === "account_recovery_status") return activeMediaAccountRead(name, args);
+      if (name === "postcard_canonical_lifecycle_ready") return {data:true,error:null};
+      if (name === "advance_media_object_purge") return mediaObjectPurgeFixture(id => id === asset.id ? asset : undefined, [])(args);
       if (name === "media_derivative_ready") { const result = structuredClone(state.ready); state.afterReady(); return { data: result, error: null }; }
       if (name === "media_derivative_cancel_asset") { state.cancelled = true; state.ready = null; state.lease = false; return { data: true, error: null }; }
       throw new Error(`unexpected RPC ${name}`);

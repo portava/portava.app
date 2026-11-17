@@ -1,12 +1,14 @@
+import { activeMediaAccountRead } from './helpers/mediaAccountReadFixture.js';
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { POST_REFERENCE_MEDIA_TYPE, readPostReference, readReferenceSource } from '../services/postDestinations.js';
 const viewer='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',author='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const post='cccccccc-cccc-4ccc-8ccc-cccccccccccc',ref='dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 let rows:Record<string,any[]>;let failures:Set<string>;let reads:string[];
-function client(){return {from(table:string){const filters:Array<(row:any)=>boolean>=[];let max=Infinity;
+function client(){return {rpc:activeMediaAccountRead,from(table:string){const filters:Array<(row:any)=>boolean>=[];let max=Infinity;
  const result=()=>{reads.push(table);const matched=(rows[table]??[]).filter(row=>filters.every(f=>f(row)));return {data:matched.slice(0,max),count:matched.length,error:failures.has(table)?{message:'unreadable'}:null};};
  const query:any={select:()=>query,order:()=>query,
+ contains:(key:string,value:Record<string,unknown>)=>{filters.push(row=>Object.entries(value).every(([k,v])=>row[key]?.[k]===v));return query;},
  overlaps:(field:string,values:string[])=>{filters.push(row=>Array.isArray(row[field]) && row[field].some((v:string)=>values.includes(v)));return query;},
  eq:(key:string,value:unknown)=>{filters.push(row=>row[key]===value);return query;},in:(key:string,values:unknown[])=>{filters.push(row=>values.includes(row[key]));return query;},limit:(value:number)=>{max=value;return query;},
  or:(expression:string)=>{assert.ok(expression.includes(viewer)||expression.includes(author));return query;},

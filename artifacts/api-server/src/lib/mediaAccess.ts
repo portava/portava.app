@@ -1,3 +1,6 @@
+import { TELEGRAPH_MEDIA_RETENTION } from "./capability/registry.js";
+import { readRestoredMediaSource, recoveryPathStillUsable } from "./media/restoredMediaSource.js";
+import { probeSchemaReadiness } from "./capability/schemaCapability.js";
 import { filterCurrentPostAuthors } from './postAuthorAudience.js';
 /**
  * mediaAccess — SERVER-side authorization for media BYTES (bucket privacy).
@@ -61,10 +64,20 @@ function noteLookupFailure(
   );
 }
 
-/** Per-(viewer,object) allow-cache — media loads burst per screen. */
-const ALLOW_TTL_MS = 60_000;
-const allowCache = new Map<string, number>();
-export function _clearMediaAccessCache(): void { allowCache.clear(); }
+/** Compatibility hook for existing test fixtures; authorization is no longer cached. */
+export function _clearMediaAccessCache(): void {}
+
+function retainedObjectPath(path: string): boolean {
+  // Routes decode their URL input, but stored variant locators may still carry
+  // an encoded first segment. Recovery staging has no ordinary read surface;
+  // activation requires a verified restoration receipt below. Caption JSON
+  // stays behind the caption service's source/manifest authorization.
+  try {
+    const prefix = decodeURIComponent(path.replace(/^\/+/, "").split("/")[0] ?? "").replace(/^\/+/, "").split("/")[0] ?? "";
+    return ["_retained", "manual-captions"].includes(prefix) || prefix === "_recovered" && !path.startsWith("_recovered/");
+  }
+  catch { return true; }
+}
 
 export function publicUrlFor(bucket: string, path: string): string | null {
   const base = process.env.SUPABASE_URL;
@@ -155,12 +168,27 @@ const UNSERVABLE_ATTACHMENT_MODERATION: ReadonlySet<string> = new Set([
 function postVisible(post: any, viewerId: string): "allow" | "deny" | "trip" {
   if (post.deleted_at != null) return "deny";
   if (post.status && post.status !== "active") return "deny";
+  if (post.postcard_draft_state === "draft" || post.postcard_draft_state === "cancelled") return "deny";
   // Delayed-publish gate (audit 1e): unpublished post media is owner-only.
   if (post.post_status && post.post_status !== "published") return "deny";
   if (post.author_id === viewerId) return "allow";
   if (post.visibility === "public") return "allow";
   if (post.visibility === "trip_only" && post.trip_id) return "trip";
   return "deny"; // private + anything richer → conservative deny
+}
+
+/** Current account authority shared by media reads and upload entry points.
+ * Recovery login is not permission to read or create media. */
+export async function mediaAccountAllowsAccess(sc: SupabaseClient, viewerId: string): Promise<boolean> {
+  // Login must still reach explicit recovery actions. Byte access requires the
+  // current account snapshot before source authorization; canonical
+  // media and its lifecycle receipts can disappear before auth erasure ends.
+  try {
+    const account = await sc.rpc("account_recovery_status", { p_user: viewerId });
+    if (account.error !== null || account.data?.userId !== viewerId
+      || account.data?.accountStatus !== "active" || account.data?.mediaAccessAllowed !== true) return false;
+    return true;
+  } catch { return false; }
 }
 
 /**
@@ -173,25 +201,12 @@ export async function authorizeMediaAccess(
   bucket: string,
   path: string,
 ): Promise<boolean> {
-  const cacheKey = `${viewerId}:${bucket}/${path}`;
-  const hit = allowCache.get(cacheKey);
-  // ONLY `profile-media` is cached. The `post-media` decision now depends on
-  // lib/mediaVisibility — per-attachment `visibility_override` rows and
-  // directional `circle_member_visibility_overrides` rows — which a DIFFERENT
-  // process writes. A 60 s allow-cache there would keep serving the bytes for
-  // up to a minute after the owner revoked them, and "I hid this from them and
-  // they could still open it" is the one outcome a circle override exists to
-  // prevent. profile-media's inputs (profile visibility, follows, blocks) have
-  // no such contextual layer, so its cache is left alone.
-  if (bucket === "profile-media" && hit && Date.now() - hit < ALLOW_TTL_MS) return true;
-
-  const allow = await decide(sc, viewerId, bucket, path);
-  if (allow && bucket === "profile-media") allowCache.set(cacheKey, Date.now());
-  if (allowCache.size > 5000) {
-    const oldest = allowCache.keys().next().value as string | undefined;
-    if (oldest) allowCache.delete(oldest);
-  }
-  return allow;
+  if (retainedObjectPath(path)) return false;
+  if (!await mediaAccountAllowsAccess(sc, viewerId)) return false;
+  // Profile deactivation, disclosure, follows and blocks can change in another
+  // process just like post attachment visibility. Every request must consult
+  // their existing owners; an earlier allow is not current authorization.
+  return decide(sc, viewerId, bucket, path);
 }
 
 /**
@@ -297,6 +312,7 @@ async function decide(
   bucket: string,
   path: string,
 ): Promise<boolean> {
+  if (retainedObjectPath(path)) return false;
   // ── profile-media: avatars and cover photos ────────────────────────────────
   // Previously universally visible; now gated by the profile's own visibility
   // settings (private profile → followers/friends only; blocked → deny).
@@ -368,6 +384,17 @@ async function decide(
   }
 
   if (bucket !== "post-media") return false;
+  if (path.startsWith("_recovered/")) {
+    const restored = await readRestoredMediaSource(sc, bucket, path);
+    if (!restored) return false;
+    if (path !== restored.sourcePath) return decide(sc, viewerId, bucket, restored.sourcePath);
+  }
+  // Restoration moves identity to a new key. The original receipt also
+  // revokes the old key when no current asset remains at that address.
+  if (!(await recoveryPathStillUsable(sc, bucket, path))) return false;
+  // telegraph_history_bound_enabled reaches this shared byte authorization.
+  // Every post-media reader needs withdrawal state, independently of that flag.
+  if ((await probeSchemaReadiness(sc, TELEGRAPH_MEDIA_RETENTION)).state !== "ready") return false;
   { const posterOf = derivedPosterBase(path); if (posterOf !== null) return decide(sc, viewerId, bucket, posterOf); } // §37: a poster IS its video
   // Recorded derivatives inherit the original's terminal moderation even for
   // the owner. A copied Memory URL grants no exception to removal of the bytes.
@@ -432,13 +459,20 @@ async function decide(
   // attachment was removed, its retained ledger decision remains authoritative.
   // A current approved attachment can represent a successful moderation appeal;
   // the historical ledger must not undo that explicit restoration.
-  let moderationRows: Array<{ post_id: string; moderation_status: string; processing_status: string }>;
+  let moderationRows: Array<{ post_id: string; moderation_status: string; processing_status: string; deleted_at?: string | null }>;
   try {
-    const current = await sc.from("post_media").select("post_id, moderation_status, processing_status")
+    const current = await sc.from("post_media").select("post_id, moderation_status, processing_status, deleted_at")
       .eq("storage_path", path).limit(POST_MEDIA_ATTACHMENT_CAP);
     if (current.error || !Array.isArray(current.data) || current.data.length >= POST_MEDIA_ATTACHMENT_CAP) return false;
     moderationRows = current.data;
     if (moderationRows.some(row => row.moderation_status === "rejected" || (owner !== viewerId && row.moderation_status === "flagged"))) return false;
+    // Retained attachments are not current access authority, including for
+    // their owner. An independently active canonical asset still has its own
+    // owner authority (shared library media); its terminal states were denied
+    // above. Keep moderation holds from every attachment before filtering.
+    const hadAttachments = moderationRows.length > 0;
+    moderationRows = moderationRows.filter(row => row.deleted_at == null);
+    if (hadAttachments && moderationRows.length === 0 && !(canonicalAssetId && owner === viewerId)) return false;
     if (moderationRows.length === 0) {
       const ledger = await sc.from("post_media_moderation_ledger").select("verdict").eq("storage_path", path).limit(1);
       if (ledger.error || !Array.isArray(ledger.data)) return false;
@@ -542,7 +576,7 @@ async function decide(
       for (const pm of pmRows) {
         const { data: post, error: postErr } = await sc
           .from("posts")
-          .select("author_id, visibility, status, post_status, trip_id, deleted_at")
+          .select("author_id, visibility, status, post_status, trip_id, deleted_at, postcard_draft_state")
           .eq("id", (pm as any).post_id)
           .maybeSingle();
         // Here the deny is returned, not fallen through: a rejected read denies
@@ -969,6 +1003,12 @@ export async function mediaAccessDeadline(
   path: string,
 ): Promise<number | null> {
   if (bucket !== "post-media") return null;
+  if (path.startsWith("_recovered/")) {
+    const restored = await readRestoredMediaSource(sc, bucket, path);
+    if (!restored) return Date.now();
+    if (path !== restored.sourcePath) return mediaAccessDeadline(sc, viewerId, bucket, restored.sourcePath);
+    if (restored.ownerId === viewerId) return null;
+  }
   { const posterOf = derivedPosterBase(path); if (posterOf !== null) return mediaAccessDeadline(sc, viewerId, bucket, posterOf); } // §37: a poster keeps its video's deadline
   const owner = ownerFromPath(path);
   if (owner && owner === viewerId) return null; // owner archive: no boundary

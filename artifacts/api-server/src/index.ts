@@ -46,7 +46,6 @@ import { startPostPlaceBackfillWorker } from "./lib/places/postPlaceBackfillWork
 import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js"; import { startMediaProcessingWorker } from "./lib/media/mediaProcessingWorker.js"; import { startPendingUploadSweepScheduler } from "./lib/media/pendingUploadSweepScheduler.js"; import { startMessageMediaPartsSweepScheduler } from "./lib/messageMediaPartsSweep.js"; // census-telegraph T223 (3656)
 import { startPlaceCollectionsWorker } from "./lib/places/placeCollectionsWorker.js";
 import { startCompassSearchDecayFlushScheduler } from "./lib/compassSearchDecayFlushScheduler.js";
-import { startAccountDeletionScheduler } from "./lib/accountDeletionScheduler.js";
 import { startStoryRetentionScheduler } from "./lib/storyRetentionScheduler.js"; import { startDiscoveryServeLogRetentionScheduler } from "./lib/discoveryServeLogRetentionScheduler.js"; import { startRankingDebugSamplePurgeScheduler } from "./lib/rankingDebugSamplePurgeScheduler.js"; // census-discovery §120; §133 (DV-52) the flag-gated debug-sample purge
 import { startLocationSnapshotPurgeScheduler } from "./lib/locationSnapshotPurgeScheduler.js";
 import { startIntelRetentionScheduler } from "./lib/intelRetentionScheduler.js";
@@ -237,10 +236,6 @@ app.listen(port, (err) => {
   // without it.
   registerScopedTrustApplier();
   startIntelAttributionScheduler();
-  // Executes due user_deletion_requests. Irreversible, so it is gated behind
-  // the `account_deletion_worker_enabled` feature flag and fails closed —
-  // starting it here is safe even before the flag is turned on.
-  startAccountDeletionScheduler();
   // Purges the Story archive on the owner-decided windows (365d expired, 30d
   // owner-deleted, 30d engagement). Hourly.
   //

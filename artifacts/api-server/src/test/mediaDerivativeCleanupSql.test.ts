@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, realpath, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -15,7 +15,7 @@ test("offline PostgreSQL cleanup CAS, role boundary, generation trigger and hard
   const root = await realpath(await mkdtemp(join(tmpdir(), "cleanup-pg-")));
   const owner = "10000000-0000-4000-a000-000000000001";
   const asset = "20000000-0000-4000-a000-000000000001";
-  let failRemove = true;
+  let failRemove = true, removeCalls = 0;
   let reconciler: AdaptiveOrphanReconciler | null = null;
   const identifier = (value: string) => { assert.match(value, /^[a-z_][a-z0-9_]*$/); return `"${value}"`; };
   const normalize = (value: unknown) => JSON.parse(JSON.stringify(value));
@@ -60,11 +60,25 @@ test("offline PostgreSQL cleanup CAS, role boundary, generation trigger and hard
       return query;
     },
     rpc(name: string, args: Record<string, unknown> = {}) {
+      // This isolated SQL test installs the three purge functions below, not the
+      // full application chain. Model only its separate readiness/account-read
+      // premises; every purge transition still executes the real migration SQL.
+      // Full-chain readiness refusal is covered by mediaRecoveryPrerequisites.
+      if (name === "postcard_canonical_lifecycle_ready") return database.query(
+        "SELECT current_user='service_role' AND to_regprocedure('public.advance_media_object_purge(uuid,bigint,text,text,uuid)') IS NOT NULL AS ready")
+        .then((answer: any) => ({ data: answer.rows[0].ready, error: null }));
+      if (name === "account_recovery_status") return Promise.resolve({ data: null, error: null });
       const entries = Object.entries(args);
       return database.query(`SELECT public.${identifier(name)}(${entries.map(([key], index) => `${identifier(key)} => $${index + 1}`).join(",")}) AS result`, entries.map(([, value]) => value))
         .then((answer: any) => ({ data: normalize(answer.rows[0].result), error: null }), (error: unknown) => ({ data: null, error }));
     },
-    storage: { from: () => ({ async remove(paths: string[]) {
+    storage: { from: (bucket: string) => ({
+      async info(path: string) {
+        try {const current=await stat(join(root,path));return {data:{id:asset,version:"synthetic",bucketId:bucket,name:path,size:current.size},error:null};}
+        catch(error:any) {if(error.code!=="ENOENT")throw error;return {data:null,error:{status:404,statusCode:"NoSuchKey"}};}
+      },
+      async remove(paths: string[]) {
+      removeCalls++;
       if (failRemove) return { error: new Error("synthetic storage failure") };
       for (const path of paths) await unlink(join(root, path)).catch(error => { if (error.code !== "ENOENT") throw error; });
       return { error: null };
@@ -72,14 +86,18 @@ test("offline PostgreSQL cleanup CAS, role boundary, generation trigger and hard
   } as unknown as SupabaseClient;
   try {
     await database.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;
-      CREATE TABLE public.media_assets(id uuid PRIMARY KEY, owner_user_id uuid NOT NULL, version integer NOT NULL,
+      CREATE TABLE public.media_assets(id uuid PRIMARY KEY, owner_user_id uuid NOT NULL, uploader_user_id uuid, recovery_generation uuid, version integer NOT NULL,
         storage_bucket text NOT NULL, storage_path text NOT NULL, size_bytes bigint, thumbnail_path text, media_type text,
         deleted_at timestamptz, purge_status text NOT NULL, purge_error text, purged_at timestamptz, updated_at timestamptz,
         processing_status text, moderation_status text);
       CREATE TABLE public.feature_flags(flag text PRIMARY KEY, enabled boolean, description text);
-      CREATE TABLE public.media_asset_lifecycle_events(media_asset_id uuid REFERENCES media_assets(id) ON DELETE CASCADE,
+      CREATE TABLE public.post_media(user_id uuid,storage_bucket text,storage_path text,thumbnail_storage_path text,feed_storage_path text,recovery_snapshot jsonb);
+      CREATE TABLE public.media_asset_lifecycle_events(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),media_asset_id uuid REFERENCES media_assets(id) ON DELETE CASCADE,
         actor_user_id uuid, event_type text, details jsonb);
-      GRANT SELECT,INSERT,UPDATE,DELETE ON media_assets,feature_flags,media_asset_lifecycle_events TO service_role;`);
+      CREATE TABLE public.user_deletion_requests(user_id uuid,status text,execution_token uuid,execution_started_at timestamptz);
+      INSERT INTO public.user_deletion_requests VALUES('${owner}','executing',gen_random_uuid(),clock_timestamp());
+      GRANT SELECT ON user_deletion_requests TO service_role;
+      GRANT SELECT,INSERT,UPDATE,DELETE ON media_assets,feature_flags,media_asset_lifecycle_events,post_media TO service_role;`);
     const migration = await readFile(new URL("../migrations/3320_media_canonical_contract_constraints.sql", import.meta.url), "utf8");
     const trigger = migration.match(/CREATE OR REPLACE FUNCTION public\.media_assets_bump_version\(\)[\s\S]*?EXECUTE FUNCTION public\.media_assets_bump_version\(\);/);
     assert.ok(trigger);
@@ -87,6 +105,13 @@ test("offline PostgreSQL cleanup CAS, role boundary, generation trigger and hard
     await database.exec(await readFile(new URL("../migrations/3980_media_derivative_jobs.sql", import.meta.url), "utf8"));
     await database.query(`INSERT INTO media_assets(id,owner_user_id,version,storage_bucket,storage_path,size_bytes,media_type,deleted_at,purge_status,updated_at,processing_status,moderation_status)
       VALUES($1,$2,4,'post-media',$3,100,'video','2025-01-01','failed','2025-01-01','removed','owner_deleted')`, [asset, owner, `${owner}/original.mp4`]);
+    const retention=await readFile(new URL("../migrations/4041_media_recovery_retention.sql",import.meta.url),"utf8");
+    for(const name of ['media_retention_transfer_settled','media_permanent_purge_paths','advance_media_object_purge']) {
+      const start=retention.indexOf(`CREATE FUNCTION public.${name}(`),end=retention.indexOf('$fn$;',start);
+      assert.ok(start>=0 && end>start);await database.exec(retention.slice(start,end+5));
+      const grantStart=retention.indexOf(`REVOKE ALL ON FUNCTION public.${name}(`,end),grantEnd=retention.indexOf('TO service_role;',grantStart);
+      await database.exec(retention.slice(grantStart,grantEnd+'TO service_role;'.length));
+    }
     await database.exec("SET ROLE service_role");
     await mkdir(join(root, owner));
     await writeFile(join(root, owner, "original.mp4"), "synthetic original bytes");
@@ -98,8 +123,11 @@ test("offline PostgreSQL cleanup CAS, role boundary, generation trigger and hard
     assert.equal((await retryFailedMediaPurges(client, { env: {} })).attempted, 0);
     await database.exec("UPDATE media_assets SET updated_at='2025-01-01'");
     failRemove = false;
+    // Reconcile late provider completion; do not reset the first dispatch claim.
+    assert.equal(removeCalls,1);await unlink(join(root,owner,"original.mp4"));
     const attempts = await Promise.all([retryFailedMediaPurges(client, { env: {} }), retryFailedMediaPurges(client, { env: {} })]);
     assert.equal(attempts.reduce((total, result) => total + result.completed, 0), 1);
+    assert.equal(removeCalls,1);
     row = (await database.query("SELECT * FROM media_assets")).rows[0];
     assert.equal(row.purge_status, "completed");
     assert.equal(row.version, 9);
