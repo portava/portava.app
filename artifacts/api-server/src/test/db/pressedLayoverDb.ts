@@ -10,7 +10,7 @@
  *   psql   — LOCAL_DB_URL is set: CI's api-server-local-db job, whose database
  *            scripts/local-db/up.sh built from the same baseline and chain on
  *            PostgreSQL 16 + PostGIS. Flags a case changes are restored on
- *            close(). Each handle now owns an isolated replayed clone, including
+ *            close(). Each PostgreSQL handle exclusively leases the existing database, including
  *            migration-absent variants and persistent BEGIN/ROLLBACK across calls.
  *   pglite — LAYOVER_PGLITE_ROOT names a node_modules/@electric-sql directory
  *            holding `pglite` and `pglite-postgis` (the baseline needs PostGIS
@@ -34,6 +34,10 @@
  *          row only. No layover file depends on its objects.
  * A file that fails fails the build (no tolerated list): 0 of the remaining
  * files may fail, so the database is the whole chain or nothing.
+ *
+ * Realtime is schema-only (delivery raises). The monitor schema/functions replay,
+ * but the exact pg_cron registration tail is withheld in replayed fixtures and
+ * reported as unexecuted; local-db/up.sh tests that tail with the real extension.
  *
  * VARIANTS (both isolated engines): `without: ["3513", …]` replays the chain WITHOUT
  * those files — the migration-absent arm a pressed-state proof needs. A later
@@ -136,7 +140,20 @@ DECLARE _parts text[]; _filename text; BEGIN SELECT string_to_array(name, '/') I
 RETURN reverse(split_part(reverse(_filename), '.', 1)); END $$;
 GRANT USAGE ON SCHEMA storage TO anon, authenticated, service_role;
 GRANT ALL ON storage.objects, storage.buckets TO anon, authenticated, service_role;
+-- Schema-only Realtime surface for applying policies from 4025. This harness
+-- executes SQL/RLS, not WebSocket delivery. Any actual broadcast fails loudly.
 CREATE SCHEMA IF NOT EXISTS realtime;
+CREATE TABLE realtime.messages (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  topic text, extension text, payload jsonb, event text, private boolean DEFAULT false);
+ALTER TABLE realtime.messages ENABLE ROW LEVEL SECURITY;
+GRANT USAGE ON SCHEMA realtime TO anon, authenticated, service_role;
+GRANT SELECT, INSERT ON realtime.messages TO anon, authenticated, service_role;
+CREATE FUNCTION realtime.topic() RETURNS text LANGUAGE sql STABLE AS $$
+  SELECT nullif(current_setting('realtime.topic', true), '')
+$$;
+CREATE FUNCTION realtime.send(jsonb,text,text,boolean DEFAULT true) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'local-db has no Realtime transport; run this delivery proof against Supabase'; END
+$$;
 CREATE SCHEMA IF NOT EXISTS graphql_public;
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN CREATE PUBLICATION supabase_realtime; END IF; END $$;
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
@@ -177,7 +194,7 @@ async function pgliteModules(): Promise<{ PGlite: any; extensions: Record<string
 
 const errText = (e: any) => `${e?.code ? e.code + ": " : ""}${String(e?.message ?? e).split("\n")[0]}`;
 
-export interface ReplayReport { engine: string; key: string; applied: number; excluded: string[]; variantExcluded: string[]; standIn: string; seconds: number }
+export interface ReplayReport { engine: string; key: string; applied: number; excluded: string[]; variantExcluded: string[]; standIn: string; schedulerRegistration: "not-executed-in-isolated-clone"; seconds: number }
 
 interface ReplayDatabase { exec(sql: string): Promise<unknown>; query(sql: string): Promise<{rows: Row[]}>; close(): Promise<void> }
 /** Explicit causal edges, verified against the named migration preconditions.
@@ -203,6 +220,8 @@ const ABSENT_DEPENDENCIES:Readonly<Record<string,readonly string[]>>={
   '3898':['3827','3828'], // lifecycle state + active snapshot columns
   '3907':['3899'], // objective fact kind CHECK
   '3908':['2860','2992','3623','3828','3871','3873','3895'], // declared durable fanout schema/watch prerequisites
+  '4043':['4040','4041'], // terminal account receipt requires retained-media inventory
+  '4042':['4041','3913'], // guarded edits extend the existing complete Memory kernel
   '3951':['2700','2992'], '3996':['2984'], // 3951: the certified table + snapshot identity (census-layover §83 L25); 3996: crew membership composite FK
 };
 export function pressedMigrationOmissions(order:readonly string[],without:readonly string[]):Map<string,readonly string[]> {
@@ -234,6 +253,18 @@ export async function executePressedMigrationChain(db:Pick<ReplayDatabase,'exec'
   }
   return {applied,excluded,variantExcluded};
 }
+/** Replayed fixtures exercise monitor schema/functions, not the host scheduler.
+ * Fixture variants must not register active host jobs during a replay.
+ * The main local-db/up.sh path still applies 4026 verbatim with real pg_cron.
+ * Refuse any drift in the omitted registration rather than trimming arbitrary SQL. */
+export function pressedMigrationSql(file: string, sql: string): string {
+  if (file !== '4026_intelligence_system_monitor.sql') return sql;
+  const registration = "create extension if not exists pg_cron with schema pg_catalog;\nselect cron.schedule('intelligence-system-monitor-hourly', '7 * * * *',\n  $job$set statement_timeout='20s'; set lock_timeout='2s'; select intelligence_monitor.collect();$job$);";
+  if (!sql.trimEnd().endsWith(registration) || sql.indexOf(registration) !== sql.lastIndexOf(registration)) {
+    throw new Error('4026 scheduler registration changed: re-review the isolated replay boundary');
+  }
+  return sql.trimEnd().slice(0, -registration.length);
+}
 async function replayInto(dir: string, without: readonly string[], external?: { db: ReplayDatabase; version: string; major: number }): Promise<ReplayReport> {
   const t0 = Date.now();
   const { A, B } = await scripts();
@@ -257,23 +288,28 @@ async function replayInto(dir: string, without: readonly string[], external?: { 
       try { await db.exec(s.code); } catch { await reset(); }
     }
   }
+  // Synthetic bucket configuration matches the private upload contract.
+  // No hosted bucket is altered; 4028 still refuses a genuinely public bucket.
+  await db.exec("INSERT INTO storage.buckets(id,name,public) VALUES ('post-media','post-media',false) ON CONFLICT(id) DO UPDATE SET public=false");
   const order = (await chainOrder()).filter((f) => f >= "2093");
   const skip = new Set<string>([...PACKET_EXCLUDED, STAND_IN, ...(external && external.major < 17 ? ["2490_destructive_privilege_boundary.sql"] : [])]); // PG16 lacks MAINTAIN; existing local-db KNOWN_UNREPLAYABLE records this exact exception.
-  const {applied,excluded,variantExcluded}=await executePressedMigrationChain(db,order,without,skip,f=>readFileSync(join(MIGRATIONS,f),'utf8'));
+  const {applied,excluded,variantExcluded}=await executePressedMigrationChain(db,order,without,skip,f=>pressedMigrationSql(f,readFileSync(join(MIGRATIONS,f),'utf8')));
   // 3982's stand-in: the ledger row the main packet records, nothing else (no pgvector here)
   const ledger = (await db.query(`SELECT to_regclass('public.schema_migration_ledger') IS NOT NULL AS ok`)).rows[0] as { ok: boolean };
   if (ledger.ok) await db.exec(`INSERT INTO public.schema_migration_ledger (filename, checksum, applied_by, notes) VALUES (${lit(STAND_IN)}, ${lit(sha(readFileSync(join(MIGRATIONS, STAND_IN))))}, 'manual', 'HARNESS-ONLY STAND-IN: 3982 needs pgvector, which PGlite lacks') ON CONFLICT (filename) DO NOTHING`);
   if (!external) await db.exec("ALTER DATABASE postgres SET timezone TO 'UTC'");
   await db.close();
-  return { engine: version, key: "", applied, excluded, variantExcluded, standIn: STAND_IN, seconds: Math.round((Date.now() - t0) / 1000) };
+  return { engine: version, key: "", applied, excluded, variantExcluded, standIn: STAND_IN, schedulerRegistration: "not-executed-in-isolated-clone", seconds: Math.round((Date.now() - t0) / 1000) };
 }
 
 function cacheKey(engine: string, without: readonly string[], order: string[]): string {
   const h = createHash("sha256");
   h.update(`v2|${engine}|without=${[...without].sort().join(",")}|`);
   h.update(SHIM);
+  h.update(pressedMigrationSql.toString());
   h.update(readFileSync(fileURLToPath(import.meta.url)));
   h.update(readFileSync(join(HERE, "pressedPostgres.ts")));
+  h.update(readFileSync(join(HERE, "pressedSnapshot.ts")));
   h.update(readFileSync(BASELINE));
   h.update(readFileSync(join(MIGRATIONS, "ORDER_OVERRIDES.json")));
   for (const f of order) { h.update(f); h.update(readFileSync(join(MIGRATIONS, f))); }

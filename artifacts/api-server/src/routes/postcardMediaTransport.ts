@@ -1,3 +1,4 @@
+import { mediaAccountAllowsAccess } from "../lib/mediaAccess.js";
 /**
  * Postcard media transport — the poster and the resumable byte path for a
  * reserved `post_media` slot (Media spec §37). The policy lives in
@@ -83,6 +84,7 @@ async function loadOwnedPendingSlot(sc: any, userId: string, postId: string, med
   const { data, error } = await sc
     .from("post_media")
     .select("id, user_id, post_id, storage_path, media_type, file_size_bytes, processing_status")
+    .is("deleted_at", null)
     .eq("id", mediaId)
     .eq("post_id", postId)
     .maybeSingle();
@@ -111,6 +113,10 @@ async function preamble(
   const sc = getServiceClient();
   if (!sc) {
     sendError(res, "server_not_configured", "Storage not configured");
+    return null;
+  }
+  if (!await mediaAccountAllowsAccess(sc, auth.user.id)) {
+    sendError(res, "forbidden", "An active account is required to upload media.");
     return null;
   }
   if (await isKillSwitchEngaged(sc, "disable_media_uploads")) {

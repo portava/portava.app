@@ -1,3 +1,4 @@
+import { memoryEditFixture } from './helpers/memoryEditFixture.js';
 /**
  * §17 Command Bus over routes/memories.ts — the boundary, the §5 machine, the
  * §17 REMOVE_PERSON authorization, §19 idempotent replay, and honest failure.
@@ -191,6 +192,10 @@ async function startApp(opts: {
 }
 
 async function call(app: App, method: string, path: string, viewer: string, body?: unknown, idem?: string) {
+  if (method === "PATCH" && /^\/api\/memories\/[^/]+$/.test(path) && body && typeof body === "object") {
+    const row = app.tables.memories.find(m => m.id === path.split('/').at(-1));
+    if (row) body = memoryEditFixture(row, body as Record<string, unknown>);
+  }
   const headers: Record<string, string> = {
     Authorization: `Bearer ${viewer}`, "Content-Type": "application/json", connection: "close",
   };
@@ -448,7 +453,8 @@ describe("kernel enabled, migration 2710 NOT applied — the route reports unava
       try {
         const r = await call(app, method, path, OWNER, body);
         assert.equal(r.status, 503, JSON.stringify(r.body));
-        assert.equal(r.body?.reason, "MEMORY_KERNEL_UNAVAILABLE");
+        if(method === "POST" || method === "PATCH") assert.equal(r.body?.error, "degraded_unavailable");
+        else assert.equal(r.body?.reason, "MEMORY_KERNEL_UNAVAILABLE");
         assert.equal(app.tables.memories.find((m) => m.id === M_PUB)?.title, titleBefore);
         assert.equal(stateOf(app, M_PUB), "published");
         assert.equal(app.tables.memory_items.length, itemsBefore);
@@ -481,17 +487,17 @@ describe("kernel enabled, migration 2710 NOT applied — the route reports unava
 // 5. The flag OFF path is the pre-lane behaviour, plus the guard.
 // ═════════════════════════════════════════════════════════════════════════════
 
-describe("kernel flag OFF — the legacy direct write still runs and no event is invented", () => {
-  it("PATCH applies and writes NO event, NO outbox row, NO receipt", async () => {
+describe("kernel flag OFF — edits still use the transactional writer", () => {
+  it("PATCH applies with one event, outbox row and receipt", async () => {
     const app = await startApp({ kernelOn: false });
     try {
       const r = await call(app, "PATCH", `/api/memories/${M_PUB}`, OWNER, { title: "legacy" });
       assert.equal(r.status, 200, JSON.stringify(r.body));
       assert.equal(app.tables.memories.find((m) => m.id === M_PUB)?.title, "legacy");
-      assert.equal(app.state.rpcCalls.length, 0, "the kernel function was never called");
-      assert.equal(app.tables.memory_domain_events.length, 0);
-      assert.equal(app.tables.memory_event_outbox.length, 0);
-      assert.equal(app.tables.memory_command_receipts.length, 0);
+      assert.deepEqual(app.state.rpcCalls.map(c => c.name), ["memory_field_edits_ready", "memory_kernel_execute"]);
+      assert.equal(app.tables.memory_domain_events.length, 1);
+      assert.equal(app.tables.memory_event_outbox.length, 1);
+      assert.equal(app.tables.memory_command_receipts.length, 1);
     } finally { await app.close(); }
   });
 

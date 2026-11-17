@@ -13,6 +13,7 @@ import { globalErrorHandler } from "./lib/errorEnvelope";
 import { specAliasRewrite } from "./lib/specAliasRewrite";
 import { BOOT_HRTIME } from "./lib/bootTime";
 import { callsWebhookHandler, callsWebhookRawParser } from "./routes/callsWebhook";
+import { generationWebhookHandler, generationWebhookRawParser } from "./routes/mediaGenerationWebhook.js";
 import { webhookHandler as verificationWebhookHandler, webhookRawParser as verificationWebhookRawParser } from "./routes/verification.js";
 import wellKnownShareRouter from "./routes/wellKnownShare.js";
 import { telegraphObservability } from "./middlewares/telegraphObservability.js";
@@ -123,6 +124,7 @@ app.use(coldStartMiddleware);
 // LiveKit webhook needs the RAW body for signature verification — must be
 // registered BEFORE the global JSON parser consumes it.
 app.post("/api/calls/webhook", callsWebhookRawParser, callsWebhookHandler);
+app.post("/api/media/generation/webhook/:id", generationWebhookRawParser, generationWebhookHandler);
 
 // Identity-verification webhook: raw body for future real-provider signature verification.
 // Registered before the global JSON parser so the raw body is preserved.

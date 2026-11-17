@@ -1,3 +1,4 @@
+import { mediaAccountAllowsAccess } from "../lib/mediaAccess.js";
 /**
  * Postcards routes — structured media upload flow for Postcards.
  *
@@ -15,11 +16,12 @@
  *  - TODO: server-side thumbnail generation (currently the client uploads a thumbnail frame).
  */
 import { Router } from 'express';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { requireUser, sendError, safeSecretEquals, tripExists, isAcceptedTripMember } from '../lib/http.js';
 import { getServiceClient } from '../lib/supabase.js';
-import { processTagging } from '../services/tagging/TaggingService.js';
-import { isKillSwitchEngaged } from '../lib/featureFlags.js';
+import { postcardDraftRouter, publishPostcardDraft } from './postcardDrafts.js';
+import { isFlagEnabled, isKillSwitchEngaged } from '../lib/featureFlags.js';
 import { processImage, computePHash, makeFeedVariant } from '../lib/mediaProcessing.js';
 import { stripVideoLocationMetadata } from '../lib/videoMetadata.js';
 import {
@@ -28,9 +30,12 @@ import {
   verifyUploadedBytes,
   MEDIA_SIZE_LIMITS,
 } from '../lib/mediaPipeline.js';
-import { recordEntityMedia, MEDIA_SOURCE_UNDECLARED } from '../lib/mediaAssets.js'; import { recordPostcardCreatedSignal } from '../lib/mediaAnalytics.js';
+import { recordEntityMedia, recordMediaAssetDetailed, capturedAtFromImageBytes, capturedAtFromPhotoMetadata, MEDIA_SOURCE_UNDECLARED } from '../lib/mediaAssets.js'; import { recordPostcardCreatedSignal } from '../lib/mediaAnalytics.js';
+
+import { postcardCanonicalReady, finishPostcardCanonicalMedia, type PostcardMediaSource } from '../lib/media/postcardCanonicalMedia.js';
 
 const router = Router();
+router.use(postcardDraftRouter(syncPostcardAfterMediaChange));
 
 const STORAGE_BUCKET = 'post-media';
 const MAX_MEDIA_PER_POSTCARD = 10;
@@ -225,6 +230,9 @@ async function refreshMediaCounts(sc: any, postId: string): Promise<{
  * completed media item when add_to_passport=true.
  */
 const createPostcardSchema = z.object({
+  operationId: z.string().uuid().optional(),
+  /** Current clients publish explicitly after checking their upload lifetime. */
+  deferPublication: z.boolean().optional().default(false),
   caption:         z.string().max(2000).optional(),
   visibility:      z.enum(['public', 'private', 'trip_only']).optional().default('public'),
   locationName:    z.string().max(200).optional(),
@@ -290,6 +298,15 @@ router.post('/postcards', async (req, res) => {
 
   // Column mapping: provider place refs go to location_place_id (same column
   // the /api/posts flow writes — a bare `place_id` column does not exist).
+  if (p.operationId) {
+    const existing = await sc.from('posts').select('id,postcard_draft_state' as never).eq('author_id', user.id).eq('postcard_draft_operation_id' as never, p.operationId).maybeSingle();
+    if (existing.error) { sendError(res, 'db_error', 'Draft could not be read. Try again.'); return; }
+    const previous = existing.data as unknown as { id: string; postcard_draft_state: string } | null;
+    if (previous) {
+      if (previous.postcard_draft_state === 'cancelled') { res.status(409).json({ error: 'draft_cancelled' }); return; }
+      res.status(201).json({ id: previous.id }); return;
+    }
+  }
   const baseRow = {
     author_id:          user.id,
     content:            p.caption ?? '',
@@ -297,7 +314,12 @@ router.post('/postcards', async (req, res) => {
     media_count:        0,
     has_video:          false,
     primary_media_type: 'none',
-    visibility:         p.visibility,
+    visibility:         'private' as const,
+    post_status:        'draft' as const,
+    postcard_draft_state: 'draft',
+    postcard_requested_visibility: p.visibility,
+    postcard_draft_operation_id: p.operationId ?? null,
+    postcard_publish_on_complete: !p.deferPublication,
     status:             'active',
     location_name:      p.locationName ?? null,
     location_city:      (layover ? layover.city : p.locationCity) ?? null, // census-layover L275: a layover postcard's city is the layover's, never the client's
@@ -364,19 +386,8 @@ router.post('/postcards', async (req, res) => {
     }).catch(() => {});
   }
 
-  // Fire-and-forget: extract @mentions and #hashtags from caption
-  if (p.caption) {
-    processTagging({
-      db:         sc,
-      authorId:   user.id,
-      sourceType: 'post',
-      sourceId:   postId,
-      content:    p.caption,
-      city:       p.locationCity ?? null,
-      country:    p.locationCountry ?? null,
-      logger:     (req as any).log,
-    }).catch(() => {});
-  }
+  // Mentions/hashtags are processed only after explicit publication, never for
+  // a private upload shell or discarded caption.
 
   res.status(201).json({ id: postId });
 });
@@ -465,15 +476,19 @@ router.post('/postcards/:id/media/upload-url', async (req, res) => {
     return;
   }
 
-  // Create post_media row in pending state (storage_path filled after we have the mediaId)
+  // Reserve the ID and immutable locator in one write. Never mint upload
+  // authority for a slot whose final path was not durably recorded.
+  const mediaId = randomUUID();
+  const storagePath = `${user.id}/${postId}/${mediaId}.${mimeInfo.ext}`;
   const { data: mediaRow, error: mediaErr } = await sc
     .from('post_media')
     .insert({
+      id:                mediaId,
       post_id:           postId,
       user_id:           user.id,
       media_type:        mimeInfo.mediaType,
       storage_bucket:    STORAGE_BUCKET,
-      storage_path:      '',
+      storage_path:      storagePath,
       public_url:        '',
       mime_type:         mimeType,
       file_size_bytes:   fileSizeBytes,
@@ -481,7 +496,7 @@ router.post('/postcards/:id/media/upload-url', async (req, res) => {
       moderation_status: 'pending',
       sort_order:        existingCount,
     })
-    .select('id')
+    .select('id, storage_path')
     .single();
 
   if (mediaErr) {
@@ -490,15 +505,11 @@ router.post('/postcards/:id/media/upload-url', async (req, res) => {
     return;
   }
 
-  const mediaId = (mediaRow as any).id as string;
-  const storagePath = `${user.id}/${postId}/${mediaId}.${mimeInfo.ext}`;
-
-  // Backfill storage_path now that we have the mediaId
-  const { error: pathErr } = await sc
-    .from('post_media')
-    .update({ storage_path: storagePath })
-    .eq('id', mediaId);  // census-discovery §56 (DV-77): BOUND. A slot whose path did not record is one no sweep can find, so no URL is minted for it.
-  if (pathErr) { req.log.error({ err: pathErr, mediaId }, 'postcards: storage_path backfill failed — refusing rather than minting an untracked upload URL'); await sc.from('post_media').update({ processing_status: 'failed' }).eq('id', mediaId).then(undefined, () => {}); sendError(res, "db_error", "We couldn't prepare your upload. Please try again.", { exposeDetail: true }); return; }
+  if (!mediaRow || mediaRow.id !== mediaId || mediaRow.storage_path !== storagePath) {
+    req.log.error({ mediaId }, 'postcards: reservation receipt unconfirmed — refusing upload authority');
+    sendError(res, "db_error", "We couldn't confirm your upload reservation. Please try again.", { exposeDetail: true });
+    return;
+  }
 
   // Generate signed upload URL
   const { data: urlData, error: urlErr } = await sc.storage
@@ -531,6 +542,7 @@ router.post('/postcards/:id/media/upload-url', async (req, res) => {
  * passport_postcard on the first ready media when add_to_passport=true.
  */
 const completeSchema = z.object({
+  photoCapturedAt: z.string().max(40).nullish(),
   mimeType:        z.string(),
   fileSizeBytes:   z.number().int().positive(),
   durationSeconds: z.number().positive().optional(),
@@ -665,6 +677,11 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+  if (!await mediaAccountAllowsAccess(sc, user.id)) {
+    sendError(res, 'forbidden', 'An active account is required to complete media.');
+    return;
+  }
+
 
   const parsed = completeSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -676,7 +693,8 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
   // Load + verify ownership
   const { data: mediaRow, error: mediaErr } = await sc
     .from('post_media')
-    .select('id, user_id, post_id, storage_path, storage_bucket, media_type, processing_status')
+    .select('id, user_id, post_id, storage_path, storage_bucket, media_type, processing_status, moderation_status, width, height, mime_type, file_size_bytes')
+    .is('deleted_at', null)
     .eq('id', mediaId)
     .eq('post_id', postId)
     .maybeSingle();
@@ -689,10 +707,21 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
   if (!mediaRow) { sendError(res, 'not_found', 'Media not found'); return; }
   if ((mediaRow as any).user_id !== user.id) { sendError(res, 'forbidden', 'Not your media'); return; }
 
+  const canonicalPhoto = (mediaRow as any).media_type === 'image' && await isFlagEnabled(sc, 'media_canonical_enabled');
+  if (canonicalPhoto && !await postcardCanonicalReady(sc)) {
+    sendError(res, 'degraded_unavailable', 'Photo completion is temporarily unavailable. Please retry.'); return;
+  }
+
   // Idempotent: already ready
   if ((mediaRow as any).processing_status === 'ready') {
-    res.status(200).json({ ok: true });
-    return;
+    const receipt = canonicalPhoto ? await finishPostcardCanonicalMedia(sc, mediaRow as unknown as PostcardMediaSource) : 'complete';
+    if (receipt === 'unavailable') { sendError(res, 'db_error', 'Photo completion could not be confirmed. Please retry.'); return; }
+    if (receipt === 'complete') {
+      if (!await autoPublishLegacyPostcard(sc, postId, user.id)) { sendError(res, 'db_error', 'Publication could not be confirmed. Try again.'); return; }
+      await syncPostcardAfterMediaChange(sc, postId, user, req); res.status(200).json({ ok: true }); return;
+    }
+    // A legacy ready source may predate canonical capture persistence. Recover
+    // it through the measured pipeline; never claim a missing receipt succeeded.
   }
 
   // Compute bare bucket/path reference (bucket will be private; client hydration signs on demand)
@@ -706,6 +735,8 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
   // Videos are not transcoded (no ffmpeg tier), but their container location
   // atoms ARE stripped, and their duration + display size are READ from the
   // container (§37, lib/videoProbe.ts) — server-measured wins, as for images.
+  let measuredMime: string | null = null;
+  let measuredSize: number | null = null;
   let probedVideo: VideoProbe | null = null;
   let measuredWidth: number | null = null;
   let measuredHeight: number | null = null;
@@ -734,6 +765,20 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
         img = await processImage(rawBuf, sniffed);
       } catch (decodeErr) {
         throw contentFailure(decodeErr instanceof Error ? decodeErr.message : 'image could not be decoded');
+      }
+      // Persist the capture receipt before stripping the only raw EXIF copy.
+      // uploaded + limited is not distributable; the existing source guard
+      // orders this write against cancellation/deletion while the slot is pending.
+      measuredMime = img.mime; measuredSize = img.buffer.length;
+      if (canonicalPhoto) {
+        const asset = await recordMediaAssetDetailed(sc, {
+          ownerUserId: user.id, storageBucket: STORAGE_BUCKET, storagePath, publicUrl,
+          mediaType: 'image', mimeType: img.mime, sizeBytes: img.buffer.length,
+          width: img.width, height: img.height, sourceType: MEDIA_SOURCE_UNDECLARED,
+          capturedAt: capturedAtFromPhotoMetadata(p.photoCapturedAt) ?? capturedAtFromImageBytes(rawBuf),
+          processingStatus: 'uploaded', moderationStatus: 'limited', preserveExisting: true,
+        }, { allowSchemaFallback: false });
+        if (asset.outcome !== 'written' || !asset.assetId) throw infraFailure('Canonical photo receipt could not be confirmed');
       }
       // STORAGE — infrastructure again.
       const { error: reErr } = await sc.storage
@@ -975,10 +1020,10 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
   // Mark ready + store metadata
   const baseUpdate: Record<string, unknown> = {
     processing_status:      'ready',
-    moderation_status:      await preDistributionPostMediaStatus(sc, { mediaType: (mediaRow as any).media_type === 'video' ? 'video' : 'image', bucket: STORAGE_BUCKET, path: storagePath, framePath: poster.path }), // census-media §37 (MD269/MD283): 'approved' while media_moderation_classifier_enabled is off (3356, seeded FALSE) (was: moderation_status:      'approved',)
+    moderation_status:      ((mediaRow as any).processing_status === 'ready' || ['flagged', 'rejected'].includes((mediaRow as any).moderation_status)) ? (mediaRow as any).moderation_status : await preDistributionPostMediaStatus(sc, { mediaType: (mediaRow as any).media_type === 'video' ? 'video' : 'image', bucket: STORAGE_BUCKET, path: storagePath, framePath: poster.path }), // census-media §37 (MD269/MD283): 'approved' while media_moderation_classifier_enabled is off (3356, seeded FALSE) (was: moderation_status:      'approved',)
     public_url:             publicUrl,
-    mime_type:              p.mimeType,
-    file_size_bytes:        p.fileSizeBytes,
+    mime_type:              measuredMime ?? p.mimeType,
+    file_size_bytes:        measuredSize ?? p.fileSizeBytes,
     duration_seconds:       storedDuration.seconds,
     // Server-measured dimensions win over client-declared (audit trust fix).
     width:                  measuredWidth ?? probedVideo?.width ?? p.width ?? null,
@@ -1019,10 +1064,11 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     baseUpdate.feed_url = feedUrl;
   }
 
-  let { error: updateErr } = await sc
+  let { data: completedSource, error: updateErr } = await sc
     .from('post_media')
     .update(overlay ? { ...baseUpdate, stamp_overlay: overlay } : baseUpdate)
-    .eq('id', mediaId);
+    .eq('id', mediaId).eq('processing_status', (mediaRow as any).processing_status)
+    .eq('moderation_status', (mediaRow as any).moderation_status).select('id');
 
   // Graceful degrade: feed_url/feed_storage_path missing (migration 0208 not
   // applied in this environment) — drop them and retry. The variant object is
@@ -1045,8 +1091,9 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     const retry = await sc
       .from('post_media')
       .update(overlay ? { ...baseUpdate, stamp_overlay: overlay } : baseUpdate)
-      .eq('id', mediaId);
-    updateErr = retry.error;
+      .eq('id', mediaId).eq('processing_status', (mediaRow as any).processing_status)
+    .eq('moderation_status', (mediaRow as any).moderation_status).select('id');
+    updateErr = retry.error; completedSource = retry.data;
   }
 
   // Graceful degrade: stamp_overlay column missing (migration 0129 not applied
@@ -1060,8 +1107,9 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     req.log.warn({ err: updateErr }, 'postcards: stamp_overlay column missing — completing without overlay (apply migration 0129)');
     overlay = null;
     overlayError = 'stamp_overlay_not_supported';
-    const retry = await sc.from('post_media').update(baseUpdate).eq('id', mediaId);
-    updateErr = retry.error;
+    const retry = await sc.from('post_media').update(baseUpdate).eq('id', mediaId).eq('processing_status', (mediaRow as any).processing_status)
+    .eq('moderation_status', (mediaRow as any).moderation_status).select('id');
+    updateErr = retry.error; completedSource = retry.data;
   }
 
   if (updateErr) {
@@ -1069,9 +1117,26 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     sendError(res, "db_error", "We couldn't finish your upload. Please try again.", { exposeDetail: true });
     return;
   }
+  if (!Array.isArray(completedSource) || completedSource.length !== 1) { sendError(res, 'conflict', 'The photo changed during completion. Please retry.'); return; }
+  if (canonicalPhoto && await finishPostcardCanonicalMedia(sc, { ...(mediaRow as unknown as PostcardMediaSource), ...baseUpdate } as PostcardMediaSource, true) !== 'complete') {
+    sendError(res, 'db_error', 'Photo completion could not be confirmed. Please retry.'); return;
+  }
+  if (!await autoPublishLegacyPostcard(sc, postId, user.id)) { sendError(res, 'db_error', 'Publication could not be confirmed. Try again.'); return; }
   const counts = await syncPostcardAfterMediaChange(sc, postId, user, req); res.status(200).json({ ok: true, mediaCount: counts.mediaCount, hasVideo: counts.hasVideo, ...(p.stampOverlay ? (overlay ? { stampOverlayApplied: true } : { stampOverlayApplied: false, stampOverlayError: overlayError ?? 'stamp_unavailable' }) : {}) }); }); // census-media §37.9: the step below is shared with admin moderation; the response is unchanged
+async function autoPublishLegacyPostcard(sc: NonNullable<ReturnType<typeof getServiceClient>>, postId: string, actor: string): Promise<boolean> {
+  const { data, error } = await sc.from('posts').select('postcard_draft_state,postcard_publish_on_complete' as never).eq('id', postId).eq('author_id', actor).maybeSingle();
+  if (error || !data) return false;
+  const draft = data as unknown as { postcard_draft_state?: string; postcard_publish_on_complete?: boolean };
+  if (draft.postcard_draft_state === 'cancelled') return false;
+  if (draft.postcard_draft_state !== 'draft' || !draft.postcard_publish_on_complete) return true;
+  if (await isKillSwitchEngaged(sc, 'disable_posting')) return false;
+  return (await publishPostcardDraft(sc, actor, postId)).ok;
+}
 export async function syncPostcardAfterMediaChange(sc: any, postId: string, user: { id: string }, req: { log: { warn: (...args: any[]) => void } }, alsoGone: readonly string[] = []): Promise<PostcardStepResult> { // census-media §37.10: it also moves the passport cover (was: …, req: {…}): Promise<PostcardMediaCounts> {) // Refresh parent counts and get first-ready URL for postcard creation (census-media §37.9: /complete and POST /admin/media/:id/moderate)
   const counts = await refreshMediaCounts(sc, postId);
+
+  const lifecycle = await sc.from('posts').select('postcard_draft_state').eq('id', postId).maybeSingle();
+  if (lifecycle.error || ['draft', 'cancelled'].includes(lifecycle.data?.postcard_draft_state)) return { ...counts, cover: lifecycle.error ? 'failed' : 'no_postcard' };
 
   // Lazily create passport_postcard on the first ready media when add_to_passport=true.
   // Uses insert-or-nothing (ON CONFLICT DO NOTHING via ignoreDuplicates) so concurrent
@@ -1148,7 +1213,7 @@ export async function syncPostcardAfterMediaChange(sc: any, postId: string, user
 /* ============================================================================
  * DELETE /api/postcards/:id/media/:mediaId — owner-only removal
  * ============================================================================
- * Hard-deletes the post_media row, removes the storage object, and re-derives
+ * Withdraws the existing post_media row, retains its bytes, and re-derives
  * the parent post's media summary columns.
  */
 router.delete('/postcards/:id/media/:mediaId', async (req, res) => {
@@ -1194,34 +1259,21 @@ router.delete('/postcards/:id/media/:mediaId', async (req, res) => {
     }
   }
 
-  // Hard-delete from DB — after 2098's delete pin (isModerationPinnedPostMedia, at the tail): a pinned row is refused and NOTHING is written
+  // Withdraw atomically, retaining the existing slot for late signed PUT cleanup.
   if (isModerationPinnedPostMedia((mediaRow as any).moderation_status)) { sendError(res, 'conflict', POSTCARD_MEDIA_PINNED_MESSAGE()); return; }
-  const { data: deletedRows, error: deleteErr } = await sc
-    .from('post_media')
-    .delete()
-    .eq('id', mediaId).eq('moderation_status', String((mediaRow as any).moderation_status)).select('id'); // compare-and-set on the state just read: a verdict landing after the read is not deleted out from under it
+  const { data: withdrawn, error: deleteErr } = await sc.rpc('withdraw_postcard_media', {
+    p_actor: user.id, p_post: postId, p_media: mediaId,
+    p_expected_moderation: String((mediaRow as any).moderation_status),
+    ...(!isOwner ? { p_admin_reason: 'Administrator withdrew Postcard media' } : {}),
+  });
   if (deleteErr) {
     req.log.error({ err: deleteErr }, 'postcards: failed to delete media row');
     sendError(res, "db_error", "We couldn't remove that media. Please try again.", { exposeDetail: true });
     return;
   }
-  if (!Array.isArray(deletedRows) || deletedRows.length === 0) { sendError(res, 'conflict', POSTCARD_MEDIA_PINNED_MESSAGE()); return; } // the row changed or went since the read: nothing was deleted, and its objects are left as they are
-  // Remove from storage (best-effort — do not fail if storage removal fails).
-  // The 0208 feed variant goes with it: it is a derivative of this exact object
-  // and nothing else references it, so leaving it behind would be an ORPHAN
-  // OBJECT in check:media-objects' terms — wasted storage, and content believed
-  // deleted that is still fetchable. `remove` tolerates absent keys, so listing
-  // it unconditionally is safe for videos and pre-0208 rows alike.
-  const storagePath = (mediaRow as any).storage_path as string;
-  if (storagePath) {
-    await sc.storage
-      .from(STORAGE_BUCKET)
-      .remove([storagePath, `${storagePath}.feed.jpg`])
-      .then(undefined, () => {});
-    // The video poster and any resumable parts are derivatives of this exact
-    // object too (routes/postcardMediaTransport.ts); they go with it.
-    await removeTransportArtifacts(sc.storage.from(STORAGE_BUCKET), storagePath).then(undefined, () => {});
-  }
+  if (withdrawn !== true) { sendError(res, 'conflict', POSTCARD_MEDIA_PINNED_MESSAGE()); return; } // the row changed or went since the read: nothing was deleted, and its objects are left as they are
+  // Retain bytes for admin recovery. Abandoned, never-completed uploads remain
+  // the responsibility of the existing expiry sweep; completed slots are held.
 
   // Re-derive parent media counts
   const counts = await refreshMediaCounts(sc, postId); await repointPassportCover(sc, postId, counts, req, [String((mediaRow as any).public_url ?? '')].filter(Boolean)); // census-media §37.10 item 1: a cover that sat on the removed file moves (or clears) by the one cover rule
@@ -1589,7 +1641,7 @@ export default router;
 // placement does not change evaluation order.
 import { probeVideoContainer, resolveStoredDuration, type VideoProbe } from '../lib/videoMetadata.js';
 import { admissiblePosterPath } from '../lib/mediaPosterPath.js';
-import { removeTransportArtifacts } from '../lib/postcardMediaTransport.js';  import { sweepAbandonedPendingUploads, PENDING_UPLOAD_ORPHAN_CUTOFF_MS } from '../services/media/PendingUploadSweep.js';  // census-discovery §56 (DV-77)
+import { sweepAbandonedPendingUploads, PENDING_UPLOAD_ORPHAN_CUTOFF_MS } from '../services/media/PendingUploadSweep.js';  // census-discovery §56 (DV-77)
 
 // census-media §37 (MD269/MD283): the §36 safety-moderation stage decides the value /complete
 // writes. Off (the seed), it is 'approved', as before. Imported at the TAIL, like the block above.

@@ -117,7 +117,7 @@ It is a discount on inflated evidence, never a penalty on a person: `01` §10 fo
 
 **Gaps:**
 
-- A signed-in `for_you` cold request with Compass on is ordered by Compass (`artifacts/api-server/src/routes/discovery.ts:2169#const scored = await rankItemsForDiscovery`) and not by `rankForViewer`.
+- A signed-in `for_you` cold request with Compass on is ordered by Compass (`artifacts/api-server/src/routes/discovery.ts:2148#const scored = await rankItemsForDiscovery`) and not by `rankForViewer`.
 - §41.4: consolidating removes the parallel path that is DV-09's only passing leg. It would also change served `for_you` order **with no flag in front of it**.
 
 **Design:** no new flag. The consolidation rides the existing `DISCOVERY_ENGINE_MODE`. In `pde` mode, for an in-cohort viewer, the Compass branch is skipped and the cold `for_you` page is ranked by `rankForViewer`, so it is gated by Phase F gate 2 like every other pde change. Legacy keeps Compass. Design 5's `discovery` surface objective must exist **first**, so that DV-09's Discovery leg is carried by the consolidated pipeline before Compass leaves it.

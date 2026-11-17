@@ -1,3 +1,4 @@
+import { recoverDeletedAccount, recoveryRefusalMessage } from '../services/accountDeletion/AccountRecoveryService.js';
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, safeSecretEquals } from "../lib/http";
@@ -6,7 +7,6 @@ import { getServiceClient } from "../lib/supabase";
 import { resolveStoragePath } from "../lib/storagePath.js";
 import { readVerifiedAgeSignal } from "../lib/travelerVerification.js";
 import { gateAgeFrom } from "../lib/gateAge.js";
-import { executeAccountDeletion } from "../services/accountDeletion/AccountDeletionService.js";
 import { retranslateForUser } from "../services/messageTranslation";
 import { shouldRetranslateOnLanguageChange } from "../lib/retranslateGate";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
@@ -1372,7 +1372,7 @@ router.put("/me/push-token", async (req, res) => {
  * GET /me/account-status — lightweight account health check
  * ---------------------------------------------------------------------------
  * Returns accountStatus ("active" | "deactivated" | "pending_deletion") and,
- * when pending_deletion, the scheduled deletion date.
+ * the server-calculated owner recovery deadline. No automatic purge is scheduled.
  * Uses the service client so the read bypasses RLS reliably.
  */
 router.get("/me/account-status", async (req, res) => {
@@ -1383,59 +1383,20 @@ router.get("/me/account-status", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
-  const { data: profile, error: profileErr } = await sc
-    .from("profiles")
-    .select("account_status")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (profileErr) {
-    req.log.error({ err: profileErr }, "account-status: profile query failed");
-    sendError(res, "db_error", "Could not load account status");
-    return;
+  const { data, error } = await sc.rpc('account_recovery_status', { p_user: user.id });
+  if (error) {
+    req.log.error({ err: error }, 'account-status: recovery status lookup failed');
+    sendError(res, 'db_error', 'Could not load account status'); return;
   }
-  if (!profile) {
-    sendError(res, "not_found", "Profile not found");
-    return;
-  }
-
-  const rawStatus: string = (profile as any).account_status ?? "active";
-
-  // If the profile is deactivated, check whether there is a pending deletion
-  // request — if so, surface the more specific "pending_deletion" status so
-  // the mobile client can show the correct interstitial.
-  if (rawStatus === "deactivated") {
-    // supabase-js RESOLVES on a database error, so `{ data: null, error }` and
-    // "there is no pending deletion request" arrived here as the same value and
-    // the second `.then` argument — a REJECTION handler — never fired. An
-    // unreadable `user_deletion_requests` therefore reported plain
-    // "deactivated" to a user whose account is in fact counting down to an
-    // irreversible deletion, which is the one status they most need to see (it
-    // is the interstitial that offers them the cancel). Distinguish it: an
-    // unread restriction is not an absent restriction.
-    const { data: deletionRow, error: deletionErr } = await sc
-      .from("user_deletion_requests")
-      .select("scheduled_at, status")
-      .eq("user_id", user.id)
-      .eq("status", "pending")
-      .maybeSingle();
-
-    if (deletionErr) {
-      req.log.error({ err: deletionErr, userId: user.id }, "account-status: pending-deletion lookup failed");
-      sendError(res, "db_error", "Could not load account status");
-      return;
-    }
-
-    if (deletionRow) {
-      res.status(200).json({
-        accountStatus: "pending_deletion",
-        deletionScheduledAt: (deletionRow as any).scheduled_at ?? null,
-      });
-      return;
-    }
-  }
-
-  res.status(200).json({ accountStatus: rawStatus, deletionScheduledAt: null });
+  if (data === null) { sendError(res, 'not_found', 'Profile not found'); return; }
+  const parsed = z.object({
+    accountStatus: z.enum(['active', 'deactivated', 'pending_deletion', 'deleted']),
+    deletionScheduledAt: z.null(),
+    selfRecoverableUntil: z.string().datetime({ offset: true }).nullable(),
+    reactivateUntil: z.string().datetime({ offset: true }).nullable(),
+  }).safeParse(data);
+  if (!parsed.success) { sendError(res, 'upstream_error', 'Could not verify account recovery status'); return; }
+  res.status(200).json(parsed.data);
 });
 
 /* ---------------------------------------------------------------------------
@@ -1452,113 +1413,19 @@ router.post("/me/reactivate", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
-  // Fail closed: check profiles.account_status directly — this is the authoritative field
-  const { data: profileRow, error: profileCheckErr } = await sc
-    .from("profiles")
-    .select("account_status")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (profileCheckErr) {
-    req.log.error({ err: profileCheckErr }, "reactivate: failed to check account status");
-    sendError(res, "db_error", "Could not verify account status");
-    return;
-  }
-  if (!profileRow) {
-    sendError(res, "not_found", "Profile not found");
-    return;
+  const { data: deletion, error: deletionError } = await sc.from('user_deletion_requests').select('status, recovery_generation').eq('user_id', user.id).maybeSingle();
+  if (deletionError) { sendError(res, 'upstream_error', 'Could not verify profile recovery eligibility.'); return; }
+  if (deletion && ['pending', 'executing', 'failed'].includes(deletion.status)) {
+    const recovery = await recoverDeletedAccount(sc, { actorId: user.id, userId: user.id, generation: deletion.recovery_generation, reason: 'Owner requested profile reactivation' });
+    if (recovery.kind === 'unavailable') { sendError(res, 'upstream_error', 'Recovery could not be confirmed.'); return; }
+    if (recovery.kind === 'refused') { sendError(res, 'conflict', recoveryRefusalMessage(recovery.reason)); return; }
+    res.json({ reactivated: recovery.accountStatus === 'active', accountStatus: recovery.accountStatus }); return;
   }
 
-  const currentStatus = (profileRow as any).account_status as string;
-  if (currentStatus !== "deactivated") {
-    // suspended/banned/deleted accounts cannot self-reactivate
-    sendError(res, "forbidden", "Account cannot be self-reactivated. Please contact support.");
-    return;
-  }
-
-  const now = new Date().toISOString();
-
-  // Fail closed: if the profile update fails, return an error (don't swallow it)
-  const { error: profileUpdateErr } = await sc
-    .from("profiles")
-    .update({ account_status: "active" })
-    .eq("id", user.id);
-
-  if (profileUpdateErr) {
-    req.log.error({ err: profileUpdateErr }, "reactivate: profile update failed");
-    sendError(res, "db_error", "Failed to reactivate account");
-    return;
-  }
-
-  // ── CANCELLING THE SCHEDULED DELETION IS NOT A SECONDARY WRITE ──────────
-  // A pending `user_deletion_requests` row is a standing instruction to DESTROY
-  // this account: lib/accountDeletionScheduler.ts selects `status = 'pending'
-  // AND scheduled_at <= now()` and runs executeAccountDeletion against every
-  // row it finds, with no human in the loop, and so does
-  // POST /internal/deletion-requests/execute-due below.
-  //
-  // WHAT THIS USED TO DO. `.then(undefined, () => {})`, under a comment calling
-  // the outcome "fail-open" because "the reactivation itself already
-  // succeeded". supabase-js RESOLVES on a database error, so the rejection
-  // handler never ran and the resolved `{ error }` was discarded unread and
-  // unlogged. The user was told `200 { reactivated: true }`, their
-  // account_status was genuinely restored to 'active' — and the deletion row
-  // stayed pending, so the worker deleted the account anyway on its original
-  // schedule. A silent DB error turned a successful reactivation into an
-  // irreversible deletion the user had explicitly cancelled and been told was
-  // cancelled. "Fail-open" is not a description of that outcome.
-  //
-  // So it fails CLOSED, and deliberately does not report success: the account
-  // is left 'active' (the harmless half), the operator gets a loud log, and the
-  // caller gets a retryable error instead of an assurance that is not true. The
-  // update is idempotent, so retrying converges.
-  const { error: cancelErr } = await sc
-    .from("user_deletion_requests")
-    .update({ status: "cancelled", cancelled_at: now })
-    .eq("user_id", user.id)
-    .eq("status", "pending");
-
-  if (cancelErr) {
-    req.log.error(
-      { err: cancelErr, userId: user.id },
-      "reactivate: could not cancel the pending deletion request — the account may still be deleted on schedule",
-    );
-    sendError(
-      res,
-      "db_error",
-      "Your account was reactivated but the scheduled deletion could not be cancelled. Please try again.",
-    );
-    return;
-  }
-
-  // Secondary writes are best-effort after the primary writes succeed, but the
-  // failure must be OBSERVABLE: `.then(undefined, cb)` never sees a RESOLVED DB
-  // error. Note: user_account_states is unique on (user_id, state), so clear
-  // the 'deactivated' row rather than upserting on user_id alone. try/catch
-  // keeps this fire-and-forget even if the client shim lacks .delete().
-  try {
-    void sc.from("user_account_states")
-      .delete()
-      .eq("user_id", user.id)
-      .eq("state", "deactivated")
-      .then(
-        ({ error: e }: any) => {
-          if (e) req.log.warn({ err: e }, "reactivate: failed to clear the deactivated account state (non-fatal)");
-        },
-        (err: unknown) => req.log.warn({ err }, "reactivate: account-state clear rejected (non-fatal)"),
-      );
-  } catch { /* best-effort */ }
-
-  void sc.from("profile_privacy_settings")
-    .upsert({ user_id: user.id, allow_profile_discovery: true, updated_at: now }, { onConflict: "user_id" })
-    .then(
-      ({ error: e }: any) => {
-        if (e) req.log.warn({ err: e }, "reactivate: failed to restore profile discovery (non-fatal)");
-      },
-      (err: unknown) => req.log.warn({ err }, "reactivate: discovery restore rejected (non-fatal)"),
-    );
-
-  res.status(200).json({ reactivated: true });
+  const { data, error } = await sc.rpc('reactivate_self_deactivated_account', { p_user: user.id });
+  if (error || !data || typeof data !== 'object') { sendError(res, 'upstream_error', 'Reactivation could not be confirmed.'); return; }
+  if (data.ok !== true) { sendError(res, data.error === 'profile_unavailable' ? 'not_found' : data.error === 'recovery_forbidden' ? 'forbidden' : 'conflict', recoveryRefusalMessage(String(data.error))); return; }
+  res.json({ reactivated: true, alreadyReactivated: data.alreadyReactivated === true });
 });
 
 /* ---------------------------------------------------------------------------
@@ -1574,106 +1441,17 @@ router.post("/me/deactivate", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
-  const now = new Date().toISOString();
-  // user_account_states is unique on (user_id, state), not user_id alone.
-  const { error } = await sc
-    .from("user_account_states")
-    .upsert({ user_id: user.id, state: "deactivated", updated_at: now }, { onConflict: "user_id,state" });
-
-  if (error) {
-    req.log.error({ err: error }, "deactivate: failed to update account state");
-    sendError(res, "db_error", error.message);
-    return;
-  }
-
-  // ── THE AUTHORITATIVE STATUS WRITE ──────────────────────────────────────
-  // `profiles.account_status` is the field every downstream restriction reads:
-  // the ban gate in lib/http.ts (`readAccountStatus`), the public map
-  // (lib/mapTravelers.ts `if (prof.account_status !== "active") continue`),
-  // Circle location serving (lib/circleLocationsRead.ts gate 7),
-  // lib/mediaAccess.ts, lib/profileVisibility.ts, and this file's own
-  // GET /me/account-status and POST /me/reactivate (which calls it "the
-  // authoritative field"). `user_account_states` above is a secondary record;
-  // it is NOT what those readers consult.
-  //
-  // WHAT THIS USED TO DO. `.then(undefined, () => {})`. supabase-js RESOLVES on
-  // a database error — it does not reject — so the rejection handler never
-  // fired and the resolved `{ error }` was dropped with no branch and no log. A
-  // failed write returned `200 { deactivated: true }` to a user who remained
-  // ACTIVE and fully visible on the public map, in Circle and through media
-  // access, with nothing anywhere recording that it had not happened. That is
-  // the account-status fail-open in its purest form: an unwritten restriction
-  // rendered to its subject as an applied one.
-  //
-  // The stale rationale that licensed it — "fail-open if column not yet
-  // migrated" — cannot hold on this path: requireUser SELECTed
-  // `profiles.account_status` for this very user microseconds ago and refuses
-  // the request outright when it is unreadable (lib/http.ts, the ban gate), so
-  // the column demonstrably exists on any request that reaches this line.
-  //
-  // Failing the request leaves the account MORE restricted than before, never
-  // less: `user_account_states` is already 'deactivated' and the upsert above
-  // is idempotent, so a retry converges.
-  const { error: statusErr } = await sc
-    .from("profiles")
-    .update({ account_status: "deactivated" })
-    .eq("id", user.id);
-
-  if (statusErr) {
-    req.log.error(
-      { err: statusErr, userId: user.id },
-      "deactivate: profiles.account_status write failed — the account is NOT deactivated",
-    );
-    sendError(res, "db_error", "Could not deactivate your account. Please try again.");
-    return;
-  }
-
-  // Suppress from discovery. Best-effort, but the failure must be OBSERVABLE:
-  // `.then(undefined, cb)` alone never sees a RESOLVED DB error.
-  void sc.from("profile_privacy_settings")
-    .upsert({ user_id: user.id, allow_profile_discovery: false, updated_at: now }, { onConflict: "user_id" })
-    .then(
-      ({ error: e }: any) => {
-        if (e) req.log.warn({ err: e }, "deactivate: failed to suppress profile discovery (non-fatal)");
-      },
-      (err: unknown) => req.log.warn({ err }, "deactivate: discovery suppression rejected (non-fatal)"),
-    );
-
-  // Pause Circle sharing on deactivation — server-side, not client-dependent.
-  // Sets paused=true on ALL circle_context_settings rows for this user so
-  // their presence is hidden even if the client never calls pause-on-session-end.
-  // Note: circle_context_settings uses "paused" (not "is_paused"); the global
-  //       circle_visibility_settings uses "is_paused".
-  void sc.from("circle_context_settings")
-    .update({ paused: true, updated_at: now })
-    .eq("user_id", user.id)
-    .then(
-      ({ error: e }: any) => {
-        if (e) req.log.warn({ err: e }, "deactivate: failed to pause circle context settings (non-fatal)");
-      },
-      (err: unknown) => req.log.warn({ err }, "deactivate: circle context pause rejected (non-fatal)"),
-    );
-
-  // Also pause any active presence rows so they stop appearing on other members' maps.
-  void sc.from("circle_presence")
-    .update({ status: "paused", updated_at: now })
-    .eq("user_id", user.id)
-    .eq("status", "active")
-    .then(
-      ({ error: e }: any) => {
-        if (e) req.log.warn({ err: e }, "deactivate: failed to pause circle presence (non-fatal)");
-      },
-      (err: unknown) => req.log.warn({ err }, "deactivate: circle presence pause rejected (non-fatal)"),
-    );
-
-  res.status(200).json({ deactivated: true });
+  const { data, error } = await sc.rpc('set_account_self_deactivation', { p_user: user.id });
+  if (error || !data || typeof data !== 'object') { sendError(res, 'upstream_error', 'Deactivation could not be confirmed.'); return; }
+  if (data.ok !== true) { sendError(res, 'conflict', recoveryRefusalMessage(String(data.error))); return; }
+  res.status(200).json({ deactivated: true, reactivateUntil: data.reactivateUntil });
 });
 
 /* ---------------------------------------------------------------------------
- * POST /me/delete-request — schedule account deletion (30-day hold)
+ * POST /me/delete-request — hide account with owner/admin recovery
  * ---------------------------------------------------------------------------
- * Creates a deletion request record and flags the account as deactivated
- * so it becomes invisible to other users during the hold period.
+ * Creates a durable deletion request and hides the account. Owners can recover
+ * for 90 days; admins can recover until explicit permanent deletion.
  */
 router.post("/me/delete-request", async (req, res) => {
   const auth = await requireUser(req, res);
@@ -1683,65 +1461,10 @@ router.post("/me/delete-request", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
-  const nowMs = Date.now();
-  const now = new Date(nowMs).toISOString();
-  const scheduledAt = new Date(nowMs + 30 * 24 * 60 * 60 * 1000).toISOString();
-
-  const { error } = await sc
-    .from("user_deletion_requests")
-    .upsert({ user_id: user.id, requested_at: now, scheduled_at: scheduledAt, status: "pending" }, { onConflict: "user_id" });
-
-  if (error) {
-    req.log.error({ err: error }, "delete-request: failed to create deletion request");
-    sendError(res, "db_error", error.message);
-    return;
-  }
-
-  // Deactivate so profile is unavailable to others during the hold period.
-  // Secondary record; failure is logged but does not fail the request — the
-  // authoritative write is the `profiles.account_status` one below.
-  {
-    const { error: statesErr } = await sc
-      .from("user_account_states")
-      .upsert({ user_id: user.id, state: "deactivated", updated_at: now }, { onConflict: "user_id,state" });
-    if (statesErr) {
-      req.log.warn({ err: statesErr, userId: user.id }, "delete-request: user_account_states write failed (non-fatal)");
-    }
-  }
-
-  // ── THE AUTHORITATIVE STATUS WRITE ──────────────────────────────────────
-  // Same field, same readers and the same defect as POST /me/deactivate above:
-  // `.then(undefined, () => {})` never observes a supabase-js DB error because
-  // supabase-js RESOLVES rather than rejecting. A failed write here returned
-  // `200 { deletionScheduled: true }` while the account stayed ACTIVE and fully
-  // visible for the entire 30-day hold the user was told it was hidden for.
-  // requireUser has already read this column on this request, so "the column
-  // might not be migrated" is not available as a rationale.
-  const { error: statusErr } = await sc
-    .from("profiles")
-    .update({ account_status: "deactivated" })
-    .eq("id", user.id);
-
-  if (statusErr) {
-    req.log.error(
-      { err: statusErr, userId: user.id },
-      "delete-request: profiles.account_status write failed — the account is NOT hidden during the hold",
-    );
-    sendError(res, "db_error", "Your deletion is scheduled but the account could not be hidden. Please try again.");
-    return;
-  }
-
-  // Suppress from discovery. Best-effort, but the failure must be OBSERVABLE.
-  void sc.from("profile_privacy_settings")
-    .upsert({ user_id: user.id, allow_profile_discovery: false, updated_at: now }, { onConflict: "user_id" })
-    .then(
-      ({ error: e }: any) => {
-        if (e) req.log.warn({ err: e }, "delete-request: failed to suppress profile discovery (non-fatal)");
-      },
-      (err: unknown) => req.log.warn({ err }, "delete-request: discovery suppression rejected (non-fatal)"),
-    );
-
-  res.status(200).json({ deletionScheduled: true, scheduledAt });
+  const { data, error } = await sc.rpc('request_recoverable_account_deletion', { p_user: user.id });
+  if (error || !data || typeof data !== 'object') { sendError(res, 'upstream_error', 'Account deletion is unavailable. Nothing has been confirmed.'); return; }
+  if (data.ok !== true) { sendError(res, 'conflict', recoveryRefusalMessage(String(data.error))); return; }
+  res.status(200).json({ deletionScheduled: true, scheduledAt: null, recoveryGeneration: data.generation, selfRecoverableUntil: data.selfRecoverableUntil });
 });
 
 /* ---------------------------------------------------------------------------
@@ -1760,7 +1483,7 @@ router.get("/me/delete-request", async (req, res) => {
 
   const { data, error } = await sc
     .from("user_deletion_requests")
-    .select("status, scheduled_at")
+    .select("status, scheduled_at, requested_at, recovery_generation, recovery_verified, execution_started_at")
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -1770,10 +1493,13 @@ router.get("/me/delete-request", async (req, res) => {
     return;
   }
 
-  const pending = (data as any)?.status === "pending";
+  const pending = ["pending", "executing", "failed"].includes((data as any)?.status);
   res.status(200).json({
     pending,
-    scheduledAt: pending ? (data as any).scheduled_at : null,
+    scheduledAt: null,
+    recoveryGeneration: pending ? (data as any).recovery_generation : null,
+    selfRecoverableUntil: pending && (data as any).recovery_verified && !(data as any).execution_started_at
+      ? new Date(Date.parse((data as any).requested_at) + 90 * 86400000).toISOString() : null,
   });
 });
 
@@ -1793,106 +1519,26 @@ router.delete("/me/delete-request", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
-  // Verify there is actually a pending deletion request to cancel
-  const { data: existing, error: fetchErr } = await sc
-    .from("user_deletion_requests")
-    .select("status")
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (fetchErr) {
-    req.log.error({ err: fetchErr }, "delete-request DELETE: failed to fetch request");
-    sendError(res, "db_error", fetchErr.message);
-    return;
-  }
-
-  if (!existing || (existing as any).status !== "pending") {
-    sendError(res, "not_found", "No pending deletion request found");
-    return;
-  }
-
-  const now = new Date().toISOString();
-
-  // Mark the deletion request as cancelled
-  const { error: cancelErr } = await sc
-    .from("user_deletion_requests")
-    .update({ status: "cancelled", cancelled_at: now })
-    .eq("user_id", user.id);
-
-  if (cancelErr) {
-    req.log.error({ err: cancelErr }, "delete-request DELETE: failed to cancel");
-    sendError(res, "db_error", cancelErr.message);
-    return;
-  }
-
-  // Restore profile account_status to active (primary write — fail closed)
-  const { error: profileErr } = await sc
-    .from("profiles")
-    .update({ account_status: "active" })
-    .eq("id", user.id);
-
-  if (profileErr) {
-    req.log.error({ err: profileErr }, "delete-request DELETE: failed to restore profile status");
-    sendError(res, "db_error", "Failed to restore account status");
-    return;
-  }
-
-  // Secondary writes are best-effort after the primary write succeeds, but the
-  // failure must be OBSERVABLE: `.then(undefined, cb)` never sees a RESOLVED DB
-  // error. Note: user_account_states is unique on (user_id, state), so clear
-  // the 'deactivated' row rather than upserting on user_id alone. try/catch
-  // keeps this fire-and-forget even if the client shim lacks .delete().
-  try {
-    void sc.from("user_account_states")
-      .delete()
-      .eq("user_id", user.id)
-      .eq("state", "deactivated")
-      .then(
-        ({ error: e }: any) => {
-          if (e) req.log.warn({ err: e }, "delete-request DELETE: failed to clear the deactivated state (non-fatal)");
-        },
-        (err: unknown) => req.log.warn({ err }, "delete-request DELETE: account-state clear rejected (non-fatal)"),
-      );
-  } catch { /* best-effort */ }
-
-  void sc.from("profile_privacy_settings")
-    .upsert({ user_id: user.id, allow_profile_discovery: true, updated_at: now }, { onConflict: "user_id" })
-    .then(
-      ({ error: e }: any) => {
-        if (e) req.log.warn({ err: e }, "delete-request DELETE: failed to restore profile discovery (non-fatal)");
-      },
-      (err: unknown) => req.log.warn({ err }, "delete-request DELETE: discovery restore rejected (non-fatal)"),
-    );
-
-  res.status(200).json({ cancelled: true });
+  const { data: request, error } = await sc.from('user_deletion_requests').select('recovery_generation').eq('user_id', user.id).maybeSingle();
+  if (error) { sendError(res, 'upstream_error', 'Recovery is unavailable. Please try again.'); return; }
+  if (!request) { sendError(res, 'not_found', 'No deletion request found'); return; }
+  const result = await recoverDeletedAccount(sc, { actorId: user.id, userId: user.id, generation: request.recovery_generation, reason: 'Owner requested profile recovery' });
+  if (result.kind === 'unavailable') { sendError(res, 'upstream_error', 'Recovery could not be confirmed. Refresh before retrying.'); return; }
+  if (result.kind === 'refused') { sendError(res, 'conflict', recoveryRefusalMessage(result.reason)); return; }
+  res.status(200).json({ cancelled: true, accountStatus: result.accountStatus, alreadyRecovered: result.alreadyRecovered });
 });
 
 /* ---------------------------------------------------------------------------
- * POST /internal/deletion-requests/execute-due — deletion worker endpoint
+ * POST /internal/deletion-requests/execute-due — retired worker endpoint
  * ---------------------------------------------------------------------------
- * Service-to-service endpoint (NOT user-facing). Executes the full deletion
- * cascade (services/accountDeletion/AccountDeletionService.ts — the same
- * implementation used by the admin execute route and the in-process
- * scheduler) for every user_deletion_requests row whose 30-day hold has
- * elapsed (scheduled_at <= now, status pending/confirmed).
+ * Existing cron callers receive a terminal response without accessing data.
  *
  * Auth: X-Internal-Secret header must match INTERNAL_API_SECRET — the same
  * fail-closed pattern as routes/notifications.ts requireInternalSecret. When
  * the env var is unset the endpoint is disabled (503).
  *
- * SAFETY: like lib/accountDeletionScheduler.ts, execution is additionally
- * gated behind the `account_deletion_worker_enabled` feature flag and fails
- * CLOSED — when the flag row is missing, unreadable, or false the endpoint
- * responds 503/skipped and touches nothing.
- *
- * SCHEDULING: hit this endpoint once a day via a Replit Scheduled Deployment
- * (or any external cron):
- *   curl -X POST "$API_BASE_URL/api/internal/deletion-requests/execute-due" \
- *        -H "X-Internal-Secret: $INTERNAL_API_SECRET"
- * Batch is capped at 20 per run; the endpoint is idempotent (a request is
- * only marked completed when its cascade fully succeeds, and completed rows
- * are never re-selected — failed ones stay pending for retry), so overlapping
- * runs are safe.
+ * Retired: an internal secret authenticates the caller but does not authorize
+ * permanent deletion. Kept as an explicit 410 response for existing cron jobs.
  */
 function requireInternalSecret(req: any, res: any): boolean {
   const secret = process.env.INTERNAL_API_SECRET;
@@ -1913,88 +1559,8 @@ function requireInternalSecret(req: any, res: any): boolean {
 
 router.post("/internal/deletion-requests/execute-due", async (req, res) => {
   if (!requireInternalSecret(req, res)) return;
-
-  const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
-
-  // Same fail-closed flag gate as lib/accountDeletionScheduler.ts: account
-  // deletion is irreversible and this endpoint acts without a human in the
-  // loop, so it does nothing until the flag is explicitly enabled.
-  if (!(await isFlagEnabled(sc, "account_deletion_worker_enabled"))) {
-    res.status(503).json({
-      ok: false,
-      skipped: true,
-      error: "feature_disabled",
-      message: "account_deletion_worker_enabled feature flag is off; deletion worker is disabled",
-    });
-    return;
-  }
-
-  const now = new Date().toISOString();
-  const BATCH_CAP = 20;
-
-  const { data: due, error: dueErr } = await sc
-    .from("user_deletion_requests")
-    .select("user_id, scheduled_at, status")
-    // `user_deletion_requests.status` is TEXT with a CHECK last set by
-    // migration 2178 to pending | executing | cancelled | executed | completed |
-    // failed. "confirmed" is not among them and nothing writes it, so that arm
-    // could never match. `pending` is the status this route's own creator
-    // writes and the only one lib/accountDeletionScheduler.ts:69 picks up.
-    .eq("status", "pending")
-    .lte("scheduled_at", now)
-    .order("scheduled_at", { ascending: true })
-    .limit(BATCH_CAP);
-
-  if (dueErr) {
-    req.log.error({ err: dueErr }, "deletion worker: failed to query due requests");
-    sendError(res, "db_error", dueErr.message);
-    return;
-  }
-
-  let executed = 0;
-  const failed: Array<{ userId: string; failedSteps: { step: string; error?: string }[] }> = [];
-  const outcomes: Array<Awaited<ReturnType<typeof executeAccountDeletion>>> = [];
-
-  for (const row of (due ?? []) as { user_id: string }[]) {
-    const userId = row.user_id;
-    try {
-      // The service marks the request completed itself — but ONLY when the
-      // cascade outcome is ok (profile anonymised + auth user removed). A
-      // failed cascade leaves the row pending/confirmed so the next run
-      // retries it.
-      const outcome = await executeAccountDeletion(sc, userId, {
-        actorId: null, // executed by the worker, not an admin
-        reason: "Scheduled account deletion executed",
-      });
-      outcomes.push(outcome);
-      if (outcome.ok) {
-        executed += 1;
-        if (outcome.warnings.length > 0) {
-          req.log.warn({ userId, warnings: outcome.warnings }, "deletion worker: completed with warnings");
-        }
-      } else {
-        const failedSteps = outcome.steps.filter((s) => !s.ok).map((s) => ({ step: s.step, error: s.error }));
-        failed.push({ userId, failedSteps });
-        req.log.error(
-          { userId, failedSteps },
-          "deletion worker: deletion did not complete; request left pending for retry",
-        );
-      }
-    } catch (err: any) {
-      failed.push({ userId, failedSteps: [{ step: "execute", error: err?.message ?? String(err) }] });
-      req.log.error({ err, userId }, "deletion worker: executeAccountDeletion threw");
-    }
-  }
-
-  res.status(200).json({
-    ok: true,
-    processed: (due ?? []).length,
-    executed,
-    failed,
-    executedAt: now,
-    outcomes,
-  });
+  res.status(410).json({ ok: false, skipped: true, error: 'admin_permanent_deletion_required',
+    message: 'Automatic account deletion has been retired. An admin must explicitly authorize permanent deletion.' });
 });
 
 /* ---------------------------------------------------------------------------

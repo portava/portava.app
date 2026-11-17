@@ -16,6 +16,7 @@ import { fireEvent } from '@testing-library/react-native';
 import { useMediaComposer } from '../../hooks/useMediaComposer.ts';
 import type { ContentPolicyKey } from '../../lib/contentMediaPolicy.ts';
 import type * as ImagePickerNS from 'expo-image-picker';
+import { uploadMedia } from '../../services/media.ts';
 
 // NOTE: exhaustive by design — only the two permission functions are used here;
 // spreading requireActual would pull in native expo-image-picker bindings that
@@ -71,7 +72,7 @@ function UploadHarness({
   const { items, onPickResult, uploadItem } = useMediaComposer(policyKey);
 
   React.useEffect(() => {
-    onPickResult(makeImageAsset(assetId));
+    onPickResult({ ...makeImageAsset(assetId), photoCapturedAt: '2026-03-04T05:06:07.000Z' } as ImagePickerNS.ImagePickerAsset);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -95,6 +96,7 @@ describe('useMediaComposer — photo URL reaches submit payload', () => {
     });
 
     expect(onDone).toHaveBeenCalledWith(UPLOADED_URL);
+    expect(uploadMedia).toHaveBeenCalledWith(expect.objectContaining({ photoCapturedAt: '2026-03-04T05:06:07.000Z' }));
   });
 
   it("'review': upload result URL is passed to onDone after successful upload", async () => {

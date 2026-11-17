@@ -1,3 +1,4 @@
+import { providerModel } from "../providerVersions.js";
 /**
  * Image generation provider abstraction.
  *
@@ -54,7 +55,7 @@ export function isNonRetryableProviderError(err: any): boolean {
 // whole batch.
 
 export const STAMP_IMAGE_MODEL =
-  process.env.STAMP_IMAGE_MODEL?.trim() || "gpt-image-1";
+  process.env.STAMP_IMAGE_MODEL?.trim() || providerModel("openai", "gpt-image-1");
 export const STAMP_IMAGE_QUALITY =
   process.env.STAMP_IMAGE_QUALITY?.trim() || "high";
 

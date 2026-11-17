@@ -83,7 +83,11 @@ for(const order of ['sorted-gap','after-3999'] as const)describe('3899 full cata
  const db=await openPressedLayoverDb({without:order==='after-3999'?['3899','3907']:['3907']});
  try{
  if(order==='sorted-gap')await db.exec(rollback);const u=await db.seedUser('full_rollback3899');const baseline=await migratedCatalogAndRows(db);
- await db.exec(forward);const installed=await migratedCatalogAndRows(db);
+ await db.exec(forward);
+ // Match pg_dump/restore's CHECK reparse even when this fixture was just built.
+ const [{definition}]=await db.query<{definition:string}>("SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid='public.layover_objective_facts'::regclass AND conname='layover_objective_facts_source_url_check'");
+ await db.exec(`ALTER TABLE public.layover_objective_facts DROP CONSTRAINT layover_objective_facts_source_url_check, ADD CONSTRAINT layover_objective_facts_source_url_check ${definition};`);
+ const installed=await migratedCatalogAndRows(db);
  const refuses=async(label:string,setup:string,re:RegExp)=>{
  await db.exec('BEGIN;'+setup);let err:unknown;try{await db.exec(rollback);}catch(e){err=e;}await db.exec('ROLLBACK');assert.ok(err,label);assert.match(String((err as Error).message),re);assert.deepEqual(await migratedCatalogAndRows(db),installed,label+' changed catalog or rows');console.log('refused',order,label);
  };
@@ -100,8 +104,9 @@ for(const order of ['sorted-gap','after-3999'] as const)describe('3899 full cata
  await refuses('policy addition',"CREATE POLICY later_policy ON public.layover_objective_facts FOR SELECT TO authenticated USING(true);",/table .* was changed/);
  await refuses('required column relaxed',"ALTER TABLE public.layover_objective_facts ALTER COLUMN source_note DROP NOT NULL;",/table .*was changed/);
  await refuses('intent required column relaxed',"ALTER TABLE public.layover_objective_intents ALTER COLUMN intent DROP NOT NULL;",/table .*was changed/);
+ await refuses('changed restored CHECK bound',"ALTER TABLE public.layover_objective_facts DROP CONSTRAINT layover_objective_facts_source_url_check, ADD CONSTRAINT layover_objective_facts_source_url_check CHECK(length(source_url) BETWEEN 8 AND 1000 AND source_url LIKE 'https://%');",/table .*was changed/);
  await refuses('external dependency',"CREATE VIEW public.objective_external AS SELECT * FROM public.layover_objective_facts;",/depend/);
  await db.exec(rollback);assert.deepEqual(await migratedCatalogAndRows(db),baseline,'full catalog/all nonledger rows');await db.exec(rollback);assert.deepEqual(await migratedCatalogAndRows(db),baseline,'repeat inert');await db.exec(forward);await db.exec(rollback);assert.deepEqual(await migratedCatalogAndRows(db),baseline,'reapply then rollback');
- console.log(order,'full catalog + every nonledger row equal; repeat/reapply; 14 refusals');
+ console.log(order,'full catalog + every nonledger row equal; repeat/reapply; 16 refusals');
  }finally{await db.close();}
 });});

@@ -3,6 +3,7 @@ import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { CaptionError, EMPTY_CAPTION_REVISION, captionLanguage, readCaptionAsset, readCaptionManifest, recheckCaptionAsset, requirePrivateCaptionStorage } from "./AuthoredCaptionsService.js";
 
 export interface CaptionProcessingConsent {
+  disclosureVersion?: string;
   consentId: string;
   jobId: string;
   jobRevisionKey: string;
@@ -16,7 +17,10 @@ export interface CaptionProcessingConsent {
   recordedAt: string;
 }
 
+export interface CaptionProcessingReceipt { provider: "local" | "deepgram"; modelVersion: string; configVersion: string; disclosureVersion: string }
+
 interface AsrConfig {
+  processing_provider?: "local" | "deepgram";
   enabled: boolean;
   model_version: string;
   config_version: string;
@@ -25,16 +29,23 @@ interface AsrConfig {
 }
 
 export async function readCaptionAsrConfig(sc: SupabaseClient): Promise<AsrConfig | null> {
-  const { data, error } = await sc.from("media_caption_asr_config").select("enabled, model_version, config_version, allowed_languages, runtime_verified_at").eq("singleton", true).maybeSingle();
+  const { data, error } = await sc.from("media_caption_asr_config").select("enabled, model_version, config_version, allowed_languages, runtime_verified_at, processing_provider").eq("singleton", true).maybeSingle();
   if (error) throw new CaptionError("degraded_unavailable", "Transcription configuration unavailable.");
   if (!data || data.enabled !== true || !Number.isFinite(Date.parse(data.runtime_verified_at)) || !Array.isArray(data.allowed_languages) || !data.allowed_languages.length) return null;
   if (!/^[A-Za-z0-9._:/@+\-]{1,200}$/.test(data.model_version) || typeof data.config_version !== "string" || !data.config_version || data.config_version.length > 200) return null;
   for (const language of data.allowed_languages) captionLanguage(language);
+  if (data.processing_provider != null && !["local", "deepgram"].includes(data.processing_provider)) return null;
+  if (data.processing_provider === "deepgram" && !/^deepgram:nova-3:[A-Za-z0-9._-]{1,100}$/.test(data.model_version)) return null;
   return data as AsrConfig;
 }
 
+function processingReceipt(config: AsrConfig): CaptionProcessingReceipt {
+  const provider = config.processing_provider ?? "local";
+  return { provider, modelVersion: config.model_version, configVersion: config.config_version, disclosureVersion: provider === "deepgram" ? "deepgram-audio-opt-out-v1" : "local-audio-v1" };
+}
+
 export async function readActiveCaptionAsrGrant(sc: SupabaseClient, assetId: string) {
-  const { data, error } = await sc.from("media_caption_asr_consents").select("id, asset_id, owner_user_id, source_version, caption_revision_key, job_revision_key, model_version, config_version, target_language, job_id, granted_at, revoked_at").eq("asset_id", assetId).is("revoked_at", null).maybeSingle();
+  const { data, error } = await sc.from("media_caption_asr_consents").select("id, asset_id, owner_user_id, source_version, caption_revision_key, job_revision_key, model_version, config_version, target_language, job_id, granted_at, revoked_at, processing_disclosure_version").eq("asset_id", assetId).is("revoked_at", null).maybeSingle();
   if (error) throw new CaptionError("degraded_unavailable", "Transcription consent unavailable.");
   if (!data) return null;
   const { data: job, error: jobError } = await sc.from("media_derivative_jobs").select("id, asset_id, owner_user_id, source_version, source_bucket, source_path, kind, model_version, target_language, revision_key, state, lease_token, lease_until, result").eq("id", data.job_id).maybeSingle();
@@ -53,6 +64,7 @@ export async function readCaptionProcessingConsent(sc: SupabaseClient, request: 
   const active = await readActiveCaptionAsrGrant(sc, request.assetId);
   if (!active || !config) return null;
   const { consent, job } = active;
+  if (config.processing_provider === "deepgram" && consent.processing_disclosure_version !== processingReceipt(config).disclosureVersion) return null;
   if (request.kind !== "captions" || job.id !== request.id || job.state !== "processing" || job.lease_token !== request.token || !(Date.parse(job.lease_until) > Date.now())
     || job.owner_user_id !== request.ownerUserId || job.source_version !== request.sourceVersion || job.source_bucket !== request.bucket || job.source_path !== request.path
     || job.model_version !== request.modelVersion || job.revision_key !== request.revisionKey || job.target_language !== (request.targetLanguage ?? "")
@@ -62,7 +74,7 @@ export async function readCaptionProcessingConsent(sc: SupabaseClient, request: 
   const manifest = await readCaptionManifest(sc, request.assetId);
   if (source.owner_user_id !== request.ownerUserId || source.version !== request.sourceVersion || source.storage_bucket !== request.bucket || source.storage_path !== request.path || (manifest?.revision_key ?? EMPTY_CAPTION_REVISION) !== consent.caption_revision_key) return null;
   await recheckCaptionAsset(sc, request.ownerUserId, source);
-  return { consentId: consent.id, jobId: job.id, jobRevisionKey: consent.job_revision_key, assetId: consent.asset_id, ownerId: consent.owner_user_id, sourceVersion: consent.source_version, revisionKey: consent.caption_revision_key, configVersion: consent.config_version, allowedLanguages: config.allowed_languages, transcription: true, recordedAt: consent.granted_at };
+  return { disclosureVersion: consent.processing_disclosure_version ?? undefined, consentId: consent.id, jobId: job.id, jobRevisionKey: consent.job_revision_key, assetId: consent.asset_id, ownerId: consent.owner_user_id, sourceVersion: consent.source_version, revisionKey: consent.caption_revision_key, configVersion: consent.config_version, allowedLanguages: config.allowed_languages, transcription: true, recordedAt: consent.granted_at };
 }
 
 export async function getCaptionAsrStatus(sc: SupabaseClient, ownerId: string, assetId: string) {
@@ -74,11 +86,11 @@ export async function getCaptionAsrStatus(sc: SupabaseClient, ownerId: string, a
   const active = await readActiveCaptionAsrGrant(sc, assetId);
   const manifest = await readCaptionManifest(sc, assetId);
   const revisionKey = manifest?.revision_key ?? EMPTY_CAPTION_REVISION;
-  return { enabled: Boolean(config && await asrEnabled(sc)), languages: config?.allowed_languages ?? [], sourceVersion: source.version, revisionKey, consentEpoch,
+  return { processing: config ? processingReceipt(config) : null, enabled: Boolean(config && await asrEnabled(sc)), languages: config?.allowed_languages ?? [], sourceVersion: source.version, revisionKey, consentEpoch,
     state: active?.job.state ?? "not_requested", canRevoke: Boolean(active), current: !active || active.consent.source_version === source.version && active.consent.caption_revision_key === revisionKey };
 }
 
-export async function enqueueCaptionAsr(sc: SupabaseClient, ownerId: string, assetId: string, version: number, revisionKey: string, language: string, consent: boolean, expectedConsentEpoch: string) {
+export async function enqueueCaptionAsr(sc: SupabaseClient, ownerId: string, assetId: string, version: number, revisionKey: string, language: string, consent: boolean, expectedConsentEpoch: string, processing?: CaptionProcessingReceipt) {
   if (consent !== true) throw new CaptionError("invalid_payload", "Explicit transcription consent is required.");
   if (typeof expectedConsentEpoch !== "string" || !/^[a-f0-9]{64}$/.test(expectedConsentEpoch)) throw new CaptionError("invalid_payload", "Refresh transcription consent status before requesting a draft.");
   const source = await readCaptionAsset(sc, assetId);
@@ -89,9 +101,15 @@ export async function enqueueCaptionAsr(sc: SupabaseClient, ownerId: string, ass
   await requirePrivateCaptionStorage(sc);
   if (language) captionLanguage(language);
   const config = await readCaptionAsrConfig(sc);
-  if (!config || !(await asrEnabled(sc))) throw new CaptionError("feature_disabled", "Local transcription is not enabled.");
+  if (!config || !(await asrEnabled(sc))) throw new CaptionError("feature_disabled", "Transcription is not enabled.");
   if (language && !config.allowed_languages.includes(language)) throw new CaptionError("invalid_payload", "This language is not validated for transcription.");
-  const { data, error } = await sc.rpc("media_caption_asr_enqueue", { p_asset_id: assetId, p_owner_id: ownerId, p_source: source, p_caption_revision: revisionKey, p_target_language: language, p_consent: consent, p_expected_consent_epoch: expectedConsentEpoch });
+  const expected = processingReceipt(config);
+  if (processing && Object.keys(expected).some((key) => processing[key as keyof CaptionProcessingReceipt] !== expected[key as keyof CaptionProcessingReceipt])
+    || !processing && expected.provider !== "local") throw new CaptionError("conflict", "The transcription provider changed. Reopen and review its processing disclosure.");
+  const parameters = { p_asset_id: assetId, p_owner_id: ownerId, p_source: source, p_caption_revision: revisionKey, p_target_language: language, p_consent: consent, p_expected_consent_epoch: expectedConsentEpoch };
+  const { data, error } = processing
+    ? await sc.rpc("media_caption_asr_enqueue_v2", { ...parameters, p_expected_provider: processing.provider, p_expected_model: processing.modelVersion, p_expected_config: processing.configVersion, p_disclosure_version: processing.disclosureVersion })
+    : await sc.rpc("media_caption_asr_enqueue", parameters);
   if (error) throw new CaptionError("degraded_unavailable", "Transcription could not be queued. No audio was exported.");
   if (typeof data !== "string" || !/^[a-f0-9-]{36}$/i.test(data)) throw new CaptionError("conflict", "Transcription was not queued. Reopen to refresh consent, video and captions.");
   await recheckCaptionAsset(sc, ownerId, source);

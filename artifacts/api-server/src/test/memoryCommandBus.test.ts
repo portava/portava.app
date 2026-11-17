@@ -38,6 +38,7 @@ import { readFileSync } from "node:fs";
 import { logger } from "../lib/logger.js";
 import {
   auditCommand,
+  dispatchMemoryCommand,
   authorizeParticipantCommand,
   commandTypeForPatch,
   failureClassOf,
@@ -354,6 +355,19 @@ describe("§24 memory_command_rejected_total counts by reason", () => {
     assert.deepEqual(readMemoryCommandRejectedTotal(), { MEMORY_KERNEL_UNAVAILABLE: 1 });
   });
 
+  it("only the exact source-post uniqueness failure on ADD_MEDIA is a domain conflict",async()=>{
+    for(const [type,code,constraint,expected] of [
+      ['ADD_MEDIA','23505','memory_items_source_post_media_uniq','MEMORY_ITEM_ALREADY_LINKED'],
+      ['ADD_MEDIA','23505','memory_items_pkey','MEMORY_KERNEL_UNAVAILABLE'],
+      ['ADD_MEDIA','42501','memory_items_source_post_media_uniq','MEMORY_KERNEL_UNAVAILABLE'],
+      ['ARCHIVE_MEMORY','23505','memory_items_source_post_media_uniq','MEMORY_KERNEL_UNAVAILABLE'],
+    ] as const){
+      const sc={rpc:async()=>({data:null,error:{code,message:`duplicate key value violates unique constraint "${constraint}"`}})};
+      const result=await executeMemoryCommand(sc,{commandId:'c1',memoryId:'m1',actorUserId:'u1',idempotencyKey:'k1',type,payload:{}});
+      assert.equal(result.ok,false);if(!result.ok)assert.equal(result.reason,expected);
+    }
+  });
+
   it("an RPC returning NEITHER data nor error is unavailable too — a null body is not an empty success", async () => {
     const sc = { rpc: async () => ({ data: null, error: null }) };
     const r = await executeMemoryCommand(sc, {
@@ -431,6 +445,7 @@ describe("§24 failure class — the category of a refusal, not its reason code"
       MEMORY_AUTH_NOT_PARTICIPANT: "authorization",
       MEMORY_AUTH_IDEMPOTENCY_KEY_FOREIGN: "authorization",
       MEMORY_IDEMPOTENCY_KEY_REUSED: "idempotency",
+      MEMORY_ITEM_ALREADY_LINKED: "idempotency",
       MEMORY_LIFECYCLE_TERMINAL: "lifecycle",
       MEMORY_LIFECYCLE_INVALID_TRANSITION: "lifecycle",
       MEMORY_LIFECYCLE_UNKNOWN_STATE: "lifecycle",
@@ -546,5 +561,31 @@ describe("§24 the audit LINE, not just the classifier", () => {
     for (const forbidden of ["title", "caption", "patch", "payload", "allowedUserIds", "hiddenUserIds", "locationLat", "locationLng"]) {
       assert.equal(forbidden in line!, false, `${forbidden} must never reach an operational log`);
     }
+  });
+});
+
+
+describe('Memory item prerequisite envelopes',()=>{
+  it('refuses absent, malformed and failed proofs before selecting or invoking any writer, with an honest audit',async()=>{
+    const warn=logger.warn,lines:Record<string,unknown>[]=[];
+    logger.warn=((line:Record<string,unknown>)=>{lines.push(line);}) as typeof logger.warn;
+    try{
+      for(const response of [undefined,{data:true},{data:false,error:null},{data:'true',error:null},{data:true,error:{message:'offline'}},{data:null,error:null}]){
+        const calls:string[]=[];
+        const sc={rpc:async(name:string)=>{calls.push(name);return response;},from:()=>{throw new Error('Cannot select writer before readiness');}};
+        const result=await dispatchMemoryCommand({sc,commandType:'ADD_MEDIA',memoryId:'m1',actorUserId:'u1',idempotencyKey:'key',payload:{write:{media_url:'https://external.invalid/photo.jpg'}}});
+        assert.equal(result.ok,false);if(!result.ok&&'http' in result)assert.equal(result.http.code,'degraded_unavailable');
+        assert.deepEqual(calls,['memory_item_source_ready']);
+      }
+      assert.equal(lines.length,6);assert.ok(lines.every(line=>line.durable===false&&line.failureClass==='infrastructure'&&line.outcome==='rejected'));
+    }finally{logger.warn=warn;}
+  });
+  it('an explicit true proof reaches exactly the shared legacy insertion owner',async()=>{
+    const calls:string[]=[];
+    const sc={from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{enabled:false},error:null})})})}),
+      rpc:async(name:string,args?:{p_write:{id:string}})=>{calls.push(name);return name==='memory_item_source_ready'?{data:true,error:null}:
+        {data:{item:{id:args?.p_write.id,memory_id:'m1'},duplicate:false},error:null};}};
+    const result=await dispatchMemoryCommand({sc,commandType:'ADD_MEDIA',memoryId:'m1',actorUserId:'u1',idempotencyKey:'key',payload:{write:{media_url:'https://external.invalid/photo.jpg'}}});
+    assert.equal(result.ok,true,JSON.stringify(result));assert.deepEqual(calls,['memory_item_source_ready','insert_memory_media_item']);
   });
 });

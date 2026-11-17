@@ -174,3 +174,16 @@ describe('useCommunityDiscovery — a refusal is not a cacheable empty city', ()
     expect(refused.result.current.incomplete).toBe(false);
   });
 });
+
+it('ends a transport timeout as a retryable refusal, then recovers on reload', async () => {
+  const city = 'Timeout recovery';
+  mockGetCommunityPlaces.mockResolvedValueOnce({ ok: false, error: 'Places took too long to load. Try again.' });
+  const ui = await renderHook(({ refreshKey }: { refreshKey: number }) => useCommunityDiscovery(city, null, refreshKey), { initialProps: { refreshKey: 0 } });
+  await waitFor(() => expect(ui.result.current.loading).toBe(false));
+  expect(ui.result.current.refused).toBe(true);
+  mockGetCommunityPlaces.mockResolvedValueOnce({ ok: true, data: { items: [gem('recovered')], city, total: 1 } });
+  await ui.rerender({ refreshKey: 1 });
+  await waitFor(() => expect(ui.result.current.loading).toBe(false));
+  expect(ui.result.current.refused).toBe(false);
+  expect(ui.result.current.gems).toHaveLength(1);
+});

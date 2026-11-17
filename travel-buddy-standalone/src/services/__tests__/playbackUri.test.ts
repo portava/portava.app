@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isLoadablePlaybackUri, isPrivateMediaRefOf, playbackUriState } from '../playbackUri.ts';
+import { isLoadablePlaybackUri, isPrivateMediaRefOf, playbackUriState, mediaSigningReference } from '../playbackUri.ts';
 
 const MOV = 'post-media/d47c09d6-0000-4000-8000-00000000a001/1792727980484.mov';
 const SIGNED = 'https://ajrurzioarfkagpuxfnb.supabase.co/storage/v1/object/sign/post-media/d47c09d6-0000-4000-8000-00000000a001/1792727980484.mov?token=t';
@@ -24,11 +24,35 @@ test('P1 a bare private ref is never loadable; signed, file and same-origin URIs
   assert.equal(isLoadablePlaybackUri(SIGNED), true);
   assert.equal(isLoadablePlaybackUri('file:///var/mobile/clip.mov'), true);
   assert.equal(isLoadablePlaybackUri('ph://ABC/L0/001'), true);
-  assert.equal(isLoadablePlaybackUri('/api/media/file/post-media/u/a.mp4'), true, 'a same-origin path keeps its old behaviour');
+  assert.equal(isLoadablePlaybackUri('/api/media/file/post-media/u/a.mp4'), false, 'an API relay requires bearer authentication; sign it first');
+  assert.equal(isLoadablePlaybackUri('/public/video.mp4'), true);
   assert.equal(isLoadablePlaybackUri('//cdn.example/a.mp4'), false);
   assert.equal(isLoadablePlaybackUri(''), false);
   assert.equal(isLoadablePlaybackUri(null), false);
   assert.equal(isPrivateMediaRefOf(MOV), true);
+});
+
+test('only our relay is converted to a private signing reference', () => {
+  const original = process.env.EXPO_PUBLIC_API_BASE_URL;
+  process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test/';
+  try {
+    const url = 'https://api.test/api/media/file/post-media/u/a.mp4';
+    assert.equal(mediaSigningReference(url), 'post-media/u/a.mp4');
+    assert.equal(mediaSigningReference('/api/media/file/post-media/u/a%20b.jpg'), 'post-media/u/a b.jpg');
+    assert.deepEqual(playbackUriState(url, {}), { state: 'resolving' });
+    assert.deepEqual(playbackUriState(url, { [url]: SIGNED }), { state: 'ready', uri: SIGNED });
+    for (const value of [
+      'https://api.test.evil/api/media/file/post-media/u/a.mp4',
+      'https://other.test/api/media/file/post-media/u/a.mp4',
+      '/api/media/file/post-media/u/%2e%2e/private.jpg',
+      '/api/media/file/post-media/u/a.jpg?token=anything',
+      '/api/media/file/post-media/u/%ZZ',
+      '/api/media/file/unknown/u/a.jpg',
+    ]) assert.equal(mediaSigningReference(value), value);
+  } finally {
+    if (original === undefined) delete process.env.EXPO_PUBLIC_API_BASE_URL;
+    else process.env.EXPO_PUBLIC_API_BASE_URL = original;
+  }
 });
 
 test('P2 resolving while the signature is pending, ready once it lands, unavailable on refusal', () => {

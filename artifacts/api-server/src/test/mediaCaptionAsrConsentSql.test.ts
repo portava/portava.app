@@ -90,5 +90,25 @@ test("real offline queue/consent transaction: explicit grant, idempotency, revok
       await assert.rejects(readEpoch(), /permission denied/);
       await assert.rejects(database.query("SELECT * FROM public.media_caption_asr_epochs"), /permission denied/);
     }
+    await database.exec("RESET ROLE");
+    await database.exec(await readFile(new URL("../migrations/4023_managed_media_processing_consent.sql", import.meta.url), "utf8"));
+    await database.exec("UPDATE public.media_caption_asr_config SET processing_provider='deepgram', model_version='deepgram:nova-3:fixture', config_version='managed-fixture'; SET ROLE service_role");
+    expectedConsentEpoch = await readEpoch();
+    const managed = async (provider = "deepgram", model = "deepgram:nova-3:fixture", configuration = "managed-fixture", disclosure = "deepgram-audio-opt-out-v1") => (await database.query(
+      "SELECT public.media_caption_asr_enqueue_v2($1,$2,$3::jsonb,$4,$5,$6,$7,$8,$9,$10,$11) AS id",
+      [asset.id,asset.owner_user_id,JSON.stringify(asset),"a".repeat(64),"en",true,expectedConsentEpoch,provider,model,configuration,disclosure])).rows[0].id;
+    for (const refused of [await managed("local"), await managed("deepgram","other-model"), await managed("deepgram","deepgram:nova-3:fixture","old-config"), await managed("deepgram","deepgram:nova-3:fixture","managed-fixture","local-audio-v1")]) assert.equal(refused, null);
+    // Even a legacy server can only create an unstamped grant; the managed worker refuses it.
+    const legacy = await enqueue(true,"en","a".repeat(64));
+    assert.equal((await database.query("SELECT processing_disclosure_version FROM public.media_caption_asr_consents WHERE job_id=$1",[legacy])).rows[0].processing_disclosure_version,null);
+    const approved = await managed();
+    assert.equal(approved, legacy);
+    assert.equal((await database.query("SELECT processing_disclosure_version FROM public.media_caption_asr_consents WHERE job_id=$1",[approved])).rows[0].processing_disclosure_version,"deepgram-audio-opt-out-v1");
+    await database.exec("RESET ROLE; UPDATE public.media_caption_asr_config SET config_version='changed-after-review'; SET ROLE service_role");
+    assert.equal(await managed(),null);
+    for (const role of ["anon","authenticated"]) {
+      await database.exec(`RESET ROLE; SET ROLE ${role}`);
+      await assert.rejects(managed(),/permission denied/);
+    }
   } finally { await database.close(); }
 });

@@ -8,7 +8,7 @@ jest.mock('../../../../../hooks/useSocialVersion.ts', () => ({ bumpSocialVersion
 // NOTE: native navigation is replaced at its external boundary.
 jest.mock('expo-router', () => ({ router: { push: jest.fn() } }));
 // NOTE: account changes are controlled independently of live auth.
-jest.mock('../../../../../services/discoveryViewerScope.ts', () => ({ currentDiscoveryScope: () => 'viewer', isCurrentDiscoveryScope: () => true }));
+jest.mock('../../../../../services/discoveryViewerScope.ts', () => ({ ...jest.requireActual('../../../../../services/discoveryViewerScope.ts'), currentDiscoveryScope: () => 'viewer', isCurrentDiscoveryScope: () => true }));
 jest.mock('../../../../../platform/input-assistance/hooks/useInputAccountEpoch.ts', () => ({ useInputAccountEpoch: () => 0 }));
 import { router } from 'expo-router';
 import { followUser } from '../../../../../services/follows.ts';

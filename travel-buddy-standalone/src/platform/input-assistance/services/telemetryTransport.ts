@@ -32,7 +32,8 @@
  * `installInputTelemetry` with this transport. Census G263 stays W only until
  * rows are observed in production; the client half is attached.
  */
-import { freshToken as freshApiToken } from '../../../services/apiToken.ts';
+import { isCurrentOutcomeAuthorization, outcomeAuthorizationSignal } from './outcomeLearning.ts';
+import { withInputApiResponse } from './inputApiRequest.ts';
 import {
   createTelemetryBatcher,
   newTelemetrySessionId,
@@ -59,26 +60,23 @@ export function installInputTelemetryTransport(
   const post = async (batch: TelemetryBatch) => {
     const base = apiBase();
     if (!base) return { ok: false };
-    let token: string | null = null;
+    const events = batch.events.filter(e => e.name !== 'downstream_task_completed' || isCurrentOutcomeAuthorization(e));
+    if (!events.length) return { ok: false };
+    const authorization = outcomeAuthorizationSignal(events.filter(e => e.name === 'downstream_task_completed'));
     try {
-      token = await freshApiToken();
-    } catch {
-      token = null;
-    }
-    if (!token) return { ok: false };
-    try {
-      const res = await fetch(`${base}/api/input-assistance/telemetry`, {
+      return await withInputApiResponse('/api/input-assistance/telemetry', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(batch),
-      });
-      // 503 is the route's HONEST answer to a failed write (it refuses to call
-      // a broken ingest an empty one). The client's answer to that is to drop,
-      // not to retry into an incident.
-      return { ok: res.ok, retryable: res.status === 503 };
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: batch.sessionId, events }),
+      }, async res => {
+        // 503 is the route's HONEST answer to a failed write (it refuses to call
+        // a broken ingest an empty one). The client's answer to that is to drop,
+        // not to retry into an incident.
+        return { ok: res.ok, retryable: res.status === 503 };
+      }, authorization.signal, authorization.accountId);
     } catch {
       return { ok: false, retryable: true };
-    }
+    } finally { authorization.dispose(); }
   };
 
   return createTelemetryBatcher({ post, sessionId });

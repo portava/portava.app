@@ -25,8 +25,9 @@ jest.mock('../components/MediaActionPanels.tsx', () => ({ SECTION21_ACTION_ICONS
   openRailDirections: jest.fn(), saveRailRoute: jest.fn() }));
 // NOTE: exhaustive stub; the navigation provider does not participate in collection writes.
 jest.mock('../../../components/PlanPickerController.tsx', () => ({ usePlanPicker: () => ({ open: jest.fn() }) }));
-// NOTE: exhaustive stub to avoid analytics timers; no collection transport is mocked here.
-jest.mock('../../../hooks/useMediaAnalytics.ts', () => ({ useMediaAnalytics: () => ({ record: jest.fn() }) }));
+// NOTE: exhaustive recording seam; real action handlers and mapping are exercised without transport timers.
+jest.mock('../../../hooks/useMediaAnalytics.ts', () => ({ useMediaAnalytics: () => ({ record: mockRecord }) }));
+const mockRecord = jest.fn();
 // NOTE: exhaustive native inset stub for predictable layout in the renderer.
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }) }));
 
@@ -118,8 +119,8 @@ it('keeps a failed report open with a retry and accepts only a confirmed success
   const close = jest.fn();
   await render(<MediaActionRail mediaId="post-a" visible onClose={close} />);
   await fireEvent.press(await screen.findByLabelText('Report'));
-  expect(screen.getByText('Couldn’t send this report. Try again.')).toBeTruthy(); expect(close).not.toHaveBeenCalled();
-  await fireEvent.press(screen.getByLabelText('Report')); expect(close).toHaveBeenCalledTimes(1);
+  expect(screen.getByText('Couldn’t send this report. Try again.')).toBeTruthy(); expect(close).not.toHaveBeenCalled(); expect(mockRecord).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByLabelText('Report')); expect(close).toHaveBeenCalledTimes(1); expect(mockRecord).not.toHaveBeenCalled();
 });
 
 it('does not close the replacement media when an old report finishes', async () => {
@@ -144,7 +145,7 @@ it('locks repeated plan requests and ignores a result after dismissal', async ()
   await render(<MediaActionRail mediaId="post-a" visible onClose={close} />);
   await fireEvent.press(await screen.findByLabelText('Do this'));
   await fireEvent.press(screen.getByLabelText('Do this'));
-  expect(actions.fetchCompiledExperiencePlan).toHaveBeenCalledTimes(1);
+  expect(actions.fetchCompiledExperiencePlan).toHaveBeenCalledTimes(1); expect(mockRecord).not.toHaveBeenCalled();
   expect(actions.fetchCompiledExperiencePlan).toHaveBeenCalledWith('trip-a', { source: 'experience', signal: expect.any(AbortSignal) });
   const signal = jest.mocked(actions.fetchCompiledExperiencePlan).mock.calls[0][1].signal;
   await fireEvent.press(screen.getByLabelText('Close'));

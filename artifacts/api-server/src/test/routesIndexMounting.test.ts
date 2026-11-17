@@ -131,7 +131,7 @@ describe("B. routes/index.ts registers nothing inside a comment, and mounts ever
 
   it("B4. the file keeps its pinned length (censuses cite it by line)", () => {
     const lines = SRC.split("\n");
-    assert.equal(lines.length, 453);
-    assert.equal(lines[451], "router.use(recordingCaptureStampsRouter);");
+    assert.equal(lines.length, 455);
+    assert.equal(lines[453], "router.use(recordingCaptureStampsRouter);");
   });
 });

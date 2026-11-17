@@ -1,57 +1,6 @@
-/**
- * ACCOUNT STATUS — an unwritten restriction must never be reported as an
- * applied one, and an unread restriction must never be reported as an absent
- * one.
- *
- * ── THE DEFECT CLASS ────────────────────────────────────────────────────────
- * supabase-js RESOLVES on a database error. It does not reject. So
- *
- *     await sc.from("profiles").update({ account_status: "deactivated" })
- *       .eq("id", user.id)
- *       .then(undefined, () => {});
- *
- * observes NOTHING when the write fails: the second argument to `.then` is a
- * REJECTION handler, and the failure arrives RESOLVED as `{ data: null, error }`
- * with no branch reading it and no log recording it. Four sites in
- * routes/profile.ts had that shape on the account-status path, and
- * `profiles.account_status` is the field every downstream restriction consults
- * — the ban gate in lib/http.ts, the public map (lib/mapTravelers.ts), Circle
- * location serving (lib/circleLocationsRead.ts gate 7), lib/mediaAccess.ts and
- * lib/profileVisibility.ts.
- *
- * The four outcomes this file pins, each of which shipped:
- *
- *   1. POST /me/deactivate answered `200 { deactivated: true }` while the
- *      account stayed ACTIVE and fully visible everywhere.
- *   2. POST /me/delete-request answered `200 { deletionScheduled: true }` while
- *      the account stayed ACTIVE for the whole 30-day hold it claimed to hide
- *      the user for.
- *   3. POST /me/reactivate answered `200 { reactivated: true }` while the
- *      pending `user_deletion_requests` row survived — so
- *      lib/accountDeletionScheduler.ts DESTROYED the account on its original
- *      schedule, after the user had cancelled and been told it was cancelled.
- *   4. GET /me/account-status answered plain "deactivated" when
- *      `user_deletion_requests` could not be read, hiding the irreversible
- *      countdown (and the cancel affordance) from the person it belongs to.
- *
- * ── WHY EVERY FAILURE CASE IS PAIRED ────────────────────────────────────────
- * A test where the account genuinely has no restriction and a test where the
- * restriction table cannot be read PASS FOR THE SAME REASON. So every failure
- * case below sits next to a HEALTHY case with the row present and readable: a
- * "fix" that refused every request would satisfy all the failure assertions and
- * would have broken deactivation outright. Both halves are asserted on the
- * exact status CODE, never on `!== 200` — a request that died at validation
- * would satisfy that and prove nothing about the gate.
- *
- * The double is src/test/helpers/failClosedSupabase.ts, which is contract-
- * checked against the real supabase-js client every CI run. Its injected
- * failures RESOLVE, exactly as production's do; a fake that THREW would take a
- * code path production never takes (a try/catch around a supabase call is dead
- * code) and the test would pass for the wrong reason.
- *
- * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
- *      node --import tsx/esm --test src/test/accountStatusFailOpenWrites.test.ts
- */
+/** Fail-closed account controls. SQL transaction rollback and resulting state are
+ * proved in db/accountRecovery.db.test.ts; these tests inject resolved RPC errors
+ * and assert no independent write or false success escapes through HTTP. */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
@@ -141,151 +90,32 @@ async function call(
   return { status: res.status, body };
 }
 
-describe("account status: an unwritten restriction is not an applied one", () => {
-  // ── POST /me/deactivate ────────────────────────────────────────────────────
-
-  it("HEALTHY: deactivate writes profiles.account_status and reports success", async () => {
-    const spec: FakeClientSpec = { rows: baseRows("active") };
-    install(spec);
-
-    const res = await call("POST", "/me/deactivate");
-    assert.equal(res.status, 200, "a healthy deactivation must still succeed");
-    assert.equal(res.body.deactivated, true);
-
-    // The AUTHORITATIVE write was actually issued with the right value.
-    const profileWrites = spec.updated?.["profiles"] ?? [];
-    assert.equal(profileWrites.length, 1, "expected exactly one profiles write");
-    assert.equal(profileWrites[0].account_status, "deactivated");
-  });
-
-  it("FAILS CLOSED: deactivate does not report success when the account_status write fails", async () => {
-    const spec: FakeClientSpec = {
-      rows: baseRows("active"),
-      // Only the authoritative write fails. Reads of `profiles` still succeed,
-      // so requireUser's ban gate admits the request and the 500 below cannot
-      // be the ban gate answering instead of the route.
-      failWritesOn: (t) => (t === "profiles" ? WRITE_ERROR : null),
-    };
-    install(spec);
-
-    const res = await call("POST", "/me/deactivate");
-    assert.equal(res.status, 500, "an unwritten deactivation must not answer 200");
-    assert.equal(res.body.error, "db_error");
-    assert.notEqual(res.body.deactivated, true, "must never claim the account was deactivated");
-  });
-
-  // ── POST /me/delete-request ────────────────────────────────────────────────
-
-  it("HEALTHY: delete-request schedules and hides the account", async () => {
-    const spec: FakeClientSpec = { rows: baseRows("active") };
-    install(spec);
-
-    const res = await call("POST", "/me/delete-request");
-    assert.equal(res.status, 200);
-    assert.equal(res.body.deletionScheduled, true);
-    assert.equal(typeof res.body.scheduledAt, "string");
-
-    const profileWrites = spec.updated?.["profiles"] ?? [];
-    assert.equal(profileWrites.length, 1);
-    assert.equal(profileWrites[0].account_status, "deactivated");
-  });
-
-  it("FAILS CLOSED: delete-request does not claim the account is hidden when the write fails", async () => {
-    const spec: FakeClientSpec = {
-      rows: baseRows("active"),
-      failWritesOn: (t) => (t === "profiles" ? WRITE_ERROR : null),
-    };
-    install(spec);
-
-    const res = await call("POST", "/me/delete-request");
-    assert.equal(res.status, 500, "a 30-day hold that hides nothing must not answer 200");
-    assert.equal(res.body.error, "db_error");
-    assert.notEqual(res.body.deletionScheduled, true);
-  });
-
-  // ── POST /me/reactivate ────────────────────────────────────────────────────
-
-  it("HEALTHY: reactivate cancels the pending deletion and reports success", async () => {
-    const spec: FakeClientSpec = {
-      rows: baseRows("deactivated", {
-        user_deletion_requests: [{ user_id: ME, status: "pending", scheduled_at: SCHEDULED }],
-      }),
-    };
-    install(spec);
-
-    const res = await call("POST", "/me/reactivate");
-    assert.equal(res.status, 200, "a healthy reactivation must still succeed");
-    assert.equal(res.body.reactivated, true);
-
-    const cancels = spec.updated?.["user_deletion_requests"] ?? [];
-    assert.equal(cancels.length, 1, "the cancellation write must be ISSUED, not merely constructed");
-    assert.equal(cancels[0].status, "cancelled");
-  });
-
-  it("FAILS CLOSED: reactivate does not report success when the deletion cancel fails", async () => {
-    const spec: FakeClientSpec = {
-      rows: baseRows("deactivated", {
-        user_deletion_requests: [{ user_id: ME, status: "pending", scheduled_at: SCHEDULED }],
-      }),
-      // The profiles write (account_status -> active) succeeds; only the
-      // cancellation of the standing DESTROY instruction fails. That is the
-      // exact combination that used to answer 200 and then delete the account.
-      failWritesOn: (t) => (t === "user_deletion_requests" ? WRITE_ERROR : null),
-    };
-    install(spec);
-
-    const res = await call("POST", "/me/reactivate");
-    assert.equal(
-      res.status,
-      500,
-      "an uncancelled scheduled deletion must not be reported as a completed reactivation",
-    );
-    assert.equal(res.body.error, "db_error");
-    assert.notEqual(res.body.reactivated, true);
-  });
-
-  // ── GET /me/account-status ────────────────────────────────────────────────
-
-  it("HEALTHY: account-status surfaces pending_deletion when the row is readable", async () => {
-    install({
-      rows: baseRows("deactivated", {
-        user_deletion_requests: [{ user_id: ME, status: "pending", scheduled_at: SCHEDULED }],
-      }),
+describe('account status: unavailable authoritative operations never report success', () => {
+  const cases = [
+    { method: 'POST', path: '/me/deactivate', rpc: 'set_account_self_deactivation', receipt: { ok: true, reactivateUntil: SCHEDULED }, success: 'deactivated' },
+    { method: 'POST', path: '/me/delete-request', rpc: 'request_recoverable_account_deletion', receipt: { ok: true, generation: ME, scheduledAt: null, selfRecoverableUntil: SCHEDULED }, success: 'deletionScheduled' },
+    { method: 'POST', path: '/me/reactivate', rpc: 'recover_deleted_account', receipt: { ok: true, alreadyRecovered: false, accountStatus: 'active' }, success: 'reactivated' },
+    { method: 'GET', path: '/me/account-status', rpc: 'account_recovery_status', receipt: { accountStatus: 'pending_deletion', deletionScheduledAt: null, selfRecoverableUntil: SCHEDULED, reactivateUntil: null }, success: 'accountStatus' },
+  ];
+  for (const c of cases) {
+    const rows = () => baseRows('deactivated', { user_deletion_requests: [{ user_id: ME, status: 'pending', recovery_generation: ME }] });
+    it(`HEALTHY: ${c.path} reports the canonical receipt without separate writes`, async () => {
+      let invoked = 0;
+      const spec: FakeClientSpec = { rows: rows(), rpc: { [c.rpc]: args => { invoked++; assert.equal(args.p_user, ME); return { data: c.receipt, error: null }; } } };
+      install(spec); const res = await call(c.method, c.path); assert.equal(res.status, 200); assert.ok(res.body[c.success]); assert.equal(invoked, 1);
+      assert.deepEqual(spec.updated ?? {}, {});
+      if (c.path === '/me/delete-request') assert.equal(res.body.scheduledAt, null);
     });
-
-    const res = await call("GET", "/me/account-status");
-    assert.equal(res.status, 200);
-    assert.equal(res.body.accountStatus, "pending_deletion");
-    assert.equal(res.body.deletionScheduledAt, SCHEDULED);
-  });
-
-  it("HEALTHY: account-status says deactivated when there is genuinely no pending deletion", async () => {
-    install({ rows: baseRows("deactivated") });
-
-    const res = await call("GET", "/me/account-status");
-    assert.equal(res.status, 200);
-    assert.equal(res.body.accountStatus, "deactivated");
-    assert.equal(res.body.deletionScheduledAt, null);
-  });
-
-  it("FAILS CLOSED: an unreadable user_deletion_requests is not reported as 'no pending deletion'", async () => {
-    install({
-      rows: baseRows("deactivated", {
-        user_deletion_requests: [{ user_id: ME, status: "pending", scheduled_at: SCHEDULED }],
-      }),
-      // `profiles` reads stay healthy so requireUser and the handler's own
-      // account_status read both succeed — the ONLY unreadable input is the
-      // deletion schedule.
-      failOn: (ctx) => (ctx.table === "user_deletion_requests" ? READ_ERROR : null),
+    it(`FAILS CLOSED: ${c.path} rejects a resolved database failure`, async () => {
+      let invoked = 0;
+      const spec: FakeClientSpec = { rows: rows(), rpc: { [c.rpc]: () => { invoked++; return { data: null, error: c.method === 'GET' ? READ_ERROR : WRITE_ERROR }; } } };
+      install(spec); const res = await call(c.method, c.path); assert.equal(res.status, c.method === 'GET' ? 500 : 502); assert.equal(invoked, 1); assert.equal(res.body[c.success], undefined); assert.deepEqual(spec.updated ?? {}, {});
     });
-
-    const res = await call("GET", "/me/account-status");
-    assert.equal(res.status, 500, "an unread countdown must not be answered as an absent one");
-    assert.equal(res.body.error, "db_error");
-    assert.notEqual(
-      res.body.accountStatus,
-      "deactivated",
-      "reporting plain 'deactivated' hides an irreversible scheduled deletion from its subject",
-    );
+  }
+  it('an unreadable deletion request cannot select the personal reactivation path', async () => {
+    let invoked = false;
+    install({ rows: baseRows('deactivated'), failOn: ctx => ctx.table === 'user_deletion_requests' ? READ_ERROR : null,
+      rpc: { reactivate_self_deactivated_account: () => { invoked = true; return { data: { ok: true }, error: null }; } } });
+    const res = await call('POST', '/me/reactivate'); assert.equal(res.status, 502); assert.equal(invoked, false); assert.notEqual(res.body.reactivated, true);
   });
 });

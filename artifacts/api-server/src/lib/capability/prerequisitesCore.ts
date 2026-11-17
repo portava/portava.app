@@ -754,6 +754,23 @@ export interface RegistryFinding {
   readSites: number;
 }
 
+/** A shared guard must be on this flag consumer's actual call path and name
+ * every required RPC. Merely registering a guard elsewhere is insufficient. */
+export function reachesSharedFunctionGuard(
+  def: CapabilityDefinition, consumer: string, scan: ScanResult,
+  readConsumer: (rel: string) => string | null,
+): boolean {
+  const functions = def.requires.functions ?? [];
+  if (!functions.length || Object.keys(def.requires.tables).length) return false;
+  return (def.sharedFunctionGuards ?? []).some(guard => {
+    const source = readConsumer(guard);
+    if (!source || !/capability\/|SchemaCapability|schemaCapability/.test(source)) return false;
+    return scan.reads.some(read => read.flag === def.flag && read.file === consumer
+      && functions.every(fn => read.refs.some(ref =>
+        ref.kind === "function" && ref.name === fn && ref.file === guard)));
+  });
+}
+
 export function evaluateRegistry(
   registry: Readonly<Record<string, CapabilityDefinition>>,
   snap: ProductionSnapshot,
@@ -781,6 +798,7 @@ export function evaluateRegistry(
     const badConsumers: string[] = [];
     for (const c of def.consumers) {
       const src = readConsumer(c);
+      const sharedGuard = reachesSharedFunctionGuard(def, c, scan, readConsumer);
       // Order matters, and it is the opposite of the obvious one.
       //
       // "Does it reach lib/capability" is the check that carries the meaning: a
@@ -794,8 +812,9 @@ export function evaluateRegistry(
       // reports a consumer that is in fact correct. Running it FIRST let it
       // preempt the real check and mask the finding that matters.
       if (src === null) badConsumers.push(`${c} (not found)`);
-      else if (!/capability\/|SchemaCapability|schemaCapability/.test(src)) badConsumers.push(`${c} (does not reach lib/capability)`);
-      else if (!src.includes(def.flag)) badConsumers.push(`${c} (does not name ${def.flag})`);
+      else if (!/capability\/|SchemaCapability|schemaCapability/.test(src)
+        && !sharedGuard) badConsumers.push(`${c} (does not reach lib/capability)`);
+      else if (!src.includes(def.flag) && !sharedGuard) badConsumers.push(`${c} (does not name ${def.flag})`);
     }
     out.push({
       flag: def.flag,

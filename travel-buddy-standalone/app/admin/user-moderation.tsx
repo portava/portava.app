@@ -35,6 +35,7 @@ import {
   suspendUser,
   banUser,
   restoreUser,
+  reactivateUserProfile,
   restrictBio,
   restrictMessaging,
   restrictVisibility,
@@ -52,7 +53,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 type ActionSlug =
-  | 'warn' | 'restrict' | 'suspend' | 'ban' | 'restore'
+  | 'warn' | 'restrict' | 'suspend' | 'ban' | 'restore' | 'reactivate-profile'
   | 'restrict-bio' | 'restrict-messaging' | 'restrict-visibility' | 'hide-posts';
 
 interface ActionDef {
@@ -78,14 +79,15 @@ const ACTIONS: ActionDef[] = [
     promptMessage: 'Why is this account being permanently banned?',
     confirmFirst: 'This permanently bans the account. It can only be reversed with Restore. Continue?',
   },
-  { slug: 'restore', label: 'Restore account', destructive: false, requireReason: false, promptMessage: 'Optional note for restoring this account to active.' },
+  { slug: 'restore', label: 'Lift ban or suspension', destructive: false, requireReason: false, promptMessage: 'Optional note for lifting the ban or suspension. This does not reactivate a deactivated profile.' },
+  { slug: 'reactivate-profile', label: 'Reactivate profile', destructive: false, requireReason: true, promptMessage: 'Why should this deactivated profile be recovered? Separate bans and suspensions remain in force.' },
   { slug: 'restrict-bio', label: 'Clear & lock bio', destructive: true, requireReason: true, promptMessage: 'Why is the bio being cleared?' },
   { slug: 'restrict-messaging', label: 'Restrict messaging', destructive: true, requireReason: true, promptMessage: 'Why is messaging being restricted?' },
   { slug: 'restrict-visibility', label: 'Force profile private', destructive: true, requireReason: true, promptMessage: 'Why is the profile being forced private?' },
   { slug: 'hide-posts', label: 'Hide all posts', destructive: true, requireReason: true, promptMessage: 'Why are this user\u2019s posts being hidden?' },
 ];
 
-function runAction(slug: ActionSlug, userId: string, reason: string, reportId?: string) {
+function runAction(slug: ActionSlug, userId: string, reason: string, reportId?: string, deactivationId: string | null = null) {
   const r = reason || null;
   switch (slug) {
     case 'warn':                return warnUser(userId, r, reportId);
@@ -93,6 +95,7 @@ function runAction(slug: ActionSlug, userId: string, reason: string, reportId?: 
     case 'suspend':              return suspendUser(userId, reason, undefined, reportId);
     case 'ban':                  return banUser(userId, reason, reportId);
     case 'restore':              return restoreUser(userId, r);
+    case 'reactivate-profile':   return reactivateUserProfile(userId, reason, deactivationId);
     case 'restrict-bio':         return restrictBio(userId, reason);
     case 'restrict-messaging':   return restrictMessaging(userId, reason);
     case 'restrict-visibility':  return restrictVisibility(userId, reason);
@@ -109,7 +112,7 @@ export default function UserModerationScreen() {
 }
 
 const REPORT_ACTIONS: readonly ActionSlug[] = ['warn', 'restrict', 'suspend', 'ban'];
-type PendingAction = ActionDef & { userId: string; reportId?: string; revision: number };
+type PendingAction = ActionDef & { userId: string; reportId?: string; revision: number; deactivationId: string | null };
 
 function UserModerationForm({ initialHandoff, invalidHandoff }: { initialHandoff: ModerationReportHandoff | null; invalidHandoff: boolean }) {
 
@@ -195,7 +198,7 @@ function UserModerationForm({ initialHandoff, invalidHandoff }: { initialHandoff
   const beginAction = (def: ActionDef) => {
     if (!mountedRef.current || actioningRef.current || !userId || !summary || (reportId && !REPORT_ACTIONS.includes(def.slug))) return;
     const revision = ++revisionRef.current;
-    const pending = { ...def, userId, reportId, revision };
+    const pending = { ...def, userId, reportId, revision, deactivationId: summary.accountStates.find(state => state.state === 'deactivated')?.id ?? null };
     setPendingAction(null);
     if (def.confirmFirst) {
       Alert.alert('Confirm', def.confirmFirst, [
@@ -217,7 +220,7 @@ function UserModerationForm({ initialHandoff, invalidHandoff }: { initialHandoff
     setPendingAction(null);
     setActioning(def.slug);
     try {
-      const res = await runAction(def.slug, def.userId, reason, def.reportId);
+      const res = await runAction(def.slug, def.userId, reason, def.reportId, def.deactivationId);
       if (!mountedRef.current || revision !== revisionRef.current) return;
       if (!res.ok) {
         Alert.alert(`${def.label} failed`, res.error);
@@ -304,7 +307,7 @@ function UserModerationForm({ initialHandoff, invalidHandoff }: { initialHandoff
             <View style={s.section}>
               <Text style={s.sectionTitle}>Moderation actions</Text>
               <View style={s.actionsWrap}>
-                {ACTIONS.filter((def) => !reportId || REPORT_ACTIONS.includes(def.slug)).map((def) => (
+                {ACTIONS.filter(def => def.slug !== 'reactivate-profile' || (currentStatus === 'deactivated' && summary?.accountStates.every(state => state.state !== 'deactivated' || Boolean(state.id)))).filter((def) => !reportId || REPORT_ACTIONS.includes(def.slug)).map((def) => (
                   <Pressable
                     key={def.slug}
                     style={[s.actionChip, def.destructive && s.actionChipDestructive]}

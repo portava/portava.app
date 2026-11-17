@@ -1,3 +1,4 @@
+import {activeMediaAccountRead} from './helpers/mediaAccountReadFixture.js';
 import {describe,it} from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
@@ -21,6 +22,7 @@ async function fixture(options:{uploadFail?:boolean;commitError?:string;removeFa
   async upload(path:string,bytes:Buffer){assert.ok(store.telegraph_forward_media_jobs.length,'journal exists before any upload');if(options.uploadFail)return {error:{message:'failed'}};uploaded.set(path,bytes);return {error:null};},
   async remove(paths:string[]){removed.push(paths);if(options.removeFail)return {error:{message:'failed'}};for(const path of paths)uploaded.delete(path);return {error:null};},
  };}},async rpc(name:string,args:any){
+      if (name === "account_recovery_status") return activeMediaAccountRead(name, args);
   if(name==='telegraph_prepare_media_forward'){
    prepared++;const id=args.p_id,paths=Array.from({length:args.p_asset_count},(_,i)=>`${A}/telegraph-forwards/${id}/${i}`).flatMap(path=>[path,path+'.thumb.jpg']);
    store.telegraph_forward_media_jobs.push({id,forwarder_id:A,state:'preparing',storage_paths:paths});return {data:{outcome:'prepared',id,paths},error:null};

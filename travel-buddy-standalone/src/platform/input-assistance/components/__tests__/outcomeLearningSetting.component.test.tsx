@@ -37,6 +37,7 @@ import {
   OUTCOME_DISCLOSURE_BODY,
   OUTCOME_DISCLOSURE_VERSION,
   beginOutcomeAccount,
+  clearOutcomeWithdrawal,
   outcomeLearningConsented,
   type OutcomeConsentState,
 } from '../../services/outcomeLearning.ts';
@@ -48,6 +49,7 @@ const OFF: OutcomeConsentState = {
 const ON: OutcomeConsentState = { ...OFF, enabled: true, consentVersion: OUTCOME_DISCLOSURE_VERSION, consentedAt: '2026-10-05T00:00:00.000Z' };
 
 afterEach(async () => {
+  clearOutcomeWithdrawal('u1');
   await cleanup();
   beginOutcomeAccount(null);
 });
@@ -103,4 +105,61 @@ test('withdrawal is one tap, closes the gate, and says when what was kept goes',
   expect(r.getByTestId('outcome-learning-note').props.children).toMatch(/within 30 days/);
   expect(outcomeLearningConsented()).toBe(false);
   expect(r.queryByTestId('outcome-learning-disclosure')).toBeNull();
+});
+
+test('a failed withdrawal immediately pauses local learning and exposes a retry', async () => {
+  beginOutcomeAccount('u1');
+  const read=jest.fn().mockResolvedValue({status:'ok',state:ON});
+  let finish!: (value:unknown)=>void;
+  const write=jest.fn().mockImplementation(()=>new Promise(resolve=>{finish=resolve;}));
+  const r=await render(<OutcomeLearningSetting read={read} write={write}/>);
+  await waitFor(()=>expect(outcomeLearningConsented()).toBe(true));
+  await act(async()=>{fireEvent(r.getByTestId('outcome-learning-switch'),'valueChange',false);});
+  expect(outcomeLearningConsented()).toBe(false);
+  expect(r.getByTestId('outcome-learning-switch').props.value).toBe(false);
+  await act(async()=>{finish({status:'failed'});});
+  expect(r.getByText(/Learning is paused on this device/)).toBeTruthy();
+  expect(r.getByTestId('outcome-learning-retry-withdrawal')).toBeTruthy();
+  await act(async()=>{fireEvent.press(r.getByTestId('outcome-learning-retry-withdrawal'));});
+  expect(write).toHaveBeenCalledTimes(2);
+  await act(async()=>{finish({status:'ok',state:{...ON,enabled:false,withdrawnAt:'2026-11-14T00:00:00.000Z'},countersErased:true});});
+});
+
+test('a stale settings read cannot open learning for a newly signed-in account', async () => {
+  beginOutcomeAccount('u1');
+  let stale!: (value:unknown)=>void;
+  const read=jest.fn().mockImplementationOnce(()=>new Promise(resolve=>{stale=resolve;}))
+    .mockResolvedValue({status:'ok',state:OFF});
+  const r=await render(<OutcomeLearningSetting read={read} write={jest.fn()}/>);
+  await act(async()=>{beginOutcomeAccount('u2');});
+  await waitFor(()=>expect(r.getByTestId('outcome-learning-switch').props.value).toBe(false));
+  await act(async()=>{stale({status:'ok',state:ON});});
+  expect(r.getByTestId('outcome-learning-switch').props.value).toBe(false);
+  expect(outcomeLearningConsented()).toBe(false);
+});
+
+
+test('an enabled withdrawal receipt retains the retry and never claims deletion', async () => {
+  beginOutcomeAccount('u1');
+  const r=await render(<OutcomeLearningSetting
+    read={jest.fn().mockResolvedValue({status:'ok',state:ON})}
+    write={jest.fn().mockResolvedValue({status:'ok',state:ON,countersErased:true})}/>);
+  await waitFor(()=>expect(r.getByTestId('outcome-learning-switch').props.value).toBe(true));
+  await act(async()=>{fireEvent(r.getByTestId('outcome-learning-switch'),'valueChange',false);});
+  expect(r.getByTestId('outcome-learning-retry-withdrawal')).toBeTruthy();
+  expect(r.getByTestId('outcome-learning-switch').props.value).toBe(false);
+  expect(r.getByText(/couldn’t be saved/)).toBeTruthy();
+  expect(r.queryByText(/has been deleted/)).toBeNull();
+});
+
+test('an acknowledged withdrawal without an erasure receipt never claims deletion', async () => {
+  beginOutcomeAccount('u1');
+  const r=await render(<OutcomeLearningSetting
+    read={jest.fn().mockResolvedValue({status:'ok',state:ON})}
+    write={jest.fn().mockResolvedValue({status:'ok',state:{...ON,enabled:false,withdrawnAt:'2026-11-14T00:00:00.000Z'},countersErased:null})}/>);
+  await waitFor(()=>expect(r.getByTestId('outcome-learning-switch').props.value).toBe(true));
+  await act(async()=>{fireEvent(r.getByTestId('outcome-learning-switch'),'valueChange',false);});
+  expect(r.getByText(/couldn’t confirm/)).toBeTruthy();
+  expect(r.queryByText(/has been deleted/)).toBeNull();
+  expect(r.queryByTestId('outcome-learning-retry-withdrawal')).toBeNull();
 });

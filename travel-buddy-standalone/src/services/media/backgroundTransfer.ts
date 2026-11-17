@@ -129,7 +129,8 @@ export function backgroundPartTransport(api: ResumableTransport['api'], fs: FsLi
 export async function loadExpoFs(lifetime?: UploadLifetime): Promise<FsLike | null> {
   try {
     const mod = await import('expo-file-system/legacy');
-    const { Platform } = await import('react-native');
+    // Metro importAll eagerly reads unrelated lazy native exports; only load the property we need.
+    const { Platform } = require('react-native') as typeof import('react-native');
     let androidTask: FsLike['createUploadTask'] | null = null;
     if (Platform.OS === 'android' && lifetime) {
       const { requireOptionalNativeModule } = await import('expo-modules-core');

@@ -8,7 +8,7 @@ export function CaptionAsrSheet({ source, onClose, onRevoked }: { source: Captio
   const [language, setLanguage] = useState('');
   const [busy, setBusy] = useState(false);
   const [confirmRevoke, setConfirmRevoke] = useState(false);
-  const [message, setMessage] = useState('Checking local transcription availability…');
+  const [message, setMessage] = useState('Checking transcription availability…');
   const mounted = useRef(false);
   const pending = useRef(false);
   const sourceEpoch = useRef(0);
@@ -25,9 +25,9 @@ export function CaptionAsrSheet({ source, onClose, onRevoked }: { source: Captio
     setLanguage('');
     setBusy(false);
     setConfirmRevoke(false);
-    setMessage('Checking local transcription availability…');
+    setMessage('Checking transcription availability…');
     getCaptionAsrStatus(source, abort.signal).then((value) => {
-      if (!abort.signal.aborted && request === statusRequest.current) { setStatus(value); setMessage(value.enabled ? `Transcription: ${value.state.replace(/_/g, ' ')}` : 'Local transcription is unavailable until its model and languages are validated.'); }
+      if (!abort.signal.aborted && request === statusRequest.current) { setConsent(false); setStatus(value); setMessage(value.enabled ? `Transcription: ${value.state.replace(/_/g, ' ')}` : 'Transcription is unavailable until its model and languages are validated.'); }
     }).catch(() => { if (!abort.signal.aborted && request === statusRequest.current) setMessage('Transcription status unavailable. You can still stop transcription and erase drafts.'); });
     return () => { sourceEpoch.current += 1; mounted.current = false; abort.abort(); action.current?.abort(); };
   }, [source.assetId, source.version, source.revisionKey]);
@@ -59,7 +59,7 @@ export function CaptionAsrSheet({ source, onClose, onRevoked }: { source: Captio
           }
         }
       } else {
-        const result = await requestCaptionAsr(source, language, consent, status!.consentEpoch, controller.signal);
+        const result = await requestCaptionAsr(source, language, consent, status!.consentEpoch, controller.signal, status!.processing);
         if (isCurrent()) {
           setStatus(result);
           setConsent(false);
@@ -75,11 +75,16 @@ export function CaptionAsrSheet({ source, onClose, onRevoked }: { source: Captio
     } finally { if (action.current === controller) action.current = null; if (isCurrent()) { pending.current = false; setBusy(false); } }
   }
 
+  const managed = status?.processing?.provider === 'deepgram';
+  const permissionLabel = managed ? "I have permission to send this video's audio to Deepgram for transcription" : "I have permission to transcribe this video's audio locally";
+  const requestLabel = managed ? 'Request caption draft with Deepgram' : 'Request local caption draft';
   const canRequest = status?.enabled && !stale && consent && !busy;
   return <Modal visible animationType="slide" onRequestClose={onClose}>
     <ScrollView contentContainerStyle={styles.sheet}>
       <Text accessibilityRole="header" style={styles.title}>Generate a caption draft</Text>
-      <Text style={styles.copy}>Portava's self-hosted worker processes this video's audio for AI transcription. No managed transcription provider receives it. The original video and published captions are unchanged.</Text>
+      <Text style={styles.copy}>{managed
+        ? "With your permission, Portava sends this video's audio to Deepgram for AI transcription, with model-improvement use disabled. Deepgram processes the audio and returns a private draft. Its usage metadata may be retained. The original video and published captions are unchanged."
+        : "Portava's self-hosted worker processes this video's audio for AI transcription. No managed transcription provider receives it. The original video and published captions are unchanged."}</Text>
       <Text style={styles.copy}>You must have permission from the people speaking. Review every cue before publishing; speech and language accuracy are not guaranteed.</Text>
       <Text accessibilityRole="alert" style={styles.copy}>{stale ? 'The video or captions changed. Close and reopen this video before requesting transcription.' : message}</Text>
       <Pressable accessibilityRole="button" accessibilityLabel={`Transcription language: ${language || 'Detect language'}`} disabled={busy || !status?.enabled} onPress={() => {
@@ -87,8 +92,8 @@ export function CaptionAsrSheet({ source, onClose, onRevoked }: { source: Captio
         setLanguage(languages[(languages.indexOf(language) + 1) % languages.length]);
         setConsent(false);
       }} style={styles.button}><Text style={styles.buttonText}>Language: {language || 'Detect language'}</Text></Pressable>
-      <Pressable accessibilityRole="checkbox" accessibilityLabel="I have permission to transcribe this video's audio locally" accessibilityState={{ checked: consent, disabled: busy }} disabled={busy} onPress={() => setConsent(!consent)} style={styles.button}><Text style={styles.buttonText}>{consent ? '☑' : '☐'} I have permission to transcribe this video's audio locally.</Text></Pressable>
-      <Pressable accessibilityRole="button" accessibilityLabel="Request local caption draft" accessibilityState={{ disabled: !canRequest, busy }} disabled={!canRequest} onPress={() => void submit(false)} style={styles.button}><Text style={styles.buttonText}>Request local caption draft</Text></Pressable>
+      <Pressable accessibilityRole="checkbox" accessibilityLabel={permissionLabel} accessibilityState={{ checked: consent, disabled: busy || !status?.enabled }} disabled={busy || !status?.enabled} onPress={() => setConsent(!consent)} style={styles.button}><Text style={styles.buttonText}>{consent ? '☑' : '☐'} {permissionLabel}.</Text></Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel={requestLabel} accessibilityState={{ disabled: !canRequest, busy }} disabled={!canRequest} onPress={() => void submit(false)} style={styles.button}><Text style={styles.buttonText}>{requestLabel}</Text></Pressable>
       <Pressable accessibilityRole="button" accessibilityLabel={confirmRevoke ? 'Confirm stop transcription and delete drafts' : 'Stop transcription and delete drafts'} accessibilityState={{ disabled: busy }} disabled={busy} onPress={() => confirmRevoke ? void submit(true) : setConfirmRevoke(true)} style={styles.button}><Text style={styles.buttonText}>{confirmRevoke ? 'Confirm stop and delete drafts' : 'Stop transcription and delete drafts'}</Text></Pressable>
       <Pressable accessibilityRole="button" accessibilityLabel="Close transcription request" onPress={onClose} style={styles.button}><Text style={styles.buttonText}>Close</Text></Pressable>
     </ScrollView>

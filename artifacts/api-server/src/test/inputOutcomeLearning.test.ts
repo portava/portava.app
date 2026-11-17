@@ -26,6 +26,7 @@ import {
   INPUT_OUTCOME_FLAG,
   INPUT_OUTCOME_RETENTION_DAYS,
   readOutcomeMemory,
+  attachOutcomeMemory,
   outcomeWindowStartDay,
   runInputOutcomeRetentionSweep,
 } from "../lib/inputAssistance/outcomeLearning.js";
@@ -64,12 +65,15 @@ function makeFakeClient(state: FakeState) {
     },
     rpc: async (name: string, args: any) => {
       state.__rpc!.push({ name, args });
+      state.__beforeRpc?.(name);
       if (fail(`rpc:${name}`)) return { data: null, error: { message: "boom" } };
+      if (state.__rpcData && Object.hasOwn(state.__rpcData, name)) return { data: state.__rpcData[name], error: null };
       // Models 3780: both functions re-check the FLAG and the CONSENT in the database.
       const flagOn = !!(state.feature_flags ?? []).find((f: any) => f.flag === INPUT_OUTCOME_FLAG && f.enabled === true);
       const consented = (uid: string) => {
         const c = (state.input_outcome_consent ?? []).find((r: any) => r.user_id === uid);
-        return !!c && c.enabled === true && !c.withdrawn_at && !!c.consent_version;
+        return !!c && c.enabled === true && !c.withdrawn_at && c.consent_version === INPUT_OUTCOME_DISCLOSURE_VERSION && !!c.consented_at
+          && (!('p_consented_at' in args) || c.consented_at === args.p_consented_at);
       };
       if (name === "input_outcome_memory") {
         if (!flagOn || !consented(args.p_user_id)) return { data: { active: false }, error: null };
@@ -84,7 +88,7 @@ function makeFakeClient(state: FakeState) {
         return { data: { active: true, counts: [...by.values()] }, error: null };
       }
       if (name === "input_record_task_outcome") {
-        if (!flagOn) return { data: false, error: null };
+        if (!flagOn || !consented(args.p_user_id)) return { data: false, error: null };
         return { data: true, error: null };
       }
       if (name === "input_record_outcome") {
@@ -328,11 +332,28 @@ describe("outcome consent — explicit, off by default, server-stamped (OD-INPUT
 // ── 2. The outcome write (G320; OD-INPUT-1/2) ─────────────────────────────────
 
 const OUTCOME = {
+  outcomeConsentedAt: "2026-10-01T00:00:00.000Z",
   context: "city_picker", fieldId: "geo.city", task: "trip_destinations_saved", ok: true,
   entities: [{ entityType: "city", entityId: SANTA_ROSA.id }],
 };
 
 describe("POST /input-assistance/outcome — only for a user who opted in, only what the field may remember", () => {
+  it("refuses missing or previous-grant provenance without writing a counter", async () => {
+    for (const outcomeConsentedAt of [undefined, '2026-09-01T00:00:00Z', 'private text']) {
+      setup({feature_flags:[flag(true)],input_outcome_consent:[consentRow(USER_A)]});
+      const r=await call('POST','/input-assistance/outcome',{...OUTCOME,outcomeConsentedAt});
+      assert.equal(r.status,403);
+      assert.equal(state.__rpc!.length,0);
+    }
+  });
+
+  it("database refusal after the route consent read does not report a successful write", async () => {
+    setup({feature_flags:[flag(true)],input_outcome_consent:[consentRow(USER_A)],
+      __beforeRpc:()=>{state.input_outcome_consent[0].enabled=false;}});
+    const r=await call('POST','/input-assistance/outcome',OUTCOME);
+    assert.deepEqual(await r.json(),{ok:true,recorded:0,failed:0,refused:1});
+    assert.equal((state.input_outcome_counters??[]).length,0);
+  });
   it("records against the SESSION's user when the flag is on and consent is valid", async () => {
     setup({ feature_flags: [flag(true)], input_outcome_consent: [consentRow(USER_A)] });
     const r = await call("POST", "/input-assistance/outcome", { ...OUTCOME, userId: USER_B });
@@ -421,12 +442,46 @@ function telemetryBatch() {
     sessionId: "sess-1",
     events: [
       { name: "suggestion_selected", fieldId: "geo.city", context: "city_picker", at, props: { suggestionType: "entity", source: "canonical" } },
-      { name: "downstream_task_completed", fieldId: "geo.city", context: "city_picker", at, props: { task: "trip_destinations_saved", ok: true } },
+      { name: "downstream_task_completed", outcomeConsentedAt: "2026-10-01T00:00:00.000Z", fieldId: "geo.city", context: "city_picker", at, props: { task: "trip_destinations_saved", ok: true } },
     ],
   };
 }
 
 describe("§44 ingest — downstream_task_completed is admitted only for a caller who opted in (OD-INPUT-1)", () => {
+  it("rejects stale grant metadata while retaining unrelated product events", async () => {
+    setup({feature_flags:[flag(true)],input_outcome_consent:[consentRow(USER_A)]});
+    const batch=telemetryBatch();
+    batch.events[1]!.outcomeConsentedAt='2026-09-01T00:00:00Z';
+    const r=await call('POST','/input-assistance/telemetry',batch);
+    assert.deepEqual(await r.json(),{ok:true,accepted:1,rejected:1});
+    assert.deepEqual(state.input_assistance_telemetry_events.map((row:any)=>row.event_name),['suggestion_selected']);
+  });
+  it("aggregate storage failures and unknown RPC receipts are failures, not successful policy refusals", async () => {
+    for (const extra of [
+      { __fail: { "rpc:input_record_task_outcome": true } },
+      ...[null, undefined, {}, "true", 1].map(value => ({ __rpcData: { input_record_task_outcome: value } })),
+    ]) {
+      setup({ feature_flags: [flag(true)], input_outcome_consent: [consentRow(USER_A)], ...extra });
+      const batch = telemetryBatch(); batch.events = batch.events.slice(1);
+      const response = await call("POST", "/input-assistance/telemetry", batch);
+      assert.equal(response.status, 503);
+      assert.deepEqual(await response.json(), { ok: false, retryable: true, reason: "outcome_write_failed", accepted: 0, rejected: 0, failed: 1 });
+    }
+  });
+  it("a mixed batch reports a committed ordinary event separately from an aggregate failure", async () => {
+    setup({ feature_flags: [flag(true)], input_outcome_consent: [consentRow(USER_A)], __fail: { "rpc:input_record_task_outcome": true } });
+    const response = await call("POST", "/input-assistance/telemetry", telemetryBatch());
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { ok: false, retryable: true, reason: "outcome_write_failed", accepted: 1, rejected: 0, failed: 1 });
+    assert.deepEqual(state.input_assistance_telemetry_events.map((row:any)=>row.event_name), ["suggestion_selected"]);
+  });
+  it("an ordinary storage failure does not deny the aggregate already committed", async () => {
+    setup({ feature_flags: [flag(true)], input_outcome_consent: [consentRow(USER_A)], __fail: { "insert:input_assistance_telemetry_events": true } });
+    const response = await call("POST", "/input-assistance/telemetry", telemetryBatch());
+    assert.equal(response.status, 503);
+    const body:any = await response.json();
+    assert.equal(body.ok, false); assert.equal(body.accepted, 1); assert.equal(body.failed, 1); assert.equal(body.rejected, 0);
+  });
   it("without consent the outcome event is REJECTED and the rest of the batch still lands", async () => {
     setup({ feature_flags: [flag(true)] });
     const r = await call("POST", "/input-assistance/telemetry", telemetryBatch());
@@ -451,8 +506,8 @@ describe("§44 ingest — downstream_task_completed is admitted only for a calle
     assert.deepEqual(stored.map((x) => x.event_name), ["suggestion_selected"], "no downstream_task_completed row");
     const aggCalls = state.__rpc!.filter((c) => c.name === "input_record_task_outcome");
     assert.equal(aggCalls.length, 1);
-    assert.deepEqual(Object.keys(aggCalls[0]!.args).sort(), ["p_context", "p_ok", "p_task"], "the aggregate is told nothing that names a person or a session");
-    assert.deepEqual(aggCalls[0]!.args, { p_context: "city_picker", p_task: "trip_destinations_saved", p_ok: true });
+    assert.deepEqual(Object.keys(aggCalls[0]!.args).sort(), ["p_consented_at", "p_context", "p_ok", "p_task", "p_user_id"], "actor and grant authorize the transaction, not the stored aggregate");
+    assert.deepEqual(aggCalls[0]!.args, { p_user_id: USER_A, p_consented_at: "2026-10-01T00:00:00.000Z", p_context: "city_picker", p_task: "trip_destinations_saved", p_ok: true });
     assert.ok(!JSON.stringify(state.__rpc).includes("sess-1"), "the session token never reaches the aggregate");
   });
 
@@ -674,6 +729,15 @@ describe("OD-INPUT-2 — a completion counts for 30 UTC days, then it is deleted
     assert.deepEqual(r, { purged: 0, skipped: true, reason: "error" });
   });
 
+  it("malformed counter rows fail closed and preserve ordinary assistance memory exactly", async () => {
+    const good = {entity_type:"city",entity_id:"canonical-city",completed:2};
+    const acceptance = memoryOf([["canonical-city", 4]]);
+    for (const counts of [[null], [{...good,completed:0}], [{...good,completed:-1}], [{...good,completed:1.5}], [{...good,completed:"2"}], [{...good,entity_id:""}], [good,good], Array.from({length:501},(_,i)=>({...good,entity_id:String(i)}))]) {
+      const db = {rpc:async()=>({data:{active:true,counts},error:null})};
+      assert.deepEqual(await readOutcomeMemory(db as any,{userId:USER_A,context:"city_picker"}), {ok:false});
+      assert.equal(await attachOutcomeMemory(db as any,acceptance,USER_A,"city_picker"), acceptance);
+    }
+  });
   it("a failed read is a failed read, not an empty one; a malformed answer is also a failure", async () => {
     const s: FakeState = { __fail: { "rpc:input_outcome_memory": true } };
     assert.equal((await readOutcomeMemory(makeFakeClient(s) as any, { userId: USER_A, context: "c", now: NOW })).ok, false);

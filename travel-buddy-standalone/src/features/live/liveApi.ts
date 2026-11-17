@@ -1,3 +1,4 @@
+import { withServiceRequest, type ServiceResponse } from '../../services/serviceRequest.ts';
 /**
  * TM-live (WP-11) — the one request helper every live decision surface uses.
  *
@@ -51,34 +52,37 @@ export async function liveRequest<T = any>(
   path: string,
   body?: unknown,
 ): Promise<LiveCall<T>> {
-  if (!isConfigured() || !apiBase()) return { kind: 'off', reason: 'not_configured', detail: null };
-  const token = await bearerToken();
-  if (!token) return { kind: 'off', reason: 'signed_out', detail: null };
-  let res: Response;
-  try {
-    res = await fetch(`${apiBase()}${path}`, {
-      method,
-      headers: { Authorization: `Bearer ${token}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
-  } catch (e: any) {
-    return { kind: 'unavailable', status: null, detail: String(e?.message ?? 'network error') };
-  }
-  const parsed: any = await res.json().catch(() => undefined);
-  if (res.ok) {
-    if (parsed === undefined || parsed === null || typeof parsed !== 'object') {
-      return { kind: 'unavailable', status: res.status, detail: 'unreadable response' };
+  return withServiceRequest<LiveCall<T>>(async (request) => {
+    if (!isConfigured() || !apiBase()) return { kind: 'off', reason: 'not_configured', detail: null };
+    const token = await request.token(bearerToken);
+    if (!token) return { kind: 'off', reason: 'signed_out', detail: null };
+    let res: ServiceResponse;
+    try {
+      res = await request.fetch(`${apiBase()}${path}`, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+    } catch (e: any) {
+      return { kind: 'unavailable', status: null, detail: String(e?.message ?? 'network error') };
     }
-    return { kind: 'ok', status: res.status, body: parsed as T };
-  }
-  const error = typeof parsed?.error === 'string' ? parsed.error : `http_${res.status}`;
-  const detail = typeof parsed?.detail === 'string' ? parsed.detail : typeof parsed?.message === 'string' ? parsed.message : null;
-  if (error === 'feature_disabled' || parsed?.reason === 'FEATURE_DISABLED') return { kind: 'off', reason: 'feature_disabled', detail };
-  if (res.status >= 500 || res.status === 0) {
-    const why = typeof parsed?.reason === 'string' ? parsed.reason : null;
-    return { kind: 'unavailable', status: res.status, detail: why ? `${why}${detail ? ` — ${detail}` : ''}` : detail ?? error, body: parsed ?? null };
-  }
-  return { kind: 'refused', status: res.status, error, reason: typeof parsed?.reason === 'string' ? parsed.reason : null, detail, body: parsed ?? null };
+    const parsed: any = await res.json().catch(() => undefined);
+    if (res.ok) {
+      if (parsed === undefined || parsed === null || typeof parsed !== 'object') {
+        return { kind: 'unavailable', status: res.status, detail: 'unreadable response' };
+      }
+      return { kind: 'ok', status: res.status, body: parsed as T };
+    }
+    const error = typeof parsed?.error === 'string' ? parsed.error : `http_${res.status}`;
+    const detail = typeof parsed?.detail === 'string' ? parsed.detail : typeof parsed?.message === 'string' ? parsed.message : null;
+    if (error === 'feature_disabled' || parsed?.reason === 'FEATURE_DISABLED') return { kind: 'off', reason: 'feature_disabled', detail };
+    if (res.status >= 500 || res.status === 0) {
+      const why = typeof parsed?.reason === 'string' ? parsed.reason : null;
+      return { kind: 'unavailable', status: res.status, detail: why ? `${why}${detail ? ` — ${detail}` : ''}` : detail ?? error, body: parsed ?? null };
+    }
+    return { kind: 'refused', status: res.status, error, reason: typeof parsed?.reason === 'string' ? parsed.reason : null, detail, body: parsed ?? null };
+
+  }).catch((e: unknown): LiveCall<T> => { return { kind: 'unavailable', status: null, detail: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 /** The one sentence a surface shows for a call that did not succeed. */

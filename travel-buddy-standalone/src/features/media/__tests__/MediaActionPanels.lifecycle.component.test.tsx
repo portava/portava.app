@@ -36,44 +36,44 @@ afterEach(async () => { await act(async () => { disposeObservedOwnerSession(); s
 
 it('allows eligible trips only and prevents repeat taps while posting', async () => {
   const pending = deferred<ReturnType<typeof response>>(); submit = () => pending.promise;
-  const applied = jest.fn();
-  await render(<TripChoicePanel plan={plan} onBack={() => {}} onApplied={applied} />);
+  const applied = jest.fn(), committed = jest.fn();
+  await render(<TripChoicePanel plan={plan} onBack={() => {}} onApplied={applied} onCommitted={committed} />);
   const button = await screen.findByLabelText('Add to Weekend');
   expect(screen.queryByLabelText('Add to Other')).toBeNull();
   await fireEvent.press(button); await fireEvent.press(button);
-  expect(writes).toHaveLength(1);
+  expect(writes).toHaveLength(1); expect(committed).not.toHaveBeenCalled();
   await act(async () => { pending.resolve(response({ id: 'added' })); });
-  expect(writes).toHaveLength(2); expect(applied).toHaveBeenCalledTimes(1);
+  expect(writes).toHaveLength(2); expect(applied).toHaveBeenCalledTimes(1); expect(committed).toHaveBeenCalledTimes(1); expect(committed).toHaveBeenCalledWith('trip-a');
 });
 it('stops the remaining plan writes and navigation after the chooser closes', async () => {
   const pending = deferred<ReturnType<typeof response>>(); submit = () => pending.promise;
-  const applied = jest.fn(), back = jest.fn();
-  await render(<TripChoicePanel plan={plan} onBack={back} onApplied={applied} />);
+  const applied = jest.fn(), committed = jest.fn(), back = jest.fn();
+  await render(<TripChoicePanel plan={plan} onBack={back} onApplied={applied} onCommitted={committed} />);
   await fireEvent.press(await screen.findByLabelText('Add to Weekend'));
   await fireEvent.press(screen.getByLabelText('Back to actions'));
   await act(async () => { pending.resolve(response({ id: 'added' })); });
-  expect(writes).toHaveLength(1); expect(applied).not.toHaveBeenCalled(); expect(back).toHaveBeenCalledTimes(1);
+  expect(writes).toHaveLength(1); expect(applied).not.toHaveBeenCalled(); expect(committed).not.toHaveBeenCalled(); expect(back).toHaveBeenCalledTimes(1);
 });
 it('stops remaining plan writes and navigation after a new login session', async () => {
   const pending = deferred<ReturnType<typeof response>>(); submit = () => pending.promise;
-  const applied = jest.fn();
-  await render(<TripChoicePanel plan={plan} onBack={() => {}} onApplied={applied} />);
+  const applied = jest.fn(), committed = jest.fn();
+  await render(<TripChoicePanel plan={plan} onBack={() => {}} onApplied={applied} onCommitted={committed} />);
   await fireEvent.press(await screen.findByLabelText('Add to Weekend'));
   await act(async () => { emitObservedAuthEvent('SIGNED_IN', observedOwnerSession('owner-a', 'session-b')); pending.resolve(response({ id: 'added' })); });
-  expect(writes).toHaveLength(1); expect(applied).not.toHaveBeenCalled();
+  expect(writes).toHaveLength(1); expect(applied).not.toHaveBeenCalled(); expect(committed).not.toHaveBeenCalled();
 });
 it('keeps a partial result visible and offers review instead of replaying accepted stops', async () => {
   submit = async () => writes.length === 1 ? response({ id: 'added' }) : response({ message: 'unavailable' }, 503);
-  const applied = jest.fn();
-  await render(<TripChoicePanel plan={plan} onBack={() => {}} onApplied={applied} />);
+  const applied = jest.fn(), committed = jest.fn();
+  await render(<TripChoicePanel plan={plan} onBack={() => {}} onApplied={applied} onCommitted={committed} />);
   const add = await screen.findByLabelText('Add to Weekend');
   await fireEvent.press(add);
   expect(await screen.findByText(/Added 1 of 2 stops/)).toBeTruthy();
-  expect(applied).not.toHaveBeenCalled();
+  expect(applied).not.toHaveBeenCalled(); expect(committed).not.toHaveBeenCalled();
   await fireEvent.press(screen.getByLabelText('Add to Weekend'));
   expect(writes).toHaveLength(2);
   await fireEvent.press(screen.getByLabelText('Open trip to review stops'));
-  expect(applied).toHaveBeenCalledWith('trip-a');
+  expect(applied).toHaveBeenCalledWith('trip-a'); expect(committed).not.toHaveBeenCalled();
 });
 it('sends one invitation on double tap and does not claim success after dismissal', async () => {
   jest.useFakeTimers();

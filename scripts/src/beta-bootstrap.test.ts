@@ -829,6 +829,28 @@ describe("the chain-seed parser (beta-chain-seeds.ts): which reference rows the 
     );
   });
 
+  it("bucket name uniqueness is proven at seed, export, validation and import boundaries", () => {
+    const sql = "INSERT INTO storage.buckets(id,name,public) VALUES('generated-media-private','generated-media-private',false) ON CONFLICT(id) DO NOTHING;";
+    const chain: ChainSource = { files: ["4025_test.sql"], read: () => sql };
+    const plans = planReferenceTables(model, REFERENCE_PUBLIC_TABLES, chain);
+    const bucket = plans.find((p) => p.schema === "storage")!;
+    const row = (id: string, name = id) => ({ id, name, public: "false", file_size_limit: null, allowed_mime_types: null });
+    assert.deepEqual(withoutChainSeededRows(bucket, [row("other"), row("generated-media-private")]).rows, [row("other")]);
+    const collision = row("other", "generated-media-private");
+    assert.throws(() => withoutChainSeededRows(bucket, [collision]), /name must equal id/);
+    assert.throws(() => buildReferenceImportSql(bucket, [collision]), /name must equal id/);
+    assert.throws(() => buildReferenceImportSql(bucket, [row("generated-media-private")]), /chain seeds itself/);
+    const snapshot: ReferenceSnapshot = {
+      format: SNAPSHOT_FORMAT, takenAt: "2026-11-13T00:00:00.000Z",
+      sourceProjectRef: "hwokxgbmezheskbzskfr", baselineSha256: model.sha256, rowCap: REFERENCE_ROW_CAP,
+      tables: plans.map((p) => ({ ...p, rowCount: p === bucket ? 1 : 0, rows: p === bucket ? [collision] : [] })),
+    };
+    assert.throws(() => validateSnapshot(snapshot, plans, model.sha256), /name must equal id/);
+    assert.throws(() => planReferenceTables(model, REFERENCE_PUBLIC_TABLES, { ...chain, read: () => sql.replace("'generated-media-private',false", "'different-name',false") }), /chain seeds must have name equal to id/);
+    assert.throws(() => planReferenceTables(buildBaselineModel(BASELINE_SQL.replace("btree (name);", "btree (lower(name));")), REFERENCE_PUBLIC_TABLES, chain), /unique key besides its primary key/);
+    assert.throws(() => planReferenceTables(model, REFERENCE_PUBLIC_TABLES, { ...chain, read: () => sql + " CREATE UNIQUE INDEX alternate ON storage.buckets (public);" }), /unique key besides its primary key/);
+  });
+
   it("the chain is read in APPLY order from CHAIN_START_PREFIX on: files before it and skipped files are not in it", () => {
     const skip = { skip: "2100_c.sql", superseded_by: ["2101_d.sql"], why: "w", evidence: "e" };
     assert.deepEqual(chainApplyOrder(["2101_d.sql", "2092_a.sql", "2093_b.sql", "2100_c.sql"], [skip]), ["2093_b.sql", "2101_d.sql"]);
@@ -842,7 +864,7 @@ describe("the chain-seed parser (beta-chain-seeds.ts): which reference rows the 
     const plans = planReferenceTables(model);
     const ff = plans.find((p) => p.table === "feature_flags")!;
     const seeded = Object.keys(ff.chainSeeded);
-    assert.equal(seeded.length, 243, "pinned (2026-11-05): a migration that seeds a flag moves this; read what it seeds, then update"); // 239 -> 243: 4005 telegraph_sequence_state_enabled, 4008 map_route_flow_consent_enabled, 4013 trip_nearby_checkpoints_enabled and 4017 telegraph_outcome_feedback_enabled, all FALSE; 236 -> 239 (census-discovery §133, release 3 merge), every one FALSE: 3920 discovery_trend_canonical_place_context_enabled, 3922 ranking_debug_samples_purge_enabled, 3923 discovery_trail_open_telemetry_enabled; 234 -> 236 (census-layover L196, batch 3): 3952 layover_presence_expiry_enabled and layover_crew_expiry_enabled (both TRUE: they keep production's deletion at expiry; owner directive 2026-10-24, do not expand retention without authorization); 233 -> 234 (census-layover L25, batch 2): 3951 layover_snapshot_envelope_ref_enabled (FALSE); 232 -> 233 (census-layover L159, PR #781): 3950 layover_checkpoint_expiry_enabled (FALSE); 218 -> 232 (Layover continuation, PR #765), every one FALSE: 3871 layover_recommendation_status_enabled, 3872 layover_crew_split_plans_enabled, 3873 layover_canonical_snapshot_enabled, 3875 layover_mutual_discovery_enabled, 3885 layover_live_signals_enabled, 3890 layover_service_write_audit_enabled, 3893 layover_safe_return_product_enabled, 3894 layover_buddy_specialist_enabled, 3895 layover_route_subjects_enabled, 3897 layover_compass_replan_enabled, 3898 layover_experience_execution_enabled, 3899 layover_objective_evidence_enabled, 3907 layover_activity_commitment_enabled, 3908 layover_route_fanout_enabled; 214 -> 218 (Layover 165), every one FALSE: 3846 layover_compass_assistant_enabled, 3856 layover_routed_corridor_enabled, 3826 trip_flight_segments_enabled, 3827 layover_flight_connections_enabled; 213 -> 214 (wave 5): 3999 memory_from_own_media_enabled (FALSE; census-media MD385); 209 -> 213 (wave 4), every one FALSE: 3996 layover_crew_location_enabled, 3997 memory_visibility_policies_enabled and memory_shared_experiences_enabled, 3998 telegraph_conversation_snapshots_enabled; 201 -> 209: the PR #762 batch seeds eight flags, every one FALSE — 3980 media_derivative_jobs_enabled, 3983 media_caption_asr_enabled, 3986 media_dubbing_enabled, 3987 media_caption_translation_enabled, 3990 memory_snapshots_enabled, 3991 memory_video_segments_enabled, 3992 memory_import_batches_enabled, 3993 memory_resurfacing_policy_enabled; 200 -> 201: 3784 seeds layover_ranking_mode (FALSE, mode legacy; B58 LAY-4); 199 -> 200: 3785 seeds layover_map_budget_chips_enabled (FALSE; B58 LAY-5); 198 -> 199: 3786 seeds layover_crew_abort_notify_enabled (FALSE; B58 LAY-6); 197 -> 198: 3802 seeds memory_narrative_ai_enabled (FALSE; B58 MEM-NARR-1); 196 -> 197: 3825 seeds telegraph_link_previews_enabled (FALSE; B58 TM-1); 194 -> 196 was 3803/3804 (B58 MEM-CANON, PR #716)
+    assert.equal(seeded.length, 245, "pinned (2026-11-14; 4031 adds media_event_retention_enabled OFF): a migration that seeds a flag moves this; read what it seeds, then update"); // 239 -> 243: 4005 telegraph_sequence_state_enabled, 4008 map_route_flow_consent_enabled, 4013 trip_nearby_checkpoints_enabled and 4017 telegraph_outcome_feedback_enabled, all FALSE; 236 -> 239 (census-discovery §133, release 3 merge), every one FALSE: 3920 discovery_trend_canonical_place_context_enabled, 3922 ranking_debug_samples_purge_enabled, 3923 discovery_trail_open_telemetry_enabled; 234 -> 236 (census-layover L196, batch 3): 3952 layover_presence_expiry_enabled and layover_crew_expiry_enabled (both TRUE: they keep production's deletion at expiry; owner directive 2026-10-24, do not expand retention without authorization); 233 -> 234 (census-layover L25, batch 2): 3951 layover_snapshot_envelope_ref_enabled (FALSE); 232 -> 233 (census-layover L159, PR #781): 3950 layover_checkpoint_expiry_enabled (FALSE); 218 -> 232 (Layover continuation, PR #765), every one FALSE: 3871 layover_recommendation_status_enabled, 3872 layover_crew_split_plans_enabled, 3873 layover_canonical_snapshot_enabled, 3875 layover_mutual_discovery_enabled, 3885 layover_live_signals_enabled, 3890 layover_service_write_audit_enabled, 3893 layover_safe_return_product_enabled, 3894 layover_buddy_specialist_enabled, 3895 layover_route_subjects_enabled, 3897 layover_compass_replan_enabled, 3898 layover_experience_execution_enabled, 3899 layover_objective_evidence_enabled, 3907 layover_activity_commitment_enabled, 3908 layover_route_fanout_enabled; 214 -> 218 (Layover 165), every one FALSE: 3846 layover_compass_assistant_enabled, 3856 layover_routed_corridor_enabled, 3826 trip_flight_segments_enabled, 3827 layover_flight_connections_enabled; 213 -> 214 (wave 5): 3999 memory_from_own_media_enabled (FALSE; census-media MD385); 209 -> 213 (wave 4), every one FALSE: 3996 layover_crew_location_enabled, 3997 memory_visibility_policies_enabled and memory_shared_experiences_enabled, 3998 telegraph_conversation_snapshots_enabled; 201 -> 209: the PR #762 batch seeds eight flags, every one FALSE — 3980 media_derivative_jobs_enabled, 3983 media_caption_asr_enabled, 3986 media_dubbing_enabled, 3987 media_caption_translation_enabled, 3990 memory_snapshots_enabled, 3991 memory_video_segments_enabled, 3992 memory_import_batches_enabled, 3993 memory_resurfacing_policy_enabled; 200 -> 201: 3784 seeds layover_ranking_mode (FALSE, mode legacy; B58 LAY-4); 199 -> 200: 3785 seeds layover_map_budget_chips_enabled (FALSE; B58 LAY-5); 198 -> 199: 3786 seeds layover_crew_abort_notify_enabled (FALSE; B58 LAY-6); 197 -> 198: 3802 seeds memory_narrative_ai_enabled (FALSE; B58 MEM-NARR-1); 196 -> 197: 3825 seeds telegraph_link_previews_enabled (FALSE; B58 TM-1); 194 -> 196 was 3803/3804 (B58 MEM-CANON, PR #716)
     const chain = loadChainSource();
     const live = seededFlagPopulation([...chain.files], chain.read);
     for (const f of live.keys()) assert.ok(f in ff.chainSeeded, `${f} is left in feature_flags by the chain but not keyed`);
@@ -855,10 +877,12 @@ describe("the chain-seed parser (beta-chain-seeds.ts): which reference rows the 
     for (const f of preBaselineFlagDefinitions().keys()) assert.ok(!(f in ff.chainSeeded), `${f}: b2 creates it, the chain does not seed it`);
   });
 
-  it("no other allowlisted table, and not storage.buckets, is seeded by the chain today — a chain file that starts to turns this red", () => {
+  it("only flags and the private generation bucket are seeded by the chain today", () => {
     const plans = planReferenceTables(model);
-    const others = plans.filter((p) => p.table !== "feature_flags");
-    assert.equal(others.length, REFERENCE_PUBLIC_TABLES.length);
+    const buckets = plans.find((p) => p.schema === "storage" && p.table === "buckets")!;
+    assert.deepEqual(buckets.chainSeeded, { "generated-media-private": "4025_higgsfield_generation_jobs.sql:121" });
+    const others = plans.filter((p) => p.table !== "feature_flags" && p !== buckets);
+    assert.equal(others.length, REFERENCE_PUBLIC_TABLES.length - 1);
     for (const p of others) assert.deepEqual(p.chainSeeded, {}, `${p.schema}.${p.table}: the chain seeds rows the snapshot copies; check their postconditions and keys`);
   });
 });

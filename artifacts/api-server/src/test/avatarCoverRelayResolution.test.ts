@@ -1,15 +1,17 @@
+import { installMediaDeliveryFixture } from "./helpers/mediaDeliveryFixture.js";
+import {activeMediaAccountRead} from './helpers/mediaAccountReadFixture.js';
 /**
  * avatarCoverRelayResolution.test.ts
  *
  * Confirms that relay URLs returned by the avatar and cover upload endpoints
  * resolve correctly through GET /api/media/file/:bucket/*path — i.e. the
- * relay issues a 302 redirect to a signed URL rather than 403-ing the caller.
+ * relay streams authenticated bytes rather than 403-ing the caller.
  *
  * Scenario for each upload type:
  *   1. POST /me/avatar/upload (or /me/cover/upload) with a valid JPEG body
  *      → captures the storage path from the 201 response.
  *   2. GET /media/file/profile-media/<path> with the same bearer token
- *      → asserts HTTP 302, confirming the relay signed the URL rather than
+ *      → asserts HTTP 200, confirming the relay fetched the bytes rather than
  *        denying access.
  *
  * Authorization short-circuit: authorizeMediaAccess returns true immediately
@@ -58,6 +60,7 @@ function makeReq(base: string) {
   ): Promise<{ status: number; headers: Record<string, string | string[]>; body: any }> {
     return new Promise((resolve, reject) => {
       const url         = new URL(path, base);
+      if (url.pathname.startsWith("/api/media/file/")) url.searchParams.set("viewer", USER_ID);
       const payload     = opts.binary;
       const contentType = opts.contentType ?? "application/json";
 
@@ -97,10 +100,10 @@ function makeReq(base: string) {
 // ── Fake Supabase client ────────────────────────────────────────────────────────
 
 /** Last path passed to createSignedUrl — lets tests assert the relay called it. */
-let lastSignedPath: string | null = null;
+let lastDeliveredPath: string | null = null;
 
 function buildFakeClient() {
-  lastSignedPath = null;
+  lastDeliveredPath = null;
 
   /** Generic query builder — returns empty data for all queries. */
   function from(_table: string) {
@@ -142,6 +145,7 @@ function buildFakeClient() {
       },
     },
     from,
+    rpc: async (name:string,args:any)=>activeMediaAccountRead(name,args),
     storage: {
       /** Called by ensureStorageBucket — always succeeds. */
       createBucket: async () => ({ error: null }),
@@ -158,13 +162,7 @@ function buildFakeClient() {
          * Relay signing: return a deterministic fake signed URL.
          * Capture the path so tests can assert it was called.
          */
-        createSignedUrl: async (storagePath: string, _ttl: number) => {
-          lastSignedPath = storagePath;
-          return {
-            data: { signedUrl: `https://signed.storage.example.com/${bucket}/${storagePath}` },
-            error: null,
-          };
-        },
+        createSignedUrl: async () => { throw new Error("Provider signing must be retired"); },
         getPublicUrl: () => ({
           data: { publicUrl: `https://storage.example.com/${bucket}` },
         }),
@@ -177,12 +175,15 @@ function buildFakeClient() {
 
 // ── Test suite ─────────────────────────────────────────────────────────────────
 
-describe("Avatar & cover relay resolution — relay returns 302, not 403", () => {
+describe("Avatar & cover relay resolution — relay returns 200, not 403", () => {
   let server: Server;
   let base:   string;
   let req:    ReturnType<typeof makeReq>;
+  let restoreDelivery:()=>void;const previousUrl=process.env.SUPABASE_URL;
 
   before(async () => {
+    process.env.SUPABASE_URL="https://synthetic-avatar-storage.example.test";
+    restoreDelivery=installMediaDeliveryFixture(read=>{lastDeliveredPath=read.path;});
     const app = express();
 
     // Inject a no-op req.log so error branches in route handlers don't throw
@@ -204,6 +205,7 @@ describe("Avatar & cover relay resolution — relay returns 302, not 403", () =>
   });
 
   after(async () => {
+    restoreDelivery();if(previousUrl===undefined)delete process.env.SUPABASE_URL;else process.env.SUPABASE_URL=previousUrl;
     await new Promise<void>((r) => server.close(() => r()));
     _setTestClient(null as any, false);
     _setTestServiceClient(null as any);
@@ -237,7 +239,7 @@ describe("Avatar & cover relay resolution — relay returns 302, not 403", () =>
       );
     });
 
-    it("relay URL resolves to 302 — not 403 — after a successful upload", async () => {
+    it("relay URL resolves to 200 — not 403 — after a successful upload", async () => {
       // Step 1: upload to get the storage path.
       const uploadRes = await req(
         "POST",
@@ -252,26 +254,24 @@ describe("Avatar & cover relay resolution — relay returns 302, not 403", () =>
       const storagePath: string = uploadRes.body.path; // "avatars/{userId}/{uuid}.jpg"
 
       // Step 2: resolve via relay. http.request does NOT follow redirects,
-      // so a 302 means the relay issued a signed URL; a 403 means auth failed.
+      // so a 200 means the relay issued a signed URL; a 403 means auth failed.
       const relayRes = await req(
         "GET",
         `/api/media/file/profile-media/${storagePath}`,
         USER_TOKEN,
       );
       assert.equal(
-        relayRes.status, 302,
-        `Expected relay to 302-redirect to signed URL, got ${relayRes.status}: ${JSON.stringify(relayRes.body)}`,
+        relayRes.status, 200,
+        `Expected relay to 200-redirect to signed URL, got ${relayRes.status}: ${JSON.stringify(relayRes.body)}`,
       );
 
       // The redirect Location must point to the fake signed URL, not the generic cover.
       const location = relayRes.headers["location"] as string | undefined;
-      assert.ok(
-        typeof location === "string" && location.includes("signed.storage.example.com"),
-        `Expected Location to contain the signed URL, got: ${location}`,
-      );
+      assert.equal(location, undefined);
+      assert.equal(relayRes.body, "media-fixture-bytes");
     });
 
-    it("relay calls createSignedUrl with the correct path", async () => {
+    it("relay fetches bytes with the correct path", async () => {
       const uploadRes = await req(
         "POST",
         "/api/me/avatar/upload",
@@ -284,8 +284,8 @@ describe("Avatar & cover relay resolution — relay returns 302, not 403", () =>
       await req("GET", `/api/media/file/profile-media/${storagePath}`, USER_TOKEN);
 
       assert.equal(
-        lastSignedPath, storagePath,
-        `createSignedUrl was called with "${lastSignedPath}" but expected "${storagePath}"`,
+        lastDeliveredPath, storagePath,
+        `authenticated storage fetch was called with "${lastDeliveredPath}" but expected "${storagePath}"`,
       );
     });
 
@@ -322,7 +322,7 @@ describe("Avatar & cover relay resolution — relay returns 302, not 403", () =>
       );
     });
 
-    it("relay URL resolves to 302 — not 403 — after a successful upload", async () => {
+    it("relay URL resolves to 200 — not 403 — after a successful upload", async () => {
       // Step 1: upload.
       const uploadRes = await req(
         "POST",
@@ -336,25 +336,23 @@ describe("Avatar & cover relay resolution — relay returns 302, not 403", () =>
       );
       const storagePath: string = uploadRes.body.path; // "covers/{userId}/cover.jpg"
 
-      // Step 2: resolve via relay — must get 302, not 403.
+      // Step 2: resolve via relay — must get 200, not 403.
       const relayRes = await req(
         "GET",
         `/api/media/file/profile-media/${storagePath}`,
         USER_TOKEN,
       );
       assert.equal(
-        relayRes.status, 302,
-        `Expected relay to 302-redirect to signed URL, got ${relayRes.status}: ${JSON.stringify(relayRes.body)}`,
+        relayRes.status, 200,
+        `Expected relay to 200-redirect to signed URL, got ${relayRes.status}: ${JSON.stringify(relayRes.body)}`,
       );
 
       const location = relayRes.headers["location"] as string | undefined;
-      assert.ok(
-        typeof location === "string" && location.includes("signed.storage.example.com"),
-        `Expected Location to contain the signed URL, got: ${location}`,
-      );
+      assert.equal(location, undefined);
+      assert.equal(relayRes.body, "media-fixture-bytes");
     });
 
-    it("relay calls createSignedUrl with the correct cover path", async () => {
+    it("relay fetches bytes with the correct cover path", async () => {
       const uploadRes = await req(
         "POST",
         "/api/me/cover/upload",
@@ -367,8 +365,8 @@ describe("Avatar & cover relay resolution — relay returns 302, not 403", () =>
       await req("GET", `/api/media/file/profile-media/${storagePath}`, USER_TOKEN);
 
       assert.equal(
-        lastSignedPath, storagePath,
-        `createSignedUrl was called with "${lastSignedPath}" but expected "${storagePath}"`,
+        lastDeliveredPath, storagePath,
+        `authenticated storage fetch was called with "${lastDeliveredPath}" but expected "${storagePath}"`,
       );
     });
 

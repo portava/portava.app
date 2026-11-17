@@ -33,6 +33,7 @@ import { fileURLToPath } from "node:url";
 import { CAPABILITIES, MEDIA_CANONICAL, MEDIA_CANONICAL_ASSET_COLUMNS, capabilityFor } from "../lib/capability/registry.js";
 import { CANONICAL_ASSET_SCHEMA_COLUMNS } from "../lib/media/mediaSchemaCapability.js";
 import { CANONICAL_ASSET_COLUMNS_ADDED_BY_2250 } from "../lib/mediaAssets.js";
+import { reachesSharedFunctionGuard, scanFlagReads } from "../lib/capability/prerequisitesCore.js";
 import { buildCanonicalSchema, hasColumn, stripSqlComments } from "../scripts/lib/canonicalSchema.js";
 
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -87,15 +88,17 @@ describe("capability registry — every entry is consumed, seeded and declared",
   });
 
   it("every entry names a consumer that exists, names the flag, and reaches lib/capability", () => {
+    const scan = scanFlagReads(SRC);
+    const readConsumer = (rel: string) => { try { return readFileSync(join(SRC, rel), "utf8"); } catch { return null; } };
     for (const def of entries) {
       assert.ok(def.consumers.length > 0, `${def.flag}: a capability with no consumer guards nothing`);
       for (const rel of def.consumers) {
         const p = join(SRC, rel);
         assert.ok(existsSync(p), `${def.flag}: consumer ${rel} does not exist`);
         const src = readFileSync(p, "utf8");
-        assert.ok(src.includes(def.flag), `${def.flag}: consumer ${rel} never names the flag`);
+        assert.ok(src.includes(def.flag) || reachesSharedFunctionGuard(def, rel, scan, readConsumer), `${def.flag}: consumer ${rel} never names the flag`);
         assert.ok(
-          /capability\/|SchemaCapability/.test(src),
+          /capability\/|SchemaCapability/.test(src) || reachesSharedFunctionGuard(def, rel, scan, readConsumer),
           `${def.flag}: consumer ${rel} does not import lib/capability or a *SchemaCapability wrapper`,
         );
       }
@@ -125,5 +128,50 @@ describe("media: the wrapper is a rename over the contract, and the consumer is 
     const src = readFileSync(join(SRC, "lib", "media", "mediaSchemaCapability.ts"), "utf8");
     assert.ok(src.includes('from "../capability/schemaCapability.js"'));
     assert.ok(!src.includes('.from("media_assets")'), "a second probe implementation would drift from the first");
+  });
+});
+
+import { MEMORY_CANDIDATE_ORIGIN, PASSPORT_MEMORY_SOURCES } from "../lib/capability/registry.js";
+import { probeSchemaReadiness } from "../lib/capability/schemaCapability.js";
+import { loadPassportMemoryPeople } from "../services/passport/PassportMemoryPeople.js";
+
+describe("Memory source capability refusal", () => {
+  it("requires an explicit true from the existing read-only origin probe", async () => {
+    for (const [response, expected] of [
+      [{ data: true, error: null }, "ready"],
+      [{ data: false, error: null }, "missing"],
+      [{ data: null, error: { code: "PGRST202" } }, "missing"],
+      [{ data: null, error: { code: "42883" } }, "missing"],
+      [{ data: null, error: { code: "42501" } }, "unknown"],
+      [{ data: "true", error: null }, "unknown"],
+      [{ data: true }, "unknown"], [undefined, "unknown"],
+    ] as const) {
+      const calls: string[] = [];
+      const sc = { rpc: async (name: string) => { calls.push(name); return response; } };
+      assert.equal((await probeSchemaReadiness(sc, MEMORY_CANDIDATE_ORIGIN, { force: true })).state, expected);
+      assert.deepEqual(calls, ["memory_candidate_origin_ready"]);
+    }
+    const sc = { rpc: async () => { throw new Error("offline"); } };
+    assert.equal((await probeSchemaReadiness(sc, MEMORY_CANDIDATE_ORIGIN)).state, "unknown");
+  });
+  it("declares only an audited stable SQL boolean function as an executable probe", () => {
+    for (const def of Object.values(CAPABILITIES)) {
+      const name = def.requires.readOnlyBooleanProbe?.name;
+      if (!name) continue;
+      assert.ok(def.requires.functions?.includes(name));
+      const sql = def.providedBy.map(file => readFileSync(join(MIGRATIONS, file), "utf8")).join("\n");
+      assert.match(sql, new RegExp(`FUNCTION public\\.${name}\\(\\)\\s+RETURNS boolean LANGUAGE sql STABLE`));
+    }
+  });
+  it("missing or unreadable Passport storage remains unavailable before private reads or commands", async () => {
+    for (const error of [{ code: "42P01" }, { code: "42703" }, { code: "42501" }]) {
+      const tables: string[] = [];
+      const sc = { from(table: string) { tables.push(table); return { select() { return { eq() { return { maybeSingle: async () => ({ data: null, error }) }; } }; } }; }, rpc: async () => { throw new Error("Commands are not probes"); } };
+      const result = await loadPassportMemoryPeople(sc as never, "owner", ["scrapbook"]);
+      assert.deepEqual([...result], [["scrapbook", { state: "unavailable" }]]);
+      assert.deepEqual(tables, ["passport_memory_sources"]);
+    }
+    const sc = { from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }), rpc: async () => { throw new Error("Never invoke the writer as a probe"); } };
+    assert.equal((await probeSchemaReadiness(sc, PASSPORT_MEMORY_SOURCES)).state, "ready");
   });
 });

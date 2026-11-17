@@ -46,6 +46,21 @@ export interface ProfileResult<T> {
 // accounts/rotations; edits start a new generation. Completed data is not cached.
 const profileReads = new Map<string, Promise<ProfileResult<OwnProfile>>>();
 let profileReadGeneration = 0;
+const ownProfileListeners = new Set<() => void>();
+
+/** Notify mounted personal surfaces after a persisted edit, without sharing
+ * profile data across screens or accounts. Each subscriber re-reads its session. */
+export function subscribeOwnProfileChanges(listener: () => void): () => void {
+  ownProfileListeners.add(listener);
+  return () => { ownProfileListeners.delete(listener); };
+}
+
+function ownProfileChanged(): void {
+  profileReadGeneration += 1;
+  for (const listener of ownProfileListeners) {
+    try { listener(); } catch { /* A UI subscriber cannot fail a completed save. */ }
+  }
+}
 
 export async function getMyProfile(): Promise<ProfileResult<OwnProfile>> {
   if (!isSupabaseConfigured || !apiBase()) {
@@ -144,6 +159,7 @@ export async function updateMyProfile(patch: UpdateProfileInput): Promise<Profil
       return { ok: false, data: null, errorKind: (body as any)?.error ?? 'db_error', message: (body as any)?.message ?? `API ${res.status}` };
     }
     const data = (await res.json()) as OwnProfile & { unsavedFields?: string[]; warning?: string };
+    ownProfileChanged();
     if (Array.isArray(data.unsavedFields) && data.unsavedFields.length > 0) {
       // Partial success: the server saved what it could but dropped some fields
       // (database schema drift). Surface as a failure so every save screen shows
@@ -218,6 +234,7 @@ export async function uploadAvatar(uri: string, mimeType = 'image/jpeg'): Promis
       return { ok: false, data: null, errorKind: 'upload_failed', message: (body as any)?.message ?? `Upload failed (${res.status})` };
     }
     const body = await res.json();
+    ownProfileChanged();
     return { ok: true, data: { url: body.url, path: body.path ?? null, width: body.width ?? null, height: body.height ?? null } };
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
@@ -582,6 +599,8 @@ export type AccountStatus = 'active' | 'deactivated' | 'pending_deletion';
 export interface AccountStatusResult {
   accountStatus: AccountStatus;
   deletionScheduledAt: string | null;
+  reactivateUntil?: string | null;
+  selfRecoverableUntil?: string | null;
 }
 
 /**
@@ -650,7 +669,7 @@ export async function getAccountStatus(): Promise<ProfileResult<AccountStatusRes
 
 // ── Account controls ──────────────────────────────────────────────────────────
 
-export async function deactivateAccount(): Promise<ProfileResult<{ deactivated: boolean }>> {
+export async function deactivateAccount(): Promise<ProfileResult<{ deactivated: boolean; reactivateUntil: string }>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
   const token = await freshToken();
   if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
@@ -724,7 +743,7 @@ export async function reactivateAccount(): Promise<ProfileResult<{ reactivated: 
   }
 }
 
-export async function requestAccountDeletion(): Promise<ProfileResult<{ deletionScheduled: boolean; scheduledAt: string | null }>> {
+export async function requestAccountDeletion(): Promise<ProfileResult<{ deletionScheduled: boolean; scheduledAt: string | null; selfRecoverableUntil: string | null }>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
   const token = await freshToken();
   if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
@@ -748,6 +767,7 @@ export async function requestAccountDeletion(): Promise<ProfileResult<{ deletion
 export interface DeletionRequestState {
   pending: boolean;
   scheduledAt: string | null;
+  selfRecoverableUntil: string | null;
 }
 
 /** Whether this account has a pending deletion request, and when it runs. */
@@ -767,7 +787,7 @@ export async function getAccountDeletionRequest(): Promise<ProfileResult<Deletio
     const body = (await res.json()) as any;
     return {
       ok: true,
-      data: { pending: body?.pending === true, scheduledAt: typeof body?.scheduledAt === 'string' ? body.scheduledAt : null },
+      data: { pending: body?.pending === true, scheduledAt: typeof body?.scheduledAt === 'string' ? body.scheduledAt : null, selfRecoverableUntil: typeof body?.selfRecoverableUntil === 'string' ? body.selfRecoverableUntil : null },
     };
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
@@ -776,7 +796,7 @@ export async function getAccountDeletionRequest(): Promise<ProfileResult<Deletio
 }
 
 /** Cancels a pending deletion request; the server makes the account active again. */
-export async function cancelAccountDeletion(): Promise<ProfileResult<{ cancelled: boolean }>> {
+export async function cancelAccountDeletion(): Promise<ProfileResult<{ cancelled: boolean; accountStatus: 'active' | 'deactivated' }>> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
   const token = await freshToken();
   if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };

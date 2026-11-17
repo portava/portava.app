@@ -30,7 +30,7 @@ function moment(id: string, subject: string): WallMomentView {
     reason: { code: 'crowd_shift', text: `changed at ${id}` },
     truthClass: 'corroborated',
     freshness: 'fresh',
-    expiresAt: '',
+    expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
     attention: { route: 'WALL', reasons: [], factors: {} },
   } as unknown as WallMomentView;
 }

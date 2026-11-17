@@ -137,10 +137,21 @@ function createdMs(row: MediaCandidateRow): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
+/** A newly published upload is not a newly captured view of the world. Match
+ * the projection's capture-first clock; malformed explicit capture stays unknown. */
+function perspectiveMs(row: MediaCandidateRow): number | null {
+  const captured = displayedCanonicalAsset(row)?.captured_at;
+  if (captured === null || captured === undefined) return createdMs(row);
+  const time = typeof captured === "string" ? Date.parse(captured) : NaN;
+  return Number.isFinite(time) ? time : null;
+}
+
 export function buildRankingPage(rows: readonly MediaCandidateRow[], nowMs: number): MediaRankingPage {
   const authorsAtPlace = new Map<string, Set<string>>();
   const freshAtPlace = new Map<string, number>();
   for (const row of rows) {
+    const provenance = provenanceClassOf(row);
+    if (provenance === "synthetic" || provenance === "non_observation") continue;
     const place = placeOf(row);
     if (!place) continue;
     const author = typeof row.author_id === "string" ? row.author_id : null;
@@ -149,7 +160,7 @@ export function buildRankingPage(rows: readonly MediaCandidateRow[], nowMs: numb
       set.add(author);
       authorsAtPlace.set(place, set);
     }
-    const t = createdMs(row);
+    const t = perspectiveMs(row);
     if (t !== null && nowMs - t <= FRESH_COVERAGE_WINDOW_MS && nowMs - t >= 0) {
       freshAtPlace.set(place, (freshAtPlace.get(place) ?? 0) + 1);
     }
@@ -429,8 +440,8 @@ export function lowConfidenceLiveTerm(row: MediaCandidateRow, s: MediaRankingSig
 
 /** Freshness (§24) and, by its decay, "− Staleness": exp(−age / 7 days); unparseable → 0.5. */
 export function freshnessTerm(row: MediaCandidateRow, nowMs: number): number {
-  const t = createdMs(row);
-  if (t === null) return 0.5;
+  const t = perspectiveMs(row);
+  if (t === null || t > nowMs) return 0.5;
   const ageHours = Math.max(0, nowMs - t) / 3_600_000;
   return Math.exp(-ageHours / (24 * 7));
 }
@@ -541,8 +552,10 @@ export function usefulSocialTerm(row: MediaCandidateRow, s: MediaRankingSignals,
  * for a purpose the bridge was not built for.
  */
 export function contributionTerm(row: MediaCandidateRow, s: MediaRankingSignals, page: MediaRankingPage, nowMs: number): number {
+  const provenance = provenanceClassOf(row);
+  if (provenance === "synthetic" || provenance === "non_observation") return 0;
   const place = placeOf(row);
-  const t = createdMs(row);
+  const t = perspectiveMs(row);
   let gap = 0;
   if (place && t !== null && nowMs - t >= 0 && nowMs - t <= FRESH_COVERAGE_WINDOW_MS) {
     const fresh = Math.max(1, page.freshAtPlace.get(place) ?? 1);

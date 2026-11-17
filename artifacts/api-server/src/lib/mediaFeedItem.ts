@@ -549,6 +549,10 @@ export function hydrateMediaGridItem(
    */
   resolvedLabel?: string | null,
 ): MediaGridItem {
+  // Native media loaders cannot authenticate the API relay. Private storage
+  // refs go through the app's signed-URL resolver, independent of API hostname.
+  const gridMediaUrl = (bucket: string, path: string) =>
+    bucket === 'post-media' || bucket === 'profile-media' ? `${bucket}/${path}` : relayUrlFor(bucket, path, apiBaseUrl);
   const sorted = [...postMedia].sort(
     (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
   );
@@ -562,16 +566,14 @@ export function hydrateMediaGridItem(
   // Thumbnail: prefer the explicit thumbnail_url; fall back to the poster itself.
   const thumbnailUrl: string | null = primary?.thumbnail_url ?? null;
 
-  // Poster: video thumbnail → first image public_url → first asset public_url.
-  // Resolve via the relay when a storage_path (or thumbnail_path for video
-  // thumbnails) is present — matching the videoUrl relay pattern so that
-  // relay-bucket assets are accessible even when public_url is absent.
+  // Poster: video thumbnail → first image. Private refs are signed by the
+  // client; legacy relay buckets keep their existing representation.
   const posterUrl: string | null = (() => {
     if (primaryVideo) {
       const thumbPath: string | null = primaryVideo.thumbnail_storage_path ?? null;
       if (thumbPath) {
         const bucket: string = primaryVideo.storage_bucket ?? "post-media";
-        return relayUrlFor(bucket, thumbPath, apiBaseUrl);
+        return gridMediaUrl(bucket, thumbPath);
       }
       if (primaryVideo.thumbnail_url) return primaryVideo.thumbnail_url;
     }
@@ -579,18 +581,11 @@ export function hydrateMediaGridItem(
       const storagePath: string | null = primaryImage.storage_path ?? null;
       if (storagePath) {
         const bucket: string = primaryImage.storage_bucket ?? "post-media";
-        return relayUrlFor(bucket, storagePath, apiBaseUrl);
+        return gridMediaUrl(bucket, storagePath);
       }
       return primaryImage.public_url ?? null;
     }
-    if (primary) {
-      const storagePath: string | null = primary.storage_path ?? null;
-      if (storagePath) {
-        const bucket: string = primary.storage_bucket ?? "post-media";
-        return relayUrlFor(bucket, storagePath, apiBaseUrl);
-      }
-      return primary.public_url ?? null;
-    }
+    // A video file is not a usable image when no thumbnail was generated.
     return null;
   })();
 
@@ -617,15 +612,13 @@ export function hydrateMediaGridItem(
   const processingStatus: string | null =
     rawStatus && rawStatus !== "ready" ? rawStatus : null;
 
-  // Resolve videoUrl via the relay when a storage_path is present (matching
-  // the Watch-feed hydrator pattern). This ensures relay-stored videos are
-  // accessible even when public_url is absent or inaccessible.
+  // Prefer the durable storage identity over a stale public URL.
   const videoUrl: string | null = (() => {
     if (!primaryVideo) return null;
     const bucket: string = primaryVideo.storage_bucket ?? "post-media";
     const storagePath: string | null = primaryVideo.storage_path ?? null;
     if (storagePath) {
-      return relayUrlFor(bucket, storagePath, apiBaseUrl);
+      return gridMediaUrl(bucket, storagePath);
     }
     return primaryVideo.public_url ?? null;
   })();

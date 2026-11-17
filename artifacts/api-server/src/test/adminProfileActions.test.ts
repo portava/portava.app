@@ -1,3 +1,4 @@
+import { accountDeletionAuthorizationFixture, PERMANENT_DELETION_TEST_OPTIONS } from "./helpers/accountDeletionAuthorizationFixture.js";
 /**
  * Admin profile action tests — Phase 3 additions
  *
@@ -32,7 +33,7 @@ import adminRouter from "../routes/admin.js";
 
 const FAKE_TOKEN     = "fake.jwt.token";
 const TARGET_USER_ID = "aaaaaaaa-0000-0000-0000-000000000001";
-const ADMIN_USER_ID  = "bbbbbbbb-0000-0000-0000-000000000002";
+const ADMIN_USER_ID  = PERMANENT_DELETION_TEST_OPTIONS.actorId;
 const REPORT_ID      = "cccccccc-0000-0000-0000-000000000003";
 const DELETION_REQ_ID = "dddddddd-0000-0000-0000-000000000004";
 
@@ -106,6 +107,8 @@ function makeFakeClient(opts: {
     failInsertsOn = null as string | null,
   } = opts;
 
+  const authorization = accountDeletionAuthorizationFixture({user_deletion_requests: deletionRequests}, TARGET_USER_ID);
+
   function builder(table: string, rows: unknown[]) {
     let _rows = [...rows];
     let _failed = false;
@@ -162,8 +165,8 @@ function makeFakeClient(opts: {
     // derived personal memory behind after a deletion request is a privacy
     // failure — so without this stub the execute endpoint would (correctly)
     // refuse to mark the request completed.
-    rpc: (_fn: string, _args: Record<string, unknown>) =>
-      Promise.resolve({ data: null, error: null }),
+    rpc: (fn: string, args: Record<string, unknown>) =>
+      Promise.resolve(authorization(fn,args) ?? { data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null }),
     auth: {
       getUser: () => Promise.resolve({ data: { user: { id: ADMIN_USER_ID } }, error: null }),
       // The deletion cascade removes the Supabase Auth user as a FATAL step —
@@ -412,10 +415,17 @@ describe("GET /admin/deletion-requests", () => {
 });
 
 describe("POST /admin/deletion-requests/:id/execute", () => {
+  it("rejects a missing reviewed generation or reason before any destructive write", async () => {
+    for (const payload of [{reason:PERMANENT_DELETION_TEST_OPTIONS.reason},{generation:PERMANENT_DELETION_TEST_OPTIONS.generation}]) {
+      const updates: any[] = []; setClient([],updates);
+      const result=await req("POST",`/admin/deletion-requests/${TARGET_USER_ID}/execute`,payload);
+      assert.equal(result.status,400); assert.deepEqual(updates,[]);
+    }
+  });
   it("anonymises user data and marks request completed", async () => {
     const updates: any[] = [];
     setClient([], updates);
-    const { status, body } = await req("POST", `/admin/deletion-requests/${DELETION_REQ_ID}/execute`);
+    const { status, body } = await req("POST", `/admin/deletion-requests/${TARGET_USER_ID}/execute`, { generation: PERMANENT_DELETION_TEST_OPTIONS.generation, reason: PERMANENT_DELETION_TEST_OPTIONS.reason });
     assert.equal(status, 200);
     assert.equal(body.ok, true);
     assert.ok(body.executedAt, "should return executedAt timestamp");

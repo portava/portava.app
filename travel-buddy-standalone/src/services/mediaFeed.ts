@@ -26,6 +26,7 @@ async function freshToken(): Promise<string | null> {
   const { freshToken: _freshTokenReal } = await import('./apiToken.ts');
   return _freshTokenReal();
 }
+import type { OwnedApiContext } from './ownedApiRequest.ts';
 import type {
   MediaFeedItem,
   WatchFeedPage,
@@ -362,7 +363,7 @@ export async function fetchMediaFeedItemById(
   }
 }
 
-export interface FetchFeedParams {
+export interface FetchFeedParams extends OwnedApiContext {
   feedType: WatchFeedType;
   cursor?: string | null;
   sessionId?: string;
@@ -373,12 +374,10 @@ export interface FetchFeedParams {
  * Fetch one page of the Watch fullscreen feed.
  * Returns a typed result; never throws.
  */
-export async function fetchWatchFeed(params: FetchFeedParams): Promise<FeedServiceResult> {
-  const token = await freshToken();
-  if (!token) {
-    return { ok: false, data: null, errorKind: 'auth', message: 'Not authenticated' };
-  }
-
+export async function fetchWatchFeed(
+  params: FetchFeedParams,
+  send?: typeof import('./ownedApiRequest.ts').fetchOwnedApi,
+): Promise<FeedServiceResult> {
   try {
     const qs = new URLSearchParams({
       mode: 'fullscreen',
@@ -388,9 +387,14 @@ export async function fetchWatchFeed(params: FetchFeedParams): Promise<FeedServi
     });
     if (params.cursor) qs.set('cursor', params.cursor);
 
-    const res = await fetch(`${apiBase()}/api/media/feed?${qs.toString()}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    // The initiating owner survives token refresh and response decoding. The
+    // existing explicit node-test token seam remains isolated from native SDKs.
+    const path = `/api/media/feed?${qs.toString()}`;
+    const res = _testToken !== null
+      ? await fetch(`${apiBase()}${path}`, { headers: { Authorization: `Bearer ${_testToken}` } })
+      : await (send ?? (await import('./ownedApiRequest.ts')).fetchOwnedApi)(path, {
+        owner: params.owner, signal: params.signal, isCurrent: params.isCurrent,
+      });
 
     if (res.status === 401 || res.status === 403) {
       return { ok: false, data: null, errorKind: 'auth', message: 'Unauthorized' };

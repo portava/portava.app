@@ -221,6 +221,8 @@ function releasedPlaceEnded(row: any): any {
  */
 export const createPostSchema = z
   .object({
+    composerUploadOperationId: uuid.optional(),
+    composerPublicationOperationId: uuid.optional(),
     content: z.string().max(5000).optional().default(""),
     mediaUrls,
     tripId: uuid.nullish(),

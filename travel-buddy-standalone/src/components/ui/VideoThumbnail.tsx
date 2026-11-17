@@ -20,6 +20,7 @@ import { Image } from 'expo-image';
 import { Play } from 'lucide-react-native';
 import { color, radius, avatar } from '../../theme/tokens.ts';
 import { useHydratedMedia } from '../../services/mediaUrl.ts';
+import { hydratedMediaSource } from '../../services/mediaRequestSource.ts';
 
 export interface VideoThumbnailProps {
   posterUri?: string | null;
@@ -38,7 +39,7 @@ function formatDuration(seconds: number): string {
 export function VideoThumbnail({ posterUri, duration, style, onPress }: VideoThumbnailProps) {
   // Hydrate the poster URL through the signed-URL layer.
   // undefined = still loading (show image with plain URI); null = server rejected
-  const { resolved: hydratedMap } = useHydratedMedia(posterUri ? [posterUri] : []);
+  const { resolved: hydratedMap, sources } = useHydratedMedia(posterUri ? [posterUri] : []);
   const effectivePosterUri = posterUri
     ? (hydratedMap[posterUri] === null ? null : (hydratedMap[posterUri] ?? posterUri))
     : null;
@@ -79,7 +80,8 @@ export function VideoThumbnail({ posterUri, duration, style, onPress }: VideoThu
         // is handled solely by the Container/parent Pressable, matching
         // native mobile behavior where a nested Image never steals touches.
         <Image
-          source={{ uri: effectivePosterUri }}
+          source={hydratedMediaSource(effectivePosterUri, sources) ?? undefined}
+          cachePolicy={hydratedMediaSource(effectivePosterUri, sources)?.headers ? 'none' : 'disk'}
           style={StyleSheet.absoluteFill}
           contentFit="cover"
           transition={150}

@@ -1,3 +1,4 @@
+import { activeMediaAccountRead } from "./helpers/mediaAccountReadFixture.js";
 /**
  * Media §37 on the GENERAL upload path (`POST /media/upload`) — census-media §22.
  *
@@ -287,6 +288,7 @@ function makeClient() {
     return b;
   }
   return {
+    rpc: activeMediaAccountRead,
     from: builder,
     storage: {
       from(bucket: string) {

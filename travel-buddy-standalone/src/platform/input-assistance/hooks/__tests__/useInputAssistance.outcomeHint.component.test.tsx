@@ -60,7 +60,7 @@ test('gate CLOSED (never opted in): the request carries no outcome hint', async 
 
 test('gate OPEN for this account: the request carries outcomeLearning: true', async () => {
   beginOutcomeAccount('u1');
-  applyOutcomeConsent('u1', true);
+  applyOutcomeConsent('u1', true, '2026-10-05T00:00:00.000Z');
   render(<Probe text="sant" />);
   await waitFor(() => expect(mockRequest).toHaveBeenCalledTimes(1));
   expect(mockRequest.mock.calls[0]![0].outcomeLearning).toBe(true);

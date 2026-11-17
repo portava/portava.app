@@ -55,6 +55,7 @@
  * unreadable ⇒ `unavailable` (503). Nothing is written to a half-deployed spine.
  */
 import { createHash } from "node:crypto";
+import { derivedUuid } from "./memoryIdentity.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { probeHighlightObject } from "../highlights/highlightSchemaAvailability.js";
@@ -627,13 +628,7 @@ export async function rejectCandidate(sc: SupabaseClient, input: { ownerId: stri
  * merely unlikely: two taps, two devices, a retry after a lost response, a
  * retry after a failed link write — all reach one row.
  */
-export function derivedUuid(namespace: string, name: string): string {
-  const h = createHash("sha256").update(`${namespace}\u0000${name}`).digest();
-  h[6] = (h[6]! & 0x0f) | 0x50;
-  h[8] = (h[8]! & 0x3f) | 0x80;
-  const x = h.subarray(0, 16).toString("hex");
-  return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20, 32)}`;
-}
+export { derivedUuid } from "./memoryIdentity.js";
 export const candidateMemoryId = (episodeId: string) => derivedUuid("portava:memory-candidate:memory", episodeId);
 export const candidateItemId = (memoryId: string, assetId: string) => derivedUuid("portava:memory-candidate:item", `${memoryId}:${assetId}`);
 /** The §19 key the Memory create carries: one per candidate, whatever key the client sent. */
@@ -671,6 +666,11 @@ export async function confirmCandidate(
   const loaded = await loadOwnEpisode(sc, input.ownerId, input.episodeId);
   if (!loaded.ok) return { ok: false, reason: loaded.reason, detail: loaded.detail };
   let ep = loaded.episode;
+  // H39: an older kernel silently drops source_mode. Refuse before claiming the
+  // episode, rather than creating a Memory with invented user-created origin.
+  // Schema half of memory_kernel_enabled; also required by the legacy fallback.
+  const origin = await probeSchemaReadiness(sc, MEMORY_CANDIDATE_ORIGIN, { force: true });
+  if (origin.state !== "ready") return { ok: false, reason: "unavailable", detail: "candidate origin storage is unavailable" };
   const title = input.title && input.title.trim() ? input.title.trim().slice(0, 200) : null;
 
   // (1)
@@ -725,6 +725,7 @@ export async function confirmCandidate(
     const write = {
       id: derivedId,
       owner_id: input.ownerId,
+      source_mode: "SUGGESTED",
       title: title ?? ep.summary,
       caption: null,
       visibility: "only_me",
@@ -741,7 +742,7 @@ export async function confirmCandidate(
       actorUserId: input.ownerId,
       idempotencyKey: candidateCreateKey(ep.id),
       fromCandidate: true,
-      payload: { to_state: lifecycleStateOf("published"), visibility: "only_me", write, select: "id" },
+      payload: { to_state: lifecycleStateOf("published"), visibility: "only_me", candidate_episode_id: ep.id, write, select: "id" },
       fromKernelResult: (r: unknown) => { const k = (r ?? {}) as { memory_id?: unknown; id?: unknown }; return { id: String(k.memory_id ?? k.id ?? "") }; },
       legacy: async () => {
         const { data, error } = await sc.from("memories").insert(write).select("id").single();
@@ -771,7 +772,7 @@ export async function confirmCandidate(
   //      deletion lifecycle's RAW_EVIDENCE_PURGED would have done.
   const { data: keptRow, error: keptErr } = await sc
     .from("memories")
-    .select("id, state")
+    .select("id, state, source_mode")
     .eq("id", memoryId)
     .eq("owner_id", input.ownerId)
     .maybeSingle();
@@ -780,6 +781,33 @@ export async function confirmCandidate(
     const retired = await retireEpisodesAndPurgeEvidence(sc, { ownerId: input.ownerId, memoryId, episodeIds: [ep.id], now: input.now, order: "purge_first" });
     if (retired.state !== "done") return { ok: false, reason: "unavailable", detail: `retiring a terminal Memory's suggestion: ${retired.detail}` };
     return { ok: false, reason: "not_a_candidate", detail: "the Memory this suggestion was kept as has been deleted or removed" };
+  }
+
+  // Known older confirmations can carry the old default. Reconcile only this
+  // explicit candidate/receipt association, through the same command writer.
+  // An imported legacy identity keeps its historical origin.
+  if (!["SUGGESTED", "LEGACY_IMPORTED"].includes((keptRow as { source_mode?: string }).source_mode ?? "")) {
+    if ((keptRow as { source_mode?: string }).source_mode !== "USER_CREATED") {
+      return { ok: false, reason: "unavailable", detail: "the kept Memory has conflicting origin" };
+    }
+    const corrected = await dispatchMemoryCommand<{ id: string }>({
+      sc, commandType: "UPDATE_MEMORY", memoryId, actorUserId: input.ownerId,
+      idempotencyKey: `memory-candidate-origin:${ep.id}`,
+      payload: { candidate_episode_id: ep.id, patch: { source_mode: "SUGGESTED" } },
+      fromKernelResult: () => ({ id: memoryId! }),
+      legacy: async () => {
+        const { error } = await sc.from("memories").update({ source_mode: "SUGGESTED" })
+          .eq("id", memoryId!).eq("owner_id", input.ownerId).eq("source_mode", "USER_CREATED")
+          .in("state", ["draft", "published", "archived"]);
+        return error ? { ok: false, http: { code: "db_error", message: error.message } }
+          : { ok: true, body: { id: memoryId! } };
+      },
+    });
+    if (!corrected.ok) return { ok: false, reason: "kernel_refused", detail: "candidate origin correction was refused" };
+    const checked = await sc.from("memories").select("source_mode, state").eq("id", memoryId).eq("owner_id", input.ownerId).maybeSingle();
+    if (checked.error || checked.data?.source_mode !== "SUGGESTED" || ["deleted", "removed"].includes(checked.data?.state)) {
+      return { ok: false, reason: "unavailable", detail: "candidate origin correction could not be verified" };
+    }
   }
 
   if (keepCanonGates) {
@@ -831,7 +859,7 @@ export async function confirmCandidate(
       const itemId = candidateItemId(memoryId!, m.id);
       if (haveIds.has(itemId) || haveUrls.has(url)) continue;
       if (classifyMemoryMediaUrl(url, input.ownerId).verdict === "foreign_storage") continue;
-      const item = { id: itemId, memory_id: memoryId, media_url: url, media_type: m.mime_type ?? "image/jpeg", caption: null, position };
+      const item = { id: itemId, memory_id: memoryId, expected_asset_id: m.id, media_url: url, media_type: m.mime_type ?? "image/jpeg", caption: null, position };
       const added = await dispatchMemoryCommand<{ id: string }>({
         sc,
         commandType: "ADD_MEDIA",
@@ -839,13 +867,6 @@ export async function confirmCandidate(
         actorUserId: input.ownerId,
         idempotencyKey: `memory-candidate-item:${itemId}`,
         payload: { media_type: item.media_type, position, write: item },
-        legacy: async () => {
-          const { data, error } = await sc.from("memory_items").insert(item).select("id").single();
-          if (!error) return { ok: true, body: { id: String((data as { id: string }).id) } };
-          // A concurrent completer attached this exact photo already.
-          if (String((error as { code?: string }).code ?? "") === "23505") return { ok: true, body: { id: itemId } };
-          return { ok: false, http: { code: "db_error", message: error.message } };
-        },
       });
       if (!added.ok) {
         const detail = "rejection" in added ? added.rejection.reason : added.http.message;
@@ -858,3 +879,6 @@ export async function confirmCandidate(
 
   return { ok: true, episodeId: ep.id, state: "confirmed", memoryId: memoryId!, mediaAttached: attached, replayed };
 }
+
+import { MEMORY_CANDIDATE_ORIGIN } from "../../lib/capability/registry.js";
+import { probeSchemaReadiness } from "../../lib/capability/schemaCapability.js";

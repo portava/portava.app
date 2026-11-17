@@ -1,3 +1,4 @@
+import { accountDeletionAuthorizationFixture, PERMANENT_DELETION_TEST_OPTIONS } from "./helpers/accountDeletionAuthorizationFixture.js";
 /**
  * A failed read must not fabricate a safety verdict.
  *
@@ -219,6 +220,8 @@ describe("accountDeletion: an unreadable moderation_reports must not hard-delete
    * which is what an RLS change or a statement timeout looks like from here.
    */
   function deletionClient(fx: { posts: string[]; failTables?: Set<string> }) {
+    const rows: Record<string, any[]> = {};
+    const authorize = accountDeletionAuthorizationFixture(rows, USER_ID);
     const rpcCalls: Array<{ fn: string; args: any }> = [];
     const deletes:  Array<{ table: string; eq: Record<string, unknown> }> = [];
     const updates:  Array<{ table: string; values: any; eq: Record<string, unknown> }> = [];
@@ -240,6 +243,10 @@ describe("accountDeletion: an unreadable moderation_reports must not hard-delete
             return;
           }
           let data: any[] = [];
+          if (table === "user_deletion_requests" && op === "update") {
+            data = rows[table]!.filter(row => Object.entries(eq).every(([col, value]) => row[col] === value));
+            for (const row of data) Object.assign(row, values);
+          }
           if (op === "select" && table === "posts") data = fx.posts.map((id) => ({ id }));
           resolve({ data, error: null, count: data.length });
         },
@@ -255,7 +262,7 @@ describe("accountDeletion: an unreadable moderation_reports must not hard-delete
         update: (v: any) => builder(table, "update", v),
         upsert: async () => ({ data: null, error: null }),
       }),
-      rpc: async (fn: string, args: any) => { rpcCalls.push({ fn, args }); return { data: null, error: null }; },
+      rpc: async (fn: string, args: any) => { rpcCalls.push({ fn, args }); const receipt = authorize(fn, args); if (receipt) return receipt; return { data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null }; },
       storage: { from: () => ({ remove: async () => ({ data: null, error: null }) }) },
       auth: { admin: { deleteUser: async () => ({ data: null, error: null }) } },
     };
@@ -276,7 +283,7 @@ describe("accountDeletion: an unreadable moderation_reports must not hard-delete
     // On the old code this post was hard-deleted: `data === undefined` → `[]`
     // → "no third-party interest" → DELETE. The moderator's evidence is gone
     // and there is no way to get it back.
-    const out = await executeAccountDeletion(sc as any, USER_ID, {} as any);
+    const out = await executeAccountDeletion(sc as any, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.equal(
       sc._deletes.some((d) => d.table === "posts" && d.eq.id === "p-under-report"), false,
@@ -303,7 +310,7 @@ describe("accountDeletion: an unreadable moderation_reports must not hard-delete
 
   it("hard-deletes NOTHING when posts_comments is unreadable", async () => {
     const sc = deletionClient({ posts: ["p-maybe-replied"], failTables: new Set(["posts_comments"]) });
-    const out = await executeAccountDeletion(sc as any, USER_ID, {} as any);
+    const out = await executeAccountDeletion(sc as any, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(sc._deletes.some((d) => d.table === "posts"), false);
     assert.equal(out.deletedCounts.posts ?? 0, 0);
     assert.equal(out.steps.find((st) => st.step === "tombstone_or_delete_posts")?.ok, false);
@@ -312,7 +319,7 @@ describe("accountDeletion: an unreadable moderation_reports must not hard-delete
   it("still hard-deletes a post when BOTH checks genuinely read clean", async () => {
     // The fix must not become "never delete anything".
     const sc = deletionClient({ posts: ["p-lonely"] });
-    const out = await executeAccountDeletion(sc as any, USER_ID, {} as any);
+    const out = await executeAccountDeletion(sc as any, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(sc._deletes.some((d) => d.table === "posts" && d.eq.id === "p-lonely"), true);
     assert.equal(out.deletedCounts.posts, 1);
     assert.equal(out.tombstonedCounts.posts, 0);

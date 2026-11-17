@@ -68,7 +68,7 @@ describe('TV-7c — Settings privacy information entry', () => {
       roleLoaded: true,
       accountStatus: null,
       accountStatusLoaded: true,
-      deletionScheduledAt: null,
+      deletionScheduledAt: null, reactivateUntil: null, selfRecoverableUntil: null,
       refreshAccountStatus: jest.fn(async () => {}),
     };
     jest.mocked(useSession).mockReturnValue(value);

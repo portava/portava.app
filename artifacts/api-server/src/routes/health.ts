@@ -314,7 +314,7 @@ router.post("/admin/jobs/story-retention", asyncHandler(async (req, res) => {
  * Unauthenticated, like the other /healthz routes. The body carries counters
  * and timestamps only — no user data, no identifiers.
  */
-type JobHealth = "healthy" | "failing" | "stale" | "never_ran" | "unknown";
+import { generationWorkerReport } from "../lib/media/generation/worker.js"; type JobHealth = "healthy" | "failing" | "stale" | "never_ran" | "unknown";
 
 interface JobReport {
   job: string;
@@ -378,7 +378,7 @@ function classify(o: {
 }
 
 function schedulerReports(): JobReport[] {
-  const reports: JobReport[] = []; const layoverMetrics=getLayoverMetricsStatus();reports.push({job: "layoverMetrics",status:classify({lastRunAt:layoverMetrics.lastAttemptAt,lastSuccessAt:layoverMetrics.lastSuccessAt,consecutiveFailures:layoverMetrics.consecutiveFailures,requiresSuccess:true,staleAfterMs:layoverMetrics.staleAfterMs}),lastRunAt:layoverMetrics.lastAttemptAt,lastSuccessAt:layoverMetrics.lastSuccessAt,consecutiveFailures:layoverMetrics.consecutiveFailures,detail:layoverMetrics.detail}); const heartbeat = schedulerHeartbeatReport(); reports.push({ job: "schedulerHeartbeat", ...heartbeat }); /* lib/schedulerHeartbeat.ts: one durable beat a minute for the whole process, so a stop of every scheduler at once (2026-09-30) is measured and answers 503. On this line so no cited line of this file moves. */
+  const reports: JobReport[] = [{ job: "higgsfieldGeneration", ...generationWorkerReport() }]; const layoverMetrics=getLayoverMetricsStatus();reports.push({job: "layoverMetrics",status:classify({lastRunAt:layoverMetrics.lastAttemptAt,lastSuccessAt:layoverMetrics.lastSuccessAt,consecutiveFailures:layoverMetrics.consecutiveFailures,requiresSuccess:true,staleAfterMs:layoverMetrics.staleAfterMs}),lastRunAt:layoverMetrics.lastAttemptAt,lastSuccessAt:layoverMetrics.lastSuccessAt,consecutiveFailures:layoverMetrics.consecutiveFailures,detail:layoverMetrics.detail}); const heartbeat = schedulerHeartbeatReport(); reports.push({ job: "schedulerHeartbeat", ...heartbeat }); /* lib/schedulerHeartbeat.ts: one durable beat a minute for the whole process, so a stop of every scheduler at once (2026-09-30) is measured and answers 503. On this line so no cited line of this file moves. */
 
   const reconcile = getReconcileStatus();
   reports.push({

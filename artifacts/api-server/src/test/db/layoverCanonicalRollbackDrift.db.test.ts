@@ -1,4 +1,4 @@
-/** Independent destructive refusal proofs, confined to isolated migrated database clones. */
+/** Independent destructive refusal proofs, confined to the leased reusable migrated fixture. */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -21,7 +21,13 @@ for (const d of definitions) for (const order of ["sorted-gap", "after-3999"] as
    // Changes to unrelated predecessor objects must survive this migration's rollback too.
    await db.exec("COMMENT ON TABLE public.layover_sessions IS 'Preexisting roundtrip evidence retained';");
    const baseline = await migratedCatalogAndRows(db);
-   await db.exec(forward); const installed = await migratedCatalogAndRows(db);
+   await db.exec(forward);
+   if (d.number === "3871") {
+    // A dump restore reparses this CHECK and flattens BETWEEN's nested AND.
+    const [{ definition }] = await db.query<{definition:string}>("SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid='public.layover_recommendation_supersessions'::regclass AND conname='layover_recommendation_supersessions_reasons_check'");
+    await db.exec(`ALTER TABLE public.layover_recommendation_supersessions DROP CONSTRAINT layover_recommendation_supersessions_reasons_check, ADD CONSTRAINT layover_recommendation_supersessions_reasons_check ${definition};`);
+   }
+   const installed = await migratedCatalogAndRows(db);
    let controls = 0;
    const refuses = async (label: string, setup: string) => {
     await db.exec(`BEGIN; ${setup}`); let error: unknown;
@@ -62,6 +68,7 @@ for (const d of definitions) for (const order of ["sorted-gap", "after-3999"] as
     await refuses("new dependent index", `CREATE INDEX rollback_extra_index ON public.${d.parentTable}(${d.parentColumn});`);
     await refuses("new column-dependent view", `CREATE VIEW public.rollback_extra_view AS SELECT ${d.parentColumn} FROM public.${d.parentTable};`);
    }
+   if (d.number === "3871") await refuses("changed restored CHECK bound", "ALTER TABLE public.layover_recommendation_supersessions DROP CONSTRAINT layover_recommendation_supersessions_reasons_check, ADD CONSTRAINT layover_recommendation_supersessions_reasons_check CHECK(cardinality(reasons) BETWEEN 1 AND 3 AND reasons <@ ARRAY['stale_certification','no_longer_feasible']);");
    await db.exec(rollback); assert.deepEqual(await migratedCatalogAndRows(db), baseline, "full catalog/all nonledger rows restored");
    await db.exec(rollback); assert.deepEqual(await migratedCatalogAndRows(db), baseline, "repeat rollback inert");
    await db.exec(forward); await db.exec(rollback); assert.deepEqual(await migratedCatalogAndRows(db), baseline, "reapply restores exact predecessor");

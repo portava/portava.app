@@ -1,6 +1,20 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { canEditPlan, isAcceptedTripMember } from '../lib/http.js';
 
+/** Never silently discard an explicit scheduling request or normalize an
+ * impossible calendar date into a different day. */
+export function tripProposalDate(value: unknown, start?: string | null, end?: string | null):
+  { ok: true; dayDate: string | null } | { ok: false; error: string } {
+  if (value === undefined) return { ok: true, dayDate: null };
+  const realDate = (day: unknown): day is string => typeof day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(day)
+    && Number.isFinite(Date.parse(day)) && new Date(day).toISOString().slice(0, 10) === day;
+  if (!realDate(value)) return { ok: false, error: 'Choose a real calendar date in YYYY-MM-DD format before proposing this item. Nothing was added.' };
+  if ((realDate(start) && value < start) || (realDate(end) && value > end)) {
+    return { ok: false, error: 'That date is outside this trip’s dates. Ask which day within the trip to use; do not change the trip dates or drop the requested day. Nothing was added.' };
+  }
+  return { ok: true, dayDate: value };
+}
+
 // Resolve only a single explicit command. References to places and trip IDs in
 // questions, quoted examples, multi-step requests or unrelated clauses stay in
 // the normal tool loop.

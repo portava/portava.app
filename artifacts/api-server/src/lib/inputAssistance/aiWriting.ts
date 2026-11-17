@@ -1,3 +1,5 @@
+import { providerModel } from "../providerVersions.js";
+import { withInputDeadline } from './requestDeadline.js';
 /**
  * AI-assisted writing (§22) + Compass prompt continuation (§56) — Phase 7.
  *
@@ -271,6 +273,7 @@ function projectAiSuggestion(
 // ── Orchestration ───────────────────────────────────────────────────────────────
 
 export interface AiWritingParams {
+  signal?: AbortSignal;
   context: InputContext;
   policy: InputFieldPolicy;
   /** The traveler's partial text (the seed the model refines / reformulates). */
@@ -308,12 +311,12 @@ export async function buildAiAssistedWriting(
   //    Unavailable / error ⇒ no AI suggestion (degrade, never throw/fabricate).
   let content = '';
   try {
-    const completion: any = await getOpenAI().chat.completions.create({
-      model: 'gpt-5-mini',
+    const completion: any = await withInputDeadline((signal) => getOpenAI().chat.completions.create({
+      model: providerModel("openai", "gpt-5-mini"),
       max_completion_tokens: 240,
       reasoning_effort: 'low',
       messages: buildMessages(p.context, permitted),
-    } as any);
+    } as any, { signal, timeout: 2_500, maxRetries: 0 }), 2_500, p.signal);
     content = String(completion?.choices?.[0]?.message?.content ?? '');
   } catch {
     return [];

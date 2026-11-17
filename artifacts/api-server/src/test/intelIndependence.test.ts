@@ -35,6 +35,20 @@ const cl = (r: ReturnType<typeof clusterByIndependence>, actor: string, groupKey
   r.clusterForUnit(groupKey, actor);
 
 describe("intelIndependence — clusterByIndependence", () => {
+  it("one reporter switching group keys cannot supply independent corroboration", () => {
+    const reports = [
+      ob({ actorId: "same", groupKey: "group-a", valueKey: "busy", observedAtMs: T(30) }),
+      ob({ actorId: "same", groupKey: "group-b", valueKey: "quiet", observedAtMs: T(20) }),
+      ob({ actorId: "other", groupKey: "group-c", valueKey: "moderate", observedAtMs: T(10) }),
+    ];
+    for (const ordered of [reports, [...reports].reverse()]) {
+      const r = clusterByIndependence(ordered);
+      assert.equal(r.distinctGroups, 2);
+      assert.equal(r.clusterForUnit("group-a", "same"), r.clusterForUnit("group-b", "same"));
+      assert.equal(r.maxGroupShare, 0.5);
+    }
+  });
+
   it("honest independent pair (distinct groups, no shared artifacts, not synchronized) does NOT collapse", () => {
     const r = clusterByIndependence([
       ob({ actorId: "a", valueKey: '{"level":"quiet"}', observedAtMs: T(20) }),
@@ -127,16 +141,15 @@ describe("intelIndependence — clusterByIndependence", () => {
     assert.equal(r.attestedForUnit(null, "b"), true, "membership in an attested cluster is attested");
   });
 
-  it("overlapping crews that share members are NOT merged by shared actors (share stays 1.0)", () => {
-    // 3 actors each in 3 crews → 3 group_key units, each holding all 3 actors. No
-    // detector fires, so the units stay distinct (matching the prior aggregator),
-    // and the actor-based share over the distinct-actor union is 1.0.
+  it("overlapping crews cannot turn the same people into independent sources", () => {
+    // Three actors in three crews are still one connected source, with a
+    // dominant share of 1.0, even without timestamps or media to correlate.
     const obs: IndependenceObservation[] = [];
     for (const a of ["a0", "a1", "a2"]) for (const g of ["g0", "g1", "g2"]) {
       obs.push({ actorId: a, groupKey: g, valueKey: '{"level":"busy"}', observedAtMs: Number.NaN, mediaRefs: [], sourceRefs: [] });
     }
     const r = clusterByIndependence(obs);
-    assert.equal(r.distinctGroups, 3);
+    assert.equal(r.distinctGroups, 1);
     assert.equal(r.maxGroupShare, 1);
   });
 

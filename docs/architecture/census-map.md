@@ -463,7 +463,7 @@ reproduces §8's mock verbatim as the module contract.
 | M64 | Five flow states | C | `src/features/map/render/zoneStyle.ts:95` `FLOW_STATES = ['strong','moderate','emerging','dispersing','unusual']`. |
 | M65 | The seven declared input families | **W** | `lib/crowdFlowProducer.ts:294` `WIRED_SIGNAL_SOURCES` is **two** of seven; `:298-300` `DECLARED_BUT_UNFED_FAMILIES` and `:351` `UNFED_FAMILY_BLOCKERS` name, per family, the specific capture that must exist first. Honestly declared, but five families produce nothing. *(Re-read 2026-09-14: all four citations hold at this tree — `:294#WIRED_SIGNAL_SOURCES`, `:304#DECLARED_BUT_UNFED_FAMILIES`, `:351#UNFED_FAMILY_BLOCKERS`.)* **Turns red when:** `WIRED_SIGNAL_SOURCES` names all seven families **and** each newly-named family has a capture writing rows a producer run can observe. This is the one row in this census that no deployment unblocks: `UNFED_FAMILY_BLOCKERS` states, per family, the capture nobody has written (the entries are product work, not migrations). Moving a family into `WIRED_SIGNAL_SOURCES` without its capture would turn this row green while producing nothing — so the evidence required is a producer run observing that family, not a diff of the constant. |
 | M66 | Minimum cohort density | C | `lib/mapAggregation.ts:351` `MIN_ZONE_COHORT = PRIVACY_THRESHOLD_V1.minUniqueActors`. |
-| M67 | Multiple signal families required | **W** | The gate is right — `lib/crowdFlowProducer.ts:503-504` requires ≥ `MIN_SIGNAL_FAMILIES` *observed*, and refuses before it reads (`:935`). But the second family is the accepted-plan hop lane, whose consent record `route_flow_contribution_consent` (`lib/routeHopSignal.ts:116,588`) is **absent from production**: `` `artifacts/api-server/src/scripts/checkProductionDrift.ts:389#route_flow_contribution_consent` `` classifies it unapplied, and the name is not in `baseline/20260907_production_tables.txt`. *(Re-read 2026-09-14: lines 180-183 were `passport_telemetry_events`; repointed and anchored.)* One family in production ⇒ the producer permanently refuses. **Turns red when:** 2224 is applied to production and `observedSignalFamilies()` returns ≥ `MIN_SIGNAL_FAMILIES` for a real viewport. Integration owner applies; the operator's refreshed baseline is the evidence. |
+| M67 | Multiple signal families required | **W** | The gate is right — `lib/crowdFlowProducer.ts:503-504` requires ≥ `MIN_SIGNAL_FAMILIES` *observed*, and refuses before it reads (`:935`). But the second family is the accepted-plan hop lane, whose consent record `route_flow_contribution_consent` (`lib/routeHopSignal.ts:116,588`) is **absent from production**: `` `artifacts/api-server/src/scripts/checkProductionDrift.ts:393#route_flow_contribution_consent` `` classifies it unapplied, and the name is not in `baseline/20260907_production_tables.txt`. *(Re-read 2026-09-14: lines 180-183 were `passport_telemetry_events`; repointed and anchored.)* One family in production ⇒ the producer permanently refuses. **Turns red when:** 2224 is applied to production and `observedSignalFamilies()` returns ≥ `MIN_SIGNAL_FAMILIES` for a real viewport. Integration owner applies; the operator's refreshed baseline is the evidence. |
 | M68 | Freshness checks | C | `lib/crowdFlowProducer.ts:516` `SIGNAL_MAX_AGE_MINUTES`; `:659` applied per signal. |
 | M69 | Privacy gates | C | `lib/crowdFlowProducer.ts:102` per-family consent; migration `2218_crowd_flow.sql:59` states the four gates as the flag's own description. |
 | M70 | Observed movement and inferred cause separately represented | C | `lib/crowdFlowProducer.ts:273-277` `OBSERVED_SIGNAL_FAMILIES` vs `CAUSE_ONLY_SIGNAL_FAMILIES`; `:823` `MAX_INFERRED_CAUSE_CONFIDENCE = 'provisional'` — a cause can never be asserted as strongly as an observation. |
@@ -666,7 +666,7 @@ open**. These verdicts describe code that is correct and would run.
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| M179 | Suppress sensitive locations **before** data reaches the client | **W** | The gate is written and cannot fire. `lib/protectedLocations.ts:2#protectedLocations`, `:860#applyProtection` is the last step before serialization, ordered correctly at `routes/mapProjection.ts` and (after PR #393's fix) in the temporal route. But `protected_zones` is **absent from production** (`` `artifacts/api-server/src/scripts/checkProductionDrift.ts:315#protected_zones` ``, and the name is not in `baseline/20260907_production_tables.txt`), so the read errors, `routes/mapProjection.ts:238#loadProtectedZones` returns null and the route answers the refusal envelope at `:1028#protection_unreadable`. *(Re-read 2026-09-14: three of these four citations were wrong — line 849 is a field inside an interface and `applyProtection` is 11 lines below it; drift's `protected_zones` entry is at line 157, not 110; and lines 964-979 are the §19 ordering block, not the envelope, which begins 60 lines later.)* The production behaviour is *refuse everything*, not *suppress sensitive locations* — safe, and not the requirement. **Turns red when:** 2217 is applied to production, a refreshed baseline lists `protected_zones`, and a projection response over a viewport containing a curated zone carries `protection` non-null with at least one object coarsened or withheld. Note the second half: applying the table is necessary and NOT sufficient — an empty `protected_zones` makes `applyProtection([], …)` an identity pass (`routes/mapProjection.ts:199#FAIL-CLOSED`), which suppresses nothing. A curated zone set is an ops act after the migration. |
+| M179 | Suppress sensitive locations **before** data reaches the client | **W** | The gate is written and cannot fire. `lib/protectedLocations.ts:2#protectedLocations`, `:860#applyProtection` is the last step before serialization, ordered correctly at `routes/mapProjection.ts` and (after PR #393's fix) in the temporal route. But `protected_zones` is **absent from production** (`` `artifacts/api-server/src/scripts/checkProductionDrift.ts:319#protected_zones` ``, and the name is not in `baseline/20260907_production_tables.txt`), so the read errors, `routes/mapProjection.ts:238#loadProtectedZones` returns null and the route answers the refusal envelope at `:1028#protection_unreadable`. *(Re-read 2026-09-14: three of these four citations were wrong — line 849 is a field inside an interface and `applyProtection` is 11 lines below it; drift's `protected_zones` entry is at line 157, not 110; and lines 964-979 are the §19 ordering block, not the envelope, which begins 60 lines later.)* The production behaviour is *refuse everything*, not *suppress sensitive locations* — safe, and not the requirement. **Turns red when:** 2217 is applied to production, a refreshed baseline lists `protected_zones`, and a projection response over a viewport containing a curated zone carries `protection` non-null with at least one object coarsened or withheld. Note the second half: applying the table is necessary and NOT sufficient — an empty `protected_zones` makes `applyProtection([], …)` an identity pass (`routes/mapProjection.ts:199#FAIL-CLOSED`), which suppresses nothing. A curated zone set is an ops act after the migration. |
 | M180 | The protected categories (residences, medical, shelters, sensitive government, policy-defined) | C | `lib/protectedLocations.ts:81-88` `PROTECTED_CATEGORIES`; migration `2217:66-72` CHECK-constrains the same five; `:102` `policy_ref NOT NULL` so *"a protected location with no recorded policy"* is unrepresentable; `:135` `'allow'` is deliberately not storable — "a protection row that permits is a hole". |
 | M181 | Safety and access warnings take precedence over activity ranking | C | `lib/mapObjects.ts:284` `safety: 120`; `lib/protectedLocations.ts:210` `PROTECTION_EXEMPT_KINDS = ['safety_notice']` — a hazard notice is never coarsened away. |
 | M182 | The public map never receives more location detail than the viewer is authorized to see | C | `lib/protectedLocations.ts:720#coarsenForZone`, `lib/protectedLocations.ts:798#COARSENED_PAYLOAD_KEYS`; `lib/mapObjects.ts:221-226#verified_firsthand` documents that the strip must be able to delete `sourceClass` because it *"publishes that someone was here"*. *(These three repointed 2026-09-14: line 793 was 5 lines short, and lines 376-381 sat 155 lines past the passage they quote.)* Also `lib/protectedLocations.ts:301#COARSEN_UNSAFE_KINDS` and `:325#RELATIONSHIP_GATED_KINDS` — REPOINTED 2026-09-14 by `check:citation-symbols`: the LINE NUMBERS were right and the FILE was wrong. Both constants live in `protectedLocations.ts`, but `lib/mapObjects.ts:376-381` was cited between them and the opening citation, and a bare `:301` inherits the most recently named file. Anchored so the next shift fails loudly. |
@@ -1963,7 +1963,7 @@ database.
   (`` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:283#reference: resolved.reference,` ``,
   unchanged in position).
 - **What the key contains.** Every key the upload route mints starts with the
-  uploader's account id: `` `artifacts/api-server/src/routes/posts.ts:226#let basePath = ` ``.
+  uploader's account id: `` `artifacts/api-server/src/routes/posts.ts:231#let basePath = ` ``.
   The ownership proof depends on exactly that segment.
 - **What 3002 promised about this table.** Its contributor id is a rotating
   token, `` `artifacts/api-server/src/migrations/3002_intel_contribution_identity.sql:387#COMMENT ON COLUMN public.intel_evidence.actor_id IS` ``.
@@ -2003,11 +2003,11 @@ The task named `media_assets.id` as the preferred reference, if the asset
 exists at capture time. It is refused on both counts:
 
 - **It may not exist.** The upload route writes the canonical row
-  fire-and-forget, `` `artifacts/api-server/src/routes/posts.ts:283#canonicalModerationAtBirth(sc).then((atBirth) => recordMediaAssetDetailed(sc, { ...atBirth,` ``,
+  fire-and-forget, `` `artifacts/api-server/src/routes/posts.ts:300#const canonicalWrite = canonicalModerationAtBirth(sc).then(async atBirth => {` ``,
   and only while `media_canonical_enabled` is on.
 - **It is not opaque.** `media_assets.owner_user_id` is one join away for any
   reader of this table. The byte gate itself reads it
-  (`` `artifacts/api-server/src/lib/mediaAccess.ts:410#if ((asset as any).owner_user_id) owner = (asset as any).owner_user_id;` ``).
+  (`` `artifacts/api-server/src/lib/mediaAccess.ts:455#if ((asset as any).owner_user_id) owner = (asset as any).owner_user_id;` ``).
   That is the same re-identification, derivable instead of direct.
 
 ### §45.3 What was built
@@ -2067,7 +2067,7 @@ still the moderation and visibility decision the module reserves, and lane I's
 MD65 Question 5.
 
 **C. Account deletion finds the bytes again.** The collection step now calls
-`` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:664#collectOwnEvidenceObjectKeys(sc, userId, readAll)` ``.
+`` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:706#collectOwnEvidenceObjectKeys(sc, userId, readAll)` ``.
 That function reads the rows under every identity the account's rows may carry
 (`` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:642#for (const identity of identities.identities) {` ``)
 and opens each reference.
@@ -2078,7 +2078,7 @@ and opens each reference.
   orphaned.
 - A reference that does not open fails the step, and the receipt carries the
   warning:
-  `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:675#if (unopenable > 0) throw new Error(` ``.
+  `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:717#if (unopenable > 0) throw new Error(` ``.
 
 The edit is line-neutral. Every citation into the file below line 682 still
 lands on its line.
@@ -2192,7 +2192,7 @@ decision-free.**
   evidence, and no observation.
 - **The tap is unaffected.** It is a separate request on the observation arrow
   and never reaches this gate. The test asserts both halves:
-  `` `artifacts/api-server/src/test/intelEvidenceReference.test.ts:662#it("under v1: the tap is recorded` ``.
+  `` `artifacts/api-server/src/test/intelEvidenceReference.test.ts:672#it("under v1: the tap is recorded` ``.
 - **What stayed unchanged.** No consent word, no consent version, no granted
   scope. `SENSING_ANON_GRANTED_SCOPES` is untouched.
 - **A test seam.** It names a fictional covering version, so suites can still
@@ -2227,7 +2227,7 @@ production, and it also needs `INTEL_EVIDENCE_REFERENCE_KEY`.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| M154 | C | **C** | Re-evidenced; does not move. The Evidence stage still attaches only to an existing, owned observation. It now stores a reference that names no account: `` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:224#const resolved = resolveAndSealOwnedMediaReference(` ``, pinned by `` `artifacts/api-server/src/test/intelEvidenceReference.test.ts:243#it("no stored reference, for forty accounts, contains any account id in any substring or encoding"` ``. Before this section the C never asked whose identity the stored row carries, and from 3002 on the row carried the account (§45.1), the same gap the port's cache note found for M203–M210. Under §21's stated convention (code that is correct and would run), activation is not graded. Activation now needs `INTEL_EVIDENCE_REFERENCE_KEY` as well as both flags and consent, and, for a photo to be kept at all, an owner-approved disclosure version in Gate 2b's list (§45.5). |
+| M154 | C | **C** | Re-evidenced; does not move. The Evidence stage still attaches only to an existing, owned observation. It now stores a reference that names no account: `` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:224#const resolved = resolveAndSealOwnedMediaReference(` ``, pinned by `` `artifacts/api-server/src/test/intelEvidenceReference.test.ts:245#it("no stored reference, for forty accounts, contains any account id in any substring or encoding"` ``. Before this section the C never asked whose identity the stored row carries, and from 3002 on the row carried the account (§45.1), the same gap the port's cache note found for M203–M210. Under §21's stated convention (code that is correct and would run), activation is not graded. Activation now needs `INTEL_EVIDENCE_REFERENCE_KEY` as well as both flags and consent, and, for a photo to be kept at all, an owner-approved disclosure version in Gate 2b's list (§45.5). |
 
 **For census-sensing's integrator, not restated here, because the rows are not
 this census's.** census-sensing §27.5 grades S118 ("the stored side cannot be
@@ -2628,7 +2628,7 @@ This supersedes §45.9 item 5 and the client clause in §45.5's option D.
 - **An unreadable consent row** still answers 500, and carries no bit at all.
 - **Tests:** four cases in section G of the capture suite. The last asserts
   the route's answer equals the gate's outcome for every state:
-  `` `artifacts/api-server/src/test/intelEvidenceReference.test.ts:854#the route's answer and the gate's answer are the same for every state` ``.
+  `` `artifacts/api-server/src/test/intelEvidenceReference.test.ts:864#the route's answer and the gate's answer are the same for every state` ``.
 
 **Client.**
 
@@ -2645,7 +2645,7 @@ This supersedes §45.9 item 5 and the client clause in §45.5's option D.
   (`` `travel-buddy-standalone/src/components/map/MapContributionSheet.tsx:199#const mediaOffered = onRequestMedia != null` ``),
   so nothing is uploaded and no orphan object is created.
 - **The client type** gains the optional field:
-  `` `travel-buddy-standalone/src/services/intelConsent.ts:25#coversPhotoEvidence?: boolean;` ``.
+  `` `travel-buddy-standalone/src/services/intelConsent.ts:29#coversPhotoEvidence?: boolean;` ``.
 - **FAIL-CLOSED.** The step is withheld when the bit is false, absent (an
   older server), not a boolean, when the read returns nothing or throws, and
   when the grant is disabled or withdrawn. Until the read lands, it is hidden.
@@ -3602,7 +3602,7 @@ from movement history. Suppress precise location and route contributions inside 
 - **Consequence 2:** if that row is then refused (demo source, blocked or suspended submitter, wrong tab), the canonical
   place is not served either.
 - Separately, the feed merge drops a canonical place whose normalised name matches a curated row's
-  (`artifacts/api-server/src/routes/discovery.ts:1297#places: [...curatedRows, ...canonicalRows.filter(`).
+  (`artifacts/api-server/src/routes/discovery.ts:1276#places: [...curatedRows, ...canonicalRows.filter(`).
 - PR #790's 3920 copies the materialiser's precedence for the trend context.
 
 **Production, read 2026-10-24.**

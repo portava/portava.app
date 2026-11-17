@@ -20,7 +20,7 @@
  * Run: pnpm run test:component -- tabsLayout.wallEntry
  */
 import React from 'react';
-import { act, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { StyleSheet, View } from 'react-native';
 import { useBottomInset } from '../../src/hooks/useBottomInset.ts';
 import { NavBarFiller } from '../../src/hooks/useNavBarCollapse.ts';
@@ -32,6 +32,9 @@ let mockDimensions = { width: 390, height: 844, scale: 3, fontScale: 1 };
 let mockPathname = '/';
 let mockDesktop = false;
 let mockCity: string | null = null;
+let mockUserId = 'viewer-a';
+const mockGetMyProfile = jest.fn().mockResolvedValue({ ok: false, data: null });
+let mockProfileChanged: (() => void) | undefined;
 let mockSwipe: ((event: { translationX: number; translationY: number; velocityX: number }) => void) | undefined;
 const mockPrefetchCounts = jest.fn().mockResolvedValue({});
 const mockPrefetchPlaces = jest.fn().mockResolvedValue([]);
@@ -83,7 +86,7 @@ jest.mock('../../src/hooks/useBreakpoint', () => ({ useIsDesktop: () => mockDesk
 // NOTE: exhaustive by design — TabLayout renders nothing until authed; a real session
 // would require Supabase auth in a test about tab-bar contents.
 jest.mock('../../src/context/SessionContext', () => ({
-  useSession: () => ({ isAuthed: true, loading: false, configured: true }),
+  useSession: () => ({ userId: mockUserId, isAuthed: true, loading: false, configured: true }),
 }));
 // NOTE: exhaustive by design — badge counts are irrelevant here and the real hook polls.
 jest.mock('../../src/hooks/useMessaging', () => ({ useUnreadCounts: () => ({ total: 0, refresh: jest.fn() }) }));
@@ -93,8 +96,10 @@ jest.mock('../../src/hooks/useGeofenceMonitor', () => ({ useGeofenceMonitor: () 
 jest.mock('../../src/services/messaging', () => ({ getIncomingMessageRequests: async () => [] }));
 // NOTE: exhaustive by design — network call behind a tab badge.
 jest.mock('../../src/services/trips', () => ({ getPendingTripInvites: async () => [] }));
-// NOTE: exhaustive by design — network call unrelated to nav contents.
-jest.mock('../../src/services/profile', () => ({ getMyProfile: async () => null }));
+// NOTE: exhaustive by design — drive own-profile reads without network access.
+jest.mock('../../src/services/profile', () => ({ getMyProfile: (...args: unknown[]) => mockGetMyProfile(...args),
+  subscribeOwnProfileChanges: (listener: () => void) => { mockProfileChanged = listener; return () => { mockProfileChanged = undefined; }; },
+}));
 // NOTE: exhaustive by design — header widget, not part of the nav bar under test.
 jest.mock('../../src/components/NotificationBell', () => ({ NotificationBell: () => null }));
 // NOTE: exhaustive by design — a modal that pulls in the whole create stack.
@@ -122,7 +127,49 @@ import TabLayout from '../(tabs)/_layout.tsx';
 function Clearance() { const inset = useBottomInset(); return <View testID="tab-scroll-clearance" style={{ paddingBottom: inset }}><NavBarFiller /></View>; }
 
 describe('(tabs)/_layout — the Wall entry appears in the navigation that is actually rendered', () => {
-  afterEach(() => { mockWallFlagOn = false; mockDimensions = { width: 390, height: 844, scale: 3, fontScale: 1 }; mockPathname = '/'; mockDesktop = false; mockCity = null; mockSwipe = undefined; jest.clearAllMocks(); jest.useRealTimers(); });
+  afterEach(() => { mockWallFlagOn = false; mockDimensions = { width: 390, height: 844, scale: 3, fontScale: 1 }; mockPathname = '/'; mockDesktop = false; mockCity = null; mockSwipe = undefined; mockUserId = 'viewer-a'; mockGetMyProfile.mockReset().mockResolvedValue({ ok: false, data: null }); jest.clearAllMocks(); jest.useRealTimers(); });
+
+  for (const desktop of [false, true]) it(`uses the viewer's profile photo for Passport and retains its destination (desktop=${desktop})`, async () => {
+    mockDesktop = desktop;
+    mockGetMyProfile.mockResolvedValue({ ok: true, data: { id: mockUserId, displayName: 'Maya Chen', username: 'maya', avatarUrl: 'https://example.com/maya.jpg' } });
+    await render(<TabLayout />);
+    expect(screen.getByTestId('passport-menu-avatar').props.source).toMatchObject({ uri: 'https://example.com/maya.jpg' });
+    await fireEvent.press(screen.getByLabelText('Passport'));
+    expect(router.push).toHaveBeenCalledWith('/(tabs)/passport');
+  });
+
+  it('refreshes after profile editing and uses initials when the photo is removed', async () => {
+    mockGetMyProfile.mockResolvedValue({ ok: true, data: { id: mockUserId, displayName: 'Maya Chen', username: 'maya', avatarUrl: 'https://example.com/maya.jpg' } });
+    const view = await render(<TabLayout />);
+    mockGetMyProfile.mockResolvedValue({ ok: true, data: { id: mockUserId, displayName: 'Maya Chen', username: 'maya', avatarUrl: null } });
+    mockPathname = '/passport';
+    await view.rerender(<TabLayout />);
+    expect(screen.getByText('MC')).toBeTruthy();
+    expect(screen.getByTestId('passport-menu-avatar').props.source).toBeUndefined();
+    expect(screen.getByLabelText('Passport').props.accessibilityState.selected).toBe(true);
+  });
+
+  it('refreshes an inline display-photo change without requiring tab navigation', async () => {
+    mockGetMyProfile.mockResolvedValue({ ok: true, data: { id: mockUserId, displayName: 'Maya Chen', username: 'maya', avatarUrl: null } });
+    await render(<TabLayout />);
+    expect(screen.getByText('MC')).toBeTruthy();
+    mockGetMyProfile.mockResolvedValue({ ok: true, data: { id: mockUserId, displayName: 'Maya Chen', username: 'maya', avatarUrl: 'https://example.com/new-photo.jpg' } });
+    await act(async () => mockProfileChanged?.());
+    expect(screen.getByTestId('passport-menu-avatar').props.source).toMatchObject({ uri: 'https://example.com/new-photo.jpg' });
+  });
+
+  it('withholds the old account photo and ignores a late profile response after account switching', async () => {
+    let finishOld: (value: unknown) => void = () => {};
+    mockGetMyProfile.mockReturnValueOnce(new Promise(resolve => { finishOld = resolve; }));
+    const view = await render(<TabLayout />);
+    mockUserId = 'viewer-b';
+    mockGetMyProfile.mockResolvedValue({ ok: true, data: { id: mockUserId, displayName: 'Sam Lee', username: 'sam', avatarUrl: null } });
+    await view.rerender(<TabLayout />);
+    await act(async () => finishOld({ ok: true, data: { id: 'viewer-a', displayName: 'Maya Chen', username: 'maya', avatarUrl: 'https://example.com/maya.jpg' } }));
+    expect(screen.getByText('SL')).toBeTruthy();
+    expect(screen.queryByText('MC')).toBeNull();
+    expect(screen.getByTestId('passport-menu-avatar').props.source).toBeUndefined();
+  });
 
   it('shows no Wall entry while wall_enabled is off', async () => {
     mockWallFlagOn = false;

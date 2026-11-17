@@ -11,7 +11,8 @@
  *   • the served place carried a well-formed `recommendationId`;
  *   • the surface is visible.
  * Otherwise nothing is timed and nothing is sent. Signed-out viewers are
- * stopped at the sender (no token ⇒ nothing sent).
+ * stopped before measurement; every view and asynchronous send remains bound to
+ * the observed initiating account/session.
  *
  * WHEN IT SENDS
  * =============
@@ -23,6 +24,7 @@
  */
 import { useCallback, useEffect, useRef } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
+import { captureMessagingOwnerRequest } from '../services/messagingOwnerRequest.ts';
 import { useFeatureFlags } from '../context/FeatureFlagsContext.tsx';
 import {
   DISCOVERY_DWELL_FLAG,
@@ -30,6 +32,7 @@ import {
   dwellEmissionFor,
   newClientEventId,
   sendDwellEmission,
+  onDwellOwnerInvalidation,
   servedExposureId,
   type DwellTracker,
 } from '../services/discoveryDwell.ts';
@@ -57,20 +60,41 @@ export function useDiscoveryDwell({
   const tracking = enabled && surface === 'discovery' && !!itemId && !!rid && visible;
 
   const tracker = useRef<DwellTracker | null>(null);
+  const pending = useRef(new Set<AbortController>());
   // The flag as of THIS render. A flag turned off mid-view must stop the final
   // send too, and the cleanup below runs after the render that saw it off.
   const enabledNow = useRef(enabled);
   enabledNow.current = enabled;
 
   useEffect(() => {
+    if (!enabled) for (const controller of pending.current) controller.abort();
+  }, [enabled]);
+
+  useEffect(() => {
     if (!tracking || !itemId || !rid) return;
+    const owner = captureMessagingOwnerRequest();
+    if (!owner) return;
+    let invalidated = false;
     const t = createDwellTracker(nowMs(), { foreground: AppState.currentState === 'active' });
     tracker.current = t;
+    const stopOwner = onDwellOwnerInvalidation(owner, () => {
+      invalidated = true;
+      if (tracker.current === t) tracker.current = null;
+      for (const controller of pending.current) controller.abort();
+    });
     const flush = (at: number) => {
+      if (invalidated || !owner.isCurrent() || !enabledNow.current) return;
       const emission = dwellEmissionFor(itemId, rid, t.drain(at), newClientEventId());
-      if (emission) void sendDwellEmission(emission, { enabled: enabledNow.current });
+      if (emission) {
+        const controller = new AbortController();
+        pending.current.add(controller);
+        void sendDwellEmission(emission, { enabled: enabledNow.current, owner,
+          isCurrent: () => !invalidated && enabledNow.current, signal: controller.signal,
+        }).finally(() => pending.current.delete(controller));
+      }
     };
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
+      if (invalidated || !owner.isCurrent() || !enabledNow.current) return;
       const at = nowMs();
       if (state === 'active') {
         t.noteForeground(at);
@@ -80,7 +104,7 @@ export function useDiscoveryDwell({
       }
     });
     return () => {
-      sub.remove();
+      sub.remove(); stopOwner();
       if (tracker.current === t) tracker.current = null;
       flush(nowMs());                         // closed, another place, or unmounted
     };

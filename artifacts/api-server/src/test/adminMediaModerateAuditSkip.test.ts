@@ -34,6 +34,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import adminMediaRouter from "../routes/adminMedia.js";
+import { adminPostcardWithdrawalReceipt } from "./helpers/postcardWithdrawalFixture.js";
 
 type Row = Record<string, any>;
 
@@ -126,6 +127,11 @@ function makeClient(tables: Record<string, Row[]>, ownerReadErrors: Record<strin
 
   return {
     from: (t: string) => chain(t),
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      if (name !== 'withdraw_postcard_media') return { data: null, error: { message: 'Unexpected RPC' } };
+      if (ownerReadErrors.withdraw_postcard_media) return { data: null, error: ownerReadErrors.withdraw_postcard_media };
+      return adminPostcardWithdrawalReceipt(tables, args);
+    },
     storage: {
       from: () => ({
         async remove(paths: string[]) { removed.push(paths); return { data: paths.map((p) => ({ name: p })), error: null }; },
@@ -260,8 +266,11 @@ describe("post_media status flip", () => {
 });
 
 describe("post_media DELETE — the one branch that can still fail closed", () => {
-  const mediaRow = () => [{
-    id: MEDIA_ID, user_id: MEDIA_OWNER, moderation_status: "approved",
+  type MediaRow = { id: string; user_id: string; post_id: string; moderation_status: string;
+    storage_bucket: string; storage_path: string; deleted_at: string | null };
+  const mediaRow = (): MediaRow[] => [{
+    id: MEDIA_ID, user_id: MEDIA_OWNER, post_id: POST_ID, moderation_status: "approved",
+    deleted_at: null,
     // Bucket-qualified, which is the shape lib/storagePath.ts resolves; an
     // unresolvable path makes the route refuse for a DIFFERENT reason and the
     // 503 under test would not be the one asserted.
@@ -287,7 +296,20 @@ describe("post_media DELETE — the one branch that can still fail closed", () =
     assert.equal(tables.moderation_actions.length, 1,
       "the delete branch audits before destroying — that row must exist");
     assert.equal(tables.moderation_actions[0].target_user_id, MEDIA_OWNER);
+    assert.deepEqual(h.removed, [], 'admin withdrawal retains Storage bytes');
+    assert.equal(body.retained, true);
+    assert.equal(tables.post_media.length, 1);
+    assert.ok(tables.post_media[0].deleted_at);
   });
+  it("an unconfirmed atomic withdrawal never falls back to application deletion or audit writes", async () => {
+    const tables = { profiles: adminProfile(), post_media: mediaRow(), moderation_actions: [] as Row[] };
+    const before = JSON.stringify(tables.post_media);
+    const { h, status } = await call(tables, { withdraw_postcard_media: DB_ERROR }, MEDIA_ID, { action: "delete", target: "post_media" });
+    open = h;
+    assert.equal(status, 500);assert.equal(JSON.stringify(tables.post_media), before);
+    assert.equal(tables.moderation_actions.length, 0);assert.deepEqual(h.removed, []);
+  });
+
 });
 
 describe("vacuity", () => {

@@ -179,7 +179,16 @@ test("purge requires tombstoned exact identity, persists revocation, cancels job
   fixture.state.ready = (await runtime.handler.handle(fixture.context)).result;
   await assert.rejects(runtime.eraseSource(fixture.source), /tombstoned/);
   fixture.asset.deleted_at = "2026-10-15T00:00:00Z";
+  fixture.asset.purge_status = "retained";
+  await assert.rejects(runtime.eraseSource(fixture.source), /authority unavailable/);
+  assert.equal(fixture.state.cancelled, false);
+  assert.equal((await readdir(join(fixture.config.root, "assets"))).length, 1);
+  assert.deepEqual(await readdir(join(fixture.config.root, "revoked")), []);
   fixture.asset.purge_status = "pending";
+  fixture.failures.add("advance_media_object_purge");
+  await assert.rejects(runtime.eraseSource(fixture.source), /authority unavailable/);
+  assert.deepEqual(await readdir(join(fixture.config.root, "revoked")), []);
+  fixture.failures.clear();
   await assert.rejects(runtime.eraseSource({ ...fixture.source, path: `${fixture.ownerId}/wrong.png` }));
   fixture.failures.add("media_derivative_cancel_asset");
   await assert.rejects(runtime.eraseSource(fixture.source), /unavailable/);

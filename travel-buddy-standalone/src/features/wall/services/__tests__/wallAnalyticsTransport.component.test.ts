@@ -1,86 +1,68 @@
-/**
- * Unit test: the Wall's real §32 analytics transport + the consented-only
- * real-world-outcome caller.
- *
- * Proves the sink actually reaches the pipeline (authenticated POST, ids/enums
- * only), fails soft, and that a real-world outcome is emitted only under valid
- * consent.
- */
-
-import {
-  createWallAnalyticsTransport,
-} from '../wallAnalyticsTransport.ts';
-import {
-  recordRealWorldOutcome,
-  setRealWorldOutcomeConsent,
-  resetRealWorldOutcomeConsent,
-  setWallAnalyticsSink,
-  resetWallAnalyticsSink,
-  type WallAnalyticsEvent,
-} from '../wallAnalytics.ts';
+// NOTE: intentionally exhaustive — the rank API is a separate transport.
+jest.mock('../wallApi.ts', () => ({ sendAction: jest.fn(), sendImpression: jest.fn() }));
+// NOTE: intentionally exhaustive — token identity is supplied by the test owner.
+jest.mock('../../../../services/messagingOwnerRequest.ts', () => ({ captureMessagingOwnerRequest: jest.fn(), messagingOwnerToken: jest.fn() }));
+import { messagingOwnerToken } from '../../../../services/messagingOwnerRequest.ts';
+import { fetchOwnedApi } from '../../../../services/ownedApiRequest.ts';
+import { createWallAnalyticsTransport } from '../wallAnalyticsTransport.ts';
+import { recordRealWorldOutcome, setRealWorldOutcomeConsent, resetRealWorldOutcomeConsent,
+  setWallAnalyticsSink, resetWallAnalyticsSink, type WallAnalyticsEvent } from '../wallAnalytics.ts';
 import type { WallProjection } from '../../types/wallProjection.ts';
-
-const flush = () => new Promise((r) => setTimeout(r, 0));
-
+const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
+const owner = { ownerId: 'a', sessionId: 'session-a', isCurrent: () => true, invalidate: () => {} };
 const event: WallAnalyticsEvent = { type: 'wall_feed_open', mode: 'for_you' };
-
-describe('createWallAnalyticsTransport (§32)', () => {
-  it('POSTs the event to /api/wall/telemetry with a bearer token, ids/enums only', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({ ok: true });
-    const sink = createWallAnalyticsTransport({
-      baseUrl: 'https://api.example.com',
-      getToken: async () => 'tok-123',
-      fetchImpl: fetchImpl as unknown as typeof fetch,
-    });
-
-    sink(event);
+const outcome: WallAnalyticsEvent = { type: 'wall_real_world_outcome', objectId: 'place-1', objectType: 'place', outcome: 'see_place' };
+const grant = '2026-11-13T12:00:00.000Z';
+const realFetch = global.fetch;
+afterEach(() => { global.fetch = realFetch; jest.clearAllMocks(); });
+describe('Wall owner-bound transport', () => {
+  it('posts only typed data and captures the owner synchronously', async () => {
+    const send = jest.fn().mockResolvedValue({});
+    const captureOwner = jest.fn(() => owner);
+    const sink = createWallAnalyticsTransport({ baseUrl: 'https://example.test', captureOwner, send, outcomeConsentAt: () => grant });
+    sink(outcome);
+    expect(captureOwner).toHaveBeenCalledTimes(1);
     await flush();
-
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchImpl.mock.calls[0];
-    expect(url).toBe('https://api.example.com/api/wall/telemetry');
-    expect(init.method).toBe('POST');
-    expect(init.headers.Authorization).toBe('Bearer tok-123');
-    expect(JSON.parse(init.body)).toEqual({ events: [event] });
+    expect(send).toHaveBeenCalledWith('/api/wall/telemetry', expect.objectContaining({ owner, method: 'POST', body: { events: [outcome], meta: { outcomeConsentAt: grant } } }));
+    sink.dispose();
   });
-
-  it('does not POST when the base URL is unset (unconfigured)', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({ ok: true });
-    const sink = createWallAnalyticsTransport({
-      baseUrl: '',
-      getToken: async () => 'tok',
-      fetchImpl: fetchImpl as unknown as typeof fetch,
-    });
-    sink(event);
-    await flush();
-    expect(fetchImpl).not.toHaveBeenCalled();
+  it('drops missing configuration, signed-out sessions and absent outcome consent', async () => {
+    const send = jest.fn();
+    for (const [baseUrl, account] of [['', owner], ['https://example.test', null]] as const) {
+      const sink = createWallAnalyticsTransport({ baseUrl, captureOwner: () => account, send, outcomeConsentAt: () => grant });
+      sink(event); sink.dispose();
+    }
+    const sink = createWallAnalyticsTransport({ baseUrl: 'https://example.test', captureOwner: () => owner, send, outcomeConsentAt: () => null });
+    sink(outcome); await flush(); expect(send).not.toHaveBeenCalled(); sink.dispose();
   });
-
-  it('does not POST when the viewer is signed out (no token)', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue({ ok: true });
-    const sink = createWallAnalyticsTransport({
-      baseUrl: 'https://api.example.com',
-      getToken: async () => null,
-      fetchImpl: fetchImpl as unknown as typeof fetch,
-    });
-    sink(event);
-    await flush();
-    expect(fetchImpl).not.toHaveBeenCalled();
+  it('never sends after delayed token lookup crosses accounts', async () => {
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://example.test';
+    let resolveToken!: (token: string) => void;
+    (messagingOwnerToken as jest.Mock).mockImplementation(() => new Promise(resolve => { resolveToken = resolve; }));
+    global.fetch = jest.fn() as any;
+    let current = true;
+    const captured = { ...owner, isCurrent: () => current };
+    const sink = createWallAnalyticsTransport({ baseUrl: 'https://example.test', captureOwner: () => captured, send: fetchOwnedApi, outcomeConsentAt: () => grant });
+    sink(outcome); await flush(); current = false; resolveToken('token-for-new-owner'); await flush();
+    expect(global.fetch).not.toHaveBeenCalled(); sink.dispose();
   });
-
-  it('swallows a transport error (fire-and-forget, never throws)', async () => {
-    const fetchImpl = jest.fn().mockRejectedValue(new Error('network down'));
-    const sink = createWallAnalyticsTransport({
-      baseUrl: 'https://api.example.com',
-      getToken: async () => 'tok',
-      fetchImpl: fetchImpl as unknown as typeof fetch,
-    });
-    expect(() => sink(event)).not.toThrow();
-    await flush();
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  it('withdrawal invalidates queued work and aborts a pending network request', async () => {
+    const send = jest.fn(() => new Promise(() => {}));
+    const sink = createWallAnalyticsTransport({ baseUrl: 'https://example.test', captureOwner: () => owner, send, outcomeConsentAt: () => grant });
+    sink(outcome); sink.invalidate(); await flush(); expect(send).not.toHaveBeenCalled();
+    sink(outcome); await flush(); const options = (send.mock.calls[0] as any[])[1];
+    expect(options.isCurrent()).toBe(true); sink.invalidate();
+    expect(options.signal.aborted).toBe(true); expect(options.isCurrent()).toBe(false); sink.dispose();
+  });
+  it('bounds pending work, drops a replaced grant and swallows delivery errors', async () => {
+    let at: string | null = grant;
+    const send = jest.fn().mockRejectedValue(new Error('offline'));
+    const sink = createWallAnalyticsTransport({ baseUrl: 'https://example.test', captureOwner: () => owner, send, outcomeConsentAt: () => at });
+    sink(outcome); at = '2026-11-13T13:00:00Z'; await flush(); expect(send).not.toHaveBeenCalled();
+    for (let i = 0; i < 100; i++) sink(event);
+    await flush(); expect(send).toHaveBeenCalledTimes(32); sink.dispose(); sink(event); await flush(); expect(send).toHaveBeenCalledTimes(32);
   });
 });
-
 describe('recordRealWorldOutcome consent gate (§32)', () => {
   const projection = {
     projectionId: 'p1',
@@ -107,7 +89,7 @@ describe('recordRealWorldOutcome consent gate (§32)', () => {
   });
 
   it('emits the outcome (ids + coarse enum) once consent is granted', () => {
-    setRealWorldOutcomeConsent(true);
+    setRealWorldOutcomeConsent(true, owner);
     recordRealWorldOutcome(projection, 'add_to_trip');
     const out = events.find(
       (e): e is Extract<WallAnalyticsEvent, { type: 'wall_real_world_outcome' }> =>

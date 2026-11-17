@@ -35,6 +35,7 @@ test("offline PostgreSQL vision artifacts and the real shared queue SQL", async 
   `);
   try { await db.exec(queueSql); } catch (error) { throw new Error(`queue SQL: ${error.message} at ${error.position}`); }
   try { await db.exec(artifactSql); } catch (error) { throw new Error(`artifact SQL: ${error.message} at ${error.position}`); }
+  await db.exec(await readFile(new URL("../../artifacts/api-server/src/migrations/4024_managed_image_cost_semantics.sql", import.meta.url), "utf8"));
   const scalar = async (sql, parameters = []) => (await db.query(sql, parameters)).rows[0]?.value;
   const reset = async () => {
     await db.exec("RESET ROLE; TRUNCATE profiles, posts, post_media, media_assets, user_account_states CASCADE;");
@@ -52,6 +53,23 @@ test("offline PostgreSQL vision artifacts and the real shared queue SQL", async 
   const finish = job => scalar("SELECT media_derivative_finish($1,$2,true,false,NULL,10,100,100,$3) AS value", [job.id, job.lease_token, { artifactKey: key, publicationToken: job.lease_token }]);
   const staged = async () => { await reset(); assert.equal(await grant(), true); const id = await enqueue(); const job = await claim(); assert.equal(job.id, id); assert.equal(await publish(job), true); return job; };
   try {
+    await context.test("managed consent records unknown hosting cost while local artifacts still require zero external cost", async () => {
+      await reset();
+      const policy = "hf-siglip-v1-fixture";
+      const managedRequest = { ...request, consentVersion: policy, key: key.replace(request.consentVersion, policy) };
+      assert.equal(await scalar("SELECT media_image_understanding_grant($1,$2,$3) AS value", [source, ownerId, policy]), true);
+      assert.ok(await enqueue(managedRequest));
+      const job = await claim();
+      const managedResult = { ...result(), consentVersion: policy };
+      assert.equal(await publish(job, managedResult), false, "paid hosting must not be reported as free");
+      managedResult.metrics.estimatedExternalCostUsd = null;
+      assert.equal(await publish(job, managedResult), true);
+      await reset(); assert.equal(await grant(), true); assert.ok(await enqueue());
+      const local = await claim();
+      const invalidLocal = result(); invalidLocal.metrics.estimatedExternalCostUsd = null;
+      assert.equal(await publish(local, invalidLocal), false);
+      assert.equal(await publish(local), true);
+    });
     await context.test("consent, persistent idempotency, exact queue revision and atomic visibility", async () => {
       await reset(); assert.equal(await enqueue(), null); assert.equal(await grant(), true);
       const id = await enqueue(); assert.ok(id); assert.equal(await enqueue(), id);

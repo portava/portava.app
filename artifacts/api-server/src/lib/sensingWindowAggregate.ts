@@ -167,8 +167,8 @@ export interface SensingWindowFeatures {
   /** Lower-median consecutive-bucket presence per contributor, 0..4; null when unknown. */
   dwellBucket: number | null;
   /**
-   * True when the median contributor was seen in at least two of the window's
-   * buckets. NEVER false: one sighting does not prove transit, and `false` is
+   * True when the median contributor was seen in at least two consecutive
+   * publishable buckets. NEVER false: one sighting does not prove transit, and `false` is
    * load-bearing in the engine — it caps `danceLikelihood` as contradicting
    * evidence — so it is claimed only where there is evidence for it.
    */
@@ -387,13 +387,23 @@ export function aggregateSensingWindow(
 
   // ── Coverage and dwell, over the publishable buckets only ─────────────────
   const seenIn = new Map<string, number>();
+  const longestRun = new Map<string, number>();
+  let currentRun = new Map<string, number>();
   for (const set of tokenSets) {
-    if (!set) continue;
-    for (const t of set) seenIn.set(t, (seenIn.get(t) ?? 0) + 1);
+    const nextRun = new Map<string, number>();
+    if (set) for (const t of set) {
+      seenIn.set(t, (seenIn.get(t) ?? 0) + 1);
+      const run = (currentRun.get(t) ?? 0) + 1;
+      nextRun.set(t, run);
+      longestRun.set(t, Math.max(longestRun.get(t) ?? 0, run));
+    }
+    // A missing contributor or unreadable/sub-k bucket breaks persistence.
+    // Separate sightings establish coverage, not uninterrupted dwell.
+    currentRun = nextRun;
   }
   const distinctContributors = seenIn.size;
   const coverage: CoverageBucket = distinctContributors === 0 ? "unknown" : sourceCountBucket(distinctContributors);
-  const dwellBucket = lowerMedian([...seenIn.values()].map((n) => Math.min(4, Math.max(0, n - 1))));
+  const dwellBucket = lowerMedian([...longestRun.values()].map((n) => Math.min(4, Math.max(0, n - 1))));
 
   return {
     bucketsSupplied: supplied,

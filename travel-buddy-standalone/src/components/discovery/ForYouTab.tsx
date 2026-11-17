@@ -338,7 +338,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
           key={destination}
           places={mapPlaces}
           placesLoading={loading || community.loading}
-          placesError={placesError ?? (source === 'refused' ? 'Places did not load' : null)}
+          placesError={placesError ?? (source === 'refused' || community.refused ? 'Places did not load' : null)}
           placesPartial={osmPartial || community.incomplete || community.refused}
           onRetryPlaces={handleRefresh}
           onSelectPlace={(p) => {

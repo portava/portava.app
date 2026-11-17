@@ -218,6 +218,13 @@ describe('prefetchWallMedia', () => {
     expect(warmed).toEqual(['https://signed/b']);
     expect(prefetch).toHaveBeenCalledWith(['https://signed/b']);
   });
+
+  it('never deposits authenticated relay content in the image disk cache', async () => {
+    const items = [proj('a', { media: [{ mediaId: 'm1', kind: 'image', url: 'post-media/a/1.jpg' }] })];
+    hydrate.mockResolvedValue({ 'post-media/a/1.jpg': '/api/media/file/post-media/a/1.jpg?viewer=a1000000-0000-4000-a000-000000000002' });
+    expect(await prefetchWallMedia(items, { hydrate, prefetch })).toEqual([]);
+    expect(prefetch).not.toHaveBeenCalled();
+  });
 });
 
 describe('formatCacheAge', () => {

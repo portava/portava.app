@@ -506,6 +506,16 @@
       "fingerprint": "46030374019124ea",
       "closedBy": "denies",
       "why": "A throw anywhere in the try, the pair block read included, lands here and answers false: no like, comment, reply, follow or friend-request notification is written or pushed. readPairExclusion itself never rejects (every block-read failure is `ok: false`, which isExcluded treats as excluded and returns false before any write), so this catch only meets other throws, and it too sends nothing. Judged 2026-11-04 (PR #816, the social activity notifier)."
+    },
+    {
+      "key": "routes/mediaFeed.ts::post /media/:id/view::catch#1",
+      "kind": "catch",
+      "reads": [
+        "readPairExclusion"
+      ],
+      "fingerprint": "d2d03118bcd38647",
+      "closedBy": "denies",
+      "why": "Reviewed 2026-11-16: a thrown block read, an unreadable pair, or any failed audience check returns degraded_unavailable before the observation RPC. No view is counted when access cannot be established; the catch returns immediately."
     }
   ]
 }

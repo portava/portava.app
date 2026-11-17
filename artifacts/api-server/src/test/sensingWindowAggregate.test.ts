@@ -386,6 +386,20 @@ describe("W7 — the four unsupported features stay unknown", () => {
 });
 
 describe("dwell is derived from presence across buckets, and only where there is evidence", () => {
+  it("separated sightings and unreadable gaps do not become continuous dwell", () => {
+    const base = tokens(0, 25);
+    for (const middle of [cohort(tokens(500, 25), { bucket: bucketAt(1) }), { ok: false, error: "unreadable" } as SensingReadResult]) {
+      const w = aggregateSensingWindow([
+        { timeBucket: bucketAt(2), read: cohort(base, { bucket: bucketAt(2) }) },
+        { timeBucket: bucketAt(1), read: middle },
+        { timeBucket: bucketAt(0), read: cohort(base, { bucket: bucketAt(0) }) },
+      ], { nowMs: NOW, timeBucketMinutes: WIDTH_MIN });
+      assert.equal(w.dwellBucket, 0);
+      assert.equal(w.boundedMovement, null);
+      assert.notEqual(w.coverage, "unknown", "separate sightings still provide coverage");
+    }
+  });
+
   it("a contributor in both buckets dwells; boundedMovement is true, never false", () => {
     const base = tokens(0, 25);
     const w = aggregateSensingWindow(twoBuckets(base, base), { nowMs: NOW, timeBucketMinutes: WIDTH_MIN });

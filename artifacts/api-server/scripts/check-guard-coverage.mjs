@@ -707,6 +707,71 @@ const GATE_PROOF_TOKENS = [
 // and if the pin ever goes away the exemption evaporates and they fail here.
 // ─────────────────────────────────────────────────────────────────────────────
 const EXEMPT = [
+  {
+    file: 'src/lib/media/privateMediaDelivery.ts',
+    reason:
+      'Production request-path byte relay. Reads the configured Supabase service identity only for the ' +
+      'private upstream object request after current viewer authorization, disallows redirects, and streams ' +
+      'bytes to the existing media route. The hosted CI-project guard would prevent the production server ' +
+      'from loading this module. Like mediaAccess.ts, this application file is deliberately UNGUARDED by ' +
+      'the CI target allowlist; endpoint authorization and provider-origin controls still apply.',
+  },
+  ...[
+    'src/test/avatarCoverRelayResolution.test.ts',
+    'src/test/privateMediaDelivery.test.ts',
+  ].map((file) => ({
+    file,
+    pinnedTestEnv: true,
+    reason:
+      'Registered synthetic media test, run by the existing command with its rechecked loopback URL and ' +
+      'dummy-key pin. Reads/restores environment strings to exercise URL canonicalization or private-byte ' +
+      'relay behavior; uses injected query clients, reserved synthetic storage origins and intercepted ' +
+      'provider fetch responses. It creates no hosted client. HTTP test requests use its own loopback server. ' +
+      'EXEMPT means unguarded by the hosted-project front door, not safe for arbitrary future transports.',
+  })),
+  {
+    file: 'src/test/memoryMediaBinding.test.ts',
+    reason:
+      'Synthetic Memory binding test registered in the pretest lifecycle command; this named-workflow ' +
+      'surface scanner does not traverse package lifecycle hooks. Reads Supabase URL strings to test ' +
+      'canonical media references and temporarily uses storage.invalid. It injects query results, creates ' +
+      'no client and performs no network I/O. Deliberately UNGUARDED by the hosted-project allowlist; ' +
+      'this is not a claim that CI never executes the test or that a future real transport is covered.',
+  },
+  ...[
+    'src/test/db/accountRecovery.db.test.ts',
+    'src/test/db/memoryCaptureUpload.db.test.ts',
+    'src/test/db/postcardCanonicalLifecycle.db.test.ts',
+    'src/test/db/postcardCaptureUpload.db.test.ts',
+  ].map((file) => ({
+    file,
+    reason:
+      'Required SQL fixture reached through the local-db runner file glob, which this named-script CI ' +
+      'surface scanner does not expand. Supabase environment references are URL-format fixtures only; ' +
+      'data operations use openPressedLayoverDb and its existing verified PostgreSQL target and exclusive ' +
+      'snapshot lease. Media provider requests, where used, are intercepted synthetic responses. No hosted ' +
+      'Supabase client is created. UNGUARDED by the hosted-project allowlist, not exempt from PostgreSQL ' +
+      'identity/restoration checks. This does not claim CI never executes these tests.',
+  })),
+  {
+    file: 'src/test/helpers/mediaBrowserDeliveryHarness.ts',
+    reason:
+      'Manually launched synthetic browser fixture, not a package/workflow entry point. Injects its query ' +
+      'client, overwrites the URL and key with reserved synthetic literals, and replaces provider fetch ' +
+      'with an in-memory WAV response after checking the exact synthetic storage prefix; all other fetches ' +
+      'throw. Its Express server is loopback-only. UNGUARDED by the hosted-project allowlist; neither this ' +
+      'exemption nor the harness is production acceptance evidence.',
+  },
+  {
+    file: 'src/test/helpers/mediaDeliveryFixture.ts',
+    reason:
+      'Test-only injected provider transport, not a package/workflow entry point. Replaces the service key ' +
+      'with a synthetic literal and handles configured-provider reads in memory, asserting that private ' +
+      'credentials stay on that origin. Other origins use the saved fetch for the callers loopback HTTP ' +
+      'server. Caller fixtures supply query clients and synthetic origins; this helper creates no hosted ' +
+      'client. UNGUARDED by the hosted-project allowlist: adding a real upstream or ambient target invalidates ' +
+      'this scoped exemption. Its importers remain independently classified.',
+  },
   // ── Operator-run scripts that DELIBERATELY target production. ─────────────
   {
     file: 'src/scripts/backfillPlacePhotos.ts',

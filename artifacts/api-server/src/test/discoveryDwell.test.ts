@@ -59,8 +59,8 @@ function install(opts: Parameters<typeof makeTelemetryDb>[0]) {
   rankEventReads = 0;
   db = makeTelemetryDb({
     users: USERS, beforeRankEventsRead: async () => { rankEventReads += 1; },
-    rpc: { increment_distribution_stats: () => ({ data: null, error: null }) },   // the serve log's denominator RPC; not under test
     ...opts,
+    rpc: { increment_distribution_stats: () => ({ data: null, error: null }), ...opts?.rpc }, // serve denominator is not under test
   });
   _setTestClient(db.client as any, true);
   _setTestServiceClient(db.client as any);
@@ -283,5 +283,54 @@ describe("DV-41 — dwell acceptance on POST /rank-events/dwell", () => {
       dwellTokenFor(ALICE, CEID, "active", "db/p2"),
     ];
     assert.equal(new Set([t, ...variants]).size, 5);
+  });
+});
+
+
+describe("atomic dwell receipt boundary", () => {
+  it("never acknowledges missing, malformed or incomplete RPC receipts", async () => {
+    for (const data of [null, [], {}, { ok: true }, { ok: true, recorded: 1, duplicates: 0 },
+      { ok: true, recorded: -1, duplicates: 4 }, { ok: true, recorded: 1.5, duplicates: 1.5 },
+      { ok: false, reason: "unknown" }]) {
+      install({ flags: FLAGS_ON, rpc: { admit_discovery_dwell: () => ({ data, error: null }) } });
+      const [rid] = await serve(ALICE, ["db/p1"]);
+      const result = await post("/rank-events/dwell", "alice-token", dwellBody(rid!, "db/p1"));
+      assert.equal(result.status, 503, JSON.stringify(data));
+      assert.equal(attentionRows().length, 0);
+    }
+  });
+  it("maps transactional refusals and failures honestly without a direct-write fallback", async () => {
+    for (const [data, error, status] of [
+      [{ ok: false, reason: "disabled" }, null, 404],
+      [{ ok: false, reason: "account_unavailable" }, null, 403],
+      [{ ok: false, reason: "not_found" }, null, 404],
+      [null, { message: "dwell_receipt_conflict" }, 409],
+      [null, { message: "dwell_invalid_payload" }, 400],
+      [null, { code: "PGRST202", message: "RPC unavailable" }, 503],
+      [null, { message: "dwell_receipt_unverified" }, 503],
+    ] as const) {
+      install({ flags: FLAGS_ON, rpc: { admit_discovery_dwell: () => ({ data, error }) } });
+      const [rid] = await serve(ALICE, ["db/p1"]);
+      assert.equal((await post("/rank-events/dwell", "alice-token", dwellBody(rid!, "db/p1"))).status, status);
+      assert.equal(attentionRows().length, 0);
+      assert.equal(db.captured.filter(c => c.table === "rank_events" && c.op === "upsert").length, 0);
+    }
+  });
+  it("same identity with changed duration refuses the entire mixed batch", async () => {
+    const [rid] = await serve(ALICE, ["db/p1"]);
+    const first = dwellBody(rid!, "db/p1", { dwell: [{ kind: "active", ms: 4200 }] });
+    assert.equal((await post("/rank-events/dwell", "alice-token", first)).status, 200);
+    const changed = dwellBody(rid!, "db/p1", { dwell: [{ kind: "active", ms: 4300 }, { kind: "idle", ms: 1000 }] });
+    assert.equal((await post("/rank-events/dwell", "alice-token", changed)).status, 409);
+    assert.equal(attentionRows().length, 1);
+    assert.equal(attentionRows()[0]!.dwell_ms, 4200);
+  });
+  it("refuses undeclared input instead of silently stripping it", async () => {
+    const [rid] = await serve(ALICE, ["db/p1"]);
+    for (const extra of [{ text: "private note" }, { dwell: [{ kind: "active", ms: 10, text: "private note" }] }]) {
+      assert.equal((await post("/rank-events/dwell", "alice-token", dwellBody(rid!, "db/p1", extra))).status, 400);
+    }
+    assert.equal(attentionRows().length, 0);
+    assert.equal(db.rpcCount("admit_discovery_dwell"), 0);
   });
 });

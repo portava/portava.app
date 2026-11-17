@@ -726,3 +726,47 @@ describe("#783 — a recorder failure fails nothing and changes nothing", () => 
 });
 import { _setPipelineStageRecorderProbeForTest } from "../routes/discovery.js";
 import { _setDiversityRecorderFaultForTest } from "../lib/portavaRank.js";
+
+describe("P42/A18 — served Discovery consumes the viewer's current Passport intent", () => {
+  const window = (overrides: Record<string, unknown> = {}) => ({
+    id: "private-window-proof", user_id: LEGACY_VIEWER, type: "one_time",
+    start_at: new Date(Date.now() - 60_000).toISOString(),
+    end_at: new Date(Date.now() + 3_600_000).toISOString(),
+    expires_at: null, source: "explicit", intents: ["Food"],
+    open_to_plans: true, visibility: "private", ...overrides,
+  });
+  for (const [name, path] of [["cached candidates", CACHE_A_PATH], ["cold candidates", COLD_PATH]] as const) {
+    it(`${name}: an own active Passport window scores served rows without a request mode`, async () => {
+      const s = await serve(path, [flag("discovery_intent_term_enabled", true)], w => {
+        w.tables.availability_windows = [window()];
+      });
+      assertServed(name, s);
+      assert.ok(s.world.reads.includes("availability_windows"), "the canonical window source was read");
+      assert.ok(s.rows.some(r => Number(r.features.intentMatch) > 0), "an actual served candidate fits Food");
+      for (const r of s.rows) assert.equal(typeof r.features.intentMatch, "number");
+      assert.ok(!JSON.stringify(s.body).includes("private-window-proof"), "the private source row is not returned");
+      assert.ok(!JSON.stringify(s.body).includes('"intents"'), "raw private intent is not a response field");
+    });
+  }
+  for (const [name, overrides] of [
+    ["inferred", { source: "plan_derived" }],
+    ["expired", { end_at: new Date(0).toISOString() }],
+    ["another viewer's", { user_id: "bbbb0000-0000-4000-8000-00000000000b" }],
+  ] as const) {
+    it(`${name} Passport window supplies no intent term to served rows`, async () => {
+      const s = await serve(CACHE_A_PATH, [flag("discovery_intent_term_enabled", true)], w => {
+        w.tables.availability_windows = [window(overrides)];
+      });
+      assertServed(name, s);
+      for (const r of s.rows) assert.ok(!("intentMatch" in r.features), r.item_id);
+    });
+  }
+  it("a disabled intent term never reads an otherwise eligible Passport window", async () => {
+    const s = await serve(CACHE_A_PATH, [flag("discovery_intent_term_enabled", false)], w => {
+      w.tables.availability_windows = [window()];
+    });
+    assertServed("disabled intent", s);
+    assert.ok(!s.world.reads.includes("availability_windows"));
+    for (const r of s.rows) assert.ok(!("intentMatch" in r.features), r.item_id);
+  });
+});

@@ -1,3 +1,4 @@
+import {activeMediaAccountRead} from './helpers/mediaAccountReadFixture.js';
 /**
  * Story media — storage-origin and ownership, at both ends.
  *
@@ -338,7 +339,7 @@ function makeRelayClient(state: RelayState = {}) {
     };
     return b;
   }
-  return { from: builder } as any;
+  return { from: builder, rpc: async (name:string,args:any)=>activeMediaAccountRead(name,args) } as any;
 }
 
 /** A live public story row pointing at `mediaUrl`, owned by `ownerId`. */

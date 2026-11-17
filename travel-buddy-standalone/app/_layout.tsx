@@ -2,6 +2,7 @@ import { useCallback, useEffect, type PropsWithChildren } from 'react';
 import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as Sentry from '@sentry/react-native';
+import { redactCrashBreadcrumb, redactCrashEvent } from '../src/lib/crashInputPrivacy.ts';
 // Register the geofence background task at module root — must be imported
 // before any call to Location.startGeofencingAsync.
 import '../src/tasks/geofenceExitTask';
@@ -22,6 +23,12 @@ if (startupSentryDsn) Sentry.init({
   enabled: !__DEV__,
   // Performance tracing — 10 % sample rate; adjust once baseline is known.
   tracesSampleRate: 0.1,
+  sendDefaultPii: false,
+  attachScreenshot: false,
+  attachViewHierarchy: false,
+  beforeBreadcrumb: redactCrashBreadcrumb,
+  beforeSend: redactCrashEvent,
+  beforeSendTransaction: redactCrashEvent,
 });
 
 // Warn loudly in non-dev builds when the DSN is missing so the misconfiguration
@@ -63,12 +70,7 @@ import { useCryptoInit } from '../src/hooks/useCryptoInit';
 import { supabase } from '../src/lib/supabase';
 import { recoveryLinkAction } from '../src/lib/recoveryLink';
 import { freshToken } from '../src/services/apiToken';
-import { getIntelConsent, hasValidConsent } from '../src/services/intelConsent';
-import {
-  setWallAnalyticsSink,
-  setRealWorldOutcomeConsent,
-} from '../src/features/wall/services/wallAnalytics';
-import { createWallAnalyticsTransport } from '../src/features/wall/services/wallAnalyticsTransport';
+import { installWallAnalytics } from '../src/features/wall/services/installWallAnalytics';
 import { installPassportTelemetry } from '../src/features/passport/installPassportTelemetry';
 import { installInputTelemetry } from '../src/platform/input-assistance/services/installInputTelemetry';
 import { installInputPolicySync } from '../src/platform/input-assistance/services/installInputPolicySync';
@@ -115,13 +117,8 @@ function CryptoSetup() {
  */
 function WallAnalyticsSetup() {
   useEffect(() => {
-    setWallAnalyticsSink(
-      createWallAnalyticsTransport({
-        baseUrl: process.env.EXPO_PUBLIC_API_BASE_URL ?? '',
-        getToken: freshToken,
-      }),
-    );
-    void getIntelConsent().then((state) => setRealWorldOutcomeConsent(hasValidConsent(state)));
+    const analytics = installWallAnalytics();
+    return () => analytics.dispose();
   }, []);
   return null;
 }

@@ -1,3 +1,4 @@
+import {activeMediaAccountRead} from './helpers/mediaAccountReadFixture.js';
 /**
  * Shared harness for the Telegraph §26/§27 certification suites.
  *
@@ -456,7 +457,7 @@ export function makeFakeClient(
 
   return {
     from,
-    rpc: async () => ({ data: null, error: { message: "rpc not modelled by the certification harness" } }),
+    rpc: async (name:string,args:any) => activeMediaAccountRead(name,args),
     auth: {
       // The bearer token IS the user id, so one app serves every caller.
       getUser: async (token: string) =>

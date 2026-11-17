@@ -6,15 +6,16 @@ import { BlurView } from 'expo-blur';
 import { Tabs, router, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Activity, Compass, Plus, Plane, Film, LayoutGrid } from 'lucide-react-native';
-import { PassportIcon } from '../../src/components/icons/PassportIcon';
+import { Avatar } from '../../src/components/ui/Avatar';
+import type { OwnProfile } from '../../src/types/models';
 import { NotificationBell } from '../../src/components/NotificationBell';
-import { color, space, type as t, shadow } from '../../src/theme/tokens';
+import { avatar, color, space, type as t, shadow } from '../../src/theme/tokens';
 import { useIsDesktop } from '../../src/hooks/useBreakpoint';
 import { useUnreadCounts } from '../../src/hooks/useMessaging';
 import { useGeofenceMonitor } from '../../src/hooks/useGeofenceMonitor'; import { useSenseAutoCheck, senseLocationKey } from '../../src/features/live/useSenseAutoCheck';
 import { getIncomingMessageRequests } from '../../src/services/messaging';
 import { getPendingTripInvites } from '../../src/services/trips';
-import { getMyProfile } from '../../src/services/profile';
+import { getMyProfile, subscribeOwnProfileChanges } from '../../src/services/profile';
 import { useSession } from '../../src/context/SessionContext';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 import { navBarProgress } from '../../src/hooks/useNavBarCollapse';
@@ -30,8 +31,16 @@ const NAV_ITEMS = [
   { href: '/(tabs)/discovery', label: 'Discovery', icon: Compass, match: ['/(tabs)/discovery'] },
   { href: '/(tabs)/media', label: 'Roam', icon: Film, match: ['/(tabs)/media'] },
   { href: '/(tabs)/trips', label: 'Trips', icon: Plane, match: ['/(tabs)/trips'] },
-  { href: '/(tabs)/passport', label: 'Passport', icon: PassportIcon, match: ['/(tabs)/passport'] },
+  { href: '/(tabs)/passport', label: 'Passport', icon: null, match: ['/(tabs)/passport'] },
 ] as const;
+
+type MenuProfile = Pick<OwnProfile, 'id' | 'displayName' | 'username' | 'avatarUrl'>;
+
+function PassportMenuAvatar({ profile, selected }: { profile?: MenuProfile | null; selected: boolean }) {
+  return <Avatar key={`${profile?.id ?? 'signed-out'}:${profile?.avatarUrl ?? 'initials'}`}
+    uri={profile?.avatarUrl} name={profile?.displayName || profile?.username}
+    size={avatar.s28} selected={selected} accessibilityLabel="Your profile photo" testID="passport-menu-avatar" />;
+}
 
 /**
  * The Wall's nav entry, kept OUT of NAV_ITEMS because NAV_ITEMS is the
@@ -57,10 +66,12 @@ function DesktopSidebar({
   unreadNotifications,
   unreadMessages,
   pendingRequests,
+  profile,
 }: {
   unreadNotifications: number;
   unreadMessages: number;
   pendingRequests: number;
+  profile: MenuProfile | null;
 }) {
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
@@ -92,7 +103,7 @@ function DesktopSidebar({
               accessibilityLabel={label}
               accessibilityState={{ selected: active }}
             >
-              <Icon size={20} color={active ? color.signal : color.mute} />
+              {Icon ? <Icon size={20} color={active ? color.signal : color.mute} /> : <PassportMenuAvatar profile={profile} selected={active} />}
               <Text style={[ds.navLabel, active && ds.navLabelActive]}>{label}</Text>
             </Pressable>
           );
@@ -122,9 +133,10 @@ interface FloatBarProps {
   newHighlights: number;
   pendingTripInvites: number;
   unreadNotifications: number;
+  profile?: MenuProfile | null;
 }
 
-export function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications }: FloatBarProps) {
+export function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications, profile }: FloatBarProps) {
   const { isEnabled } = useFeatureFlags();
   const wallEnabled = isEnabled('wall_enabled');
   const pathname = usePathname();
@@ -212,7 +224,7 @@ export function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifi
   }: {
     href: string;
     label: string;
-    icon: React.ComponentType<{ size: number; color: string }>;
+    icon: React.ComponentType<{ size: number; color: string }> | null;
     match: readonly string[];
     badge?: number;
   }) {
@@ -229,7 +241,7 @@ export function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifi
         <Animated.View style={[fb.itemInner, compactLabels && { paddingHorizontal: 0 }, active && { backgroundColor: activeHighlight }, animatedItemInnerStyle]}>
           <Animated.View style={animatedIconStyle}>
             <View>
-              <Icon size={20} color={active ? iconActive : iconMuted} />
+              {Icon ? <Icon size={20} color={active ? iconActive : iconMuted} /> : <PassportMenuAvatar profile={profile} selected={active} />}
               {(badge ?? 0) > 0 && (
                 <View style={fb.dot}>
                   <Text style={fb.dotText}>{(badge ?? 0) > 9 ? '9+' : String(badge)}</Text>
@@ -301,7 +313,12 @@ export default function TabLayout() {
   const { messages: unreadMessages, notifications: unreadNotifications, newHighlights, refresh: refreshUnread } = useUnreadCounts();
   const [pendingRequests, setPendingRequests] = useState(0);
   const [pendingTripInvites, setPendingTripInvites] = useState(0);
-  const { isAuthed, loading, configured } = useSession();
+  const { userId, isAuthed, loading, configured } = useSession();
+  const [menuProfile, setMenuProfile] = useState<MenuProfile | null>(null);
+  const [profileRevision, setProfileRevision] = useState(0);
+  useEffect(() => subscribeOwnProfileChanges(() => setProfileRevision(revision => revision + 1)), []);
+  // Never paint the outgoing account's photo while the next profile loads.
+  const visibleMenuProfile = isAuthed && !loading && menuProfile?.id === userId ? menuProfile : null;
   const { resolvedLocation } = useLocationContext();
   const pathname = usePathname();
   const pathnameRef = useRef(pathname);
@@ -385,19 +402,25 @@ export default function TabLayout() {
   // Profile-completeness gate for cold-start / session-restore paths.
   // Fires once per authenticated session. When the profile lacks displayName
   // or username (user abandoned onboarding mid-flow), redirect back to finish.
-  const profileGateChecked = useRef(false);
+  const profileGateChecked = useRef<string | null>(null);
   useEffect(() => {
-    if (!isAuthed || loading) return;
-    if (profileGateChecked.current) return;
-    profileGateChecked.current = true;
+    if (!isAuthed || loading || !userId) return;
+    let active = true;
+    // Refresh after navigation, including returning from profile editing.
+    // getMyProfile shares any in-flight read with the Passport screen.
     getMyProfile().then((res) => {
-      if (res.ok && res.data && (!res.data.displayName || !res.data.username)) {
-        router.replace('/(auth)/onboarding' as any);
+      if (!active || !res.ok || !res.data || res.data.id !== userId) return;
+      const { id, displayName, username, avatarUrl } = res.data;
+      setMenuProfile({ id, displayName, username, avatarUrl });
+      if (profileGateChecked.current !== userId) {
+        profileGateChecked.current = userId;
+        if (!displayName || !username) router.replace('/(auth)/onboarding' as any);
       }
     }).catch(() => {
       // Non-fatal — leave user on tabs if profile check fails.
     });
-  }, [isAuthed, loading]);
+    return () => { active = false; };
+  }, [isAuthed, loading, userId, pathname, profileRevision]);
 
   useGeofenceMonitor(); useSenseAutoCheck({ enabled: isAuthed && !loading, locationKey: senseLocationKey(resolvedLocation) }); // TM-live COMP-F11: nothing else ever asks Compass Sense to look
 
@@ -484,6 +507,7 @@ export default function TabLayout() {
           unreadNotifications={unreadNotifications}
           unreadMessages={unreadMessages}
           pendingRequests={pendingRequests}
+          profile={visibleMenuProfile}
         />
         <View style={ds.desktopContent}>{tabs}</View>
       </View>
@@ -500,6 +524,7 @@ export default function TabLayout() {
           newHighlights={newHighlights}
           pendingTripInvites={pendingTripInvites}
           unreadNotifications={unreadNotifications}
+          profile={visibleMenuProfile}
         />
         <LocationPermissionPrompt />
       </View>

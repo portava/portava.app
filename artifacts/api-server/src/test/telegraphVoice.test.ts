@@ -1,3 +1,4 @@
+import { activeMediaAccountRead } from "./helpers/mediaAccountReadFixture.js";
 /**
  * Telegraph §6.2 VOICE — the kind that was refused by name until migration
  * 2989 existed, exercised end to end through the shipped route.
@@ -272,7 +273,7 @@ function makeClient(state: State) {
     _db: db,
     _inserted: inserted,
     from,
-    rpc: async () => ({ data: null, error: { message: "rpc not modelled" } }),
+    rpc: activeMediaAccountRead,
     auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },
   };
 }

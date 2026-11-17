@@ -10,9 +10,9 @@ export type PassportSectionKey = 'identity' | 'stamps' | 'highlights' | 'tabs' |
 
 export const CANONICAL_SECTION_ORDER: PassportSectionKey[] = [
   'identity',
-  'stamps',
   'highlights',
   'tabs',
+  'stamps',
   'dossier',
 ];
 

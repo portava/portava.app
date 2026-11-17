@@ -2,6 +2,7 @@ import {
   listMemoryVideoSegments, createMemoryVideoSegment, deleteMemoryVideoSegment,
   resolveMemoryVideoOriginal, newVideoSegmentOperationId,
 } from '../memoryVideoSegments.ts';
+import { setDiscoveryViewerFromSession } from '../discoveryViewerScope.ts';
 
 const mockToken = jest.fn();
 const mockSession = jest.fn();
@@ -133,10 +134,14 @@ it('honors cancellation before token acquisition and after response decoding', a
 
 it('freshly authorizes only canonical post-media originals, never raw URLs or cached copies', async () => {
   const uri = `post-media/${scope.ownerId}/original.mp4`;
-  const signed = `https://storage.test/storage/v1/object/sign/${uri}?token=private`;
+  const token = `e30.${btoa(JSON.stringify({ sub: scope.ownerId }))}.c2ln`;
+  mockToken.mockResolvedValue(token);
+  mockSession.mockResolvedValue({ data: { session: { user: { id: scope.ownerId }, access_token: token } } });
+  setDiscoveryViewerFromSession(scope.ownerId);
+  const signed = `http://127.0.0.1:9/api/media/file/${uri}?viewer=${scope.ownerId}`;
   respond(200, { signed: { [uri]: signed } });
-  expect(await resolveMemoryVideoOriginal(scope, uri)).toEqual({ ok: true, uri: signed });
-  expect(await resolveMemoryVideoOriginal(scope, uri)).toEqual({ ok: true, uri: signed });
+  expect(await resolveMemoryVideoOriginal(scope, uri)).toEqual({ ok: true, uri: signed, headers: { Authorization: `Bearer ${token}` } });
+  expect(await resolveMemoryVideoOriginal(scope, uri)).toEqual({ ok: true, uri: signed, headers: { Authorization: `Bearer ${token}` } });
   expect(mockFetch).toHaveBeenCalledTimes(2);
   expect(mockFetch.mock.calls[0][0]).toMatch(/\/api\/media\/sign$/);
   expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({ urls: [uri] });
@@ -144,6 +149,10 @@ it('freshly authorizes only canonical post-media originals, never raw URLs or ca
     expect(await resolveMemoryVideoOriginal(scope, invalid)).toMatchObject({ ok: false, kind: 'not_found' });
   }
   expect(mockFetch).toHaveBeenCalledTimes(2);
+  respond(200, { signed: { [uri]: `https://storage.test/storage/v1/object/sign/${uri}?token=retired` } });
+  expect(await resolveMemoryVideoOriginal(scope, uri)).toMatchObject({ kind: 'not_found' });
+  respond(200, { signed: { [uri]: signed.replace(`viewer=${scope.ownerId}`, `viewer=${scope.memoryId}`) } });
+  expect(await resolveMemoryVideoOriginal(scope, uri)).toMatchObject({ kind: 'not_found' });
   respond(200, { signed: { [uri]: 'https://elsewhere.test/movie.mp4' } });
   expect(await resolveMemoryVideoOriginal(scope, uri)).toMatchObject({ kind: 'not_found' });
   respond(200, { signed: { [uri]: null } });

@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { reusableDatabaseName, assertReusableDatabaseIdentity, assertSnapshotToolchain } from "./db/pressedSnapshot.js";
 import { Client } from 'pg';
 import { pressedPostgresServer, pressedPostgresConnection } from "./db/pressedPostgres.js";
-import { pressedMigrationOmissions, executePressedMigrationChain } from './db/pressedLayoverDb.js';
+import { pressedMigrationOmissions, executePressedMigrationChain, pressedMigrationSql } from './db/pressedLayoverDb.js';
 
 test("destructive PostgreSQL proof harness refuses hosted and overridden destinations", () => {
   for (const url of [
@@ -11,6 +12,10 @@ test("destructive PostgreSQL proof harness refuses hosted and overridden destina
     "postgresql://postgres@127.0.0.1/db?hostaddr=10.0.0.1", "postgresql://postgres@localhost/db?service=production",
     "postgresql://postgres@localhost/db?servicefile=/tmp/pg_service.conf", "postgresql://postgres@localhost/db?dbname=production",
   ]) assert.throws(() => pressedPostgresServer(url));
+  for (const name of ['postgres', 'production', 'portava_local_copy', '']) {
+    assert.throws(() => reusableDatabaseName(new URL(`postgresql://postgres@127.0.0.1/${name}`)), /designated reusable/);
+  }
+  assert.equal(reusableDatabaseName(new URL('postgresql://postgres@127.0.0.1/portava_ci_repairs')), 'portava_ci_repairs');
   for (const host of ["127.0.0.1", "localhost", "[::1]"]) {
     assert.equal(pressedPostgresServer(`postgresql://postgres@${host}:54329/portava_local`).hostname, host);
   }
@@ -39,4 +44,42 @@ test('an unrelated migration error aborts every absent replay instead of publish
   await assert.rejects(executePressedMigrationChain(db,['2700_certified.sql','2992_ledger.sql','3899_objective.sql','3907_activity.sql'],['2700'],new Set(),f=>f),new RegExp(`3899_objective.sql: ${code}`));
   assert.equal(closed,true);assert.ok(!executed.includes('3907_activity.sql'));assert.ok(!executed.includes('2992_ledger.sql'));
  }
+});
+
+
+test('isolated replay omits only the reviewed host scheduler registration', () => {
+ const registration = "create extension if not exists pg_cron with schema pg_catalog;\nselect cron.schedule('intelligence-system-monitor-hourly', '7 * * * *',\n  $job$set statement_timeout='20s'; set lock_timeout='2s'; select intelligence_monitor.collect();$job$);";
+ const body = 'CREATE TABLE intelligence_monitor.snapshots(id uuid);\n';
+ assert.equal(pressedMigrationSql('4026_intelligence_system_monitor.sql', body + registration), body);
+ assert.equal(pressedMigrationSql('4027_whole_system_monitor.sql', body), body);
+ assert.throws(() => pressedMigrationSql('4026_intelligence_system_monitor.sql', body), /registration changed/);
+ assert.throws(() => pressedMigrationSql('4026_intelligence_system_monitor.sql', body + registration + '\nDROP TABLE public.posts;'), /registration changed/);
+});
+
+
+test('Docker fixture identity requires an independently pinned exact cluster, never a private-address allowance', () => {
+ const url=new URL('postgresql://postgres@127.0.0.1/portava_local');
+ const identity={name:'portava_local',role:'postgres',host:'172.18.0.2',cluster:'7708745771566368102'};
+ assert.throws(()=>assertReusableDatabaseIdentity(identity,url,''),/identity mismatch/);
+ assert.throws(()=>assertReusableDatabaseIdentity(identity,url,'7708745771566368103'),/identity mismatch/);
+ assert.doesNotThrow(()=>assertReusableDatabaseIdentity(identity,url,identity.cluster));
+ for(const patch of [{name:'production'},{role:'service_role'},{cluster:'not-a-cluster'},{host:null}]) {
+  assert.throws(()=>assertReusableDatabaseIdentity({...identity,...patch},url,identity.cluster),/identity mismatch/);
+ }
+ assert.throws(()=>assertReusableDatabaseIdentity(identity,new URL('postgresql://postgres@example.com/portava_local'),identity.cluster),/identity mismatch/);
+ assert.throws(()=>assertReusableDatabaseIdentity({...identity,host:'127.0.0.1'},url,'7708745771566368103'),/identity mismatch/);
+ assert.doesNotThrow(()=>assertReusableDatabaseIdentity({...identity,host:'127.0.0.1'},url,identity.cluster));
+});
+
+test('snapshot tools must match the actual server major, including both archive writer and reader', () => {
+ for (const major of [16, 17, 18]) {
+  const server = `${major}0015`;
+  assert.doesNotThrow(() => assertSnapshotToolchain(server, `pg_dump (PostgreSQL) ${major}.6 (Ubuntu)\n`, `pg_restore (PostgreSQL) ${major}.12 (Homebrew)\n`));
+  for (const wrong of [major - 1, major + 1]) {
+   assert.throws(() => assertSnapshotToolchain(server, `pg_dump (PostgreSQL) ${wrong}.6`, `pg_restore (PostgreSQL) ${major}.6`), /matching the PostgreSQL server major/);
+   assert.throws(() => assertSnapshotToolchain(server, `pg_dump (PostgreSQL) ${major}.6`, `pg_restore (PostgreSQL) ${wrong}.6`), /matching the PostgreSQL server major/);
+  }
+ }
+ for (const server of ['', '16.15', 'unknown']) assert.throws(() => assertSnapshotToolchain(server, 'pg_dump (PostgreSQL) 16.15', 'pg_restore (PostgreSQL) 16.15'));
+ for (const bad of ['', 'pg_dump (PostgreSQL) 16devel', 'unrecognized tool 16.15']) assert.throws(() => assertSnapshotToolchain('160015', bad, 'pg_restore (PostgreSQL) 16.15'));
 });

@@ -21,6 +21,8 @@
 // operator from toggling a switch that does nothing during an incident and
 // mistaking silence for the feature being stopped.
 export const HIDDEN_INERT_FLAGS: ReadonlySet<string> = new Set([
+  // Automatic deletion is retired; only an explicit admin command may purge.
+  "account_deletion_worker_enabled",
   // Retired 2026-09-16 by 2962_retire_unread_sensing_flags.sql. Seeded FALSE by
   // 2956 and read by nothing: their readers on the source branch both depended on
   // a credential module the port rejected, and lib/sensingAuthPosture.ts forbids

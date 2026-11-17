@@ -1,3 +1,10 @@
+// SDK boundary only; real observed owner, token binding and owned HTTP transport run.
+jest.mock('../../lib/supabase.ts', () => {
+  const listeners = new Set();
+  return { isSupabaseConfigured: true, supabase: { auth: { listeners,
+    onAuthStateChange: (listener: unknown) => { listeners.add(listener); return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } }; },
+  } } };
+});
 /**
  * useDiscoveryDwell — the dwell emitter mounted on a Discovery place surface
  * (census-discovery DV-41, §55). Real hook, real classifier and sender; the
@@ -15,6 +22,8 @@
  *
  * Run with: pnpm test:component
  */
+import { seedObservedOwnerSession, disposeObservedOwnerSession, observedOwnerAccessToken, emitObservedAuthEvent, observedOwnerSession } from '../../services/__tests__/observedOwnerSessionFixture.ts';
+import { setDiscoveryViewerFromSession } from '../../services/discoveryViewerScope.ts';
 import { renderHook, act } from '@testing-library/react-native';
 import { AppState, type AppStateStatus } from 'react-native';
 
@@ -24,9 +33,10 @@ const mockFlags: Record<string, boolean> = {};
 jest.mock('../../context/FeatureFlagsContext.tsx', () => ({
   useFeatureFlags: () => ({ isEnabled: (k: string) => mockFlags[k] === true, isLivePlacesEnabled: () => false, loading: false }),
 }));
-const mockToken = { value: 'test-token' as string | null };
+const mockToken = { value: null as string | null };
+const mockReadToken = jest.fn(async () => mockToken.value);
 // NOTE: intentionally exhaustive — apiToken imports the Supabase client.
-jest.mock('../../services/apiToken.ts', () => ({ freshToken: async () => mockToken.value }));
+jest.mock('../../services/apiToken.ts', () => ({ freshToken: () => mockReadToken() }));
 
 import { useDiscoveryDwell } from '../useDiscoveryDwell.ts';
 import { DISCOVERY_DWELL_FLAG, DWELL_INTERACTION_WINDOW_MS as W } from '../../services/discoveryDwell.ts';
@@ -41,6 +51,7 @@ const ORIGINAL_FETCH = global.fetch;
 const ORIGINAL_BASE = process.env.EXPO_PUBLIC_API_BASE_URL;
 
 beforeEach(() => {
+  setDiscoveryViewerFromSession('dwell-owner-a'); seedObservedOwnerSession('dwell-owner-a','dwell-session-a');
   clock = 0;
   jest.spyOn(globalThis.performance, 'now').mockImplementation(() => clock);
   appStateListener = null;
@@ -51,13 +62,14 @@ beforeEach(() => {
   Object.defineProperty(AppState, 'currentState', { configurable: true, get: () => 'active' });
   for (const k of Object.keys(mockFlags)) delete mockFlags[k];
   mockFlags[DISCOVERY_DWELL_FLAG] = true;
-  mockToken.value = 'test-token';
+  mockToken.value = observedOwnerAccessToken('dwell-owner-a','dwell-session-a');
+  mockReadToken.mockReset(); mockReadToken.mockImplementation(async () => mockToken.value);
   process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
   global.fetch = fetchMock as unknown as typeof fetch;
   fetchMock.mockReset();
-  fetchMock.mockImplementation(() => Promise.resolve({ ok: true, status: 200 } as Response));
+  fetchMock.mockImplementation((_url, init) => Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, recorded: JSON.parse(String(init?.body)).dwell.length, duplicates: 0 }) } as Response));
 });
-afterEach(() => { jest.restoreAllMocks(); });
+afterEach(() => { disposeObservedOwnerSession(); setDiscoveryViewerFromSession(null); jest.restoreAllMocks(); });
 afterAll(() => {
   global.fetch = ORIGINAL_FETCH;
   process.env.EXPO_PUBLIC_API_BASE_URL = ORIGINAL_BASE;
@@ -133,6 +145,7 @@ describe('useDiscoveryDwell', () => {
   });
 
   it('H4. signed out: nothing sent', async () => {
+    disposeObservedOwnerSession(); setDiscoveryViewerFromSession(null);
     mockToken.value = null;
     const h = await mount(open);
     clock = 20_000; await h.rerender({ ...open, visible: false });
@@ -162,4 +175,41 @@ describe('useDiscoveryDwell', () => {
     await settle();
     expect(fetchMock).not.toHaveBeenCalled();
   });
+});
+
+it('H7. disabling during token work discards the pending background emission permanently', async () => {
+  let resolve!: (value:string)=>void;
+  mockReadToken.mockImplementationOnce(()=>new Promise(done=>{resolve=done;}));
+  const h=await mount(open);
+  await at(5000,()=>appStateListener!('background')); await settle();
+  mockFlags[DISCOVERY_DWELL_FLAG]=false; await h.rerender({...open});
+  mockFlags[DISCOVERY_DWELL_FLAG]=true; await h.rerender({...open});
+  resolve(observedOwnerAccessToken('dwell-owner-a','dwell-session-a')); await settle();
+  expect(fetchMock).not.toHaveBeenCalled();
+  mockFlags[DISCOVERY_DWELL_FLAG]=false; await h.rerender({...open});
+});
+
+it('H8. an account transition invalidates the whole open view, including A to B to A', async () => {
+  const h=await mount(open); clock=5000;
+  setDiscoveryViewerFromSession('dwell-owner-b');
+  emitObservedAuthEvent('SIGNED_IN',observedOwnerSession('dwell-owner-b','dwell-session-b'));
+  setDiscoveryViewerFromSession('dwell-owner-a');
+  emitObservedAuthEvent('SIGNED_IN',observedOwnerSession('dwell-owner-a','replacement-session'));
+  await at(8000,()=>h.result.current.noteInteraction());
+  clock=10000;await h.rerender({...open,visible:false});await settle();
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it('H9. same-account SDK session replacement aborts pending work and clears the open measurement', async () => {
+  fetchMock.mockImplementationOnce(() => new Promise(() => {}));
+  const h = await mount(open);
+  await at(5000, () => appStateListener!('background')); await settle();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  emitObservedAuthEvent('SIGNED_IN', observedOwnerSession('dwell-owner-a', 'replacement-session'));
+  await settle();
+  expect(fetchMock.mock.calls[0][1]!.signal!.aborted).toBe(true);
+  await at(8000, () => appStateListener!('active'));
+  await at(9000, () => h.result.current.noteInteraction());
+  clock = 10000; await h.rerender({ ...open, visible: false }); await settle();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
 });

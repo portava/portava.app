@@ -35,7 +35,7 @@ const recognition = () => ({ modelId: IMAGE_UNDERSTANDING_MODEL, modelRevision: 
 async function fixture() {
   const pixels = await sharp({ create: { width: 48, height: 32, channels: 3, background: "#da7d31" } }).png().toBuffer();
   const rows: Record<string, any[]> = {
-    feature_flags: [{ flag: "media_vision_provider_enabled", enabled: true }],
+    feature_flags: [{ flag: "media_vision_provider_enabled", enabled: true }, { flag: "media_derivative_jobs_enabled", enabled: true }],
     profiles: [{ id: ownerId, account_status: "active", user_account_states: [] }],
     posts: [{ id: postId, author_id: ownerId, status: "active", post_status: "published", deleted_at: null }],
     post_media: [{ id: postMediaId, post_id: postId, user_id: ownerId, storage_bucket: "post-media", storage_path: storagePath, media_type: "image", processing_status: "ready", moderation_status: "approved", sort_order: 0 }],
@@ -300,7 +300,7 @@ test("abort while inference is pending returns no artifact and clears normalized
 });
 
 test("real HTTP consent route authenticates ownership, queues once, rejects URL/identity injection and revokes when OFF", async () => {
-  const data = await fixture(); const settings = { ...env };
+  const data = await fixture(); const settings: NodeJS.ProcessEnv = { ...env };
   const analyzed = await (await fixture()).run(); assert.ok(analyzed.ok);
   let viewerId = ownerId;
   const calls: Array<{ name: string; args: any }> = [];
@@ -325,6 +325,26 @@ test("real HTTP consent route authenticates ownership, queues once, rejects URL/
   const send = (value: any, authenticated = true) => fetch(url, { method: "POST", headers: { "content-type": "application/json", ...(authenticated ? { Authorization: "Bearer synthetic" } : {}) }, body: JSON.stringify(value) });
   try {
     assert.equal((await send(body, false)).status, 401); assert.equal(calls.length, 0);
+    assert.equal((await fetch(url)).status, 401);
+    const statusRequest = () => fetch(url, { headers: { Authorization: "Bearer synthetic" } });
+    const initialStatus = await statusRequest(); assert.equal(initialStatus.status, 200);
+    const descriptor: any = await initialStatus.json();
+    assert.equal(descriptor.sourceVersion,7); assert.equal(descriptor.consent,"none");
+    assert.equal(descriptor.processing.provider,"local");
+    assert.equal(descriptor.processing.enabled,true);
+    assert.equal(JSON.stringify(descriptor).includes(storagePath),false);
+    data.rows.feature_flags[1].enabled = false;
+    assert.equal(((await (await statusRequest()).json()) as any).processing.enabled,false);
+    assert.equal((await send(body)).status,404); assert.equal(calls.length,0);
+    data.rows.feature_flags[1].enabled = true;
+    data.state.failedTable = "feature_flags";
+    assert.equal((await statusRequest()).status,503);
+    assert.equal((await send(body)).status,503); assert.equal(calls.length,0);
+    data.state.failedTable = "";
+    viewerId = otherId; assert.equal((await statusRequest()).status,404); viewerId = ownerId;
+    data.state.failedTable = "media_image_understanding_consents";
+    assert.equal((await statusRequest()).status,503); data.state.failedTable = "";
+
     assert.equal((await send({ ...body, ownerId: otherId })).status, 400);
     assert.equal((await send({ ...body, imageUrl: "http://169.254.169.254/" })).status, 400);
     assert.equal((await send({ ...body, sourceVersion: 8 })).status, 404); assert.equal(calls.length, 0);
@@ -333,6 +353,7 @@ test("real HTTP consent route authenticates ownership, queues once, rejects URL/
     data.rows.post_media[0].user_id = ownerId;
     assert.equal((await send(body)).status, 202); assert.equal((await send(body)).status, 202);
     assert.equal(data.state.queued.size, 1); assert.equal(data.state.requests.length, 0); assert.equal(data.state.inferences.length, 0);
+    assert.equal(((await (await statusRequest()).json()) as any).consent,"granted");
     const artifactUrl = url.replace(/\/consent$/, "");
     const get = () => fetch(artifactUrl, { headers: { Authorization: "Bearer synthetic" } });
     assert.equal((await fetch(artifactUrl)).status, 401); assert.equal((await get()).status, 404);
@@ -347,8 +368,28 @@ test("real HTTP consent route authenticates ownership, queues once, rejects URL/
     data.state.afterCache = () => { data.rows.media_image_understanding_consents[0].revoked_at = new Date().toISOString(); };
     assert.equal((await get()).status, 404); data.state.afterCache = () => {};
     settings.MEDIA_IMAGE_UNDERSTANDING_ENABLED = "false";
+    assert.equal(((await (await statusRequest()).json()) as any).consent,"unavailable");
     assert.equal((await send(body)).status, 404);
     assert.equal((await fetch(url, { method: "DELETE", headers: { Authorization: "Bearer synthetic" } })).status, 204);
     assert.deepEqual(calls.at(-1), { name: "media_image_understanding_revoke", args: { p_post_media_id: postMediaId, p_owner_user_id: ownerId } });
+    settings.MEDIA_IMAGE_UNDERSTANDING_ENABLED = "true";
+    settings.MEDIA_VISION_EXECUTION = "huggingface";
+    settings.MEDIA_IMAGE_UNDERSTANDING_APPROVED_POLICY = "hf-siglip-v1-reviewed";
+    const processingUrl = url.replace(`${postMediaId}/consent`, "processing");
+    assert.equal((await fetch(processingUrl)).status, 401);
+    const disclosure = await fetch(processingUrl, { headers: { Authorization: "Bearer synthetic" } });
+    assert.equal(disclosure.status, 200);
+    assert.equal(disclosure.headers.get("cache-control"), "private, no-store");
+    const policy: any = await disclosure.json();
+    assert.equal(policy.provider, "huggingface");
+    assert.equal(policy.policyVersion, "hf-siglip-v1-reviewed");
+    assert.match(policy.disclosure, /Hugging Face/);
+    const beforeManagedGrant = calls.length;
+    assert.equal((await send(body)).status, 404);
+    assert.equal((await send({ ...body, policyVersion: policy.policyVersion })).status, 404);
+    assert.equal(calls.length, beforeManagedGrant, "neither local consent nor a policy string alone authorizes managed export");
+    assert.equal((await send({ ...body, policyVersion: policy.policyVersion, processingProvider: "huggingface" })).status, 202);
+    assert.equal(data.state.requests.length, 0, "consent queueing itself never exports pixels");
+
   } finally { _clearTestClient(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });

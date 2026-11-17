@@ -18,6 +18,7 @@ import assert from 'node:assert/strict';
 
 import {
   mediaActionToNorthStar,
+  emitsNorthStarOnTap,
   buildNorthStarPayload,
   emitMediaNorthStar,
   hasForbiddenKey,
@@ -34,10 +35,9 @@ test('maps each media action to its §45 north-star transition', () => {
     show_on_map: 'media_place_open',
     view_experience: 'media_place_open',
     ask_compass: 'media_compass',
-    create_plan: 'media_plan',
+    create_plan: 'media_compass',
     do_this_experience: 'media_plan',
     add_to_trip: 'media_trip_add',
-    report: 'media_correction',
   };
   for (const [actionId, event] of Object.entries(expected)) {
     assert.equal(mediaActionToNorthStar(actionId), event, `${actionId} → ${event}`);
@@ -52,6 +52,7 @@ test('non-outcome actions (and unknown ids) map to null — never a fabricated o
     'meet_here',
     'i_want_this',
     'share_telegraph',
+    'report',
     'some_future_action',
     '',
   ]) {
@@ -67,7 +68,6 @@ test('every mapped event is a member of the declared north-star vocabulary', () 
     'create_plan',
     'do_this_experience',
     'add_to_trip',
-    'report',
   ]) {
     const event = mediaActionToNorthStar(actionId);
     assert.ok(event && MEDIA_NORTH_STAR_EVENTS.includes(event), `${actionId} in vocabulary`);
@@ -224,4 +224,11 @@ test('emitMediaNorthStar is fail-soft: a throwing recorder does not propagate', 
   // Must not throw — telemetry failure never breaks the action.
   assert.doesNotThrow(() => emitMediaNorthStar(throwing, 'show_on_map', { mediaId: 'm_1' }));
   assert.equal(emitMediaNorthStar(throwing, 'show_on_map', { mediaId: 'm_1' }), null);
+});
+
+test('draft and picker actions never claim a committed outcome at tap time', () => {
+  for (const action of ['add_to_trip', 'do_this_experience', 'directions', 'report', 'save_route', 'unknown']) assert.equal(emitsNorthStarOnTap(action), false, action);
+  assert.equal(emitsNorthStarOnTap('create_plan'), true);
+  assert.equal(mediaActionToNorthStar('create_plan'), 'media_compass');
+  assert.equal(mediaActionToNorthStar('report'), null);
 });

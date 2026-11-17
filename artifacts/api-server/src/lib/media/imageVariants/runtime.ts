@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ImageVariantArtifacts } from "./artifacts.js";
+import { requireDerivativeErasure } from "../derivativeErasure.js";
 import { createImageVariantsAccess, createImageVariantsAcquirer, imageSource, type ImageVariantsConfig } from "./canonical.js";
 import { encodeImageVariantsIsolated } from "./isolatedEncoder.js";
 import { abortable, IMAGE_VARIANTS_KIND, IMAGE_VARIANTS_LIMITS, IMAGE_VARIANTS_PIPELINE, sameSource, UUID, validManifest, validSource,
@@ -43,6 +44,19 @@ async function imageQueueRpc(sc: SupabaseClient, name: string, parameters: Recor
   const answer = await abortable(sc.rpc(name, parameters).abortSignal(signal), signal);
   if (answer.error) throw new Error("image queue unavailable");
   return answer.data;
+}
+
+/** Single enqueue owner, shared by ingest and the worker runtime. Ingest does
+ * not need to construct readers, encoders or permanent-erasure handlers. */
+export async function enqueueImageVariant(
+  sc: SupabaseClient, config: ImageVariantsConfig, source: ImageVariantSource,
+  queue?: ImageVariantsQueue, parentSignal?: AbortSignal,
+): Promise<string | null> {
+  const signal = AbortSignal.any([...(parentSignal ? [parentSignal] : []), AbortSignal.timeout(10_000)]);
+  const access = createImageVariantsAccess(sc, config);
+  const artifacts = new ImageVariantArtifacts(config.root);
+  if (!queue || !await access.current(source, signal) || await artifacts.revoked(source.assetId)) return null;
+  return await abortable(queue.enqueue({ ...source, kind: IMAGE_VARIANTS_KIND, modelVersion: IMAGE_VARIANTS_PIPELINE }, signal), signal);
 }
 
 export function createImageVariantsRuntime(sc: SupabaseClient, configuration: ImageVariantsConfig, options: ImageVariantsOptions = {}) {
@@ -102,11 +116,8 @@ export function createImageVariantsRuntime(sc: SupabaseClient, configuration: Im
       await artifacts.discard(source, result.token);
     },
   };
-  async function enqueue(source: ImageVariantSource, parentSignal?: AbortSignal): Promise<string | null> {
-    const signal = AbortSignal.any([...(parentSignal ? [parentSignal] : []), AbortSignal.timeout(10_000)]);
-    if (!options.queue || !await access.current(source, signal) || await artifacts.revoked(source.assetId)) return null;
-    return await abortable(options.queue.enqueue({ ...source, kind: IMAGE_VARIANTS_KIND, modelVersion: IMAGE_VARIANTS_PIPELINE }, signal), signal);
-  }
+  const enqueue = (source: ImageVariantSource, parentSignal?: AbortSignal) =>
+    enqueueImageVariant(sc, config, source, options.queue, parentSignal);
   async function ready(source: ImageVariantSource, signal: AbortSignal) {
     return published(await imageQueueRpc(sc, "media_derivative_ready", { p_asset_id: source.assetId, p_source_version: source.sourceVersion,
       p_kind: IMAGE_VARIANTS_KIND, p_model_version: IMAGE_VARIANTS_PIPELINE, p_target_language: "", p_revision_key: "" }, signal), source);
@@ -131,6 +142,7 @@ export function createImageVariantsRuntime(sc: SupabaseClient, configuration: Im
     const row = await access.row(source.assetId, signal);
     const canonical = imageSource(row);
     if (!row || !canonical || !sameSource(canonical, source) || (row.deleted_at === null && !["pending", "failed", "completed"].includes(row.purge_status))) throw new Error("image source must be tombstoned before erase");
+    await requireDerivativeErasure(sc, { id: source.assetId, version: source.sourceVersion, storage_bucket: source.bucket, storage_path: source.path });
     await artifacts.erase(source.assetId, async () => {
       if (await imageQueueRpc(sc, "media_derivative_cancel_asset", { p_asset_id: source.assetId }, signal) !== true) throw new Error("image cancellation unconfirmed");
     });

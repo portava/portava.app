@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { supabase } from '../lib/supabase.ts';
 import { freshToken, isCurrentSessionToken } from './apiToken.ts';
+import { mediaDeliveryLocator, resolveMediaRequestSources } from './mediaRequestSource.ts';
 
 const integer = z.number().int().min(1).max(2147483647);
 const offset = z.number().int().min(0).max(2147483647);
@@ -159,7 +160,7 @@ function originalPath(uri: string): string | null {
 
 export async function resolveMemoryVideoOriginal(
   scope: VideoSegmentScope, uri: string, signal?: AbortSignal,
-): Promise<VideoSegmentResult<{ uri: string }>> {
+): Promise<VideoSegmentResult<{ uri: string; headers?: Record<string, string> }>> {
   const path = originalPath(uri);
   if (!path) return fail('not_found');
   const result = await request(scope, '/api/media/sign', 'POST', { urls: [uri] }, signal);
@@ -168,11 +169,16 @@ export async function resolveMemoryVideoOriginal(
   const signed = parsed.success ? parsed.data.signed[uri] : null;
   try {
     if (!signed) return fail('not_found');
-    const url = new URL(signed);
-    const storage = new URL(process.env.EXPO_PUBLIC_SUPABASE_URL ?? '');
-    if (url.origin !== storage.origin || url.username || url.password || url.hash || !url.searchParams.get('token')
-      || decodeURIComponent(url.pathname) !== `/storage/v1/object/sign/${path}`) return fail('not_found');
-    return { ok: true, uri: signed };
+    const delivery = mediaDeliveryLocator(signed);
+    if (delivery) {
+      const locator = new URL(delivery.uri);
+      if (delivery.viewerId !== scope.ownerId || decodeURIComponent(locator.pathname) !== `/api/media/file/${path}`
+        || [...locator.searchParams.keys()].some(key => key !== 'viewer')) return fail('not_found');
+      const source = (await resolveMediaRequestSources({ original: delivery.uri })).original;
+      if (signal?.aborted) return fail('cancelled');
+      return source ? { ok: true, ...source } : fail('unauthenticated');
+    }
+    return fail('not_found');
   } catch { return fail('not_found'); }
 }
 

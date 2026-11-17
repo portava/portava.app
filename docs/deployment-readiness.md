@@ -158,7 +158,7 @@ The older statement that no workflow applies migrations is too broad: the manual
 (`.github/workflows/beta-db.yml:141#workflow_dispatch`) has an explicit apply step (`.github/workflows/beta-db.yml:678#db:apply-migrations`).
 Pending beta application requires `apply=yes` (`.github/workflows/beta-db.yml:647#if:`, with the dry-run alternative at `:632#if:`); this is not evidence that production has this branch's schema.
 A production build therefore does not establish migration readiness. The repository's ledger comparison remains `pnpm run check:migration-ledger`
-(`artifacts/api-server/package.json:248#check:migration-ledger`); its missing-credentials outcome is explicitly non-success (`artifacts/api-server/src/scripts/checkMigrationLedger.ts:55#Exit code 2`).
+(`artifacts/api-server/package.json:249#check:migration-ledger`); its missing-credentials outcome is explicitly non-success (`artifacts/api-server/src/scripts/checkMigrationLedger.ts:55#Exit code 2`).
 This documentation pass does not use database credentials, invoke workflows or verify any deployment or activation state.
 
 ### 1.5 Deployment readiness checklist
@@ -238,7 +238,7 @@ takes its documented failure branch and returns
 hiddenGemStamps: 0, safeReturnStamps: 0, totalStamps: 0` with `readFailed: true`
 (`PassportMapService.ts:506#readFailed: true`).
 
-**THE FLAG IS HONEST AND THE SCREEN IS NOT.** `routes/passportStamps.ts:553#...stats`
+**THE FLAG IS HONEST AND THE SCREEN IS NOT.** `routes/passportStamps.ts:587#...stats`
 spreads `stats` into the response, so `readFailed` does reach the client — and
 `readFailed` appears **zero** times anywhere in `travel-buddy-standalone/src`.
 Nothing reads it. A traveller with a full Passport is therefore shown
@@ -391,8 +391,8 @@ GET   /api/admin/feature-flags
 PATCH /api/admin/feature-flags/<flag>      Body: { "enabled": true }
 ```
 
-- `artifacts/api-server/src/routes/admin.ts:717#router.get` and
-  `artifacts/api-server/src/routes/admin.ts:776#router.patch`.
+- `artifacts/api-server/src/routes/admin.ts:718#router.get` and
+  `artifacts/api-server/src/routes/admin.ts:777#router.patch`.
 - Requires a bearer token for a profile whose `role` is `admin`
   (`artifacts/api-server/src/lib/requireAdmin.ts:74#DEFAULT_ROLES`); fail-closed
   on query error, absent profile and unmatched role.
@@ -401,7 +401,7 @@ PATCH /api/admin/feature-flags/<flag>      Body: { "enabled": true }
   committed toggle always has an audit row. If migration `0119` is missing the
   route answers **503 `server_not_configured`** naming that migration.
 - Flags in `HIDDEN_INERT_FLAGS`
-  (`artifacts/api-server/src/routes/admin.ts:663#HIDDEN_INERT_FLAGS`) are
+  (`artifacts/api-server/src/routes/admin.ts:664#HIDDEN_INERT_FLAGS`) are
   refused with **400 `not_operational`**. None of the flags in §2.2 is in that
   set — **VERIFIED**.
 
@@ -478,8 +478,8 @@ Base URL `https://portava.replit.app`. All unauthenticated.
 **`discovery_live_rank_enabled` — response-visible. This is the strongest
 runtime proof available for any flag in §2.2.** `GET /discovery` emits a
 `meta.liveRank` object **only** when the pass applied
-(`artifacts/api-server/src/routes/discovery.ts:1895#liveRank`, and the cold path
-at `artifacts/api-server/src/routes/discovery.ts:2331#liveRank`), carrying
+(`artifacts/api-server/src/routes/discovery.ts:1874#liveRank`, and the cold path
+at `artifacts/api-server/src/routes/discovery.ts:2310#liveRank`), carrying
 `mode`, `readable`, `windowSize` and `demoted`.
 
 - Before enabling: `meta.liveRank` **absent**.

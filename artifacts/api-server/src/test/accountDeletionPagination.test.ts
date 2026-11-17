@@ -1,3 +1,4 @@
+import { mediaObjectPurgeFixture } from './helpers/mediaObjectPurgeFixture.js';
 /**
  * Account deletion — the storage collectors must PAGE
  *
@@ -48,6 +49,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { accountDeletionAuthorizationFixture, PERMANENT_DELETION_TEST_OPTIONS } from "./helpers/accountDeletionAuthorizationFixture.js";
 import {
   executeAccountDeletion,
   COLLECTION_PAGE_SIZE,
@@ -102,6 +104,8 @@ function makeClient(opts: {
   ignoreRange?: string[];
 } = {}) {
   const rows: Record<string, any[]> = { posts: [], ...structuredClone(opts.rows ?? {}) };
+  const purge = mediaObjectPurgeFixture(id => rows.media_assets?.find(row => row.id === id), rows.media_asset_lifecycle_events ??= [], () => 3);
+  const objects = new Set((rows.media_assets ?? []).flatMap(row => [row.storage_path,row.thumbnail_path].filter(Boolean).map(path => `${row.storage_bucket}/${path}`)));
   const fail = opts.fail ?? {};
   const failFromPage = opts.failFromPage ?? {};
   const ignoreRange = new Set(opts.ignoreRange ?? []);
@@ -129,6 +133,7 @@ function makeClient(opts: {
     return true;
   }
 
+  const authorize = accountDeletionAuthorizationFixture(rows, USER_ID);
   function builder(table: string) {
     const q: any = {
       _op: "select",
@@ -207,15 +212,22 @@ function makeClient(opts: {
     _authDeleted: authDeleted,
     from: (t: string) => builder(t),
     rpc: async (fn: string, args: Record<string, unknown>) => {
+      if (fn === 'postcard_canonical_lifecycle_ready') return {data:true,error:null};
+      if (fn === 'advance_media_object_purge') return purge(args);
+      const receipt = authorize(fn, args);
+      if (receipt) return receipt;
       ops.push({ table: `rpc:${fn}`, op: "rpc" });
       void args;
-      return { data: null, error: null };
+      return { data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null };
     },
     storage: {
+      getBucket: async (id: string) => ({ data: { id, public: false }, error: null }),
       from: (bucket: string) => ({
+        info: async (path: string) => objects.has(`${bucket}/${path}`) ? {data:{id:USER_ID,version:'synthetic',bucketId:bucket,name:path,size:128},error:null} : {data:null,error:{status:404,statusCode:'NoSuchKey'}},
         remove: async (paths: string[]) => {
           ops.push({ table: `storage:${bucket}`, op: "remove", paths });
           storageRemoved.push({ bucket, paths });
+          for (const path of paths) objects.delete(`${bucket}/${path}`);
           return { data: paths.map((p) => ({ name: p })), error: null };
         },
       }),
@@ -254,7 +266,7 @@ describe("account deletion — collection pages through every row", () => {
     }));
     const c = makeClient({ rows: { stories } });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: "admin-1" });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     // Every single object, not the first page of them.
@@ -294,7 +306,7 @@ describe("account deletion — collection pages through every row", () => {
     }));
     const c = makeClient({ rows: { messages } });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
     assert.equal(stepOf(out, "collect_message_media_paths").count, TOTAL);
     assert.equal(new Set(removedPaths(c)).size, TOTAL);
@@ -351,14 +363,14 @@ describe("account deletion — collection pages through every row", () => {
     const removedPerRun = [];
     for (let pass = 0; pass < Math.ceil(N / 100); pass += 1) {
       const before = c._rows.media_assets!.length;
-      const outcome = await executeAccountDeletion(c, USER_ID, { actorId: "admin-1" });
+      const outcome = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
       outcomes.push(outcome);
       const remaining = c._rows.media_assets!.length;
       removedPerRun.push(before - remaining);
       assert.equal(before - remaining, Math.min(100, before), "each run must make bounded, distinct source progress");
       if (remaining > 0) {
         assert.equal(outcome.ok, false, "unprocessed Media must keep this run retryable");
-        assert.equal(c._rows.user_deletion_requests![0].status, "pending");
+        assert.equal(c._rows.user_deletion_requests![0].status, "failed");
         assert.equal(c._rows.user_deletion_requests![0].user_id, USER_ID);
         assert.equal(c._rows.profiles![0].account_status, "deletion_pending");
         assert.deepEqual(c._authDeleted, []);
@@ -414,7 +426,7 @@ describe("account deletion — paging terminates without waste", () => {
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
     assert.equal(stepOf(out, "collect_story_media_paths").count, 2);
     // A short page IS the end of the data. Probing for a page that cannot exist
@@ -434,7 +446,7 @@ describe("account deletion — paging terminates without waste", () => {
     }));
     const c = makeClient({ rows: { stories } });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
     assert.equal(stepOf(out, "collect_story_media_paths").count, COLLECTION_PAGE_SIZE);
     assert.equal(c._reads["stories.select"], 2);
@@ -454,7 +466,7 @@ describe("account deletion — a failed page is a failed step, not a short read"
     // 0-based: page index 1 is the SECOND request.
     const c = makeClient({ rows: { stories }, failFromPage: { "stories.select": 1 } });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: "admin-1" });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     const st = stepOf(out, "collect_story_media_paths");
     assert.equal(st.ok, false, "a page that errored must fail the step");
@@ -488,7 +500,7 @@ describe("account deletion — a failed page is a failed step, not a short read"
       failFromPage: { "stories.select": 1 },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(stepOf(out, "collect_story_media_paths").ok, false);
     assert.equal(stepOf(out, "collect_hidden_gem_media_paths").ok, true);
     assert.ok(removedPaths(c).includes(`${USER_ID}/hg.jpg`), "the gem must still be removed");
@@ -504,7 +516,7 @@ describe("account deletion — the page cap is bounded AND loud", () => {
     // it is the original defect again.
     const c = makeClient({ ignoreRange: ["stories"] });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.equal(c._reads["stories.select"], COLLECTION_MAX_PAGES, "the loop must terminate at the cap");
     assert.ok(
@@ -539,7 +551,7 @@ describe("account deletion — paging does not reorder collection after deletion
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: "admin-1" });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     const lastStoryRead = lastOpIndex(c, "stories", "select");
@@ -591,7 +603,7 @@ describe("account deletion — pagination is not a way around the ownership guar
     );
     const c = makeClient({ rows: { messages } });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     const removed = removedPaths(c);
@@ -623,7 +635,7 @@ describe("account deletion — the memory id list survives paging", () => {
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     // The id read paged (2 requests for N rows), and every memory's item was found.

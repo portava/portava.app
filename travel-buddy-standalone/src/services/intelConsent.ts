@@ -11,30 +11,22 @@
  * is a no-op.
  */
 import { isSupabaseConfigured } from '../lib/supabase.ts';
-import { freshToken as freshApiToken } from './apiToken.ts';
+import { captureMessagingOwnerRequest, type MessagingOwnerRequest } from './messagingOwnerRequest.ts';
+import { fetchOwnedApi } from './ownedApiRequest.ts';
+import { beginIntelConsentChange, intelWithdrawalPending } from './intelConsentLifecycle.ts';
+export { onIntelConsentChange } from './intelConsentLifecycle.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 const INTEL_BASE = '/api/v1/intel';
 
 export interface IntelConsentState {
+  localWithdrawalPending?: boolean;
   enabled: boolean;
   consentVersion: string | null;
   consentedAt: string | null;
   withdrawnAt: string | null;
   /** The disclosure version a NEW grant is recorded under. */
   currentDisclosureVersion: string; /** Server-derived (Gate 2b's predicate): would a map photo be KEPT for this account? Absent on an older server, which reads as no. */ coversPhotoEvidence?: boolean;
-}
-
-async function authedFetch(path: string, opts: RequestInit = {}): Promise<Response> {
-  const token = await freshApiToken();
-  return fetch(`${apiBase()}${path}`, {
-    ...opts,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(opts.headers ?? {}),
-    },
-  });
 }
 
 /**
@@ -62,11 +54,13 @@ function isConsentState(v: unknown): v is IntelConsentState {
   return typeof o.enabled === 'boolean' && typeof o.currentDisclosureVersion === 'string';
 }
 
-export async function readIntelConsent(): Promise<IntelConsentRead> {
+export async function readIntelConsent(capturedOwner?: MessagingOwnerRequest): Promise<IntelConsentRead> {
   if (!isSupabaseConfigured || !apiBase()) return { status: 'unreadable', reason: 'not_configured' };
-  let res: Response;
+  const owner = capturedOwner ?? captureMessagingOwnerRequest();
+  if (!owner?.isCurrent()) return { status: 'unreadable', reason: 'network' };
+  let res: Awaited<ReturnType<typeof fetchOwnedApi>>;
   try {
-    res = await authedFetch(`${INTEL_BASE}/consent`);
+    res = await fetchOwnedApi(`${INTEL_BASE}/consent`, { owner });
   } catch {
     return { status: 'unreadable', reason: 'network' };
   }
@@ -75,7 +69,10 @@ export async function readIntelConsent(): Promise<IntelConsentRead> {
     const body: unknown = await res.json();
     // A body that is not a consent state is not a "no": it is an answer this
     // build cannot read, and showing the first-use gate over it is the defect.
-    return isConsentState(body) ? { status: 'ok', state: body } : { status: 'unreadable', reason: 'malformed' };
+    if (!isConsentState(body)) return { status: 'unreadable', reason: 'malformed' };
+    const pending = await intelWithdrawalPending(owner.ownerId);
+    if (!owner.isCurrent()) return { status: 'unreadable', reason: 'network' };
+    return { status: 'ok', state: pending ? { ...body, localWithdrawalPending: true } : body };
   } catch {
     return { status: 'unreadable', reason: 'malformed' };
   }
@@ -101,21 +98,36 @@ export async function getIntelConsent(): Promise<IntelConsentState | null> {
  */
 export async function setIntelConsent(enabled: boolean, displayedDisclosureVersion?: string): Promise<IntelConsentState | null> {
   if (!isSupabaseConfigured || !apiBase()) return null;
+  const owner = captureMessagingOwnerRequest();
+  if (!owner?.isCurrent()) return null;
+  const change = beginIntelConsentChange(owner.ownerId, enabled);
+  let granted = false;
   try {
-    const res = await authedFetch(`${INTEL_BASE}/consent`, {
+    try { await change.prepare(); } catch (error) {
+      // Still deliver a withdrawal if device storage fails. The in-memory hold
+      // remains closed; a grant cannot proceed without reading its local hold.
+      if (enabled) throw error;
+    }
+    if (!owner.isCurrent() || !change.current()) return null;
+    const res = await fetchOwnedApi(`${INTEL_BASE}/consent`, {
+      owner, isCurrent: change.current,
       method: 'PUT',
-      body: JSON.stringify(
-        enabled && displayedDisclosureVersion ? { enabled, disclosureVersion: displayedDisclosureVersion } : { enabled },
-      ),
+      body: enabled && displayedDisclosureVersion ? { enabled, disclosureVersion: displayedDisclosureVersion } : { enabled },
     });
     if (!res.ok) return null;
-    return (await res.json()) as IntelConsentState;
+    const state: unknown = await res.json();
+    if (!owner.isCurrent() || !change.current() || !isConsentState(state)) return null;
+    granted = enabled && hasValidConsent(state);
+    return !enabled ? { ...state, localWithdrawalPending: true } : state;
   } catch {
     return null;
+  } finally {
+    // Never let a late result clear a newer withdrawal or another session's hold.
+    try { await change.settle(granted && owner.isCurrent()); } catch { return null; /* retain the local hold on storage failure */ }
   }
 }
 
 /** Valid, capture-permitting consent = enabled and not withdrawn. */
 export function hasValidConsent(state: IntelConsentState | null | undefined): boolean {
-  return !!state && state.enabled === true && !state.withdrawnAt;
+  return !!state && state.enabled === true && !state.withdrawnAt && !state.localWithdrawalPending;
 }

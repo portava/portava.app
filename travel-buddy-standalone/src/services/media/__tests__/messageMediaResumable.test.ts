@@ -84,6 +84,15 @@ describe('resumable message media', () => {
     assert.equal((second as any).media.url, 'post-media/me/up-1.jpg');
   });
 
+  it('carries the same photo capture instant through session and assemble, but never for video', async () => {
+    const capturedAt='2026-03-04T05:06:07.000Z';
+    for(const mime of ['image/jpeg','video/mp4']) {
+      const srv=server();
+      await uploadMessageMediaResumable(file(100),mime,'capture',srv.t,env,undefined,capturedAt);
+      for(const call of srv.calls) assert.equal((call.body as any).photoCapturedAt,mime.startsWith('image/')?capturedAt:undefined);
+    }
+  });
+
   it('every call names the session by upload id, mime and size — the server derives the path, the client never sends one', async () => {
     const srv = server();
     await uploadMessageMediaResumable(file(100), 'image/png', 'up-2', srv.t, env);

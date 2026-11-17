@@ -769,7 +769,7 @@ describe("§44 telemetry ingest — the serve log the client had no destination 
         name, context: "global_search", fieldId: "global_search", at: NOW_ISH + i,
         // The real emitter (emitDownstreamTaskCompleted) always sends both; the
         // aggregate refuses an outcome without a known task and a literal bool.
-        ...(name === "downstream_task_completed" ? { props: { task: "trip_created", ok: true } } : {}),
+        ...(name === "downstream_task_completed" ? { outcomeConsentedAt: "2026-10-01T00:00:00.000Z", props: { task: "trip_created", ok: true } } : {}),
       })),
     });
     const body = (await r.json()) as any;

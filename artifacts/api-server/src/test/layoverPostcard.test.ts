@@ -17,7 +17,7 @@
  *   - another traveller's layover answers exactly like a missing one (404);
  *   - a client place sent alongside a layover id is refused, not merged;
  *   - an unreadable layover table is 503 and nothing is written;
- *   - the passport postcard the first ready file creates claims no presence
+ *   - ready media stays private until explicit publication; the resulting postcard claims no presence
  *     (location_verified false, stamp_eligible false), and no stamp is awarded;
  *   - a postcard WITHOUT a layover id is untouched (the client's place still lands).
  *
@@ -27,6 +27,7 @@ import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
+import { randomUUID } from 'node:crypto';
 import { _setTestClient } from "../lib/http.js";
 import postcardsRouter, { syncPostcardAfterMediaChange } from "../routes/postcards.js";
 
@@ -88,7 +89,7 @@ function makeClient(store: Record<string, any[]>, failReads: Set<string>) {
       }
       const all = (store[table] ??= []);
       if (mode === "insert") {
-        const rows = (Array.isArray(payload) ? payload : [payload]).map((r: any) => ({ ...r, id: r.id ?? `new-${all.length}-${table}` }));
+        const rows = (Array.isArray(payload) ? payload : [payload]).map((r: any) => ({ ...r, id: r.id ?? (table === 'posts' ? randomUUID() : `new-${all.length}-${table}`) }));
         for (const r of rows) all.push(r);
         return { data: single ? rows[0] : rows, error: null, count: rows.length };
       }
@@ -109,7 +110,18 @@ function makeClient(store: Record<string, any[]>, failReads: Set<string>) {
   }
   return {
     from(table: string) { return chain(table); },
-    rpc: async () => ({ data: null, error: { message: "no rpc" } }),
+    // Database publication boundary; SQL atomicity/authorization is exercised
+    // by composerDraftLifecycle.pglite.test, while this fixture drives HTTP +
+    // the real Passport projection and presence semantics.
+    rpc: async (name: string, args: { p_actor: string; p_post: string }) => {
+      if (name !== 'publish_postcard_draft') return { data: null, error: { message: 'no rpc' } };
+      const post = store.posts.find(row => row.id === args.p_post && row.author_id === args.p_actor);
+      if (!post) return { data: { ok: false, error: 'not_found' }, error: null };
+      if (!store.post_media.some(row => row.post_id === post.id && row.user_id === args.p_actor && row.processing_status === 'ready')) return { data: { ok: false, error: 'media_not_ready' }, error: null };
+      const repeated = post.postcard_draft_state === 'published';
+      if (!repeated) Object.assign(post, { postcard_draft_state: 'published', post_status: 'published', visibility: post.postcard_requested_visibility, postcard_requested_visibility: null });
+      return { data: { ok: true, repeated }, error: null };
+    },
     storage: { from: () => ({ remove: async () => ({ data: null, error: null }) }) },
     auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },
   };
@@ -262,13 +274,17 @@ describe("the layover decides the place; the client may not add one", () => {
 });
 
 describe("the passport postcard of a layover postcard claims no presence", () => {
-  it("the first ready file writes the passport postcard unverified and not stamp-eligible, with the layover's city", async () => {
+  it("ready media creates no prepublication projection; explicit publish writes an unverified, non-stamp-eligible postcard with the layover's city", async () => {
     app = await startApp();
-    const r = await createPostcard(app, OWNER, { layoverSessionId: SESSION });
+    const r = await createPostcard(app, OWNER, { layoverSessionId: SESSION, deferPublication: true, visibility: 'public' });
     assert.equal(r.status, 201, JSON.stringify(r.body));
     const postId = r.body.id as string;
+    const publish = () => fetch(`${app!.baseUrl}/api/postcards/${postId}/publish`, { method: 'POST', headers: { Authorization: `Bearer ${OWNER}`, connection: 'close' } });
+    const premature = await publish();
+    assert.equal(premature.status, 409);
+    assert.equal(app.store.passport_postcards.length, 0);
     app.store.post_media.push({
-      id: "m-1", post_id: postId, media_type: "image", processing_status: "ready",
+      id: "m-1", post_id: postId, user_id: OWNER, media_type: "image", processing_status: "ready",
       public_url: "https://cdn.test/p.jpg", sort_order: 0, moderation_status: "approved",
     });
     await syncPostcardAfterMediaChange(
@@ -276,6 +292,14 @@ describe("the passport postcard of a layover postcard claims no presence", () =>
       (await import("../lib/supabase.js")).getServiceClient(),
       postId, { id: OWNER }, { log: { warn: () => {} } },
     );
+    assert.equal(app.store.posts[0].postcard_draft_state, 'draft');
+    assert.equal(app.store.posts[0].visibility, 'private');
+    assert.equal(app.store.passport_postcards.length, 0, 'ready bytes alone never expose the caption or Passport projection');
+    assert.equal(app.store.user_stamps.length, 0);
+    assert.equal(app.store.passport_stamps.length, 0);
+    const published = await publish();
+    assert.equal(published.status, 200, await published.text());
+    assert.equal((await publish()).status, 200, 'publication retry is idempotent');
     assert.equal(app.store.passport_postcards.length, 1, JSON.stringify(app.store.passport_postcards));
     const pc = app.store.passport_postcards[0];
     assert.equal(pc.location_city, "Taipei");

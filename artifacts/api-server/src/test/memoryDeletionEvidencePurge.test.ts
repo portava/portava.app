@@ -1,3 +1,4 @@
+import { memoryItemWriterFake } from "./helpers/memoryItemWriterFake.js";
 /**
  * §21 RAW_EVIDENCE_PURGED on the provenance spine 2320 REALLY creates.
  * Census H52 (deletion lifecycle) and H190 ("purge canonical/eligible evidence").
@@ -60,10 +61,10 @@ const COLUMNS_2320: Record<string, ReadonlySet<string>> = {
 };
 
 const m = (n: number) => `30000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
-const url = (n: number) => `https://cdn.example.test/u/${OWNER}/p${n}.jpg`;
+const url = (n: number) => `post-media/${OWNER}/p${n}.jpg`;
 function media(n: number, captured: string) {
   return {
-    id: m(n), owner_user_id: OWNER, media_type: "image", mime_type: "image/jpeg", public_url: url(n),
+    id: m(n), storage_bucket: "post-media", storage_path: `${OWNER}/p${n}.jpg`, owner_user_id: OWNER, media_type: "image", mime_type: "image/jpeg", public_url: url(n),
     captured_at: captured, source_type: "user", moderation_status: "approved", processing_status: "ready",
     deleted_at: null, provenance: null, created_at: "2026-03-02T22:00:00.000Z",
   };
@@ -255,7 +256,7 @@ function makeClient(store: Record<string, any[]>, opts: FakeOpts = {}) {
   }
   return {
     from: (t: string) => chain(t),
-    rpc: async () => ({ data: null, error: { message: "rpc not modelled", code: "PGRST202" } }),
+    rpc: async (name: string, args?: unknown) => name === "memory_candidate_origin_ready" ? { data: true, error: null } : (await memoryItemWriterFake({from:chain},name,args)) ?? { data: null, error: { message: "rpc not modelled", code: "PGRST202" } },
     auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },
   };
 }
@@ -347,6 +348,7 @@ describe("Keep terminal Memory refusal", () => {
       const service = {
         ...client,
         rpc: async (name: string, args: any) => {
+          if (name === "memory_candidate_origin_ready") return client.rpc(name);
           commands.push(args.p_command.type);
           assert.equal(name, "memory_kernel_execute");
           assert.equal(args.p_command.type, "CREATE_MEMORY");
@@ -384,7 +386,7 @@ describe("Keep terminal Memory refusal", () => {
   }
 
   for (const sourceMode of ["LEGACY_IMPORTED", "USER_CREATED"]) for (const linked of [false, true]) {
-    it(`preserves surviving ${sourceMode}, ${linked ? "linked" : "interrupted"} retries without relabelling or duplicates`, async () => {
+    it(`preserves imported origin or corrects the old candidate default, ${sourceMode}, ${linked ? "linked" : "interrupted"}, without duplicates`, async () => {
       resetHighlightSchemaMemo();
       const store = seed();
       const { memoryId, memory } = fixture(store, "published", linked, sourceMode);
@@ -393,7 +395,7 @@ describe("Keep terminal Memory refusal", () => {
         const result = await confirmCandidate(client as any, input);
         assert.equal(result.ok, true, JSON.stringify(result));
         if (result.ok && "memoryId" in result) assert.equal(result.memoryId, memoryId);
-        assert.equal(memory.source_mode, sourceMode);
+        assert.equal(memory.source_mode, sourceMode === "USER_CREATED" ? "SUGGESTED" : sourceMode);
       }
       assert.equal(store.memories.length, 2);
       assert.equal(store.memory_items.filter(row => row.memory_id === memoryId).length, 1);
@@ -445,6 +447,7 @@ describe("Keep terminal Memory refusal", () => {
           return query;
         },
         rpc: async (name: string, args: any) => {
+          if (["memory_candidate_origin_ready","memory_item_source_ready","insert_memory_media_item"].includes(name)) return base.rpc(name,args);
           assert.equal(name, "memory_kernel_execute");
           const command = args.p_command;
           commands.push(command.type);
@@ -553,7 +556,7 @@ describe("Keep terminal Memory refusal", () => {
           const select = query.select;
           query.select = (columns?: string) => {
             const selected = select(columns);
-            if (table === "memories" && columns === "id, state") {
+            if (table === "memories" && columns === "id, state, source_mode") {
               selected.maybeSingle = async () => ({ data: null, error: { code: "57014", message: "owner-state read failed" } });
             }
             return selected;

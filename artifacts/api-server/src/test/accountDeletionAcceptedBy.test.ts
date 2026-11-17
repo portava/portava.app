@@ -21,6 +21,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { accountDeletionAuthorizationFixture, PERMANENT_DELETION_TEST_OPTIONS } from "./helpers/accountDeletionAuthorizationFixture.js";
 import { executeAccountDeletion } from "../services/accountDeletion/AccountDeletionService.js";
 import { ANONYMISED_FK_NULLED } from "../lib/deletionDispositions.js";
 
@@ -41,6 +42,8 @@ function makeClient(seed: Record<string, any[]> = {}) {
   const ops: Op[] = [];
   const authDeleted: string[] = [];
 
+  const authorize = accountDeletionAuthorizationFixture(store, USER_ID);
+
   function builder(table: string) {
     const q: any = {
       _op: "select",
@@ -48,7 +51,7 @@ function makeClient(seed: Record<string, any[]> = {}) {
       _values: undefined as any,
       _single: false,
       _limit: undefined as number | undefined,
-      select() { q._op = "select"; return q; },
+      select() { return q; },
       delete() { q._op = "delete"; return q; },
       update(v: any) { q._op = "update"; q._values = v; return q; },
       upsert(v: any) { q._op = "upsert"; q._values = v; return q; },
@@ -64,6 +67,11 @@ function makeClient(seed: Record<string, any[]> = {}) {
       maybeSingle() { q._single = true; return q._run(); },
       then(resolve: any, reject: any) { return q._run().then(resolve, reject); },
       _run() {
+        if (table === "user_deletion_requests" && q._op === "update") {
+          const matched = store[table]!.filter(row => q._filters.every(([op, col, value]: any[]) => op === "eq" && row[col] === value));
+          for (const row of matched) Object.assign(row, q._values);
+          return Promise.resolve({ data: matched, error: null });
+        }
         ops.push({ table, op: q._op, filters: q._filters, values: q._values });
         const rows = store[table] ?? [];
         if (q._op === "update") {
@@ -87,8 +95,10 @@ function makeClient(seed: Record<string, any[]> = {}) {
     _authDeleted: authDeleted,
     from: (t: string) => builder(t),
     rpc: async (fn: string, args: Record<string, unknown>) => {
+      const receipt = authorize(fn, args);
+      if (receipt) return receipt;
       ops.push({ table: `rpc:${fn}`, op: "rpc", filters: [], values: args });
-      return { data: null, error: null };
+      return { data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null };
     },
     storage: {
       from: () => ({ remove: async (paths: string[]) => ({ data: paths.map((p) => ({ name: p })), error: null }) }),
@@ -114,7 +124,7 @@ describe("executeAccountDeletion — intel_mission_candidates.accepted_by", () =
       ],
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: "admin-1" });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     const rows = c._store.intel_mission_candidates as any[];
@@ -135,7 +145,7 @@ describe("executeAccountDeletion — intel_mission_candidates.accepted_by", () =
 
   it("runs the null_intel_mission_accepted_by step, scoped to the user by accepted_by, as a SET NULL", async () => {
     const c = makeClient();
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     const upd = opFor(c, "intel_mission_candidates", "update");
@@ -168,7 +178,7 @@ describe("executeAccountDeletion — intel_mission_candidates.accepted_by", () =
       return q;
     };
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.ok(out.steps.some((s) => s.step === "null_intel_mission_accepted_by" && !s.ok),
       "the failing step must be recorded");

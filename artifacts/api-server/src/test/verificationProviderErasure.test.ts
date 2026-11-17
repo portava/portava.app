@@ -1,3 +1,4 @@
+import { accountDeletionAuthorizationFixture, PERMANENT_DELETION_TEST_OPTIONS } from "./helpers/accountDeletionAuthorizationFixture.js";
 /**
  * ERASURE MUST ASK THE PROVIDER TO DELETE ITS COPY OF THE GOVERNMENT ID.
  *
@@ -156,26 +157,31 @@ describe("requestProviderDeletionForUser", () => {
 
 function cascadeClient(rows: Record<string, any[]>) {
   const ops: Op[] = [];
+  const authorize = accountDeletionAuthorizationFixture(rows, USER);
   function builder(table: string) {
     const q: any = {
-      _op: "select",
-      select: () => { q._op = "select"; ops.push({ table, op: "select" }); return q; },
+      _op: "select", _values: undefined as any, _filters: [] as any[],
+      select: () => { if (q._op === "select") ops.push({ table, op: "select" }); return q; },
       delete: () => { q._op = "delete"; ops.push({ table, op: "delete" }); return q; },
-      update: () => { q._op = "update"; ops.push({ table, op: "update" }); return q; },
+      update: (v: any) => { q._values = v; q._op = "update"; ops.push({ table, op: "update" }); return q; },
       upsert: () => { q._op = "upsert"; ops.push({ table, op: "upsert" }); return q; },
       insert: () => { q._op = "insert"; ops.push({ table, op: "insert" }); return q; },
-      eq: () => q, neq: () => q, is: () => q, not: () => q, in: () => q, or: () => q,
+      eq: (col: string, value: unknown) => { q._filters.push([col, value]); return q; }, neq: () => q, is: () => q, not: () => q, in: () => q, or: () => q,
       lt: () => q, gt: () => q, order: () => q, limit: () => q, range: () => q,
       maybeSingle: () => Promise.resolve({ data: (rows[table] ?? [])[0] ?? null, error: null }),
       single: () => Promise.resolve({ data: (rows[table] ?? [])[0] ?? null, error: null }),
-      then: (resolve: any) => Promise.resolve({ data: rows[table] ?? [], error: null }).then(resolve),
+      then: (resolve: any) => {
+        const data = table === "user_deletion_requests" ? (rows[table] ?? []).filter(row => q._filters.every(([col, value]: any[]) => row[col] === value)) : rows[table] ?? [];
+        if (table === "user_deletion_requests" && q._op === "update") for (const row of data) Object.assign(row, q._values);
+        return Promise.resolve({ data, error: null }).then(resolve);
+      },
     };
     return q;
   }
   return {
     _ops: ops,
     from: (t: string) => builder(t),
-    rpc: async () => ({ data: null, error: null }),
+    rpc: async (fn: string, args: Record<string, unknown>) => authorize(fn, args) ?? ({ data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null }),
     storage: { from: () => ({ remove: async (p: string[]) => ({ data: p.map((n) => ({ name: n })), error: null }) }) },
     auth: { admin: { deleteUser: async () => ({ data: {}, error: null }) } },
   } as any;
@@ -188,7 +194,7 @@ describe("the account-deletion cascade requests provider erasure", () => {
       identity_verifications: [{ id: "v1", provider_verification_ref: "mockref_a" }],
     });
 
-    const out = await executeAccountDeletion(c, USER, { actorId: null });
+    const out = await executeAccountDeletion(c, USER, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.ok(
       out.steps.some((s: any) => s.step === "request_provider_verification_deletion"),
@@ -215,7 +221,7 @@ describe("the account-deletion cascade requests provider erasure", () => {
       identity_verifications: [{ id: "v1", provider_verification_ref: "mockref_a" }],
     });
 
-    const out = await executeAccountDeletion(c, USER, { actorId: null });
+    const out = await executeAccountDeletion(c, USER, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.ok(
       c._ops.some((o: Op) => o.table === "identity_verifications" && o.op === "delete"),

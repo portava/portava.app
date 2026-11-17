@@ -1,19 +1,19 @@
 /**
  * The creator ledger END TO END on synthetic accounts, and C-11's erasure
- * question answered THREE ways in three separate databases — census-discovery §107.
+ * question answered THREE ways sequentially in one database — census-discovery §107.
  *
- * WHY THREE DATABASES. Whether a person's earning records are deleted or kept
+ * WHY SERIAL FIXTURES. Whether a person's earning records are deleted or kept
  * with the identity removed when their account is erased is an open owner
  * decision (C-11 / W10D-B0). The canonical chain carries only 3510, which
  * refuses every ledger DELETE until the owner decides. The two answers are
  * complete migrations HELD in reconciliation-staging/ and are mutually
- * exclusive, so each runs in its own throwaway clone of the harness database
- * (CREATE DATABASE … TEMPLATE), never beside the other and never against
- * portava-ci or travel-buddy:
+ * exclusive, so each runs sequentially in the same loopback test database.
+ * Synthetic rows are purged and the canonical schema is restored between them.
+ * No database is cloned; no hosted database is accepted:
  *
  *   MAIN  the harness itself: the chain, 3510 included — C-11 UNDECIDED
- *   A     a clone + reconciliation-staging/3511 — DELETE ON ERASURE
- *   B     a clone + reconciliation-staging/3512 — RETAIN, PSEUDONYMISED
+ *   A     temporarily apply reconciliation-staging/3511 — DELETE ON ERASURE
+ *   B     temporarily apply reconciliation-staging/3512 — RETAIN, PSEUDONYMISED
  *
  * SYNTHETIC DATA ONLY, MARKED AS SUCH. Every account this suite creates has an
  * id starting `c11e5e00`, a handle starting `c11syn_`, the display name
@@ -50,7 +50,7 @@ import https from "node:https";
 import net from "node:net";
 import tls from "node:tls";
 import dns from "node:dns";
-import { HAVE_DB, LOCAL_DB_URL, exec, psql, rows, scalar, useDatabase } from "./localDb.js";
+import { HAVE_DB, LOCAL_DB_URL, exec, psql, rows, scalar } from "./localDb.js";
 import { creatorPsqlClient, lit } from "./creatorLedgerPsqlClient.js";
 import {
   bookCreatorEarningUnderRule,
@@ -144,7 +144,7 @@ function unbalanced(): number {
   ));
 }
 
-// ── The flows, run once per fixture database ─────────────────────────────────
+// ── The flows, run once per policy fixture ─────────────────────────────────
 interface World {
   C: string; Chandle: string; D: string; E: string; T: string; V: string; ADM: string;
   buddyC: string; bookingK: string; rid: string; item: string;
@@ -275,9 +275,9 @@ function foldsWhere(creatorWhere: string, rbeeWhere: string): Record<string, str
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-const fixtures: Record<"A" | "B", string> = { A: "", B: "" };
-const cloneName = (k: string) => `c11_fixture_${k.toLowerCase()}_${process.pid}`;
-function urlFor(db: string): string { const u = new URL(LOCAL_DB_URL); u.pathname = `/${db}`; return u.toString(); }
+let canonicalSchema: string[] = [];
+let fixtureEnabled = false;
+const flagProofs: string[] = [];
 
 describe("the creator ledger on synthetic accounts, and C-11 answered three ways (census-discovery §107)", { skip: !HAVE_DB }, () => {
   before(() => {
@@ -286,31 +286,31 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
     trap(https, "request", "https.request"); trap(https, "get", "https.get");
     trap(net, "connect", "net.connect"); trap(net, "createConnection", "net.createConnection");
     trap(tls, "connect", "tls.connect"); trap(dns, "lookup", "dns.lookup");
-    // Two clones of the harness taken BEFORE any row of this suite exists.
-    const main = new URL(LOCAL_DB_URL).pathname.slice(1);
-    useDatabase(urlFor("postgres"));
-    for (const k of ["A", "B"] as const) {
-      exec(`DROP DATABASE IF EXISTS "${cloneName(k)}";`);
-      exec(`CREATE DATABASE "${cloneName(k)}" TEMPLATE "${main}";`);
-      fixtures[k] = urlFor(cloneName(k));
-    }
-    useDatabase(null);
+    // Refuse the wrong target or nonempty fixture BEFORE any mutation.
+    validateFixtureTarget();
+    assertCanonicalFixture();
+    canonicalSchema = ledgerSchemaSnapshot();
+    fixtureEnabled = true;
+    // A and B each return to this baseline before the next policy starts.
+    // Existing read-only sessions may remain connected throughout the run.
+    // No backend is terminated and no database is created or dropped.
+    // A failed restoration remains a failure, never a reason to clone.
   });
 
   after(() => {
-    useDatabase(urlFor("postgres"));
-    for (const k of ["A", "B"] as const) exec(`DROP DATABASE IF EXISTS "${cloneName(k)}";`);
-    useDatabase(null);
-    for (const [o, k, v] of saved.reverse()) o[k] = v;
+    try { if (fixtureEnabled) assertCanonicalFixture(); }
+    finally { for (const [o, k, v] of saved.reverse()) o[k] = v; }
+    // Hooks restore network traps even if an isolation assertion fails.
+    // Policy cleanup belongs to its suite, before this final baseline check.
   });
 
   // ── MAIN: the flows, then C-11 undecided ───────────────────────────────────
   describe("MAIN — the harness chain, 3510 applied: C-11 undecided", () => {
     let w: World;
-    before(async () => { useDatabase(null); w = await runSyntheticLedger(); });
+    before(async () => { assertCanonicalFixture(); w = await runSyntheticLedger(); assert.throws(assertCanonicalFixture, /must be empty/); });
     // By the synthetic PREFIX, not by `w`: a flow that fails half-way must not
-    // leave its rows behind for the next suite (or the next fixture clone).
-    after(() => exec(purgeSyntheticSql()));
+    // leave its rows behind for the next suite (or the next policy fixture).
+    after(() => finishFixture("MAIN"));
 
     test("F1. earnings are recorded as balanced double entry, provider 'none', no settlement, on both ledgers", () => {
       const cee = rows<any>(`SELECT account, amount_minor::bigint AS a, provider, cash_settled_minor::bigint AS s, external_ref FROM public.creator_earning_entries WHERE attribution_id = '${w.d1}' AND entry_reason <> 'reversal' ORDER BY account, amount_minor`);
@@ -447,10 +447,10 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
   });
 
   // ── A: delete on erasure ───────────────────────────────────────────────────
-  describe("FIXTURE A — its own database, 3511 applied: delete on the beneficiary's erasure", () => {
+  describe("FIXTURE A — same database, 3511 applied: delete on the beneficiary's erasure", () => {
     let w: World;
     before(async () => {
-      useDatabase(fixtures.A);
+      assertCanonicalFixture();
       // Rehearse 3510 and 3511 in this database while the ledgers are empty:
       // 3510 rollback -> re-apply; 3511 apply -> re-apply -> rollback -> re-apply.
       applyFile(G_ROLLBACK);
@@ -461,7 +461,7 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
       applyFile(A_FORWARD);
       w = await runSyntheticLedger();
     });
-    after(() => useDatabase(null));
+    after(() => finishFixture("A"));
 
     test("A1. no direct DELETE: service_role no longer holds DELETE on any ledger table", () => {
       for (const t of ["rent_buddy_earnings_entries", "creator_attributions", "creator_earning_entries", "creator_ledger_audit_events"]) {
@@ -545,12 +545,12 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
   });
 
   // ── B: retain, pseudonymised ───────────────────────────────────────────────
-  describe("FIXTURE B — its own database, 3512 applied: retain, identity removed", () => {
+  describe("FIXTURE B — same database, 3512 applied: retain, identity removed", () => {
     let w: World;
     let cFoldsBefore: Record<string, string>;
     let cRowsBefore = 0;
     before(async () => {
-      useDatabase(fixtures.B);
+      assertCanonicalFixture();
       applyFile(B_FORWARD); applyFile(B_FORWARD); applyFile(B_ROLLBACK);
       assert.equal(scalar(`SELECT count(*) FROM pg_trigger WHERE tgfoid = 'public.creator_ledger_erasure_policy_undecided()'::regprocedure`), "4", "B's rollback re-installs 3510's guard");
       applyFile(B_FORWARD);
@@ -560,7 +560,7 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
         `booking_id = '${w.bookingK}'`);
       cRowsBefore = mentions(w.C);
     });
-    after(() => useDatabase(null));
+    after(() => finishFixture("B"));
 
     test("B1. retention: erasing the creator's profile, and any direct DELETE, is refused CL452 with the identity-removal hint", () => {
       const before = ledgerSnapshot();
@@ -669,11 +669,11 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
   });
 
   test("R1. the flag row is FALSE in MAIN and in both fixtures: every flag-ON path ran on an in-memory answer", () => {
-    for (const url of [null, fixtures.A, fixtures.B]) {
-      useDatabase(url);
-      assert.equal(scalar(`SELECT enabled::text FROM public.feature_flags WHERE flag = '${FLAG}'`), "false");
-    }
-    useDatabase(null);
+    assert.deepEqual(flagProofs, ["MAIN", "A", "B"], "each policy read the unchanged flag before cleanup");
+    assert.equal(scalar(`SELECT enabled::text FROM public.feature_flags WHERE flag = '${FLAG}'`), "false");
+    assert.deepEqual(ledgerSchemaSnapshot(), canonicalSchema, "all fixture schema and grants restored");
+
+
   });
 });
 
@@ -711,4 +711,59 @@ function assertOnlySynthetic(): void {
   );
   assert.deepEqual(foreign, [], "a ledger row names a non-synthetic account");
   assert.ok(Number(scalar(`SELECT count(*) FROM public.creator_attributions`)) > 0, "vacuous: the fixture holds no ledger row");
+}
+
+// These fixtures reuse one existing database. The canonical chain must be
+// restored before the next policy or test file can use it; no clone is needed.
+import { pressedPostgresServer } from './pressedPostgres.js';
+import { assertReusableDatabaseIdentity } from './pressedSnapshot.js';
+const LEDGER_TABLES = ['rent_buddy_earnings_entries', 'creator_attributions', 'creator_earning_entries', 'creator_ledger_audit_events'];
+function validateFixtureTarget(): void {
+  const target = pressedPostgresServer(LOCAL_DB_URL);
+  assertReusableDatabaseIdentity({
+    name: scalar('SELECT current_database()') ?? '', role: scalar('SELECT current_user') ?? '',
+    host: scalar('SELECT host(inet_server_addr())'), cluster: scalar('SELECT system_identifier::text FROM pg_control_system()') ?? '',
+  }, target);
+}
+function assertCanonicalFixture(): void {
+  for (const table of LEDGER_TABLES) assert.equal(scalar(`SELECT count(*) FROM public.${table}`), '0', `${table} must be empty before policy rehearsal`);
+  assert.equal(scalar("SELECT to_regprocedure('public.creator_ledger_erase_beneficiary(uuid,text,uuid,text)') IS NULL AND to_regprocedure('public.creator_ledger_remove_identity(uuid,text,uuid,text)') IS NULL"), 't');
+  assert.equal(scalar("SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgfoid='public.creator_ledger_erasure_policy_undecided()'::regprocedure"), '4');
+  assert.equal(scalar(`SELECT enabled::text FROM public.feature_flags WHERE flag='${FLAG}'`), 'false');
+  if (canonicalSchema.length) assert.deepEqual(ledgerSchemaSnapshot(), canonicalSchema, 'prior policy must restore the canonical schema and grants');
+}
+function ledgerSchemaSnapshot(): string[] {
+  const tables = LEDGER_TABLES.map(lit).join(',');
+  return rows<{ value: string }>(`
+    SELECT value FROM (
+      SELECT 'column|' || row_to_json(c)::text AS value FROM information_schema.columns c WHERE table_schema='public' AND table_name IN (${tables})
+      UNION ALL SELECT 'grant|' || row_to_json(g)::text FROM information_schema.role_table_grants g WHERE table_schema='public' AND table_name IN (${tables})
+      UNION ALL SELECT 'constraint|' || conrelid::regclass::text || '|' || conname || '|' || pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid IN (SELECT oid FROM pg_class WHERE relnamespace='public'::regnamespace AND relname IN (${tables}))
+      UNION ALL SELECT 'trigger|' || pg_get_triggerdef(t.oid) FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid WHERE NOT t.tgisinternal AND (p.proname LIKE 'creator_ledger_%' OR t.tgrelid IN (SELECT oid FROM pg_class WHERE relnamespace='public'::regnamespace AND relname IN (${tables})))
+      UNION ALL SELECT 'function|' || pg_get_functiondef(p.oid) || '|' || coalesce(p.proacl::text,'') FROM pg_proc p WHERE p.pronamespace='public'::regnamespace AND p.proname LIKE 'creator_ledger_%'
+      UNION ALL SELECT 'index|' || indexdef FROM pg_indexes WHERE schemaname='public' AND tablename IN (${tables})
+    ) snapshot ORDER BY value`).map(row => row.value);
+}
+function finishFixture(policy: 'MAIN' | 'A' | 'B'): void {
+  if (!fixtureEnabled) return;
+  // Read before cleanup: resetting state first could hide an accidental flag write.
+  const flag = scalar(`SELECT enabled::text FROM public.feature_flags WHERE flag='${FLAG}'`);
+  // Erasure receipts deliberately omit subject identity. Remove only this
+  // synthetic suite's marked receipts, never an unqualified DELETE or TRUNCATE.
+  exec(`DO $cleanup$ BEGIN
+    IF to_regclass('public.creator_ledger_erasures') IS NOT NULL THEN
+      SET LOCAL session_replication_role = replica;
+      DELETE FROM public.creator_ledger_erasures WHERE reason LIKE 'SYNTHETIC:%';
+    END IF;
+    IF to_regclass('public.creator_ledger_identity_removals') IS NOT NULL THEN
+      SET LOCAL session_replication_role = replica;
+      DELETE FROM public.creator_ledger_identity_removals WHERE reason LIKE 'SYNTHETIC:%';
+    END IF;
+  END $cleanup$;`);
+  exec(purgeSyntheticSql(), { single: true });
+  if (policy === 'A' && scalar("SELECT to_regprocedure('public.creator_ledger_erase_beneficiary(uuid,text,uuid,text)') IS NOT NULL") === 't') applyFile(A_ROLLBACK);
+  if (policy === 'B' && scalar("SELECT to_regprocedure('public.creator_ledger_remove_identity(uuid,text,uuid,text)') IS NOT NULL") === 't') applyFile(B_ROLLBACK);
+  assertCanonicalFixture();
+  assert.equal(flag, 'false', `the flag was changed under policy ${policy}`);
+  flagProofs.push(policy);
 }

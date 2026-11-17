@@ -19,11 +19,16 @@ describe("required CI test registration cannot substitute optional or missing ex
     assert.deepEqual([...requiredCiTestFiles(scripts, workflow)], [
       "src/test/mediaCaptionTranslationHardDelete.native.test.ts",
       "src/test/accountDeletionMediaBoundary.native.test.ts",
+      "src/test/memoryImportBatches.pglite.test.ts",
+      "src/test/memoryFromOwnMedia.pglite.test.ts",
       "src/test/mediaAdaptiveEncoding.real.test.ts",
+      "src/test/inputOutcomeConsent.postgres.test.ts",
+      "src/test/wallOutcomeConsent.postgres.test.ts",
+      "src/test/mediaEventPrivacy.postgres.test.ts",
     ]);
   });
 
-  for (const script of ["test:account-media-native", "test:media-encoding"]) {
+  for (const script of ["test:memory-import-sql", "test:account-media-native", "test:media-encoding", "test:input-outcome-native", "test:wall-outcome-native", "test:media-events-native"]) {
     for (const [label, change] of [
       ["missing", () => ""],
       ["filtered", (command: string) => command + " --test-only"],
@@ -31,12 +36,12 @@ describe("required CI test registration cannot substitute optional or missing ex
       ["masked failure", (command: string) => command + " || true"],
     ] as const) it(`refuses ${label} ${script}`, async () => {
       const { requiredCiTestFiles, scripts, workflow } = await load();
-      assert.throws(() => requiredCiTestFiles({ ...scripts, [script]: change(scripts[script]!) }, workflow), /Mandatory account Media or encoding command/);
+      assert.throws(() => requiredCiTestFiles({ ...scripts, [script]: change(scripts[script]!) }, workflow), /Mandatory (?:account Media or encoding|signal privacy) command/);
     });
   }
 
   for (const name of [
-    "Require native account media erasure suite", "Cache pinned media encoding source archives",
+    "Require native account media erasure suite", "Require reusable memory import SQL suite", "Cache pinned media encoding source archives",
     "Build verified media encoding tools", "Require real media encoding suite",
   ]) {
     for (const [label, replace] of [
@@ -170,7 +175,53 @@ describe("required CI test registration cannot substitute optional or missing ex
     assert.deepEqual([...requiredCiTestFiles(scripts, workflow.replace(boundary, late + boundary))], [
       "src/test/mediaCaptionTranslationHardDelete.native.test.ts",
       "src/test/accountDeletionMediaBoundary.native.test.ts",
+      "src/test/memoryImportBatches.pglite.test.ts",
+      "src/test/memoryFromOwnMedia.pglite.test.ts",
       "src/test/mediaAdaptiveEncoding.real.test.ts",
+      "src/test/inputOutcomeConsent.postgres.test.ts",
+      "src/test/wallOutcomeConsent.postgres.test.ts",
+      "src/test/mediaEventPrivacy.postgres.test.ts",
     ]);
+  });
+});
+
+import { readdir } from "node:fs/promises";
+describe("the existing required SQL job registers its actual file discovery without another test run", () => {
+  const fixture = async () => {
+    const { scripts, workflow } = await load();
+    const module = await import(new URL("../../scripts/required-ci-test-registration.mjs", import.meta.url).href) as {
+      requiredLocalDatabaseTestFiles: (scripts: Record<string,string>, workflow: string, runner: string, files: string[]) => Set<string>;
+    };
+    const runner = await readFile(new URL("artifacts/api-server/scripts/local-db/run-tests.sh", root), "utf8");
+    const files = (await readdir(new URL("artifacts/api-server/src/test/db/", root))).filter(name => name.endsWith(".db.test.ts")).map(name => `src/test/db/${name}`);
+    return { ...module, scripts, workflow, runner, files };
+  };
+  it("registers exactly the existing SQL runner population, including the new capture and retirement tests", async () => {
+    const f = await fixture();
+    const actual = f.requiredLocalDatabaseTestFiles(f.scripts, f.workflow, f.runner, f.files);
+    assert.deepEqual([...actual].sort(), f.files.sort());
+    for (const name of ["mediaAssetRetry", "memoryCaptureUpload", "mediaAssetRetirement"]) assert.ok(actual.has(`src/test/db/${name}.db.test.ts`));
+  });
+  for (const [label, change] of [
+    ["missing job", (s:string) => s.replace("  api-server-local-db:\n", "  unrelated-job:\n")],
+    ["optional job", (s:string) => s.replace("  api-server-local-db:\n", "  api-server-local-db:\n    if: false\n")],
+    ["masked failure", (s:string) => s.replace("@workspace/api-server test:db-local\n", "@workspace/api-server test:db-local || true\n")],
+    ["different database", (s:string) => s.replace("localhost:5432/portava_local", "localhost:5432/unreviewed")],
+  ] as const) it(`refuses ${label}`, async () => {
+    const f=await fixture();const changed=change(f.workflow);assert.notEqual(changed,f.workflow);
+    assert.throws(()=>f.requiredLocalDatabaseTestFiles(f.scripts,changed,f.runner,f.files),/Required SQL job/);
+  });
+  for (const [label, change] of [
+    ["filtered file population", (s:string)=>s.replace("ls src/test/db/*.db.test.ts", "ls src/test/db/postcard*.db.test.ts")],
+    ["parallel fixture writes", (s:string)=>s.replaceAll("--test-concurrency=1", "--test-concurrency=2")],
+    ["skips accepted", (s:string)=>s.replace('[ "${skip:-1}" = "0" ]', '[ "${skip:-1}" -ge "0" ]')],
+    ["early success", (s:string)=>s.replace("set -euo pipefail", "exit 0\nset -euo pipefail")],
+  ] as const) it(`refuses ${label}`, async () => {
+    const f=await fixture();const changed=change(f.runner);assert.notEqual(changed,f.runner);
+    assert.throws(()=>f.requiredLocalDatabaseTestFiles(f.scripts,f.workflow,changed,f.files),/Required SQL runner/);
+  });
+  it("refuses a focused script or an unrelated file inventory", async()=>{
+    const f=await fixture();assert.throws(()=>f.requiredLocalDatabaseTestFiles({...f.scripts,"test:db-local":"true"},f.workflow,f.runner,f.files),/Required SQL command/);
+    assert.throws(()=>f.requiredLocalDatabaseTestFiles(f.scripts,f.workflow,f.runner,["src/test/unrelated.test.ts"]),/inventory/);
   });
 });

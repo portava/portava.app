@@ -1,3 +1,4 @@
+import './composerDraftTestRuntime.ts';
 /**
  * PostcardComposer — §37 "Thumbnail generation" on the production upload path.
  *

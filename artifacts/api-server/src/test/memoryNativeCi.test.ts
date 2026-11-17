@@ -338,7 +338,9 @@ describe("Memory native CI persistent gate contract", () => {
     assert.equal(commands.length, 3);
     const mediaFiles = ["mediaCaptionManifestSql", "mediaCaptionAsrConsentSql", "mediaDubbingCaptionSql", "mediaVisualGenerationSql", "mediaDerivativeCleanupSql", "mediaCaptionTranslationSql"].map(name => `src/test/${name}.test.ts`);
     assert.equal(commands[1], "node scripts/run-media-sql-tests.mjs " + mediaFiles.join(" "));
-    assert.equal(commands[2], "node scripts/run-memory-sql-tests.mjs src/test/MemorySnapshot.pglite.test.ts src/test/memoryVideoSegments.pglite.test.ts src/test/memoryImportBatches.pglite.test.ts src/test/MemorySnapshotLockFixture.test.ts");
+    assert.equal(commands[2], "node scripts/run-memory-sql-tests.mjs src/test/MemorySnapshot.pglite.test.ts src/test/memoryVideoSegments.pglite.test.ts src/test/MemorySnapshotLockFixture.test.ts");
+    assert.equal(scripts["test:memory-import-sql"], "node scripts/run-memory-native-tests.mjs import-sql src/test/memoryImportBatches.pglite.test.ts");
+    assert.ok(!scripts.pretest.includes("memoryImportBatches.pglite.test.ts"));
     assert.match(commands[0], /^SUPABASE_URL=http:\/\/127\.0\.0\.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy node --import tsx\/esm --test /);
     const argumentsList = commands[0].split(/\s+/);
     for (const file of mediaFiles) assert.ok(!argumentsList.includes(file), file);

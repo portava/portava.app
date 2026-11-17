@@ -42,7 +42,7 @@ import {
   type MemoryCommandType,
 } from "../lib/memoryCommandBus.js";
 
-export type KernelWriteTarget = "state" | "event" | "outbox" | "receipt" | "audit";
+export type KernelWriteTarget = "correction" | "state" | "event" | "outbox" | "receipt" | "audit";
 
 export interface KernelState {
   tables: Record<string, any[]>;
@@ -70,6 +70,9 @@ const rejected = (reason: string, extra: Record<string, unknown> = {}) =>
 export function makeKernelRpc(state: KernelState) {
   return async function rpc(name: string, args: any) {
     state.rpcCalls.push({ name, args });
+
+    if (name === 'memory_field_edits_ready') return {data:!state.absent,error:null};
+    if (name === 'memory_item_source_ready') return {data:!state.absent,error:null};
 
     if (state.absent) {
       // PostgREST answers an unknown function with PGRST202. supabase-js
@@ -166,6 +169,14 @@ export function makeKernelRpc(state: KernelState) {
       fromState = memoryRow.state;
     }
 
+    // Field conflict shape for route tests. Real lock/rollback semantics are
+    // exercised by memoryFieldConflicts.db.test.ts using independent sessions.
+    if (memoryRow && c.payload.expected) {
+      for (const [field, expected] of Object.entries(c.payload.expected)) {
+        if (JSON.stringify(memoryRow[field] ?? null) !== JSON.stringify(expected)) return rejectWithAudit("MEMORY_FIELD_CONFLICT");
+      }
+    }
+
     const targetState =
       type === "DELETE_MEMORY" ? "deleted"
       : type === "ARCHIVE_MEMORY" ? "archived"
@@ -184,6 +195,24 @@ export function makeKernelRpc(state: KernelState) {
 
     // ── apply, then event + outbox + receipt + audit, all or nothing ──────────
     try {
+      // 4042: owner field corrections and canonical fields share this snapshot.
+      if (memoryRow && c.payload.expected) {
+        const after = { ...memoryRow, ...c.payload.patch };
+        if ((memoryRow.place_id ?? null) !== (after.place_id ?? null)
+          || (memoryRow.canonical_location_id ?? null) !== (after.canonical_location_id ?? null)) {
+          if (state.failOn.has("correction")) throw new Error("memory_corrections insert failed");
+          const entries = [
+            { kind: "reject", place_id: memoryRow.place_id ?? null, canonical_location_id: null },
+            { kind: "reject", place_id: null, canonical_location_id: memoryRow.canonical_location_id ?? null },
+            { kind: "assert", place_id: after.place_id ?? null, canonical_location_id: after.canonical_location_id ?? null },
+          ].filter(row => row.kind === "assert"
+            || row.place_id !== null && row.place_id !== (after.place_id ?? null)
+            || row.canonical_location_id !== null && row.canonical_location_id !== (after.canonical_location_id ?? null));
+          const createdAt = new Date().toISOString();
+          t("memory_corrections").push(...entries.map(row => ({ ...row, id: `kernel-correction-${++idCounter}`,
+            memory_id: memoryRow.id, owner_id: c.actor_user_id, field: "place", source: "memory_edit", created_at: createdAt })));
+        }
+      }
       if (state.failOn.has("state")) throw new Error("canonical write failed");
 
       let memoryId: string;

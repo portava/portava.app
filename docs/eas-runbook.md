@@ -641,7 +641,7 @@ pnpm install
 bash scripts/eas-install-rust.sh
 cp .env.example .env            # fill in the EXPO_PUBLIC_* values for the backend you test against
 PORTAVA_PERSONAL_TEAM=1 npx expo prebuild --platform ios --clean
-PORTAVA_PERSONAL_TEAM=1 npx expo run:ios --device --configuration Release
+PORTAVA_PERSONAL_TEAM=1 SENTRY_DISABLE_AUTO_UPLOAD=true npx expo run:ios --device --configuration Release
 ```
 
 If the build stops at "requires a development team" or "No Accounts", add your Apple ID under
@@ -663,13 +663,15 @@ Xcode 27.2 ships no Simulator.app (it is a separate download), and `expo run:ios
 refuses to start without it ("Can't determine id of Simulator app"). Build and install with
 Apple's own tools instead; this is the path that put the app on an iPhone 17 Pro Max on
 2026-11-04. Your team ID is the ten-character code shown next to your Personal Team in Xcode →
-Settings → Accounts, or in `security find-identity -v -p codesigning` ("Apple Development: …
-(XXXXXXXXXX)"); the phone's identifier comes from the first command.
+Settings → Accounts, or the `OU` field of the Apple Development certificate subject
+(`security find-certificate -c "Apple Development" -p | openssl x509 -noout -subject`).
+The identifier in the certificate common name is not necessarily the team ID. The phone's
+identifier comes from the first command.
 
 ```bash
 cd travel-buddy-standalone
 xcrun devicectl list devices                     # the iPhone's Identifier (plugged in, unlocked, trusted)
-xcodebuild -workspace ios/Portava.xcworkspace -scheme Portava -configuration Release \
+PORTAVA_PERSONAL_TEAM=1 SENTRY_DISABLE_AUTO_UPLOAD=true xcodebuild -workspace ios/Portava.xcworkspace -scheme Portava -configuration Release \
   -destination "id=<IDENTIFIER>" -derivedDataPath ios/build \
   -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
   CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=<TEAM_ID> build
@@ -687,3 +689,8 @@ RNSVG, AsyncStorage and react-native-maps still declare older floors). The confi
 target (15.1) to it at `pod install`, so the generated project builds as is; a project generated
 before that plugin existed needs `IPHONEOS_DEPLOYMENT_TARGET=15.1` appended to the `xcodebuild`
 command instead.
+
+For these local Personal Team commands, `SENTRY_DISABLE_AUTO_UPLOAD=true` skips
+Sentry source-map and debug-symbol uploads when an organization is not configured.
+The installed Sentry build scripts require the literal value `true`; `1` does not
+disable uploads. Keep this local preview setting out of store-release configuration.

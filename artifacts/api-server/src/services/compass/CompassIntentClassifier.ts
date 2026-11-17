@@ -1,3 +1,4 @@
+import { providerModel } from "../../lib/providerVersions.js";
 /**
  * CompassIntentClassifier
  *
@@ -5,12 +6,8 @@
  * single LLM call (gpt-5-mini, minimal reasoning). gpt-5 reasoning
  * models reject any non-default temperature, so none is sent.
  *
- * Phase-1 shadow mode: runs alongside the legacy keyword router.
- * Disagreements are logged by the caller; the classifier result does not yet
- * change recommendation-vs-itinerary routing.
- *
- * Exception: 'action' intent at confidence ≥ 0.6 is always acted on immediately
- * (returns a graceful explanation instead of routing to the card pipeline).
+ * The ask route uses this to choose itinerary guidance and reasoning effort.
+ * Classification never authorizes actions; tools enforce their own gates.
  *
  * Intent types:
  *   recommendation — user wants a place or activity suggestion
@@ -56,7 +53,7 @@ export interface ClassifierTurn {
 export const CLASSIFIER_CONTEXT_TURNS = 2;
 
 /** Per-turn character bound. Context, not transcript. */
-const TURN_CHARS = 500;
+const TURN_CHARS = 2000;
 
 const VALID_INTENTS = new Set<IntentType>([
   "recommendation",
@@ -73,6 +70,8 @@ You are an intent classifier for a travel AI assistant. Classify the LAST user m
   question       — a factual question about a place, timing, route, or app feature
   action         — they want the assistant to DO something (add, save, book, delete, create)
   smalltalk      — greeting, thanks, chitchat, or off-topic
+
+Keep the user's latest correction and constraints in scope. "Make it cheaper" or "somewhere quieter" after recommendations is recommendation; "compare those two" is question; "add the second one to my trip" is action; "move day two indoors" after a plan is itinerary. Asking for a plan is not asking you to execute a booking. Classify the complete latest message, including constraints at its end.
 
 Return ONLY valid JSON with this exact shape and nothing else — no prose, no fences:
 {"intent":"<one of the five>","confidence":<number 0.0 to 1.0>}`;
@@ -95,28 +94,29 @@ export async function classify(
       }))
       .filter((t) => t.content.length > 0);
     const completion = await oai.chat.completions.create({
-      model:                 "gpt-5-mini",
+      model:                 providerModel("openai", "gpt-5-mini"),
       max_completion_tokens: 256,
       // Without this, gpt-5-mini can spend the whole token budget on hidden
       // reasoning and return empty content, silently failing classification
       // on every call (caught by the try/catch below, but wastes a full
       // model round trip on every single Compass message).
       reasoning_effort:      "minimal" as const,
+      response_format:       { type: "json_object" },
       messages: [
         { role: "system", content: CLASSIFIER_SYSTEM },
         ...context,
-        { role: "user",   content: message.slice(0, 400) },
+        { role: "user",   content: message.slice(0, 1000) },
       ],
-    });
+    }, { timeout: 5000, maxRetries: 0 });
 
     const raw        = (completion.choices[0]?.message?.content ?? "").trim();
     const cleanedRaw = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "");
     const parsed     = JSON.parse(cleanedRaw) as { intent: unknown; confidence: unknown };
 
     const intent     = parsed.intent as IntentType;
-    const confidence = Number(parsed.confidence ?? 0);
+    const confidence = parsed.confidence;
 
-    if (!VALID_INTENTS.has(intent) || confidence < 0 || confidence > 1) {
+    if (!VALID_INTENTS.has(intent) || typeof confidence !== "number" || !Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
       return null;
     }
 

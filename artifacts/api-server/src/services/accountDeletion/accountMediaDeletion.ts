@@ -17,7 +17,7 @@ const sourceSchema = z.object({
   storage_bucket: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/), storage_path: path, thumbnail_path: path.nullable(),
   media_type: z.enum(['image', 'video']), size_bytes: z.number().int().nonnegative().safe().nullable(),
   deleted_at: instant.nullable(), updated_at: instant, moderation_status: z.string().min(1), processing_status: z.string().min(1),
-  purge_status: z.enum(['not_requested', 'pending', 'completed', 'failed']),
+  purge_status: z.enum(['not_requested', 'retained', 'pending', 'completed', 'failed']),
 });
 type Source = z.infer<typeof sourceSchema>;
 const SOURCE_COLUMNS = 'id,owner_user_id,uploader_user_id,version,storage_bucket,storage_path,thumbnail_path,media_type,size_bytes,deleted_at,updated_at,moderation_status,processing_status,purge_status';
@@ -106,20 +106,23 @@ function identityFilter<Builder extends { eq(column: string, value: string | num
 }
 
 async function eraseSource(sc: SupabaseClient, userId: string, source: Source, tables: string[], options: Options): Promise<void> {
-  const now = new Date().toISOString();
-  const withdrawn = await identityFilter(sc.from('media_assets').update({ deleted_at: source.deleted_at ?? now,
-    moderation_status: 'owner_deleted', processing_status: 'removed', purge_requested_at: now, purge_status: 'pending', updated_at: now }), source)
-    .select(SOURCE_COLUMNS);
-  if (withdrawn.error || !Array.isArray(withdrawn.data) || withdrawn.data.length !== 1) unavailable();
-  const claim = scopedSource(withdrawn.data[0], userId);
-  if (!sameIdentity(source, claim) || claim.version <= source.version || !claim.deleted_at || claim.moderation_status !== 'owner_deleted'
-    || claim.processing_status !== 'removed' || claim.purge_status !== 'pending') unavailable();
+  let claim = source;
+  if (source.purge_status !== 'completed') {
+    const now = new Date().toISOString();
+    const withdrawn = await identityFilter(sc.from('media_assets').update({ deleted_at: source.deleted_at ?? now,
+      moderation_status: 'owner_deleted', processing_status: 'removed', purge_requested_at: now, purge_status: 'pending', updated_at: now }), source)
+      .select(SOURCE_COLUMNS);
+    if (withdrawn.error || !Array.isArray(withdrawn.data) || withdrawn.data.length !== 1) unavailable();
+    claim = scopedSource(withdrawn.data[0], userId);
+    if (!sameIdentity(source, claim) || claim.version <= source.version || !claim.deleted_at || claim.moderation_status !== 'owner_deleted'
+      || claim.processing_status !== 'removed' || claim.purge_status !== 'pending') unavailable();
+  }
   await sourceBarrier(sc, claim, tables);
   await purgeWithdrawnAccountMedia(sc, claim.id, claim.owner_user_id, { ...options, expectedVersion: claim.version });
   const read = await sc.from('media_assets').select(SOURCE_COLUMNS).eq('id', claim.id).maybeSingle();
   if (read.error) unavailable();
   const completed = scopedSource(read.data, userId);
-  if (!sameIdentity(claim, completed) || completed.version <= claim.version || completed.purge_status !== 'completed'
+  if (!sameIdentity(claim, completed) || (claim.purge_status === 'completed' ? completed.version !== claim.version : completed.version <= claim.version) || completed.purge_status !== 'completed'
     || completed.deleted_at !== claim.deleted_at || completed.moderation_status !== 'owner_deleted' || completed.processing_status !== 'removed') unavailable();
   for (const table of tables) await requireNoRows(sc.from(table).select('id').eq('asset_id', completed.id).limit(1));
   const removed = await identityFilter(sc.from('media_assets').delete(), completed).select(SOURCE_COLUMNS);

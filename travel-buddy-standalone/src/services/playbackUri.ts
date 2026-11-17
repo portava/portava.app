@@ -18,12 +18,30 @@ export const PRIVATE_MEDIA_BUCKETS: readonly string[] = ['post-media', 'profile-
 // Matches: .../storage/v1/object/public/<bucket>/…
 const STORAGE_PUBLIC_BUCKET_RE = /\/storage\/v1\/object\/public\/([^/?#]+)\//;
 
+/** Native image/video loaders do not attach our API bearer token. Convert only
+ * this API's legacy media relay URLs to refs for the authenticated signer. */
+export function mediaSigningReference(url: string): string {
+  const base = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/+$/, '');
+  const prefix = '/api/media/file/';
+  const path = url.startsWith(prefix) ? url.slice(prefix.length)
+    : base && url.startsWith(base + prefix) ? url.slice((base + prefix).length) : null;
+  if (!path || /[?#\\\u0000-\u001f]/.test(path)) return url;
+  try {
+    const decoded = decodeURIComponent(path);
+    const [bucket, ...parts] = decoded.split('/');
+    if (PRIVATE_MEDIA_BUCKETS.includes(bucket) && parts.length && parts.every(part => part && part !== '.' && part !== '..')
+      && !/[?#\\\u0000-\u001f]/.test(decoded)) return decoded;
+  } catch { /* malformed escaping is not a storage reference */ }
+  return url;
+}
+
 /**
  * The storage bucket a URL or bare storage path names, or null.
  *   1. Supabase public URL: `https://…/storage/v1/object/public/<bucket>/…`
  *   2. Bare storage path: `<bucket>/<path>` — what the upload endpoints return (no scheme, bucket first).
  */
 export function storageBucketOf(url: string): string | null {
+  url = mediaSigningReference(url);
   const m = STORAGE_PUBLIC_BUCKET_RE.exec(url);
   if (m) return m[1] ?? null;
   if (!url.startsWith('//') && !url.includes('://')) {

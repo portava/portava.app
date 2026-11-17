@@ -101,6 +101,12 @@ if [ -n "$OTHER" ]; then printf '%s\n' "$OTHER" | head -20; die "baseline restor
 TABLES=$(psql -X -tA "$URL" -c "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")
 [ "$TABLES" -ge 380 ] || die "baseline restored only $TABLES public tables (expected >= 380)"
 
+# The structure-only dump contains no bucket rows. The draft lifecycle's 4028
+# precondition must run against the same PRIVATE bucket posture as the verified
+# CI/production deployments. This is a disposable fixture, not a Storage API
+# emulator or a change to any existing bucket's visibility.
+psql -X -q -v ON_ERROR_STOP=1 "$URL" -c "INSERT INTO storage.buckets(id,name,public) VALUES ('post-media','post-media',false) ON CONFLICT(id) DO NOTHING" >/dev/null
+
 # ── 3. the chain ──────────────────────────────────────────────────────────────
 # In the APPLIER'S order: byte order, then the declared overrides in src/migrations/ORDER_OVERRIDES.json
 # (docs/migrations.md § "Apply-order overrides"). resolve-order.mjs computes it; the authority is

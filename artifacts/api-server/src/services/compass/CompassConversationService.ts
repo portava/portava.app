@@ -169,12 +169,14 @@ export async function loadHistory(
   sc: SupabaseClient,
   conversationId: string,
 ): Promise<ConversationMessage[]> {
-  const { data } = await sc
+  const { data, error } = await sc
     .from("compass_conversation_messages")
     .select("role, content, payload, prompt_version, created_at")
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .limit(MAX_HISTORY_MESSAGES);
+
+  if (error) throw new Error("Compass conversation history could not be read.");
 
   if (!data || (data as any[]).length === 0) return [];
 

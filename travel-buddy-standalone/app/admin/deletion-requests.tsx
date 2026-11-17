@@ -1,31 +1,14 @@
-/**
- * Admin — Account deletions.
- *
- * Settings lets a person schedule their account for deletion and shows the
- * date, but in production nothing ran on that date: the scheduled worker is
- * behind `account_deletion_worker_enabled`, which is OFF, and the manual admin
- * route (POST /admin/deletion-requests/:id/execute) had no screen.
- *
- * PRODUCT CALL (2026-11-04): deletions must actually happen (the privacy
- * policy promises it, and the App Store requires it), so the worker gets
- * switched on. Migration 2073 asks for one real request to be run through the
- * admin route first, with every step coming back ok. This screen is that step:
- * it lists pending requests, runs one by hand, and shows every step of the
- * cascade. The worker shares the cascade (AccountDeletionService), so a clean
- * run here is what makes switching the flag safe.
- *
- * Admin-only on the server (requireAdmin); useRequireAdmin only keeps a
- * non-admin from landing here.
- */
+/** Admin recovery and explicit permanent deletion, using the existing request. */
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, RefreshControl, ScrollView, Text, View } from 'react-native';
+import { Alert, RefreshControl, ScrollView, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useSession } from '../../src/context/SessionContext';
-import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 import { useRequireAdmin } from '../../src/hooks/useRequireAdmin';
 import {
   executeDeletionRequest,
+  recoverDeletionRequest,
+  reconcileDeletionRequest,
   listDeletionRequests,
   type DeletionOutcome,
   type DeletionRequest,
@@ -50,7 +33,6 @@ function day(iso: string | null): string {
 export default function AdminDeletionRequestsScreen() {
   const insets = useSafeAreaInsets();
   const { isAuthed, loading: sessionLoading } = useSession();
-  const workerOn = useFeatureFlags().isEnabled('account_deletion_worker_enabled');
   useRequireAdmin();
 
   useEffect(() => {
@@ -62,6 +44,8 @@ export default function AdminDeletionRequestsScreen() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [rowError, setRowError] = useState<Record<string, string>>({});
   const [result, setResult] = useState<DeletionOutcome | null>(null);
+  const [reasons, setReasons] = useState<Record<string, string>>({});
+  const [recoveredNotice, setRecoveredNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setData({ state: 'loading' });
@@ -79,57 +63,70 @@ export default function AdminDeletionRequestsScreen() {
     setRefreshing(false);
   }, [load]);
 
-  const run = useCallback(async (userId: string) => {
-    setBusyId(userId);
-    setRowError((e) => ({ ...e, [userId]: '' }));
+  const run = useCallback(async (row: DeletionRequest) => {
+    const userId = row.user_id;
+    if (!userId) return;
+    const key = row.id;
+    setBusyId(key);
+    setRowError((e) => ({ ...e, [key]: '' }));
     setResult(null);
-    const r = await executeDeletionRequest(userId);
+    const r = await executeDeletionRequest(userId, row.recovery_generation, reasons[key]?.trim() ?? '');
     setBusyId(null);
     if (!r.ok) {
-      setRowError((e) => ({ ...e, [userId]: r.error }));
+      setRowError((e) => ({ ...e, [key]: r.error }));
+      await load();
       return;
     }
     setResult(r.data);
-    setData((d) => (d.state === 'ready' ? { state: 'ready', rows: d.rows.filter((x) => x.user_id !== userId) } : d));
-  }, []);
+    setData((d) => (d.state === 'ready' ? { state: 'ready', rows: d.rows.filter((x) => x.id !== key) } : d));
+  }, [reasons, load]);
 
-  const confirmRun = useCallback((userId: string) => {
+  const confirmRun = useCallback((row: DeletionRequest) => {
     Alert.alert(
       'Delete this account now?',
       'This permanently deletes the account, its posts and media, and the sign-in. It cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete now', style: 'destructive', onPress: () => void run(userId) },
+        { text: 'Delete now', style: 'destructive', onPress: () => void run(row) },
       ],
     );
   }, [run]);
 
-  const now = Date.now();
+  const recover = useCallback(async (row: DeletionRequest) => {
+    if (!row.user_id) return;
+    setBusyId(row.id); setRowError(e => ({ ...e, [row.id]: '' })); setRecoveredNotice(null);
+    const r = await recoverDeletionRequest(row.user_id, row.recovery_generation, reasons[row.id]?.trim() ?? '');
+    setBusyId(null);
+    if (!r.ok) { setRowError(e => ({ ...e, [row.id]: r.error })); return; }
+    setRecoveredNotice(r.data.accountStatus === 'active' ? 'Profile recovered. Existing moderation restrictions still apply.' : 'Profile recovered to its previous deactivated state.');
+    setData(d => d.state === 'ready' ? { state: 'ready', rows: d.rows.filter(x => x.id !== row.id) } : d);
+  }, [reasons]);
+
+  const reconcile = useCallback(async (row: DeletionRequest) => {
+    if (!row.deletion_request_id || !row.can_reconcile) return;
+    setBusyId(row.id); setRowError(old => ({ ...old, [row.id]: '' }));
+    const result = await reconcileDeletionRequest(row.deletion_request_id, row.recovery_generation, reasons[row.id]?.trim() ?? '');
+    setBusyId(null);
+    if (!result.ok) { setRowError(old => ({ ...old, [row.id]: result.error })); return; }
+    setRecoveredNotice('Permanent deletion was verified.');
+    setData(old => old.state === 'ready' ? { state: 'ready', rows: old.rows.filter(item => item.id !== row.id) } : old);
+  }, [reasons]);
+
 
   return (
     <View style={[a.screen, { paddingTop: insets.top }]}>
-      <AdminHeader title="Account deletions" subtitle="Pending requests; run one by hand and see every step" />
+      <AdminHeader title="Account deletions" subtitle="Recover profiles or explicitly permanently delete them" />
       <ScrollView contentContainerStyle={a.body} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
-        <View style={a.card} testID="deletion-worker-state">
-          <Text style={a.meta}>
-            {workerOn
-              ? 'Automatic deletion is ON: the worker runs due requests on its own (it polls every 15 minutes while the server is up).'
-              : 'Automatic deletion is OFF: nothing runs on a scheduled date until account_deletion_worker_enabled is switched on.'}
-          </Text>
-          {!workerOn && (
-            <Text style={a.meta}>
-              Run one request here first. When every step comes back ok, turn the flag on in Feature flags.
-            </Text>
-          )}
-          <View style={a.row}>
-            <AdminButton label="Open feature flags" onPress={() => router.push('/admin/feature-flags' as any)} testID="deletion-open-flags" />
-          </View>
+        <View style={a.card} testID="deletion-retention-policy">
+          <Text style={a.meta}>Users can recover their own profiles for 90 days. Admin recovery remains available until an admin permanently deletes the profile.</Text>
+          <Text style={a.meta}>Permanent deletion cannot be undone. Recovery does not lift bans or suspensions.</Text>
         </View>
+        {recoveredNotice && <Text style={a.notice} accessibilityLiveRegion="polite" testID="deletion-recovered">{recoveredNotice}</Text>}
 
         {result && (
           <View style={a.card} testID="deletion-result">
             <Text style={a.notice} accessibilityLiveRegion="polite">
-              {result.ok ? 'Deleted. Every step finished.' : 'Finished with problems. Check the steps below.'}
+              {result.ok ? 'Permanent deletion verified.' : 'Finished with problems. Check the steps below.'}
             </Text>
             {result.steps.map((s) => (
               <Text key={s.step} style={s.ok ? a.meta : a.formError} testID={`deletion-step-${s.step}`}>
@@ -148,16 +145,20 @@ export default function AdminDeletionRequestsScreen() {
           <AdminEmpty message="No accounts are waiting to be deleted." testID="deletions-empty" />
         )}
         {data.state === 'ready' && data.rows.map((r) => {
-          const due = !!r.scheduled_at && new Date(r.scheduled_at).getTime() <= now;
+          const canRecover = !!r.user_id && r.status === 'pending' && r.recovery_verified === true && !r.execution_started_at;
+          const disabled = busyId !== null || !r.recovery_generation || (reasons[r.id]?.trim().length ?? 0) < 3;
           return (
-            <View key={r.user_id} style={a.card} testID={`deletion-${r.user_id}`}>
-              <Text style={a.mono} selectable>{r.user_id}</Text>
-              <Text style={a.meta}>Requested {day(r.requested_at)} · {due ? 'Due now' : `Due ${day(r.scheduled_at)}`}</Text>
+            <View key={r.id} style={a.card} testID={`deletion-${r.id}`}>
+              <Text style={a.mono} selectable>{r.user_id ?? `Deletion receipt ${r.id}`}</Text>
+              <Text style={a.meta}>Deleted {day(r.requested_at)} · {canRecover ? 'Recoverable by an admin' : r.status === 'executing' ? 'Permanent deletion in progress; reconcile an interrupted attempt before retrying' : r.status === 'failed' ? 'Permanent deletion incomplete; recovery is unavailable' : 'Recovery requires an integrity review'}</Text>
+              <TextInput style={a.input} accessibilityLabel="Reason for profile recovery or permanent deletion" placeholder="Reason for this action" value={reasons[r.id] ?? ''} onChangeText={value => setReasons(old => ({ ...old, [r.id]: value }))} testID={`deletion-reason-${r.id}`} />
               <View style={a.row}>
-                <AdminButton label="Delete now" tone="danger" disabled={busyId === r.user_id} testID={`deletion-run-${r.user_id}`}
-                  onPress={() => confirmRun(r.user_id)} />
+                <AdminButton label="Recover profile" disabled={disabled || !canRecover} testID={`deletion-recover-${r.id}`} onPress={() => void recover(r)} />
+                <AdminButton label="Permanently delete" tone="danger" disabled={disabled || !r.user_id || r.status === 'executing'} testID={`deletion-run-${r.id}`}
+                  onPress={() => confirmRun(r)} />
+                {r.can_reconcile && <AdminButton label="Check deletion result" disabled={disabled || !r.deletion_request_id} testID={`deletion-reconcile-${r.id}`} onPress={() => void reconcile(r)} />}
               </View>
-              {!!rowError[r.user_id] && <Text style={a.formError} accessibilityRole="alert">Not deleted: {rowError[r.user_id]}</Text>}
+              {!!rowError[r.id] && <Text style={a.formError} accessibilityRole="alert">Action not completed: {rowError[r.id]}</Text>}
             </View>
           );
         })}

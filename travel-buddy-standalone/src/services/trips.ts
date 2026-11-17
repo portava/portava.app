@@ -1,3 +1,4 @@
+import { withServiceRequest } from './serviceRequest.ts';
 /**
  * Profiles + Trips services — typed wrappers over supabase-js. Map DB rows
  * (snake_case) to the app's types (camelCase). UI calls these, never supabase
@@ -175,29 +176,32 @@ export class TripsReadUnavailableError extends Error {
 }
 
 export async function listMyTrips(): Promise<TripRow[]> {
-  if (!isSupabaseConfigured) return [];
-  // Must go through GET /api/trips/me, which scopes by trip_members
-  // (owner OR any non-"invited" role) — the same membership definition used
-  // by the passport "Trips" stat (countUserTrips). A raw `trips` SELECT *
-  // relying on RLS previously used a different visibility rule and could
-  // return a different set/count of trips than the stat, e.g. the Trips tab
-  // showing several trips while the passport stat said "1 Trips".
-  const token = await freshToken();
-  if (!token) return [];
-  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-  const res = await fetch(`${apiBase}/api/trips/me`, {
-    headers: { Authorization: `Bearer ${token}` },
+  return withServiceRequest<TripRow[]>(async (request) => {
+    if (!isSupabaseConfigured) return [];
+    // Must go through GET /api/trips/me, which scopes by trip_members
+    // (owner OR any non-"invited" role) — the same membership definition used
+    // by the passport "Trips" stat (countUserTrips). A raw `trips` SELECT *
+    // relying on RLS previously used a different visibility rule and could
+    // return a different set/count of trips than the stat, e.g. the Trips tab
+    // showing several trips while the passport stat said "1 Trips".
+    const token = await request.token(freshToken);
+    if (!token) return [];
+    const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+    const res = await request.fetch(`${apiBase}/api/trips/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new TripsReadUnavailableError('Your trips', res.status);
+    const data = await res.json().catch(() => null);
+    // A body that would not parse is the same failure one step later: `data`
+    // is null, `data?.trips ?? []` is [], and the caller is told the user has
+    // no trips. Only an ACTUAL array of trips may be reported as trips.
+    if (!data || !Array.isArray(data.trips)) throw new TripsReadUnavailableError('Your trips', null);
+    const trips = data.trips as any[];
+    return trips
+      .map(mapTripApiRow)
+      .sort((a, b) => (a.startDate ?? '').localeCompare(b.startDate ?? ''));
+
   });
-  if (!res.ok) throw new TripsReadUnavailableError('Your trips', res.status);
-  const data = await res.json().catch(() => null);
-  // A body that would not parse is the same failure one step later: `data`
-  // is null, `data?.trips ?? []` is [], and the caller is told the user has
-  // no trips. Only an ACTUAL array of trips may be reported as trips.
-  if (!data || !Array.isArray(data.trips)) throw new TripsReadUnavailableError('Your trips', null);
-  const trips = data.trips as any[];
-  return trips
-    .map(mapTripApiRow)
-    .sort((a, b) => (a.startDate ?? '').localeCompare(b.startDate ?? ''));
 }
 
 /**
@@ -208,11 +212,14 @@ export async function listMyTrips(): Promise<TripRow[]> {
  * unreachable. `.maybeSingle()` keeps "no row" out of `error`.
  */
 export async function getTrip(id: string): Promise<TripRow | null> {
-  if (!isSupabaseConfigured) return null;
-  const { data, error } = await supabase.from('trips').select(TRIP_ROW_COLUMNS).eq('id', id).maybeSingle();
-  if (error) throw new TripsReadUnavailableError('This trip', null);
-  if (!data) return null;
-  return mapTrip(data);
+  return withServiceRequest<TripRow | null>(async (request) => {
+    if (!isSupabaseConfigured) return null;
+    const { data, error } = await request.wait(() => supabase.from('trips').select(TRIP_ROW_COLUMNS).eq('id', id).maybeSingle());
+    if (error) throw new TripsReadUnavailableError('This trip', null);
+    if (!data) return null;
+    return mapTrip(data);
+
+  });
 }
 
 /**
@@ -220,21 +227,24 @@ export async function getTrip(id: string): Promise<TripRow | null> {
  * Possible values: 'owner', 'co_host', 'member', 'invited'.
  */
 export async function getTripMemberRole(tripId: string): Promise<string | null> {
-  if (!isSupabaseConfigured) return null;
-  const { data: { session } } = await supabase.auth.getSession();
-  const userId = session?.user?.id;
-  if (!userId) return null;
-  const { data, error } = await supabase
-    .from('trip_members')
-    .select('role')
-    .eq('trip_id', tripId)
-    .eq('user_id', userId)
-    .maybeSingle();
-  // Unreadable is not "not a member": callers that gate on the role (a co-host
-  // managing the trip) must be able to tell an outage from a refusal (§79).
-  if (error) throw new TripsReadUnavailableError('Your role on this trip', null);
-  if (!data) return null;
-  return (data as any).role as string;
+  return withServiceRequest<string | null>(async (request) => {
+    if (!isSupabaseConfigured) return null;
+    const { data: { session } } = await request.wait(() => supabase.auth.getSession());
+    const userId = session?.user?.id;
+    if (!userId) return null;
+    const { data, error } = await request.wait(() => supabase
+      .from('trip_members')
+      .select('role')
+      .eq('trip_id', tripId)
+      .eq('user_id', userId)
+      .maybeSingle());
+    // Unreadable is not "not a member": callers that gate on the role (a co-host
+    // managing the trip) must be able to tell an outage from a refusal (§79).
+    if (error) throw new TripsReadUnavailableError('Your role on this trip', null);
+    if (!data) return null;
+    return (data as any).role as string;
+
+  });
 }
 
 export interface CreateTripInput {
@@ -380,19 +390,22 @@ async function freshToken(): Promise<string | null> {
 }
 
 export async function getPendingTripInvites(): Promise<TripInvite[]> {
-  if (!isSupabaseConfigured) return [];
-  const token = await freshToken();
-  if (!token) return [];
-  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-  const res = await fetch(`${apiBase}/api/me/trip-invites/pending`, {
-    headers: { Authorization: `Bearer ${token}` },
+  return withServiceRequest<TripInvite[]>(async (request) => {
+    if (!isSupabaseConfigured) return [];
+    const token = await request.token(freshToken);
+    if (!token) return [];
+    const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+    const res = await request.fetch(`${apiBase}/api/me/trip-invites/pending`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new TripsReadUnavailableError('Your pending trip invites', res.status);
+    const data = await res.json().catch(() => null);
+    if (!data || !Array.isArray(data.invites)) {
+      throw new TripsReadUnavailableError('Your pending trip invites', null);
+    }
+    return data.invites as TripInvite[];
+
   });
-  if (!res.ok) throw new TripsReadUnavailableError('Your pending trip invites', res.status);
-  const data = await res.json().catch(() => null);
-  if (!data || !Array.isArray(data.invites)) {
-    throw new TripsReadUnavailableError('Your pending trip invites', null);
-  }
-  return data.invites as TripInvite[];
 }
 
 export async function acceptTripInvite(tripId: string): Promise<void> {

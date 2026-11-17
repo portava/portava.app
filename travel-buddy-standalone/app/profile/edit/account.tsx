@@ -49,7 +49,7 @@ export default function AccountScreen() {
   const handleDeactivate = useCallback(() => {
     Alert.alert(
       'Deactivate account?',
-      'Your profile will be hidden from other users. You can reactivate by signing back in.',
+      'Your profile will be hidden. You can sign in and choose Reactivate account within one year of deactivating. After that, contact an admin for help.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -80,7 +80,7 @@ export default function AccountScreen() {
             const res = await reactivateAccount();
             if (res.ok) {
               setAccountStatus('active');
-              Alert.alert('Account reactivated', 'Your profile is now visible to other users.');
+              Alert.alert('Account reactivated', 'Your account is active again. Your privacy settings still apply.');
             } else {
               const msg = res.errorKind === 'forbidden'
                 ? 'This account cannot be self-reactivated. Please contact support.'
@@ -98,7 +98,7 @@ export default function AccountScreen() {
   const handleRequestDeletion = useCallback(() => {
     Alert.alert(
       'Request account deletion?',
-      'Your account will be permanently deleted within 30 days. This cannot be undone.',
+      'Your profile will be hidden. You can recover it in Settings for 90 days while it remains available.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -106,7 +106,7 @@ export default function AccountScreen() {
           onPress: () => {
             Alert.alert(
               'Are you absolutely sure?',
-              'This permanently deletes your account and all your data within 30 days. This action cannot be undone.',
+              'Your profile is retained until an admin permanently deletes it. Admin recovery remains available after your 90-day recovery window.',
               [
                 { text: 'Keep my account', style: 'cancel' },
                 {
@@ -114,7 +114,7 @@ export default function AccountScreen() {
                   onPress: async () => {
                     const res = await requestAccountDeletion();
                     if (res.ok) {
-                      Alert.alert('Request submitted', 'We will contact you to confirm. Your account will be deleted within 30 days.');
+                      Alert.alert('Request submitted', 'Your profile is hidden. You can recover it in Settings for 90 days unless an admin permanently deletes it.');
                     } else {
                       Alert.alert('Error', res.message ?? 'Could not submit request. Try again.');
                     }

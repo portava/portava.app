@@ -1,23 +1,8 @@
-/**
- * GET /api/media/file — ?width image-transform regression tests.
- *
- * Task #3596 wired ?width=<n> from the post-detail view through to the
- * Supabase createSignedUrl transform option, which is the only mechanism
- * that produces a resized derivative from a private bucket. These tests
- * confirm three properties of that pipeline:
- *
- *   1. ?width=1200  → createSignedUrl receives a transform block → redirect
- *      is a /render/image/sign/ URL (not /object/sign/).
- *   2. Omitting ?width → createSignedUrl receives NO transform → redirect is
- *      the plain /object/sign/ URL.
- *   3. Out-of-range values:
- *      - width=0  → fails the parsedWidth > 0 guard; treated as absent; no
- *        transform forwarded → /object/sign/.
- *      - width=4000 → clamped to 3000 → transform forwarded → /render/image/sign/.
- *
- * Run:
- *   node --import tsx/esm --test src/test/mediaFileWidthTransform.test.ts
- */
+import { installMediaDeliveryFixture, type MediaDeliveryRead } from "./helpers/mediaDeliveryFixture.js";
+import {activeMediaAccountRead} from './helpers/mediaAccountReadFixture.js';
+/** Authenticated media transform regression cases. These retain every
+ * prior width/quality boundary and now assert actual provider byte requests,
+ * successful streaming, and absence of provider redirects or signed links. */
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -27,7 +12,7 @@ import { _setTestServiceClient } from "../lib/supabase.js";
 import { _clearMediaAccessCache } from "../lib/mediaAccess.js";
 import mediaFileRouter from "../routes/mediaFile.js";
 
-const SB = "http://sb.example.test";
+const SB = "https://sb.example.test";
 const OLD_SUPABASE_URL = process.env.SUPABASE_URL;
 
 // VIEWER is the authenticated caller AND the path owner — so the
@@ -37,14 +22,15 @@ const VIEWER = "a2000000-0000-4000-b000-000000000001";
 const TOKEN = "media-width-token";
 
 // The last createSignedUrl call's arguments, captured by the mock.
-let lastSignArgs: { bucket: string; path: string; ttl: number; options: any } | null = null;
+let lastDeliveryArgs: MediaDeliveryRead | null = null;
+let restoreDelivery: () => void;
 
 /**
  * Build a fake Supabase client.
  *
  * The storage mock simulates Supabase's real behavior:
- *   - transform option present → /render/image/sign/ URL
- *   - no transform option      → /object/sign/ URL
+ *   - transform option present → /render/image/authenticated/ URL
+ *   - no transform option      → /object/ URL
  *
  * The auth mock returns VIEWER for TOKEN.
  *
@@ -59,7 +45,7 @@ function makeClient() {
     // recovery-window check). A builder missing them does not return "no rows"
     // — it throws, the branch fails closed, and every request in this file
     // answers 403 instead of exercising the transform logic it is about.
-    const b: any = { select() { return b; }, eq() { return b; }, in() { return b; },
+    const b: any = { select() { return b; }, contains() { return b; }, eq() { return b; }, in() { return b; },
       limit() { return Promise.resolve({ data: [], error: null }); }, order() { return b; },
       is() { return b; }, maybeSingle() { return Promise.resolve({ data: null, error: null }); },
       then(ok: any, _err: any) { return Promise.resolve({ data: [], error: null }).then(ok, _err); } };
@@ -67,21 +53,8 @@ function makeClient() {
   }
   return {
     from(_table: string) { return noop(); },
-    storage: {
-      from(bucket: string) {
-        return {
-          createSignedUrl: async (path: string, ttl: number, options?: any) => {
-            lastSignArgs = { bucket, path, ttl, options };
-            // Supabase returns /render/image/sign/ when a transform is requested,
-            // /object/sign/ for a plain signed URL.
-            const signed = options?.transform
-              ? `${SB}/storage/v1/render/image/sign/${bucket}/${path}?token=resized`
-              : `${SB}/storage/v1/object/sign/${bucket}/${path}?token=signed`;
-            return { data: { signedUrl: signed }, error: null };
-          },
-        };
-      },
-    },
+    rpc: async (name: string, args: {p_user?: unknown}) => activeMediaAccountRead(name, args),
+    storage: { from() { return { createSignedUrl() { throw new Error("Provider signing must be retired"); } }; } },
     auth: {
       getUser: async (t: string) =>
         t === TOKEN
@@ -109,6 +82,7 @@ function req(
 ): Promise<{ status: number; body: any; location?: string }> {
   return new Promise((resolve, reject) => {
     const url = new URL(urlPath, base);
+    url.searchParams.set("viewer", VIEWER);
     const headers: Record<string, string> = { authorization: `Bearer ${TOKEN}` };
     const r = http.request(
       {
@@ -122,6 +96,7 @@ function req(
         let raw = "";
         res.on("data", (c) => (raw += c));
         res.on("end", () => {
+          if (res.statusCode === 200) { assert.equal(res.headers.location, undefined); assert.equal(raw, "media-fixture-bytes"); }
           let p: any;
           try { p = JSON.parse(raw); } catch { p = raw; }
           resolve({ status: res.statusCode ?? 0, body: p, location: res.headers.location as string | undefined });
@@ -139,6 +114,7 @@ describe("GET /api/media/file — ?width image-transform", () => {
 
   before(() => {
     process.env.SUPABASE_URL = SB;
+    restoreDelivery = installMediaDeliveryFixture(read => { lastDeliveryArgs = read; });
     setClients(makeClient());
     const app = express();
     app.use(express.json());
@@ -156,39 +132,40 @@ describe("GET /api/media/file — ?width image-transform", () => {
   });
 
   after(() => {
+    restoreDelivery();
     process.env.SUPABASE_URL = OLD_SUPABASE_URL;
     return new Promise<void>((r) => server.close(() => r()));
   });
 
   beforeEach(() => {
-    lastSignArgs = null;
+    lastDeliveryArgs = null;
     _clearMediaAccessCache();
   });
 
-  it("?width=1200 → transform forwarded, redirect is /render/image/sign/", async () => {
+  it("?width=1200 → transform forwarded, upstream uses /render/image/authenticated/", async () => {
     const r = await req("GET", `/api/media/file/post-media/${mediaPath}?width=1200`);
-    assert.equal(r.status, 302, `expected 302, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.ok(
-      r.location?.includes("/render/image/sign/"),
-      `expected /render/image/sign/ URL, got: ${r.location}`,
+      lastDeliveryArgs?.url.pathname.includes("/render/image/authenticated/"),
+      `expected /render/image/authenticated/ URL, got: ${r.location}`,
     );
-    assert.ok(lastSignArgs?.options?.transform, "expected transform options to be passed to createSignedUrl");
+    assert.ok(lastDeliveryArgs?.options?.transform, "expected transform options to be passed to authenticated storage fetch");
     assert.equal(
-      lastSignArgs?.options?.transform?.width,
+      lastDeliveryArgs?.options?.transform?.width,
       1200,
-      `expected transform.width=1200, got: ${lastSignArgs?.options?.transform?.width}`,
+      `expected transform.width=1200, got: ${lastDeliveryArgs?.options?.transform?.width}`,
     );
   });
 
-  it("no ?width → no transform forwarded, redirect is /object/sign/", async () => {
+  it("no ?width → no transform forwarded, upstream uses /object/", async () => {
     const r = await req("GET", `/api/media/file/post-media/${mediaPath}`);
-    assert.equal(r.status, 302, `expected 302, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.ok(
-      r.location?.includes("/object/sign/"),
-      `expected /object/sign/ URL, got: ${r.location}`,
+      lastDeliveryArgs?.url.pathname.includes("/object/"),
+      `expected /object/ URL, got: ${r.location}`,
     );
     assert.equal(
-      lastSignArgs?.options,
+      lastDeliveryArgs?.options,
       undefined,
       "expected no transform options when ?width is absent",
     );
@@ -196,32 +173,32 @@ describe("GET /api/media/file — ?width image-transform", () => {
 
   it("?width=0 → fails parsedWidth > 0 guard; treated as absent; no transform forwarded", async () => {
     // The handler only sets a transform when parsedWidth > 0, so width=0 is
-    // treated identically to an absent ?width param — no transform, plain /object/sign/.
+    // treated identically to an absent ?width param — no transform, plain /object/.
     const r = await req("GET", `/api/media/file/post-media/${mediaPath}?width=0`);
-    assert.equal(r.status, 302, `expected 302, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.ok(
-      r.location?.includes("/object/sign/"),
-      `expected /object/sign/ URL for width=0, got: ${r.location}`,
+      lastDeliveryArgs?.url.pathname.includes("/object/"),
+      `expected /object/ URL for width=0, got: ${r.location}`,
     );
     assert.equal(
-      lastSignArgs?.options,
+      lastDeliveryArgs?.options,
       undefined,
       "expected no transform options for width=0",
     );
   });
 
-  it("?width=4000 → clamped to 3000, transform forwarded, redirect is /render/image/sign/", async () => {
+  it("?width=4000 → clamped to 3000, transform forwarded, upstream uses /render/image/authenticated/", async () => {
     const r = await req("GET", `/api/media/file/post-media/${mediaPath}?width=4000`);
-    assert.equal(r.status, 302, `expected 302, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.ok(
-      r.location?.includes("/render/image/sign/"),
-      `expected /render/image/sign/ URL for width=4000 (clamped), got: ${r.location}`,
+      lastDeliveryArgs?.url.pathname.includes("/render/image/authenticated/"),
+      `expected /render/image/authenticated/ URL for width=4000 (clamped), got: ${r.location}`,
     );
-    assert.ok(lastSignArgs?.options?.transform, "expected transform options for width=4000");
+    assert.ok(lastDeliveryArgs?.options?.transform, "expected transform options for width=4000");
     assert.equal(
-      lastSignArgs?.options?.transform?.width,
+      lastDeliveryArgs?.options?.transform?.width,
       3000,
-      `expected transform.width clamped to 3000, got: ${lastSignArgs?.options?.transform?.width}`,
+      `expected transform.width clamped to 3000, got: ${lastDeliveryArgs?.options?.transform?.width}`,
     );
   });
 });

@@ -29,6 +29,7 @@ jest.mock('../../../src/lib/supabase', () => ({
   authedClient: () => null,
   supabase: {
     auth: {
+      onAuthStateChange: () => ({ data: { subscription: { unsubscribe: jest.fn() } } }),
       getSession: async () => ({ data: { session: { access_token: 'tok', expires_at: Math.floor(Date.now() / 1000) + 3600 } } }),
       refreshSession: async () => ({ data: { session: { access_token: 'tok' } } }),
     },
@@ -73,13 +74,13 @@ let served: unknown[] = [];
 const fetchMock = jest.fn();
 let ui: Awaited<ReturnType<typeof render>>;
 
-beforeAll(() => { process.env.EXPO_PUBLIC_API_BASE_URL = 'http://api.test'; });
+beforeAll(() => { process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test'; });
 beforeEach(() => {
   mockFlagOn = true;
   served = [row(TIME, 'Fri 7 Jun · 8:00 PM – 11:00 PM', 'Set as the date and time'), row(SIZE, '6 people', 'Set as the capacity')];
   fetchMock.mockReset();
   fetchMock.mockImplementation(async (url: string, init?: any) => {
-    const u = new URL(url, 'http://api.test');
+    const u = new URL(url, 'https://api.test');
     if (u.pathname === '/api/input-assistance/suggest') {
       const body = JSON.parse(init?.body ?? '{}');
       const suggestions = body.context === 'event_title' ? served : [];

@@ -363,15 +363,15 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | GET | `/api/me/devices/:deviceId/key-packages/inventory` | `artifacts/api-server/src/routes/keyPackages.ts:91` |
 | GET | `/api/me/hashtag-follows` | `artifacts/api-server/src/routes/hashtags.ts:718` |
 | GET, POST | `/api/me/passport-stamps/gps` | `artifacts/api-server/src/routes/location.ts:218` |
-| GET | `/api/me/passport/map` | `artifacts/api-server/src/routes/passportStamps.ts:471` |
+| GET | `/api/me/passport/map` | `artifacts/api-server/src/routes/passportStamps.ts:472` |
 | GET, POST | `/api/me/passport/memories` | `artifacts/api-server/src/routes/passportStamps.ts:238` |
-| PATCH | `/api/me/passport/memories/:id` | `artifacts/api-server/src/routes/passportStamps.ts:327` |
+| PATCH | `/api/me/passport/memories/:id` | `artifacts/api-server/src/routes/passportStamps.ts:328` |
 | GET | `/api/me/passport/stamps` | `artifacts/api-server/src/routes/passportStamps.ts:130` |
 | PATCH | `/api/me/passport/stamps/:id` | `artifacts/api-server/src/routes/passportStamps.ts:207` |
-| GET | `/api/me/passport/stats` | `artifacts/api-server/src/routes/passportStamps.ts:505` |
-| GET | `/api/me/passport/suggestions` | `artifacts/api-server/src/routes/passportStamps.ts:372` |
-| POST | `/api/me/passport/suggestions/:id/accept` | `artifacts/api-server/src/routes/passportStamps.ts:412` |
-| POST | `/api/me/passport/suggestions/:id/dismiss` | `artifacts/api-server/src/routes/passportStamps.ts:445` |
+| GET | `/api/me/passport/stats` | `artifacts/api-server/src/routes/passportStamps.ts:506` |
+| GET | `/api/me/passport/suggestions` | `artifacts/api-server/src/routes/passportStamps.ts:373` |
+| POST | `/api/me/passport/suggestions/:id/accept` | `artifacts/api-server/src/routes/passportStamps.ts:413` |
+| POST | `/api/me/passport/suggestions/:id/dismiss` | `artifacts/api-server/src/routes/passportStamps.ts:446` |
 | GET | `/api/me/phone/status` | `artifacts/api-server/src/routes/phoneVerification.ts:142` |
 | POST | `/api/me/phone/verify/confirm` | `artifacts/api-server/src/routes/phoneVerification.ts:86` |
 | POST | `/api/me/phone/verify/start` | `artifacts/api-server/src/routes/phoneVerification.ts:33` |
@@ -408,9 +408,9 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | GET | `/api/places/:id/thin-buckets` | `artifacts/api-server/src/routes/placesCanonical.ts:147` |
 | GET | `/api/places/:placeId/recaps` | `artifacts/api-server/src/routes/placeRecaps.ts:152` |
 | GET | `/api/places/photo/media` | `artifacts/api-server/src/routes/places.ts:739` |
-| PUT | `/api/postcards/:id/event-link` | `artifacts/api-server/src/routes/postcards.ts:1225` |
-| POST | `/api/postcards/sweep-orphans` | `artifacts/api-server/src/routes/postcards.ts:1337` |
-| POST | `/api/posts/:postId/location-event` | `artifacts/api-server/src/routes/posts.ts:2203` |
+| PUT | `/api/postcards/:id/event-link` | `artifacts/api-server/src/routes/postcards.ts:1261` |
+| POST | `/api/postcards/sweep-orphans` | `artifacts/api-server/src/routes/postcards.ts:1373` |
+| POST | `/api/posts/:postId/location-event` | `artifacts/api-server/src/routes/posts.ts:2194` |
 | POST | `/api/rent-a-buddy/bookings/:bookingId/change-request` | `artifacts/api-server/src/routes/rentABuddy.ts:7338` |
 | POST | `/api/rent-a-buddy/bookings/:bookingId/pay-deposit` | `artifacts/api-server/src/routes/rentABuddy.ts:2151` |
 | POST | `/api/rent-a-buddy/bookings/:bookingId/pay-full` | `artifacts/api-server/src/routes/rentABuddy.ts:2161` |
@@ -464,8 +464,8 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | GET | `/api/users/:userId/restrict-status` | `artifacts/api-server/src/routes/restrict.ts:170` |
 | GET | `/api/users/:username/circles` | `artifacts/api-server/src/routes/profileTabs.ts:461` |
 | GET | `/api/users/:username/og-image.png` | `artifacts/api-server/src/routes/passport.ts:1272` |
-| GET | `/api/users/:username/passport/memories` | `artifacts/api-server/src/routes/passportStamps.ts:659` |
-| GET | `/api/users/:username/passport/stamps` | `artifacts/api-server/src/routes/passportStamps.ts:733` |
+| GET | `/api/users/:username/passport/memories` | `artifacts/api-server/src/routes/passportStamps.ts:660` |
+| GET | `/api/users/:username/passport/stamps` | `artifacts/api-server/src/routes/passportStamps.ts:734` |
 | GET | `/api/users/:username/posts` | `artifacts/api-server/src/routes/profileTabs.ts:130` |
 | GET | `/api/users/:username/stamps` | `artifacts/api-server/src/routes/profileTabs.ts:197` |
 | GET | `/api/users/:username/stamps/:stampId/preview` | `artifacts/api-server/src/routes/passport.ts:1225` |
@@ -556,7 +556,7 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | GET | `/api/admin/notification-delivery-attempts` | `artifacts/api-server/src/routes/notifications.ts:623` |
 | GET | `/api/admin/notification-templates` | `artifacts/api-server/src/routes/notifications.ts:526` |
 | POST | `/api/admin/notifications/account-notice` | `artifacts/api-server/src/routes/notifications.ts:540` |
-| GET | `/api/admin/passport/stamps/preview` | `artifacts/api-server/src/routes/passportStamps.ts:816` |
+| GET | `/api/admin/passport/stamps/preview` | `artifacts/api-server/src/routes/passportStamps.ts:817` |
 | POST | `/api/admin/places/:id/merge` | `artifacts/api-server/src/routes/placesCanonical.ts:94` |
 | POST | `/api/admin/places/:id/unmerge` | `artifacts/api-server/src/routes/placesCanonical.ts:125` |
 | POST | `/api/admin/places/ingest` | `artifacts/api-server/src/routes/placesCanonical.ts:63` |

@@ -181,7 +181,7 @@ const CHANGED: readonly Changed[] = [
   },
   { file: SF.lockType, draws: /<LockTypeSelector\b/, consumers: ['src/components/AddToPlanSheet.tsx', 'src/components/PlanPickerController.tsx', 'src/components/itinerary/PlanItemSheet.tsx'] },
   // Only the `selected` fallback changed: a consumer is an importer that passes `selected` to an <Avatar … />.
-  { file: SF.avatar, draws: /<Avatar\b(?:(?!\/>)[\s\S])*?\bselected\b(?:(?!\/>)[\s\S])*?\/>/, consumers: ['src/components/DiscoveryShareSheet.tsx', 'src/components/ShareSheet.tsx'] }, ...changedNested(), // §33.13: the nested sheets, declared at the tail
+  { file: SF.avatar, draws: /<Avatar\b(?:(?!\/>)[\s\S])*?\bselected\b(?:(?!\/>)[\s\S])*?\/>/, consumers: ['app/(tabs)/_layout.tsx', 'src/components/DiscoveryShareSheet.tsx', 'src/components/ShareSheet.tsx'] }, ...changedNested(), // §33.13: the nested sheets, declared at the tail
 ];
 
 test('every consumer of each changed component is enumerated, from a scan of app/ and src/', () => {
@@ -191,7 +191,7 @@ test('every consumer of each changed component is enumerated, from a scan of app
     assert.deepEqual(found, [...c.consumers].sort(), `${c.file}: its consumers changed — measure the new one's pairs here`);
   }
   // Anti-vacuity: the scan does see importers that draw nothing §33 changed.
-  assert.ok(importersOf(SF.avatar).length > 20, 'Avatar has many importers; only two pass `selected`');
+  assert.ok(importersOf(SF.avatar).length > 20, 'Avatar has many importers; the selected consumers are enumerated');
   assert.ok(importersOf(SF.lockType).some((f) => !/<LockTypeSelector\b/.test(source(f))), 'LOCK_STYLE / LOCK_LABEL importers draw no selector');
 });
 
@@ -233,6 +233,9 @@ const CAP_WARNING = MEDIA_SHEET_PAIRS.find((p) => p.id === 'comments.capWarning'
 const LOCK_HINT = MEDIA_SHEET_PAIRS.find((p) => p.id === 'planPicker.lock.hint')!;
 
 const CONSUMER_PAIRS: ConsumerPair[] = [
+  // Passport navigation uses the same self-painted selected fallback.
+  { id: 'passport.avatar.initialsSelected', fg: color.onInk, on: 'sheetSignalStrong', kind: 'text', component: SF.avatar, consumer: 'app/(tabs)/_layout.tsx',
+    at: [['app/(tabs)/_layout.tsx', 'selected={selected}'], [SF.avatar, 'fallbackSelected: { backgroundColor: color.signalStrong },'], [SF.avatar, 'selected && { color: color.onInk }']] },
   // As they render when opened from Media — the sheet paints its own ground, so every consumer sees these.
   ...MEDIA_SHEET_PAIRS.map((p) => ({ ...p, component: componentOf(p), consumer: 'intrinsic' })),
   // CommentsSection draws the same comment rows inline on the post screen's paper.
@@ -334,7 +337,7 @@ test('the counts: consumers, pairs, improved, unchanged, worse', () => {
   };
   assert.equal(counts.improved + counts.unchanged + counts.worse, counts.pairs);
   // Recorded in census-media §33. A change to any of these is a change to what §33 claims.
-  assert.deepEqual(counts, { changedComponents: 16, consumers: 70, pairs: 310, asserted: 245, improved: 103, unchanged: 207, worse: 0, failingBefore: 89, failingAfter: 0 }); // 2026-11-05: Wall adds one consumer of ShareSheet's intrinsic ground; pairs stay unchanged. HM-F08 (TM-create): +1 consumer, app/memory/new.tsx opens GlobalPlacePicker; its pairs are the sheet's own, so pairs do not move. §33.13 (was: assert.deepEqual(counts, { changedComponents: 10, consumers: 54, pairs: 205, asserted: 160, improved: 74, unchanged: 131, worse: 0, failingBefore: 65, failingAfter: 0 }), before the nested sheets)
+  assert.deepEqual(counts, { changedComponents: 16, consumers: 71, pairs: 311, asserted: 246, improved: 103, unchanged: 208, worse: 0, failingBefore: 89, failingAfter: 0 }); // 2026-11-05: Wall adds one consumer of ShareSheet's intrinsic ground; pairs stay unchanged. HM-F08 (TM-create): +1 consumer, app/memory/new.tsx opens GlobalPlacePicker; its pairs are the sheet's own, so pairs do not move. §33.13 (was: assert.deepEqual(counts, { changedComponents: 10, consumers: 54, pairs: 205, asserted: 160, improved: 74, unchanged: 131, worse: 0, failingBefore: 65, failingAfter: 0 }), before the nested sheets)
 });
 
 test('print the before/after table when SHEET_CONTRAST_TABLE=1', () => {

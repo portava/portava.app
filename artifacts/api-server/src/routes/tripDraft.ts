@@ -1,3 +1,4 @@
+import { providerModel } from "../lib/providerVersions.js";
 /**
  * Natural-language trip draft — POST /trips/draft-from-text
  *
@@ -102,9 +103,10 @@ router.post("/trips/draft-from-text", asyncHandler(async (req, res) => {
   let completion: unknown;
   try {
     completion = await getOpenAI().chat.completions.create({
-      model:                 "gpt-5.4-mini",
-      max_completion_tokens: 400,
+      model:                 providerModel("openai", "gpt-5.4-mini"),
+      max_completion_tokens: 1600,
       reasoning_effort:      "none",
+      response_format:       { type: "json_object" },
       messages: [
         { role: "system", content: DRAFT_SYSTEM },
         {
@@ -114,7 +116,7 @@ router.post("/trips/draft-from-text", asyncHandler(async (req, res) => {
             wrapUgc(text),
         },
       ],
-    } as any);
+    }, { timeout: 20_000, maxRetries: 0 });
   } catch (err) {
     // Operator-facing only. The provider's message can carry a key fragment or
     // an upstream host, so it is logged and never put on the wire.

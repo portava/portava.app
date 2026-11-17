@@ -1,3 +1,4 @@
+import {activeMediaAccountRead} from './helpers/mediaAccountReadFixture.js';
 /**
  * mediaAccess §3c — a retracted message's photo must stop authorizing itself.
  *
@@ -85,6 +86,8 @@ function makeFake(messages: MsgRow[], signs: { n: number }) {
     const rows = () => src().filter((r: any) => filters.every((f) => f(r))).slice(0, limitN);
     const b: any = {
       select: () => b,
+      // These fixtures have no lifecycle receipts; containment therefore has no matches.
+      contains: () => b,
       eq: (c: string, v: any) => { filters.push((r) => r[c] === v); return b; },
       in: (c: string, v: any[]) => { filters.push((r) => v.includes(r[c])); return b; },
       is: (c: string, v: any) => {
@@ -106,6 +109,7 @@ function makeFake(messages: MsgRow[], signs: { n: number }) {
   }
   return {
     from,
+    rpc: async (name: string, args: {p_user?: unknown}) => activeMediaAccountRead(name, args),
     storage: {
       from: () => ({
         createSignedUrl: async (p: string, ttl: number) => {

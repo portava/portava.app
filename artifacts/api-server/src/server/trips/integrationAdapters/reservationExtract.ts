@@ -1,3 +1,4 @@
+import { providerModel } from "../../../lib/providerVersions.js";
 /**
  * reservationExtract — LLM extraction of reservations from pasted text.
  *
@@ -89,7 +90,7 @@ export async function extractReservations(rawText: string): Promise<ExtractionRe
 
   try {
     const completion = await getOpenAI().chat.completions.create({
-      model:                 "gpt-5-mini",
+      model:                 providerModel("openai", "gpt-5-mini"),
       max_completion_tokens: 1500,
       reasoning_effort:      "minimal" as const,
       messages: [

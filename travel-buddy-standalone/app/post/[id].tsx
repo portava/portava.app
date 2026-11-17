@@ -1,3 +1,4 @@
+import { ImageUnderstandingSheet } from '../../src/components/media/ImageUnderstandingSheet.tsx';
 import { RecordingStampBadge } from '../../src/features/capture-stamps/RecordingStamp.tsx';
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
@@ -48,8 +49,9 @@ function PostOverflowSheet({
   onShare,
   onReport,
   onEdit,
-  onWrongPlace, onSaveToMemory, onDelete,
+  onWrongPlace, onSaveToMemory, onDelete, onImageUnderstanding,
 }: {
+  onImageUnderstanding?: () => void;
   visible: boolean;
   onClose: () => void;
   onShare: () => void;
@@ -82,6 +84,7 @@ function PostOverflowSheet({
             <PortavaShareIcon size={20} color={color.ink} />
             <Text style={ov.rowLabel}>Share post</Text>
           </Pressable>{onSaveToMemory && (<><View style={ov.divider} /><Pressable style={ov.row} onPress={() => dismissWith(onSaveToMemory)} testID="overflow-save-to-memory" accessibilityRole="button"><BookmarkPlus size={20} color={color.ink} /><Text style={ov.rowLabel}>Save to a Memory</Text></Pressable></>)}
+          {onImageUnderstanding && <><View style={ov.divider} /><Pressable style={ov.row} onPress={() => dismissWith(onImageUnderstanding)} testID="overflow-image-understanding" accessibilityRole="button"><Text style={ov.rowLabel}>Image understanding</Text></Pressable></>}
           {onWrongPlace && (
             <>
               <View style={ov.divider} />
@@ -331,6 +334,7 @@ export function PostDetailContent({ id, onClose, ...playback }: { id: string; on
     }
   }, [id, post, commentCount]);
 
+  const [imageUnderstandingOpen, setImageUnderstandingOpen] = useState(false);
   const isOwnPost = !!(userId && post?.author?.id === userId);
 
   const { isEnabled } = useFeatureFlags(); const [saveToMemoryOpen, setSaveToMemoryOpen] = useState(false); const canSaveToMemory = isEnabled(MEMORY_FROM_OWN_MEDIA_FLAG) && isOwnPost && canOfferSaveToMemory(post, userId); const handleReported = useCallback(() => { // MD385 (before this): own post, with media, flag on — nothing while off
@@ -434,9 +438,11 @@ export function PostDetailContent({ id, onClose, ...playback }: { id: string; on
             onShare={() => { if (post.canShare) { setShareMounted(true); setShareOpen(true); } else Alert.alert('Sharing unavailable', 'The author has restricted sharing.'); }}
             onEdit={isOwnPost ? () => router.push(`/post/edit/${post.id}` as any) : undefined}
             onDelete={isOwnPost ? confirmDelete : undefined}
+            onImageUnderstanding={isOwnPost && post.media?.length ? () => setImageUnderstandingOpen(true) : undefined}
             onReport={!isOwnPost ? () => setReportOpen(true) : undefined}
             onWrongPlace={!isOwnPost && !!post.locationName ? () => setWrongPlaceOpen(true) : undefined} onSaveToMemory={canSaveToMemory ? () => setSaveToMemoryOpen(true) : undefined}
           />{canSaveToMemory && userId ? <SaveOwnPostToMemorySheet visible={saveToMemoryOpen} post={post} viewerId={userId} onClose={() => setSaveToMemoryOpen(false)} /> : null}
+          {imageUnderstandingOpen && isOwnPost && post.media?.length ? <ImageUnderstandingSheet media={post.media} onClose={() => setImageUnderstandingOpen(false)} /> : null}
           {shareMounted && <ShareSheet visible={shareOpen} postId={post.id} onClose={() => setShareOpen(false)} />}
           {!isOwnPost && (
             <ReportSheet

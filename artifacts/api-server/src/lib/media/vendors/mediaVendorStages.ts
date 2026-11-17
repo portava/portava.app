@@ -125,6 +125,7 @@ export async function runMediaVendorIngest(
   sc: unknown,
   subject: VendorIngestSubject,
   adapters: MediaVendorAdapters = selectedMediaVendorAdapters(),
+  options: { prePublication?: boolean; skipModeration?: boolean } = {},
 ): Promise<VendorIngestReport> {
   const report: VendorIngestReport = {
     moderation: { state: "off" },
@@ -142,7 +143,7 @@ export async function runMediaVendorIngest(
     let derivativeVersion = typeof subject.sourceVersion === "number" && Number.isSafeInteger(subject.sourceVersion) && subject.sourceVersion > 0 && subject.sourceVersion <= 2147483647
       ? subject.sourceVersion : null;
 
-    if (moderationOn) {
+    if (moderationOn && !options.skipModeration) {
       derivativeVersion = null;
       // HOLD FIRST, then decide. With the stage on at upload, the canonical row
       // is BORN `limited` (canonicalModerationAtBirth, census-media §37.8), so
@@ -179,12 +180,12 @@ export async function runMediaVendorIngest(
       report.moderation = { state: "ran", result: { decision, recorded } };
     }
 
-    if (subject.mediaType === "image" && derivativeVersion !== null) {
+    if (!options.prePublication && subject.mediaType === "image" && derivativeVersion !== null) {
       try { await enqueueConfiguredImageVariants(sc, { ...subject, sourceVersion: derivativeVersion }); }
       catch { logger.warn({ code: "image_variants_enqueue_unavailable" }, "Optional image preparation unavailable"); }
     }
 
-    if (visionOn) {
+    if (!options.prePublication && visionOn) {
       const v = adapters.vision;
       const answer: VendorAnswer<{ accepted: boolean }> = !subject.assetId
         ? refused("invalid_answer", "no canonical asset id to index under")
@@ -208,7 +209,7 @@ export async function runMediaVendorIngest(
       };
     }
 
-    if (transcodeOn && subject.mediaType === "video") {
+    if (!options.prePublication && transcodeOn && subject.mediaType === "video") {
       report.transcode = {
         state: "ran",
         result: derivativeVersion === null
@@ -225,7 +226,7 @@ export async function runMediaVendorIngest(
       };
     }
 
-    if (captionsOn && subject.mediaType === "video") {
+    if (!options.prePublication && captionsOn && subject.mediaType === "video") {
       report.captions = {
         state: "ran",
         result: derivativeVersion === null

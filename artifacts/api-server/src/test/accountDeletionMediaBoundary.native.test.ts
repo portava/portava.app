@@ -1,7 +1,10 @@
+import { PERMANENT_DELETION_TEST_OPTIONS } from './helpers/accountDeletionAuthorizationFixture.js';
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, test } from 'node:test';
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
+import { Client } from 'pg';
+import { openSnapshotLease } from './db/pressedSnapshot.js';
+import { pressedPostgresServer } from './db/pressedPostgres.js';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -17,8 +20,9 @@ const encoded = (value: unknown) => `${quote(JSON.stringify(value))}::jsonb`;
 const withdraw = `UPDATE public.media_assets SET deleted_at=clock_timestamp(),moderation_status='owner_deleted',processing_status='removed',purge_status='pending',updated_at=clock_timestamp() WHERE id='${assetId}' RETURNING version;`;
 
 describe('Account Media deletion native source barrier', { skip: !binary && 'PORTAVA_TEST_POSTGRES_BIN is required for actual PostgreSQL 17.11 execution', concurrency: false }, () => {
-  let root: string, socket: string, parameters: string[], environment: NodeJS.ProcessEnv;
-  let started = false;
+  let parameters: string[], environment: NodeJS.ProcessEnv;
+  let database: Client | undefined;
+  let lease: Awaited<ReturnType<typeof openSnapshotLease>> | undefined;
   const fetchBefore = globalThis.fetch;
   const executable = (name: string) => { if (!binary) throw new Error('Native PostgreSQL runtime required'); return join(binary, name); };
   const command = (name: string, args: string[], input?: string) => {
@@ -98,30 +102,51 @@ describe('Account Media deletion native source barrier', { skip: !binary && 'POR
     return { receipt, token, reserve: `SELECT public.media_caption_translation_artifact_reserve('${receipt}','${token}',${encoded(intent)},${encoded(canonical)});` };
   }
 
-  before(() => {
+  before(async () => {
     globalThis.fetch = async () => { throw new Error('Native fixture forbids network'); };
-    root = realpathSync(mkdtempSync(join(tmpdir(), 'account-media-native-')));
-    socket = join(root, 'socket'); mkdirSync(socket, { mode: 0o700 });
-    environment = { PATH: `${binary}:/usr/bin:/bin`, HOME: root, TMPDIR: root, LC_ALL: 'C', NODE_ENV: 'test' };
-    assert.match(command('postgres', ['--version']), /\b17\.11\b/);
-    command('initdb', ['-D', join(root, 'data'), '-U', 'postgres', '--auth-local=trust', '--auth-host=reject', '--no-locale', '-E', 'UTF8']);
-    command('pg_ctl', ['-D', join(root, 'data'), '-l', join(root, 'postgres.log'), '-w', '-t', '10', '-o', `-F -h '' -k '${socket}' -p 55444 -c unix_socket_permissions=0700 -c max_connections=12 -c shared_buffers=16MB`, 'start']);
-    started = true;
-    parameters = ['-X', '--no-password', '-qAt', '-v', 'ON_ERROR_STOP=1', '-h', socket, '-p', '55444', '-U', 'postgres', '-d', 'postgres'];
-    assert.equal(sql('SHOW server_version_num'), '170011'); assert.equal(sql('SHOW listen_addresses'), ''); assert.equal(sql('SELECT inet_server_addr() IS NULL'), 't');
+    if (!process.env.LOCAL_DB_URL) throw new Error('Native account Media proof requires the designated reusable LOCAL_DB_URL');
+    const target = pressedPostgresServer(process.env.LOCAL_DB_URL);
+    database = new Client({ connectionString: target.toString() });
+    await database.connect();
+    lease = await openSnapshotLease(database, target);
+    // Identity, empty-fixture precondition, matching snapshot tools and the
+    // exclusive lease are checked before any schema mutation.
+    const expectedMajor = Number(process.env.PORTAVA_TEST_POSTGRES_MAJOR ?? '17');
+    assert.ok([16, 17].includes(expectedMajor), 'Only reviewed PostgreSQL fixture majors are supported');
+    assert.equal(Math.floor(Number((await database.query('SHOW server_version_num')).rows[0].server_version_num) / 10000), expectedMajor);
+    const password = decodeURIComponent(target.password); target.password = '';
+    environment = { PATH: `${binary}:/usr/bin:/bin`, LC_ALL: 'C', NODE_ENV: 'test', ...(password ? { PGPASSWORD: password } : {}) };
+    parameters = ['-X', '--no-password', '-qAt', '-v', 'ON_ERROR_STOP=1', '--dbname', target.toString()];
+    await lease.clear();
+    sql('CREATE SCHEMA public AUTHORIZATION postgres');
     const lifecycle = readFileSync(new URL('../migrations/2952_media_asset_deletion_lifecycle.sql', import.meta.url), 'utf8');
     const auditTable = lifecycle.match(/CREATE TABLE IF NOT EXISTS media_asset_lifecycle_events \([\s\S]*?\n\);/);
     assert.ok(auditTable);
-    sql(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;
+    sql(`DO $roles$ BEGIN
+      IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon; END IF;
+      IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated; END IF;
+      IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role BYPASSRLS; END IF;
+      END $roles$;
       CREATE SCHEMA auth; CREATE TABLE auth.users(id uuid PRIMARY KEY);
       CREATE TABLE public.media_assets(id uuid PRIMARY KEY,owner_user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-        uploader_user_id uuid REFERENCES auth.users(id) ON DELETE CASCADE,version integer NOT NULL,storage_bucket text NOT NULL,storage_path text NOT NULL,
+        uploader_user_id uuid REFERENCES auth.users(id) ON DELETE CASCADE,recovery_generation uuid,version integer NOT NULL,storage_bucket text NOT NULL,storage_path text NOT NULL,
         thumbnail_path text,media_type text NOT NULL,size_bytes bigint,duration_ms integer,deleted_at timestamptz,updated_at timestamptz NOT NULL,
         moderation_status text NOT NULL,processing_status text NOT NULL,purge_status text NOT NULL,purge_requested_at timestamptz,purged_at timestamptz,purge_error text);
       CREATE TABLE public.feature_flags(flag text PRIMARY KEY,enabled boolean,description text);
+      CREATE TABLE public.post_media(user_id uuid,storage_bucket text,storage_path text,thumbnail_storage_path text,feed_storage_path text,recovery_snapshot jsonb);
       ${auditTable[0]}
-      GRANT USAGE ON SCHEMA auth TO service_role;
+      CREATE TABLE public.user_deletion_requests(user_id uuid REFERENCES auth.users(id) ON DELETE CASCADE,status text,execution_token uuid,execution_started_at timestamptz);
+      GRANT USAGE ON SCHEMA public,auth TO service_role;
       GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public,auth TO service_role;`);
+    const retention=readFileSync(new URL('../migrations/4041_media_recovery_retention.sql',import.meta.url),'utf8');
+    const check=retention.match(/ALTER TABLE public\.media_asset_lifecycle_events ADD CONSTRAINT media_asset_lifecycle_events_event_type_check[\s\S]*?;/);
+    assert.ok(check);sql('ALTER TABLE public.media_asset_lifecycle_events DROP CONSTRAINT media_asset_lifecycle_events_event_type_check;'+check[0]);
+    for(const name of ['media_retention_transfer_settled','media_permanent_purge_paths','advance_media_object_purge']) {
+      const start=retention.indexOf(`CREATE FUNCTION public.${name}(`),end=retention.indexOf('$fn$;',start);
+      assert.ok(start>=0 && end>start);sql(retention.slice(start,end+5));
+      const grantStart=retention.indexOf(`REVOKE ALL ON FUNCTION public.${name}(`,end),grantEnd=retention.indexOf('TO service_role;',grantStart);
+      sql(retention.slice(grantStart,grantEnd+'TO service_role;'.length));
+    }
     assert.equal(sql("SELECT confdeltype FROM pg_constraint WHERE conrelid='public.media_asset_lifecycle_events'::regclass AND confrelid='public.media_assets'::regclass AND contype='f'"), 'c');
     const version = readFileSync(new URL('../migrations/3320_media_canonical_contract_constraints.sql', import.meta.url), 'utf8');
     const versionSql = version.match(/CREATE OR REPLACE FUNCTION public\.media_assets_bump_version\(\)[\s\S]*?FOR EACH ROW EXECUTE FUNCTION public\.media_assets_bump_version\(\);/);
@@ -133,14 +158,20 @@ describe('Account Media deletion native source barrier', { skip: !binary && 'POR
   });
   beforeEach(() => {
     sql(`TRUNCATE auth.users CASCADE; TRUNCATE public.media_dubbing_artifacts,public.media_caption_translation_artifacts,public.media_asset_lifecycle_events;
-      INSERT INTO auth.users VALUES('${accountId}'),('${otherId}'); UPDATE public.feature_flags SET enabled=true;
+      INSERT INTO auth.users VALUES('${accountId}'),('${otherId}');
+      INSERT INTO public.user_deletion_requests VALUES('${accountId}','executing',gen_random_uuid(),clock_timestamp()); UPDATE public.feature_flags SET enabled=true;
       INSERT INTO public.media_assets SELECT * FROM jsonb_populate_record(NULL::public.media_assets,${encoded(source())});
       INSERT INTO public.media_caption_manifests(asset_id,source_version,revision_key,object_path)
         VALUES('${assetId}',4,'${revision}','manual-captions/${assetId}/v4-${revision}.json');`);
   });
   after(async () => {
-    try { for (const connection of sessions) await connection.close(); if (started) command('pg_ctl', ['-D', join(root, 'data'), '-m', 'immediate', '-w', '-t', '10', 'stop']); }
-    finally { globalThis.fetch = fetchBefore; if (root) rmSync(root, { recursive: true, force: true }); }
+    try {
+      for (const connection of sessions) await connection.close();
+      await lease?.restore();
+    } finally {
+      await database?.end();
+      globalThis.fetch = fetchBefore;
+    }
   });
 
   test('healthy actual source purge confirms returned version and exact one-row deletion with flags OFF', async () => {
@@ -171,7 +202,8 @@ describe('Account Media deletion native source barrier', { skip: !binary && 'POR
     let observedBeforeDelete = 0;
     connected.state.before = async operation => {
       if (operation.table === 'media_assets' && operation.action === 'delete') {
-        assert.equal(sql(`SELECT count(*) FROM public.media_asset_lifecycle_events WHERE actor_user_id='${otherId}'`), '1');
+        assert.equal(sql(`SELECT count(*) FROM public.media_asset_lifecycle_events WHERE actor_user_id='${otherId}'`), '5');
+        assert.equal(sql(`SELECT count(*) FROM public.media_asset_lifecycle_events WHERE media_asset_id='${assetId}' AND actor_user_id IS DISTINCT FROM '${otherId}'::uuid`), '0');
         assert.equal(sql(`SELECT actor_user_id FROM public.media_asset_lifecycle_events WHERE media_asset_id='${assetId}' AND event_type='purge_succeeded'`), otherId);
         assert.equal(sql(`SELECT purge_status FROM public.media_assets WHERE id='${assetId}'`), 'completed');
         observedBeforeDelete += 1;
@@ -185,7 +217,7 @@ describe('Account Media deletion native source barrier', { skip: !binary && 'POR
   test('actual account service completes only after connected native source purge and fresh empty inventories', async () => {
     sql('UPDATE public.feature_flags SET enabled=false');
     const connected = fixture();
-    const result = await executeAccountDeletion(connected.client, accountId, { actorId: null });
+    const result = await executeAccountDeletion(connected.client, accountId, { ...PERMANENT_DELETION_TEST_OPTIONS });
     assert.equal(result.ok, true, JSON.stringify(result.steps.filter(step => !step.ok)));
     assert.equal(result.deletedCounts.media_assets, 1);
     assert.equal(sql('SELECT count(*) FROM public.media_assets'), '0');
@@ -230,7 +262,7 @@ describe('Account Media deletion native source barrier', { skip: !binary && 'POR
       const setup = kind === 'dubbing' ? dubbingJob() : translationJob();
       assert.ok(value('stage' in setup ? setup.stage : setup.reserve));
       const connected = fixture();
-      const outcome = await executeAccountDeletion(connected.client, accountId, { actorId: null });
+      const outcome = await executeAccountDeletion(connected.client, accountId, { ...PERMANENT_DELETION_TEST_OPTIONS });
       assert.equal(outcome.ok, false);
       assert.deepEqual(connected.fallback.state.authDeleted, []);
       assert.equal(connected.fallback.rows.profiles![0]!.account_status, 'active');
@@ -258,12 +290,16 @@ describe('Account Media deletion native source barrier', { skip: !binary && 'POR
     assert.equal(sql('SELECT count(*) FROM public.media_assets'), '1');
     assert.equal(sql('SELECT purge_status FROM public.media_assets'), 'completed');
   });
-  test('storage error preserves native source and retry uses existing actual purge', async () => {
+  test('uncertain storage preserves native source until observed absence reconciles the claimed purge', async () => {
     const connected = fixture(); connected.state.failRemove = true;
     await assert.rejects(cleanup(connected));
     assert.equal(sql('SELECT purge_status FROM public.media_assets'), 'failed');
     connected.state.failRemove = false;
+    await assert.rejects(cleanup(connected),'a retry must not redispatch an uncertain object removal');
+    const dispatched=connected.operations.filter(operation=>operation.action==='remove').flatMap(operation=>operation.paths!);
+    for(const path of dispatched)connected.objects.delete(`post-media/${path}`);
     assert.equal(await cleanup(connected), 1);
+    for(const path of dispatched)assert.equal(connected.operations.filter(operation=>operation.action==='remove' && operation.paths!.includes(path)).length,1);
   });
   test('rollback restores withdrawal and demonstrates why auth cascade must be gated', async () => {
     const setup = dubbingJob(); assert.equal(value(setup.stage), true);

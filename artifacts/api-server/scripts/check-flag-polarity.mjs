@@ -690,6 +690,16 @@ const DISPOSITIONS = new Set([
 
 const INERT_SEEDED_FLAGS = [
   {
+    flag: 'account_deletion_worker_enabled', seededIn: '2073_account_deletion_worker_flag.sql:27', kind: 'CAPABILITY',
+    disposition: 'remove-from-seed',
+    reason:
+      'Retired by the owner retention rule: content and profiles remain recoverable until explicit admin ' +
+      'permanent deletion. The automatic worker is no longer started, its entry point is inert, and the ' +
+      'old cron route refuses. The canonical hidden-inert list removes this non-operational switch from ' +
+      'public/admin lists and refuses updates. Historical applied seed SQL is preserved; physical removal ' +
+      'of its row and quiescence of old deployed workers remain rollout work, not locally proven cleanup.',
+  },
+  {
     flag: 'rent_buddy_allow_bookings_without_kyc', seededIn: '2074_rent_buddy_kyc_gate_flag.sql:37', kind: 'CAPABILITY',
     disposition: 'remove-from-seed',
     reason:
@@ -971,6 +981,11 @@ const INERT_SEEDED_FLAGS = [
   // flag nobody has examined, and removing it would mean re-deciding what that
   // state is called under time pressure.
   {
+    flag: 'media_event_retention_enabled', seededIn: '4031_media_event_erasure_and_retention.sql:15', kind: 'CAPABILITY',
+    disposition: 'owner-decision',
+    reason: 'READ IN SQL, NOT TYPESCRIPT: purge_expired_media_events in 4031 reads this row under FOR SHARE and requires both enabled=true and metadata.policy_status=approved_after_legal_review. Missing, FALSE, malformed or unapproved metadata returns enabled:false without deleting; SQL errors fail the worker. The existing intel retention scheduler calls the RPC. The 30-day proposal stays OFF pending the legal review required by owner-decisions-20261004.md Q11(a); account erasure is separate and ungated. mediaEventPrivacy.pglite.test.ts and mediaEventPrivacy.postgres.test.ts exercise the transaction boundary.',
+  },
+  {
     flag: 'memory_snapshots_enabled', seededIn: '3990_memory_snapshots.sql:7', kind: 'CAPABILITY',
     disposition: 'owner-decision',
     reason:
@@ -1155,14 +1170,7 @@ const SHADOW_READERS = [
       'per-session consent still gates every action it takes. Reads only safe_return_* CAPABILITY flags ' +
       '(verified by hand at c89f09a77; the reader shape re-read at 6639d347).',
   },
-  {
-    file: 'lib/accountDeletionScheduler.ts',
-    fn: 'isFlagEnabled',
-    reason:
-      'Shadow. Reads the module-level FEATURE_FLAG const (account_deletion_worker_enabled), a CAPABILITY. ' +
-      'Verified by hand at c89f09a77. Named in the Phase 0 report as the shadow that a call-site-pattern ' +
-      'check would have scored as the shared helper.',
-  },
+
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1282,6 +1290,7 @@ const UNRESOLVABLE = [
 // ─────────────────────────────────────────────────────────────────────────────
 const V = 'verified by hand at c89f09a77';
 const DIRECT_READS = [
+  { file: 'lib/mediaAnalytics.ts', flag: 'MEDIA_ANALYTICS_ENABLED', reason: 'Reviewed 2026-11-14: persistMediaEventBatch requires an explicit boolean receipt. Error, throw, absent or malformed flag returns failed for every event and performs no insert; FALSE explicitly discards the batch. TRUE proceeds to an awaited insert with returned-ID validation. mediaAnalyticsReceipt.test.ts covers failed reads and insert receipts; privacy PGlite tests cover trigger-suppressed rows.' },
   { file: 'routes/tripNearby.ts', flag: 'trip_nearby_checkpoints_enabled', reason: 'Reviewed at bfda35d22 (2026-11-05): this availability read returns degraded_unavailable when the flag or membership query errors; a throw reaches asyncHandler. Missing/FALSE is unavailable, and only enabled===true with eligible membership makes it available. No error enables collection; commands enforce their own gate in 4013.' },
   { file: 'services/airport/LayoverRecommendationService.ts', flag: 'layover_live_intersection_enabled', reason: 'readLiveIntersectionFlag returns LayoverRead<boolean>. Database error or throw logs the reason and returns degraded(false, live_flag_unreadable); the recommendation read preserves explicit liveDisclosure and applies the typed conservative fallback. Missing/FALSE is a deliberate disabled read. layoverLiveRead tests pin error, throw, disabled and enabled paths.' },
   { file: 'lib/layoverServiceAudit.ts', flag: 'layover_service_write_audit_enabled', reason: '3890 schema sentinel selects flag, never enabled. A present migration marker runs bounded expiry even after auditing is disabled; only null means absent. Read error, throw, malformed marker or failed/invalid RPC result reports failed and increments the existing retention job failure state. Atomic audit tests A7 prove disabled-flag expiry on the migrated database.' },

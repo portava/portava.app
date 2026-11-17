@@ -2,8 +2,7 @@
  * postcardUploadDevice — the real effects behind the postcard upload queue:
  * the API, storage, native file access and the OS background transfer.
  *
- * Loaded only by getPostcardUploadQueue(), which is only reached while
- * uploadTransportFlag is on. Everything that DECIDES anything lives in the
+ * Loaded only by getPostcardUploadQueue(). Recovery works on either transport. Everything that DECIDES anything lives in the
  * node-tested modules; this file wires them to the device and nothing more.
  */
 import type { QueueRuntime } from './postcardUploadQueue.ts';
@@ -13,6 +12,7 @@ import { apiCall, deviceResumableTransport, putPart, readFileBlob, uploadPoster 
 import { backgroundFile, backgroundPartTransport, loadExpoFs, sweepStagedParts, type FsLike, type PartDescriptor, type StagedSweepResult } from './backgroundTransfer.ts';
 import { extractVideoPoster } from './mediaProcessing.ts';
 import { isResumableMediaUploadEnabled } from './uploadTransportFlag.ts';
+import { newClientEventId } from '../clientEventId.ts';
 import { captureObservedOwnerSnapshot } from '../observedOwnerSnapshot.ts';
 import { onDiscoveryScopeChange } from '../discoveryViewerScope.ts';
 import { createUploadLifetime, type UploadLifetime } from './uploadLifetime.ts';
@@ -46,8 +46,10 @@ async function call<T>(
   return { ok: false, retryable, message: messageOf(r.body, r.status) };
 }
 
-function createShellBody(input: PostcardUploadInput): Record<string, unknown> {
+function createShellBody(input: PostcardUploadInput, operationId?: string): Record<string, unknown> {
   return {
+    deferPublication: true,
+    operationId: operationId && /^[a-f0-9-]{36}$/i.test(operationId) ? operationId : undefined,
     caption: input.caption,
     visibility: input.visibility,
     ...input.location,
@@ -104,24 +106,52 @@ async function deviceDeps(accountId?: string, jobId?: string): Promise<Omit<Pipe
     isCancelled: () => lifetime.signal.aborted && lifetime.isCurrent(),
     cancel: lifetime.cancel,
     dispose: () => { data.subscription.unsubscribe(); lifetime.dispose(); },
-    createShell: (input) =>
-      call('POST', '/api/postcards', createShellBody(input), (b) => (typeof b.id === 'string' ? { id: b.id } : null), lifetime),
+    createShell: (input, operationId) =>
+      call('POST', '/api/postcards', createShellBody(input, operationId), (b) => (typeof b.id === 'string' ? { id: b.id } : null), lifetime),
     reserveSlot: (postId, params) =>
       call('POST', `/api/postcards/${encodeURIComponent(postId)}/media/upload-url`, params, (b) =>
         typeof b.mediaId === 'string' && typeof b.uploadUrl === 'string' ? { mediaId: b.mediaId, uploadUrl: b.uploadUrl } : null, lifetime,
       ),
-    readFile: async (uri) => (fs ? backgroundFile(uri, fs) : ((await readFileBlob(uri)) as unknown as FileLike)),
+    readFile: async (uri) => {
+      const { restoreDraftAsset, releaseDraftPreview } = await import('../composerDraftAsset.ts');
+      const restored = await restoreDraftAsset(uri, owner.ownerId).catch(() => uri); // older queue entries may reference a live cache URI
+      try { return fs ? await backgroundFile(restored, fs) : ((await readFileBlob(restored)) as unknown as FileLike); }
+      finally { if (restored !== uri) releaseDraftPreview(restored); }
+    },
     resumable: { enabled: isResumableMediaUploadEnabled(), transport },
     putWhole: (url, file, mime, onProgress) => putWholeFile(fs, url, file, mime, onProgress, lifetime),
-    extractPoster: extractVideoPoster,
+    extractPoster: async uri => {
+      const { restoreDraftAsset, releaseDraftPreview } = await import('../composerDraftAsset.ts');
+      const restored = await restoreDraftAsset(uri, owner.ownerId).catch(() => uri);
+      try { return await extractVideoPoster(restored); } finally { if (restored !== uri) releaseDraftPreview(restored); }
+    },
+    releaseUploadAsset: async job => {
+      if (!job.input.retainedDraftAssetUri || job.input.asset.uri === job.input.retainedDraftAssetUri) return;
+      const { discardDraftAsset } = await import('../composerDraftAsset.ts');
+      await discardDraftAsset(job.input.asset.uri, owner.ownerId);
+    },
     uploadPoster: (postId, mediaId, uri) => uploadPoster(postId, mediaId, uri, lifetime),
     complete: (postId, mediaId, params) =>
       call('POST', `${slotPath(postId, mediaId)}/complete`, params, (b) => ({
         stampOverlayApplied: typeof b.stampOverlayApplied === 'boolean' ? b.stampOverlayApplied : undefined,
         stampOverlayError: typeof b.stampOverlayError === 'string' ? b.stampOverlayError : undefined,
       }), lifetime),
+    publish: postId => call('POST', `/api/postcards/${encodeURIComponent(postId)}/publish`, {}, b => b.ok === true ? {} : null, lifetime),
     discardShell: async (postId) => {
-      await apiCall('DELETE', `/api/posts/${encodeURIComponent(postId)}`, undefined, cleanupLifetime);
+      const result = await apiCall('DELETE', `/api/postcards/${encodeURIComponent(postId)}/draft`, undefined, cleanupLifetime);
+      if (result.status < 200 || result.status >= 300) throw new Error('Draft cleanup pending');
+    },
+    recordOutcome: async event => { const { deliverComposerOutcome } = await import('../composerOutcomeDelivery.ts'); return deliverComposerOutcome(owner, () => owner.isCurrent(), event); },
+    finishLocalDraft: async job => {
+      if (!job.input.draftKey?.startsWith(`rumazi.composer-draft.v1:${encodeURIComponent(owner.ownerId)}:`)) return;
+      const storage = (await import('@react-native-async-storage/async-storage')).default;
+      const { readComposerDraft, deleteComposerDraft } = await import('../localComposerDraft.ts');
+      const { isPostcardDraft } = await import('../postcardDraft.ts');
+      const draft = await readComposerDraft(storage, job.input.draftKey, isPostcardDraft);
+      if (draft?.uploadJobId !== job.id) return;
+      await deleteComposerDraft(storage, job.input.draftKey);
+      const { discardDraftAsset } = await import('../composerDraftAsset.ts');
+      await discardDraftAsset(draft.asset?.recoveryUri ?? draft.asset?.uri, owner.ownerId);
     },
     now: () => Date.now(),
     env: { sleep: (ms) => new Promise((r) => setTimeout(r, ms)), random: Math.random },
@@ -139,32 +169,41 @@ export function deviceQueueRuntime(): QueueRuntime {
       const { getCurrentAccountId } = await import('../accountId.ts');
       return getCurrentAccountId();
     },
-    newId: () => `pu_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`,
+    newId: newClientEventId,
     now: () => Date.now(),
     deps: deviceDeps,
   };
 }
 
 /**
- * Resume the queue at launch and on every return to the foreground. No-op
- * while the transport flag is off: production keeps the composer's own upload.
+ * Resume the queue at launch and on every return to the foreground. Recovery
+ * runs for either transport, including cancellation and local cleanup journals.
  * Returns an unsubscribe.
  */
 export function installPostcardUploadResume(appState: {
   addEventListener(type: 'change', listener: (state: string) => void): { remove(): void };
 }): () => void {
-  if (!isResumableMediaUploadEnabled()) return () => {};
+  // Draft journals now exist on either transport; the flag still controls
+  // multipart/background capabilities, not recovery of user-initiated work.
   const kick = () => {
     void import('./postcardUploadQueue.ts').then(async ({ getPostcardUploadQueue }) => {
       const q = await getPostcardUploadQueue(); await sweepOrphanedStagedParts(); // §37.8: bounded, never throws, never deletes a resumable job's copy
-      await q.resumePending();
+      await q.resumePending().catch(() => {});
+      const owner = captureObservedOwnerSnapshot();
+      if (owner) {
+        const { retryDraftAssetCleanup } = await import('../composerDraftAsset.ts');
+        const { retryComposerUploadCleanup } = await import('../composerUploadCleanup.ts');
+        const { deliverComposerOutcome } = await import('../composerOutcomeDelivery.ts');
+        await Promise.allSettled([retryDraftAssetCleanup(owner), retryComposerUploadCleanup(owner), deliverComposerOutcome(owner, () => owner.isCurrent())]);
+      }
     }).catch(() => {});
   };
   kick();
+  const unsubscribeOwner = onDiscoveryScopeChange(kick);
   const sub = appState.addEventListener('change', (state) => {
     if (state === 'active') kick();
   });
-  return () => sub.remove();
+  return () => { sub.remove(); unsubscribeOwner(); };
 }
 
 /**

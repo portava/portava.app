@@ -33,7 +33,8 @@
     "lint:dev-proxy-not-shipped": "node scripts/check-dev-proxy-not-shipped.mjs",
     "check:all": "bash scripts/run-all-checks.sh",
     "check:native-config": "node scripts/check-native-package-config.mjs",
-    "eas-build-post-install": "node scripts/check-native-package-config.mjs"
+    "eas-build-post-install": "node scripts/check-native-package-config.mjs",
+    "test:system-quality": "jest --runInBand --forceExit --testPathPattern='(generation.transport|ImageUnderstandingSheet|imageUnderstanding.transport|PostDetail.ownerDelete|WritingAssistControl|inputTransportPrivacy|deviceLocator|CaptionAsrSheet|captions.transport|batchSignMedia.privacy|DisplayMediaImage|mediaUrl.hook|PostcardComposer|create.structuredValues|create.locationAssistance|create.taskOutcome|passport\\.|PassportQuickLinks|useStamp.races|useWatchStamp.unreadCount|serviceRequest|surfaceResponseIntegrity|ownedApiRequest|eventsNearbyContract|eventsFeedIsSavedUnknown|eventReminderMapping|highlights\\.|highlightDetail|trips.readFailure|tripCommands.routeRefusal|WallMomentsStrip|wallApi.degradedLanes|wallCacheRevalidation|mapPrivacy|mapLocationPrivacyUnreadable|mapCompassCommands|discovery.placeDeadline|tripDraft.transport|StampButton.unreadCount|GridTile.videoUrl|tabsLayout.wallEntry|profilePartialSave).*component.test'"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.0",

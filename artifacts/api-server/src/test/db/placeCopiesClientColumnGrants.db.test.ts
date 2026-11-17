@@ -39,7 +39,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HAVE_DB, exec, psql, rows, scalar, seedUser, deleteUser } from "./localDb.js";
+import { HAVE_DB, exec, psql, rows, scalar, seedUser, deleteUser, cleanupSyntheticMedia } from "./localDb.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const MIGRATION = resolve(__dir, "../../migrations/3363_place_copies_client_column_grants.sql");
@@ -77,7 +77,7 @@ const WITHHELD: Record<Table, readonly string[]> = {
     "location_verified", "verification_method", "verified_distance_meters",
     "verified_at", "stamp_eligible", "stamp_reason",
   ],
-  post_media: ["canonical_place_id", "stamp_overlay"],
+  post_media: ["canonical_place_id", "stamp_overlay", "deleted_at", "recovery_snapshot"],
 };
 /** One withheld column per table that a filter-oracle probe names. */
 const ORACLE: Record<Table, string> = {
@@ -168,6 +168,8 @@ const TABLE_LIST = TABLES.map((t) => `'public.${t}'::regclass`).join(", ");
  * column-level, as aclexplode rows; the raw ACL text; the policies; the ledger row.
  */
 const SNAPSHOT = `SELECT json_build_object(
+  'columns', (SELECT json_agg(attname ORDER BY attnum) FROM pg_attribute WHERE attrelid='public.post_media'::regclass AND attnum>0 AND NOT attisdropped),
+  'triggers', (SELECT json_agg(json_build_array(tgname,tgenabled,pg_get_triggerdef(oid),md5(pg_get_functiondef(tgfoid))) ORDER BY tgname) FROM pg_trigger WHERE tgrelid='public.post_media'::regclass AND NOT tgisinternal),
   'privs', (SELECT json_agg(p ORDER BY p) FROM (
       SELECT c.relname || '|' || '' || '|' || CASE WHEN x.grantee = 0 THEN 'PUBLIC' ELSE x.grantee::regrole::text END
              || '|' || x.privilege_type || '|' || x.is_grantable AS p
@@ -223,8 +225,8 @@ describe("census-media §44.11 — 3363: the place columns of pulse_geo_tags, pa
 
   after(() => {
     if (!A) return;
-    exec(`DELETE FROM public.post_media WHERE user_id IN ('${A}', '${S}');
-          DELETE FROM public.passport_postcards WHERE user_id IN ('${A}', '${S}');
+    cleanupSyntheticMedia([A, S].filter(Boolean));
+    exec(`DELETE FROM public.passport_postcards WHERE user_id IN ('${A}', '${S}');
           DELETE FROM public.pulse_geo_tags WHERE user_id IN ('${A}', '${S}');
           DELETE FROM public.posts WHERE author_id IN ('${A}', '${S}');
           DELETE FROM public.places WHERE id = '${PLACE}';`);
@@ -341,7 +343,14 @@ describe("census-media §44.11 — 3363: the place columns of pulse_geo_tags, pa
   });
 
   it("G3-5 — the rollback restores the prior SELECT grants exactly and deletes 3363's ledger row; 3363 re-applies identically", () => {
+    const original=exec(SNAPSHOT)[0];
+    // Rehearse the unchanged historical migration on its original table shape.
+    // The surrounding rollback restores the current policy, columns and trigger.
     const out = exec(`BEGIN;
+      ALTER POLICY post_media_select_post_readable_or_owner ON public.post_media USING
+        ((SELECT auth.uid())=user_id OR EXISTS(SELECT 1 FROM public.posts p WHERE p.id=post_media.post_id));
+      DROP TRIGGER postcard_media_source_retired ON public.post_media;
+      ALTER TABLE public.post_media DROP COLUMN deleted_at, DROP COLUMN recovery_snapshot;
       INSERT INTO public.schema_migration_ledger (filename, checksum, applied_by, notes)
         VALUES ('${LEDGER_NAME}', 'test', 'manual', 'placeCopiesClientColumnGrants.db.test.ts')
         ON CONFLICT (filename) DO NOTHING;
@@ -372,6 +381,6 @@ describe("census-media §44.11 — 3363: the place columns of pulse_geo_tags, pa
     assert.deepEqual(rolled.policies, now.policies, "the rollback changes no policy");
     assert.deepEqual(reapplied.policies, now.policies, "3363 changes no policy");
     // The database is untouched by this test.
-    assert.deepEqual(JSON.parse(exec(SNAPSHOT)[0]!).acltext, now.acltext);
+    assert.equal(exec(SNAPSHOT)[0],original,"historical rollback restores current columns, policy, guards, functions and ACLs");
   });
 });

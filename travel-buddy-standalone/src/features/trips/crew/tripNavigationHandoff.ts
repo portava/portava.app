@@ -107,7 +107,8 @@ let _open: Opener | null = null;
 export function _setOpener(o: Opener | null): void { _open = o; }
 async function openUrl(url: string): Promise<void> {
   if (_open) { await _open(url); return; }
-  const { Linking } = await import('react-native');
+  // Keep this lazy and property-only: Metro importAll reads every native export.
+  const { Linking } = require('react-native') as typeof import('react-native');
   await Linking.openURL(url);
 }
 

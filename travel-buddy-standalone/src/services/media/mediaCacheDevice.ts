@@ -25,7 +25,10 @@ async function deviceFiles(): Promise<CacheFiles | null> {
             await fs.makeDirectoryAsync(dir, { intermediates: true }).catch(() => {});
             made.add(dir);
           }
-          const res = await fs.downloadAsync(url, toUri);
+          const { resolveMediaRequestSources } = await import('../mediaRequestSource.ts');
+          const source = (await resolveMediaRequestSources({ cached: url })).cached;
+          if (!source) return null;
+          const res = await fs.downloadAsync(source.uri, toUri, source.headers ? { headers: source.headers } : undefined);
           if (res.status < 200 || res.status >= 300) {
             await fs.deleteAsync(toUri, { idempotent: true }).catch(() => {});
             return null;

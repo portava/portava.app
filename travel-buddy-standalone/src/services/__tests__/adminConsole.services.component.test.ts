@@ -155,3 +155,19 @@ describe('airport form builders', () => {
     expect(buildCautionZoneBody({ ...z, iataCode: '' }).ok).toBe(false);
   });
 });
+
+
+describe('terminal deletion receipt reconciliation', () => {
+  const { reconcileDeletionRequest } = require('../adminConsole.ts');
+  it('sends only the stable receipt and reviewed generation/reason', async () => {
+    respond(200,{ok:true,completed:true,alreadyCompleted:false});
+    await expect(reconcileDeletionRequest('receipt-id','generation-id','Verify interrupted result')).resolves.toEqual({ok:true,data:{completed:true}});
+    expect(calls[0].url).toBe('http://api.test/api/admin/deletion-requests/receipt-id/reconcile');
+    expect(bodyOf(0)).toEqual({generation:'generation-id',reason:'Verify interrupted result'});
+  });
+  it('refuses malformed success and preserves an unsettled server result', async () => {
+    respond(200,{ok:true}); expect((await reconcileDeletionRequest('receipt','generation','Verify result')).ok).toBe(false);
+    respond(409,{error:'conflict',message:'Deletion remains held'});
+    await expect(reconcileDeletionRequest('receipt','generation','Verify result')).resolves.toEqual({ok:false,error:'Deletion remains held'});
+  });
+});

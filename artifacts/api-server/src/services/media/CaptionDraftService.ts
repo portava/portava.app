@@ -17,7 +17,7 @@ export interface CaptionJob {
   leaseToken?: string;
   expectedSource?: { bucket: string; path: string };
   requestedBy: string;
-  consent: { transcription: true; ownerId: string; recordedAt: string };
+  consent: { disclosureVersion?: string; transcription: true; ownerId: string; recordedAt: string };
 }
 
 export interface CaptionDraft {

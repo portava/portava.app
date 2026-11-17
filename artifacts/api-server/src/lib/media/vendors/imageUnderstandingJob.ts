@@ -47,7 +47,7 @@ export async function runImageUnderstandingJob(input: ImageUnderstandingContext 
       candidates: deriveVisualEvidenceCandidates(IMAGE_UNDERSTANDING_PROVIDER, signals, new Set([source.postId])).candidates,
       pixelScope: source.mediaType === "video" ? "stored_poster" : "image",
       processedAt: new Date(nowMs).toISOString(), pixelSha256: createHash("sha256").update(pixels).digest("hex"),
-      metrics: { inputBytes: acquired.inputBytes, normalizedBytes: pixels.length, elapsedMs: nowMs - started, estimatedExternalCostUsd: 0 },
+      metrics: { inputBytes: acquired.inputBytes, normalizedBytes: pixels.length, elapsedMs: nowMs - started, estimatedExternalCostUsd: (input.env ?? process.env).MEDIA_VISION_EXECUTION === "huggingface" ? null : 0 },
     } };
     }, signal);
   } catch (error) {

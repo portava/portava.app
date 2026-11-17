@@ -110,10 +110,11 @@ export type SensingAggregateReason =
  * contributor's latest row is the one that counts, as for medianSignalBucket).
  * Null whenever the cohort is not publishable: a sub-k cohort's median motion
  * energy is a fact about a handful of people, so it is withheld like the
- * bucket is. Each field is null when no counted contributor carried it.
+ * bucket is. Each field is also withheld unless its own valid contributors
+ * independently meet the same privacy gate; total presence cannot pad it.
  */
 export interface SensingCohortFeatures {
-  /** Contributors whose latest row carried the feature half at all. */
+  /** Contributors whose latest row carried features; zero when that subset is suppressed. */
   contributorsWithFeatures: number;
   motionEnergyCenti: number | null;
   periodicityCenti: number | null;
@@ -127,7 +128,7 @@ export interface SensingCohortFeatures {
   densityBucket: SensingDensityBucket | null;
   /** 0..4, over contributors that held the separate acoustic permission. */
   acousticEnergyBucket: number | null;
-  /** Contributors whose latest row carried the acoustic pair. */
+  /** Qualified acoustic contributors; zero when the acoustic subset is suppressed. */
   acousticContributors: number;
 }
 
@@ -145,8 +146,8 @@ const NO_FEATURES: SensingCohortFeatures = Object.freeze({
 export function cohortFeatures(latestRows: readonly SensingContributionFeatureColumns[]): SensingCohortFeatures {
   const carrying = latestRows.filter((r) => r && typeof r.movement_class === "string");
   if (carrying.length === 0) return NO_FEATURES;
-  const ints = (pick: (r: SensingContributionFeatureColumns) => number | null | undefined): number[] =>
-    carrying.map(pick).filter((v): v is number => typeof v === "number" && Number.isInteger(v));
+  const ints = (pick: (r: SensingContributionFeatureColumns) => number | null | undefined, max: number): number[] =>
+    carrying.map(pick).filter((v): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= max);
   const votes = new Map<SensingDensityBucket, number>();
   for (const r of carrying) {
     const d = r.density_bucket;
@@ -160,12 +161,12 @@ export function cohortFeatures(latestRows: readonly SensingContributionFeatureCo
     const n = votes.get(d) ?? 0;
     if (n > best) { best = n; density = d; }
   }
-  const acoustic = ints((r) => r.acoustic_energy_bucket);
+  const acoustic = ints((r) => r.acoustic_energy_bucket, 4);
   return {
     contributorsWithFeatures: carrying.length,
-    motionEnergyCenti: lowerMedian(ints((r) => r.motion_energy_centi)),
-    periodicityCenti: lowerMedian(ints((r) => r.periodicity_centi)),
-    reducedDwellBucket: lowerMedian(ints((r) => r.dwell_bucket)),
+    motionEnergyCenti: lowerMedian(ints((r) => r.motion_energy_centi, 100)),
+    periodicityCenti: lowerMedian(ints((r) => r.periodicity_centi, 100)),
+    reducedDwellBucket: lowerMedian(ints((r) => r.dwell_bucket, 4)),
     densityBucket: density,
     acousticEnergyBucket: lowerMedian(acoustic),
     acousticContributors: acoustic.length,
@@ -196,7 +197,7 @@ export interface SensingCohortAggregate {
    * carries the ordinal and no label.
    */
   medianSignalBucket: number | null;
-  /** 3312 feature statistics; null unless publishable — see SensingCohortFeatures. */
+  /** 3312 feature statistics; each field additionally gates its own supporters. */
   features: SensingCohortFeatures | null;
 }
 
@@ -230,6 +231,60 @@ export interface SensingAggregateOptions {
   sensitiveSubject?: boolean;
 }
 
+/** Use the same contributor/group counting rule for the whole cohort and each
+ * feature's actual supporters. Total cohort size cannot anonymize a value
+ * provided by only one person inside it. */
+function cohortFacts(rows: readonly SensingContributionRow[]) {
+  const actors = new Set<string>();
+  const groups = new Map<string, Set<string>>();
+  const groupedActors = new Set<string>();
+  let latestMs = Number.NEGATIVE_INFINITY;
+  for (const row of rows) {
+    if (!row.contributor_token) continue;
+    actors.add(row.contributor_token);
+    const created = Date.parse(row.created_at);
+    if (Number.isFinite(created)) latestMs = Math.max(latestMs, created);
+    if (!row.group_token) continue;
+    const members = groups.get(row.group_token) ?? new Set<string>();
+    members.add(row.contributor_token);
+    groups.set(row.group_token, members);
+    groupedActors.add(row.contributor_token);
+  }
+  let largest = 0;
+  for (const members of groups.values()) largest = Math.max(largest, members.size);
+  return {
+    distinctActors: actors.size,
+    distinctGroups: groups.size,
+    maxGroupShare: groupedActors.size ? largest / groupedActors.size : 0,
+    observedAt: Number.isFinite(latestMs) ? new Date(latestMs).toISOString() : null,
+  };
+}
+
+function qualifiedCohortFeatures(rows: readonly SensingContributionRow[], options: SensingAggregateOptions, nowMs: number): SensingCohortFeatures {
+  const carrying = rows.filter(row => typeof row.movement_class === "string");
+  const mayPublish = (supporters: readonly SensingContributionRow[]) => {
+    const facts = cohortFacts(supporters);
+    return evaluatePrivacy({ ...facts, observedAt: facts.observedAt ?? undefined, now: nowMs,
+      sensitiveSubject: options.sensitiveSubject }, options.threshold ?? PRIVACY_THRESHOLD_V1).publishable;
+  };
+  if (!mayPublish(carrying)) return NO_FEATURES;
+  const raw = cohortFeatures(carrying);
+  const numeric = (key: "motion_energy_centi" | "periodicity_centi" | "dwell_bucket" | "acoustic_energy_bucket", max: number) =>
+    carrying.filter(row => typeof row[key] === "number" && Number.isInteger(row[key]) && row[key]! >= 0 && row[key]! <= max);
+  const acoustic = numeric("acoustic_energy_bucket", 4);
+  const acousticAllowed = mayPublish(acoustic);
+  return {
+    contributorsWithFeatures: carrying.length,
+    motionEnergyCenti: mayPublish(numeric("motion_energy_centi", 100)) ? raw.motionEnergyCenti : null,
+    periodicityCenti: mayPublish(numeric("periodicity_centi", 100)) ? raw.periodicityCenti : null,
+    reducedDwellBucket: mayPublish(numeric("dwell_bucket", 4)) ? raw.reducedDwellBucket : null,
+    densityBucket: mayPublish(carrying.filter(row => row.density_bucket && row.density_bucket !== "unknown"
+      && (SENSING_DENSITY_BUCKETS as readonly string[]).includes(row.density_bucket))) ? raw.densityBucket : null,
+    acousticEnergyBucket: acousticAllowed ? raw.acousticEnergyBucket : null,
+    acousticContributors: acousticAllowed ? acoustic.length : 0,
+  };
+}
+
 /**
  * Turn one cohort read into a publish decision.
  *
@@ -250,12 +305,7 @@ export function aggregateSensingCohort(
   const rows: readonly SensingContributionRow[] = read.rows ?? [];
   const fresh = rows.filter((r) => r && !isSensingContributionExpired(r, nowMs));
 
-  // distinctActors — contributors, never rows.
-  const actors = new Set<string>();
-  // Per-group distinct contributors, and the union across all grouped rows.
-  const groupActors = new Map<string, Set<string>>();
-  const groupedActorUnion = new Set<string>();
-  let latestMs = Number.NEGATIVE_INFINITY;
+  const { distinctActors, distinctGroups, maxGroupShare, observedAt } = cohortFacts(fresh);
 
   // One bucket PER CONTRIBUTOR — the contributor's latest row wins, so a device
   // that wrote several rows before 2340's replay key still weighs exactly one.
@@ -266,10 +316,7 @@ export function aggregateSensingCohort(
   for (const r of fresh) {
     const token = r.contributor_token;
     if (!token) continue; // a tokenless row is not a countable contributor
-    actors.add(token);
-
     const created = Date.parse(r.created_at);
-    if (Number.isFinite(created) && created > latestMs) latestMs = created;
 
     if (Number.isInteger(r.signal_bucket)) {
       const createdMs = Number.isFinite(created) ? created : Number.NEGATIVE_INFINITY;
@@ -282,29 +329,7 @@ export function aggregateSensingCohort(
       if (!prev || createdMs >= prev.createdMs) latestRowByActor.set(token, { createdMs, row: r });
     }
 
-    const group = r.group_token;
-    if (group === null || group === undefined || group === "") continue; // zero group credit
-    let set = groupActors.get(group);
-    if (!set) {
-      set = new Set<string>();
-      groupActors.set(group, set);
-    }
-    set.add(token);
-    groupedActorUnion.add(token);
   }
-
-  let maxGroupActors = 0;
-  for (const set of groupActors.values()) {
-    if (set.size > maxGroupActors) maxGroupActors = set.size;
-  }
-  // Union denominator, and always finite (0 when nothing is grouped) so the gate
-  // returns an accurate below_group_threshold rather than invalid_input.
-  const maxGroupShare = groupedActorUnion.size > 0 ? maxGroupActors / groupedActorUnion.size : 0;
-
-  const observedAt = Number.isFinite(latestMs) ? new Date(latestMs).toISOString() : null;
-
-  const distinctActors = actors.size;
-  const distinctGroups = groupActors.size;
 
   // An empty cohort has no observation instant, so the gate's publication-delay
   // clause would see `observedAt: undefined` and answer invalid_input — a
@@ -359,7 +384,7 @@ export function aggregateSensingCohort(
       ? lowerMedian([...bucketByActor.values()].map((v) => v.bucket))
       : null,
     features: decision.publishable
-      ? cohortFeatures([...latestRowByActor.values()].map((v) => v.row))
+      ? qualifiedCohortFeatures([...latestRowByActor.values()].map((v) => v.row), options, nowMs)
       : null,
   };
 }

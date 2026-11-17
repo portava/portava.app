@@ -19,6 +19,7 @@
  */
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { accountDeletionAuthorizationFixture, PERMANENT_DELETION_TEST_OPTIONS } from "./helpers/accountDeletionAuthorizationFixture.js";
 import {
   enumerateSensingRevocationReach,
   type PagedRead,
@@ -61,6 +62,7 @@ function makeFake(opts: FakeOpts = {}) {
   const rows = opts.rows ?? {};
   const ops: Array<{ table: string; op: string; filters: any[] }> = [];
   const shape = opts.shape ?? "bridge";
+  const authorize = accountDeletionAuthorizationFixture(rows, USER);
   function builder(table: string) {
     const q: any = {
       _op: "select",
@@ -69,7 +71,7 @@ function makeFake(opts: FakeOpts = {}) {
       _payload: null as Row | null,
       _limit: undefined as number | undefined,
       _single: false,
-      select() { q._op = "select"; return q; },
+      select() { return q; },
       delete() { q._op = "delete"; return q; },
       update(patch?: Row) { q._op = "update"; q._payload = patch ?? null; return q; },
       upsert() { q._op = "upsert"; return q; },
@@ -108,7 +110,7 @@ function makeFake(opts: FakeOpts = {}) {
             q._filters.every((f: any[]) => (f[0] === "eq" ? r[f[1]] === f[2] : f[0] === "in" ? (f[2] as any[]).includes(r[f[1]]) : true)),
           );
           for (const r of target) Object.assign(r, q._payload);
-          return Promise.resolve({ data: null, error: null });
+          return Promise.resolve({ data: target, error: null });
         }
         let data: Row[] = rows[table] ?? [];
         if (q._op === "select") {
@@ -131,13 +133,15 @@ function makeFake(opts: FakeOpts = {}) {
     _ops: ops,
     from: builder,
     rpc: async (fn: string, args: Record<string, unknown>) => {
+      const receipt = authorize(fn, args);
+      if (receipt) return receipt;
       ops.push({ table: `rpc:${fn}`, op: "rpc", filters: [args] });
       if (fn === "intel_consented_contributor_tokens") return shape === "bridge" ? { data: [], error: null } : absent;
       if (fn === "intel_contributor_token") return absent;
       if (fn === "intel_contributor_tokens_for_actor") {
         return shape === "bridge" ? { data: opts.tokens ?? [TOKEN], error: null } : absent;
       }
-      return { data: null, error: null };
+      return { data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null };
     },
     storage: { from: () => ({ remove: async () => ({ data: null, error: null }) }) },
     auth: { admin: { deleteUser: async () => ({ data: null, error: null }) } },
@@ -341,7 +345,7 @@ describe("S112 — the account-deletion run is the production caller", () => {
 
   it("runs the reach step BEFORE erase_intel_for_actor and records its count", async () => {
     const sc = makeFake({ rows: { posts: [], ...fixtureRows() } });
-    const out = await executeAccountDeletion(sc as any, USER, { actorId: null } as any);
+    const out = await executeAccountDeletion(sc as any, USER, PERMANENT_DELETION_TEST_OPTIONS);
     const step = out.steps.find((s) => s.step === "sensing_revocation_reach");
     assert.ok(step, `no sensing_revocation_reach step: ${out.steps.map((s) => s.step).join(", ")}`);
     assert.equal(step!.ok, true, step!.error);
@@ -355,7 +359,7 @@ describe("S112 — the account-deletion run is the production caller", () => {
 
   it("AFTER the erase, the affected snapshots are recomputed, and those still resting on erased evidence are RETRACTED", async () => {
     const sc = makeFake({ rows: { posts: [], ...fixtureRows() } });
-    const out = await executeAccountDeletion(sc as any, USER, { actorId: null } as any);
+    const out = await executeAccountDeletion(sc as any, USER, PERMANENT_DELETION_TEST_OPTIONS);
     const step = out.steps.find((s) => s.step === "recompute_intel_snapshots_after_erase");
     assert.ok(step, `no recompute step: ${out.steps.map((s) => s.step).join(", ")}`);
     assert.equal(step!.ok, true, step!.error);
@@ -377,7 +381,7 @@ describe("S112 — the account-deletion run is the production caller", () => {
   it("AFTER the recompute, the reached memory is RETAINED and its references to WITHDRAWN snapshots are removed — its reference to a standing one is kept", async () => {
     const rows: Record<string, Row[]> = { posts: [], ...fixtureRows() };
     const sc = makeFake({ rows });
-    const out = await executeAccountDeletion(sc as any, USER, { actorId: null } as any);
+    const out = await executeAccountDeletion(sc as any, USER, PERMANENT_DELETION_TEST_OPTIONS);
     const step = out.steps.find((s) => s.step === "prune_memory_lineage_after_erase");
     assert.ok(step, `no memory lineage step: ${out.steps.map((s) => s.step).join(", ")}`);
     assert.equal(step!.ok, true, step!.error);
@@ -419,7 +423,7 @@ describe("S112 — the account-deletion run is the production caller", () => {
       };
       return q;
     };
-    const out = await executeAccountDeletion(sc as any, USER, { actorId: null } as any);
+    const out = await executeAccountDeletion(sc as any, USER, PERMANENT_DELETION_TEST_OPTIONS);
     const step = out.steps.find((s) => s.step === "prune_memory_lineage_after_erase");
     assert.ok(step && step.ok, step?.error);
     assert.ok(snapshotReads > 0);
@@ -431,7 +435,7 @@ describe("S112 — the account-deletion run is the production caller", () => {
       rows: { posts: [], ...fixtureRows() },
       failSelect: { intel_state_snapshots: "server closed the connection unexpectedly" },
     });
-    const out = await executeAccountDeletion(sc as any, USER, { actorId: null } as any);
+    const out = await executeAccountDeletion(sc as any, USER, PERMANENT_DELETION_TEST_OPTIONS);
     const step = out.steps.find((s) => s.step === "sensing_revocation_reach");
     assert.ok(step);
     assert.equal(step!.ok, false);

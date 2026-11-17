@@ -1,0 +1,205 @@
+{
+  "status": "source frozen and locally verified",
+  "paths": [
+    {
+      "path": "artifacts/api-server/src/scripts/checkFlagSchemaPrerequisites.ts",
+      "sha256": "614103527373a8196a0e82d219cfe0f973cd5a0844f03d08cf91b69b48194db0"
+    },
+    {
+      "path": "artifacts/api-server/src/test/snapshotFreshnessGuard.test.ts",
+      "sha256": "4c62a601c2c2e58bf386b1f779c9be52971235749ea98b7544d8f15477b8f532"
+    },
+    {
+      "path": "artifacts/api-server/src/test/wallLiveStripRoute.test.ts",
+      "sha256": "ba8aa6c76dc50883452380a0ec0feafec65796a2d254f895e7496767d830d71c"
+    },
+    {
+      "path": "artifacts/api-server/src/lib/capability/production-applied-migrations.json",
+      "sha256": "15da13a460b8e9969aad8d789bb57e7c024cdf5a8e8b41116e8e53db4429c448"
+    },
+    {
+      "path": "artifacts/api-server/src/lib/capability/snapshots/current.ts",
+      "sha256": "04eb825ff51a671f15a97127ab1433bf4b8404444f348bdcf9b10e5432942252"
+    },
+    {
+      "path": "artifacts/api-server/src/lib/capability/snapshots/20261114-post-4033-production-schema.json",
+      "sha256": "b43c0dfc803b5eebd4e379371d76033979f35f630ab41b1847718ae7e5f0885b"
+    },
+    {
+      "path": "artifacts/api-server/baseline/20261114_post_4033_production_tables.txt",
+      "sha256": "1179444c2adcb8cc9e413b234bc0a91683a6044b6503e1bd5d66f02c01d2e374"
+    },
+    {
+      "path": "artifacts/api-server/src/scripts/checkProductionDrift.ts",
+      "sha256": "cb675aa122e6e794d0ebbd306c1b2a60b014f937d67a8d1de36b7fc4e0072916"
+    },
+    {
+      "path": "artifacts/api-server/scripts/check-citation-targets.mjs",
+      "sha256": "7131b5f897dabf9f9ea6abcca230886ddb51854df3ab641f00c0029c53d99725"
+    },
+    {
+      "path": "docs/architecture/census-compass.md",
+      "sha256": "e491c8c89e00aa4104a61dc6445f3ded529f129ff33986e08be70f3d9c92e207"
+    },
+    {
+      "path": "docs/architecture/census-discovery.md",
+      "sha256": "3c494a8672164d5af2538b9425ad5dffe94e0a0b08a90d48815e5f70b139ccd2"
+    },
+    {
+      "path": "docs/architecture/census-trips.md",
+      "sha256": "ba32b8eed003e677ecb1412cd36e3003203f7fd3511c2461942db83633b8b30e"
+    },
+    {
+      "path": "docs/architecture/census-media.md",
+      "sha256": "be0c07720c6b0833ef99346c2b29cc4295fcf405fc6a96d48d380719ea19682e"
+    },
+    {
+      "path": "docs/architecture/manual-production-migration-runbook.md",
+      "sha256": "cddbe3c5e6cc1d76fd30f01aff6415c98a229f385d60df750f875b99f8d6a380"
+    },
+    {
+      "path": "docs/architecture/layover-certification.md",
+      "sha256": "d4c64ed461a1ff8b530aa6741cc1fd4427a39f1838bbb6223a063920003a1141"
+    }
+  ],
+  "integrationCommit": "8d59596fe",
+  "verification": {
+    "originalThreeSuites": {
+      "distinctTests": 35,
+      "passingEvidence": "Media15 + Wall13 passed in initial34/35 run; corrected import fixture and all7freshness cases passed on final rerun",
+      "initialFailure": "New import-side-effect control initially used Node24-incompatible --input-type with tsx; changed to a temporary .mjs importer, then passed."
+    },
+    "refreshedProductionSchema": {
+      "distinctTests": 75,
+      "initialRun": {
+        "passed": 74,
+        "failed": 1,
+        "skipped": 0
+      },
+      "isolatedRerun": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "initialFailure": "Real-snapshot CLI subprocess reached its unchanged120second timeout during parallel native compilation; isolated same assertion passed in64.5seconds with no acceptance or timeout change."
+    },
+    "flagPhantomReads": {
+      "passed": 15,
+      "failed": 0,
+      "skipped": 0
+    },
+    "flagPolaritySeedScan": {
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0
+    },
+    "securityCheckSuite": {
+      "passed": 17,
+      "failed": 0,
+      "skipped": 0,
+      "scope": "Real-tree static security guards and runner failure semantics. Credential-gated live authorization contract remains explicitly unavailable with localhost dummy configuration; not claimed as a live check."
+    },
+    "apiProductionTypecheck": {
+      "exitCode": 0
+    },
+    "docCitations": {
+      "exitCode": 0,
+      "result": "clean"
+    },
+    "citationTargets": {
+      "exitCode": 0,
+      "deadTargets": 145,
+      "ceiling": 145,
+      "previousCeiling": 149
+    },
+    "productionCapture": {
+      "capturedAt": "2026-11-14T07:21:18.904166Z",
+      "watermark": "20261114071740",
+      "tablesAndViews": 660,
+      "baseTables": 641,
+      "functions": 532,
+      "enums": 69,
+      "flags": 395,
+      "checksumsVerified": 4,
+      "migrationFileHashesVerified": 5,
+      "oldSnapshotsUnchanged": true,
+      "retentionEnabled": false,
+      "higgsfieldGenerationEnabled": false
+    },
+    "layoverCertification": {
+      "entries": 31,
+      "dependenciesMet": 23,
+      "gradesChanged": false
+    },
+    "gitDiffCheck": {
+      "exitCode": 0
+    }
+  },
+  "evidence": [
+    {
+      "path": "/private/tmp/rumazi-api-three-regressions.log",
+      "sha256": "ae61f3f7a55839d4747972f573e0ed43f9777352a42e0f178d8cf1e7cbcc8a82"
+    },
+    {
+      "path": "/private/tmp/rumazi-snapshot-freshness-final.log",
+      "sha256": "6e15f96994c6f0bb0d2512a3077f0d5045506f92a7856999144d171a683df1de"
+    },
+    {
+      "path": "/private/tmp/rumazi-api-three-regressions-tsc.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/private/tmp/rumazi-schema-cli-verdict-preserved.log",
+      "sha256": "6dbdb58a00aecf58bdfcc8b0b288db550f0df080c4c5703e409fcf78c7cf7781"
+    },
+    {
+      "path": "/private/tmp/rumazi-prod-snapshot-sql-local-proof.log",
+      "sha256": "10edd99d4a3f9122abd5cb6e21174ac8a38e9008e4ec8dfa5e9316d8f002f73a"
+    },
+    {
+      "path": "/private/tmp/rumazi-prod-snapshot-4033-capture.json",
+      "sha256": "b11601dd0668027a6518bb4dab005b7698c3c8f5cbc310c7f7da26c541711566"
+    },
+    {
+      "path": "/private/tmp/rumazi-production-snapshot-refresh.log",
+      "sha256": "e4e8b87bb09862ac550ce6b0cefaa57b9c8d6b2eb51a23473d8291fcfb9eb740"
+    },
+    {
+      "path": "/private/tmp/rumazi-layover-refresh.log",
+      "sha256": "d68562af26772e944457c40d65b7ca92473c45a525a63cc579a7e6da411a04e4"
+    },
+    {
+      "path": "/private/tmp/rumazi-production-4033-schema-regressions.log",
+      "sha256": "859d797e98da0fb7242dd6d248b1a491e48db965dde672525c6cf08263a9e5cd"
+    },
+    {
+      "path": "/private/tmp/rumazi-production-4033-schema-control-isolated.log",
+      "sha256": "658de59dede04385efbf897633af6572f69932660ffe1944bd394e141c791479"
+    },
+    {
+      "path": "/private/tmp/rumazi-production-4033-flag-phantom.log",
+      "sha256": "a40eb766a5a6c1794fad24620898a364088e83d2a9b752e7b0035402433d5d6f"
+    },
+    {
+      "path": "/private/tmp/rumazi-production-4033-flag-polarity.log",
+      "sha256": "9277768db2d3ae06f069cd95abceb99de87a9c85ab1093cb8bbb937525fda0c3"
+    },
+    {
+      "path": "/private/tmp/rumazi-production-4033-security-suite.log",
+      "sha256": "508a1769e54d1b543f2bfb5f777f7ee1d35a28a0a8bd7d99db0dbf1502600a39"
+    },
+    {
+      "path": "/private/tmp/rumazi-production-4033-doc-citations-final.log",
+      "sha256": "aa92ad00176da7b84651c5141836ae594a3d41c6a746e01afefb2a5027882bdf"
+    },
+    {
+      "path": "/private/tmp/rumazi-production-4033-citation-targets-final.log",
+      "sha256": "863c0d3d855fb25f4391df8f4a0686cc28bbfc46443feceb41035938e02c0d6b"
+    }
+  ],
+  "limits": [
+    "The complete API suite at8d59596fe is owned by root and has not been rerun by this agent.",
+    "No iPhone build/device behavior or API deployment was performed by this agent.",
+    "No checklist grade or acceptance requirement was weakened; remaining145legacy dead citation targets are still explicitly bounded by the existing guard."
+  ]
+}

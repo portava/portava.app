@@ -24,6 +24,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import { Camera, Gem, Globe } from 'lucide-react-native';
 
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
@@ -66,6 +67,7 @@ function MediaScreenInner() {
   const { selectedMode, setMode, restored } = useMediaStore(); // restored: the saved mode is back (World on: 'world' arrives only then)
 
   const [quickSheetOpen, setQuickSheetOpen] = useState(false);
+  const [focused, setFocused] = useState(false);
 
   // Filter out modes disabled by feature flags.
   const enabledModes = useMemo(
@@ -76,7 +78,9 @@ function MediaScreenInner() {
   // Emit MEDIA_PAUSE_ALL when the tab loses focus so future players pause cleanly.
   useFocusEffect(
     useCallback(() => {
+      setFocused(true);
       return () => {
+        setFocused(false);
         mediaEvents.emit('MEDIA_PAUSE_ALL');
       };
     }, []),
@@ -104,6 +108,7 @@ function MediaScreenInner() {
 
   return (
     <View style={[styles.screen, { backgroundColor: screenBg }]}>
+      {focused && <StatusBar style={isImmersive ? 'light' : 'dark'} />}
       {/* ── Mode content (fills remaining space) ────────────────────── */}
       <View style={styles.content}>
         {selectedMode === 'watch' && !flagsLoading && restored && <WatchFeed />}{selectedMode === 'world' && <MediaWorldTabSurface modeSwitcher={enabledModes.length > 1 ? <MediaModeSelector modes={enabledModes} selectedMode={selectedMode} onSelect={setMode} /> : null} />}

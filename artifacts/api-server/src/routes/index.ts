@@ -1,6 +1,7 @@
 import mapPrivacyRouter from './mapPrivacy.js';
 import tripNearbyRouter from './tripNearby.js';
 import { Router, type IRouter } from "express";
+import { createMediaGenerationRouter } from "./mediaGeneration.js";
 import verificationRouter from "./verification.js";
 import devicesRouter from "./devices";
 import keyPackagesRouter from "./keyPackages";
@@ -166,6 +167,7 @@ import wallRouter from "./wall.js";
 import wallTelemetryRouter from "./wallTelemetry.js";
 
 const router: IRouter = Router();
+router.use(createMediaGenerationRouter());
 
 router.use(healthRouter);
 router.use(authRouter);

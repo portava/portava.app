@@ -71,6 +71,7 @@ interface FakeState {
   compassProfiles?:     Array<Record<string, unknown>>;
   compassPreferences?:  Array<Record<string, unknown>>;
   tokenMap?:            Record<string, string>;
+  historyReadError?:    boolean;
 }
 
 function makeClient(state: FakeState = {}, callerUserId: string = ALICE_ID) {
@@ -125,7 +126,7 @@ function makeClient(state: FakeState = {}, callerUserId: string = ALICE_ID) {
         }
         return Promise.resolve({ data: filtered[0] ?? null, error: null });
       },
-      then: (resolve: any) => resolve({ data: filtered, error: null }),
+      then: (resolve: any) => resolve({ data: filtered, error: state.historyReadError && table === "compass_conversation_messages" ? { message: "read failed" } : null }),
       update: (_patch: any) => { return b; },
     };
 
@@ -225,7 +226,7 @@ describe("A. Conversation persistence", () => {
     assert.equal(status, 200);
     assert.ok(typeof body.conversationId === "string", "should return conversationId");
     assert.ok(typeof body.message === "string", "should return message");
-    assert.ok(body.promptVersion === "compass-v2");
+    assert.ok(body.promptVersion === "compass-v3");
   });
 
   it("accepts a conversationId and loads its history", async () => {
@@ -279,6 +280,70 @@ describe("A. Conversation persistence", () => {
 // ── B. Multi-turn continuity ──────────────────────────────────────────────────
 
 describe("B. Multi-turn continuity", () => {
+  for (const prompt of ["Plan two days.", "Plan two days in Kyoto."]) {
+    it(`uses conversation constraints instead of a standalone template: ${prompt}`, async () => {
+      const now = new Date().toISOString();
+      const previous = "I'm visiting Kyoto. I need wheelchair access and vegan food, under $40 per day.";
+      _setTestClient(makeClient({ conversations: [{ id: CONV_ID, user_id: ALICE_ID, last_active_at: now }],
+        convMessages: [{ conversation_id: CONV_ID, role: "user", content: previous, created_at: now }],
+      }), true);
+      const requests: Array<{ messages: Array<{ content: string }> }> = [];
+      _setTestOpenAI({ chat: { completions: { create: async (opts: { max_completion_tokens: number; messages: Array<{ content: string }> }) => {
+        if (opts.max_completion_tokens === 256) return { choices: [{ message: { content: '{"intent":"itinerary","confidence":0.95}' } }] };
+        requests.push(opts);
+        return { choices: [{ message: { role: "assistant", content: '{"message":"Let’s plan around your Kyoto constraints.","payload":null,"quickActions":[]}' } }] };
+      } } } } as unknown as Parameters<typeof _setTestOpenAI>[0]);
+      const { body } = await ask({ prompt, currentCity: "Da Nang", conversationId: CONV_ID });
+      assert.equal(body.fallback, undefined);
+      assert.equal(requests.length, 1, "follow-up must reach the reasoning model even when the catalog is empty");
+      assert.ok(requests[0].messages.some(message => message.content === previous));
+      assert.doesNotMatch(String(body.message), /Which city|flexible 2-day outline/);
+    });
+  }
+
+  it("carries displayed identities and destination focus into the actual provider turn", async () => {
+    const now = new Date().toISOString();
+    _setTestClient(makeClient({ conversations: [{ id: CONV_ID, user_id: ALICE_ID, last_active_at: now }],
+      convMessages: [{ conversation_id: CONV_ID, role: "assistant", content: "Here are two quiet options in Kyoto.", created_at: now,
+        payload: { uiBlocks: [{ type: "place_cards", places: [
+          { id: "place-first", name: "Garden", city: "Kyoto", openNow: true },
+          { id: "place-second", name: "Tea House", city: "Kyoto", price: 50 },
+        ] }] } }],
+    }), true);
+    type Request = { max_completion_tokens: number; reasoning_effort: string; messages: Array<{ content: string }> };
+    const calls: Request[] = [];
+    _setTestOpenAI({ chat: { completions: { create: async (opts: Request) => {
+      if (opts.max_completion_tokens === 256) return { choices: [{ message: { content: '{"intent":"question","confidence":0.95}' } }] };
+      calls.push(opts);
+      return { choices: [{ message: { role: "assistant", content: '{"message":"I need current details to compare those options.","payload":null,"quickActions":[]}' } }] };
+    } } } } as unknown as Parameters<typeof _setTestOpenAI>[0]);
+    const { body } = await ask({ prompt: "Compare those two", city: "Kyoto", currentCity: "Da Nang", conversationId: CONV_ID });
+    assert.equal(body.fallback, undefined);
+    const request = calls[0];
+    assert.ok(request, "the follow-up must reach the provider");
+    assert.equal(request.reasoning_effort, "medium");
+    const context = request.messages.at(-1)!.content;
+    assert.match(context, /Selected destination: "Kyoto"/);
+    assert.match(context, /Current city: "Da Nang"/);
+    assert.ok(context.indexOf("place-first") < context.indexOf("place-second"));
+    assert.doesNotMatch(context, /openNow|"price":50/);
+  });
+
+  it("keeps the conversation retryable when history is unreadable, without calling the model", async () => {
+    _setTestClient(makeClient({ historyReadError: true,
+      conversations: [{ id: CONV_ID, user_id: ALICE_ID, last_active_at: new Date().toISOString() }],
+    }), true);
+    let modelCalls = 0;
+    _setTestOpenAI({ chat: { completions: { create: async () => { modelCalls++; throw new Error("must not run"); } } } } as unknown as Parameters<typeof _setTestOpenAI>[0]);
+    for (const stream of [false, true]) {
+      const { body } = await ask({ prompt: "Add the second one", conversationId: CONV_ID, stream });
+      assert.equal(body.conversationId, CONV_ID);
+      assert.equal(body.fallbackReason, "history_unavailable");
+      assert.equal(body.retryable, true);
+    }
+    assert.equal(modelCalls, 0);
+  });
+
   it("follow-up message includes the prior assistant reply in the model context", async () => {
     const now = new Date().toISOString();
     const priorAssistantContent = JSON.stringify({

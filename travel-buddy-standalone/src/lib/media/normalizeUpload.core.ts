@@ -25,6 +25,7 @@
  */
 // Pure: the native seams are injected (NormalizeDeps); normalizeUpload.ts wires the real ones.
 import { CAPTURE_QUALITY, IMAGE_MAX_SIZE_BYTES } from '../../constants/mediaLimits.ts';
+import { photoCaptureTime } from './photoCaptureTime.ts';
 
 /** Longest edge of an uploaded photo. 4096 keeps a 12 MP original whole and brings a 48 MP one down to ~12 MP. */
 export const IMAGE_MAX_EDGE_PX = 4096;
@@ -34,6 +35,9 @@ export const IMAGE_QUALITY_STEPS: readonly number[] = [CAPTURE_QUALITY, 0.85, 0.
 
 /** The fields of a picked asset this module reads and writes — a subset of both ImagePickerAsset and PickedMedia. */
 export interface UploadAsset {
+  exif?: Record<string, unknown> | null;
+  /** Untrusted original-photo metadata, in UTC; not proof of camera origin. */
+  photoCapturedAt?: string | null;
   uri: string;
   mimeType?: string | null;
   fileName?: string | null;
@@ -106,7 +110,12 @@ export interface NormalizeDeps {
  * fileName / fileSize / width / height replaced for a re-encoded photo, and a corrected mimeType for a video.
  */
 export async function normalizeForUploadWith<T extends UploadAsset>(asset: T, deps: NormalizeDeps): Promise<T & UploadAsset> {
-  if (isVideoAsset(asset)) return { ...asset, mimeType: videoMimeFor(asset) };
+  if (isVideoAsset(asset)) return { ...asset, mimeType: videoMimeFor(asset), ...(asset.exif != null ? { exif: null } : {}) };
+
+  // Extract before conversion, then discard the entire EXIF object (including GPS).
+  // A second normalization keeps the previously extracted capture instant.
+  const capturedAt = photoCaptureTime(asset.exif) ?? asset.photoCapturedAt ?? null;
+  asset = { ...asset, ...(asset.exif != null ? { exif: null } : {}), ...(capturedAt ? { photoCapturedAt: capturedAt } : {}) };
 
   const { manipulate, fileSize } = deps;
   const maxBytes = deps.maxBytes ?? IMAGE_MAX_SIZE_BYTES;

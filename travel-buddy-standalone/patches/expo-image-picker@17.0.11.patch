@@ -1,0 +1,12 @@
+diff --git a/android/src/main/java/expo/modules/imagepicker/ImagePickerConstants.kt b/android/src/main/java/expo/modules/imagepicker/ImagePickerConstants.kt
+index cd6d77e5c9a1c29548207404e24dc18e147817ab..09e679d4d6b598688c65cdefb657720e86bd7432 100644
+--- a/android/src/main/java/expo/modules/imagepicker/ImagePickerConstants.kt
++++ b/android/src/main/java/expo/modules/imagepicker/ImagePickerConstants.kt
+@@ -28,6 +28,7 @@ object ImagePickerConstants {
+         ExifInterface.TAG_DATETIME,
+         ExifInterface.TAG_DATETIME_DIGITIZED,
+         ExifInterface.TAG_DATETIME_ORIGINAL,
++        ExifInterface.TAG_OFFSET_TIME_ORIGINAL,
+         ExifInterface.TAG_DEVICE_SETTING_DESCRIPTION,
+         ExifInterface.TAG_EXIF_VERSION,
+         ExifInterface.TAG_FILE_SOURCE,

@@ -297,7 +297,10 @@ export async function prefetchWallMedia(
     const signed = await hydrate(refs);
     const urls = refs
       .map((r) => signed[r])
-      .filter((u): u is string => typeof u === 'string' && u.length > 0);
+      // Authenticated delivery deliberately bypasses image caches. Prefetching
+      // its bytes into a disk cache would retain content after access changes
+      // and cannot accelerate the later no-store display request.
+      .filter((u): u is string => typeof u === 'string' && u.length > 0 && hydratedMediaSource(u) !== null);
     if (urls.length === 0) return [];
     await prefetch(urls);
     return urls;
@@ -335,3 +338,4 @@ function currentWallImageTargetPx(): number {
 // Imported at the TAIL so no cited line above moves; ESM hoists them.
 import { Dimensions } from 'react-native';
 import { drawnWallMediaOf, pickWallImageRef, wallImageTargetPx } from './wallImageVariant.ts';
+import { hydratedMediaSource } from '../../../services/mediaRequestSource.ts';

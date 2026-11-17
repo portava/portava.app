@@ -478,3 +478,37 @@ describe('TV-4a action transport', () => {
     ]);
   });
 });
+
+
+describe('admin recovery of deactivated profiles', () => {
+  const deactivationId = 'dddddddd-0000-4000-8000-000000000001';
+  function installRecoveryReply(fail = false) {
+    let active = false;
+    respond = call => {
+      if (call.url.pathname === `/api/admin/users/${USER_ONE}/summary`) {
+        const record = summary(USER_ONE);
+        return { status: 200, body: { ...record, profile: { ...record.profile, account_status: active ? 'active' : 'deactivated' }, accountStates: active ? [] : [{ id: deactivationId, state: 'deactivated', set_by: USER_TWO, created_at: '2020-01-01T00:00:00Z' }] } };
+      }
+      if (call.url.pathname === `/api/admin/users/${USER_ONE}/reactivate-profile`) {
+        if (fail) return { status: 409, body: { message: 'Deactivation changed; refresh before retrying.' } };
+        active = true; return { status: 200, body: { reactivated: true, alreadyReactivated: false } };
+      }
+      return defaultReply(call);
+    };
+  }
+  it('requires a reason and sends the reviewed deactivation ID separately from lifting sanctions', async () => {
+    installRecoveryReply(); await render(<UserModerationScreen />); await searchUser('first');
+    expect(screen.getByText('Lift ban or suspension')).toBeTruthy();
+    await chooseAction('reactivate-profile'); await fireEvent.press(screen.getByTestId('reason-confirm-btn')); expect(posts()).toHaveLength(0);
+    await confirmReason(); await waitFor(() => expect(posts()).toHaveLength(1));
+    expect(posts()[0].url.pathname).toBe(`/api/admin/users/${USER_ONE}/reactivate-profile`);
+    expect(body(posts()[0])).toEqual({ reason: REASON, deactivationId });
+    await waitFor(() => expect(screen.queryByTestId('action-reactivate-profile')).toBeNull());
+  });
+  it('keeps the profile recoverable control visible and reports a refused recovery', async () => {
+    installRecoveryReply(true); await render(<UserModerationScreen />); await searchUser('first');
+    await chooseAction('reactivate-profile'); await confirmReason(); await waitFor(() => expect(posts()).toHaveLength(1));
+    await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('Reactivate profile failed', expect.any(String)));
+    expect(screen.getByTestId('action-reactivate-profile')).toBeTruthy();
+  });
+});

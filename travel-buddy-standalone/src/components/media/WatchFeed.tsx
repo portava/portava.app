@@ -297,6 +297,7 @@ function WatchFeedForViewer() {
   return (
     <View style={s.root}>
       <WatchFeedList
+        sessionId={feed.sessionId}
         autoplayOnView
         items={feed.items}
         activeIndex={feed.activeIndex}

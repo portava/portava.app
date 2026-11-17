@@ -1,0 +1,11 @@
+{
+  "kind": "exact_silence_regression",
+  "eligibleForReplacement": false,
+  "seconds": 0.7687538750469685,
+  "inputSha256": "190415015d40eef0cd797e1b59ffe00846b01873050b12d44b3a216de3faa2a9",
+  "output": {
+    "language": "und",
+    "languageProbability": 0,
+    "segments": []
+  }
+}

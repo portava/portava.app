@@ -1,0 +1,43 @@
+{
+  "date": "2026-11-16T15:19:56.844Z",
+  "sourceCommit": "390371f83",
+  "modelId": "openai/clip-vit-base-patch32@d44250afa9f05af7eca021052567539406661018:clip-rgb224-v1",
+  "modelLockSha256": "49eae3b429f46f786d84d83992966606dedc930dab1d1b507d0c678078a33437",
+  "networkDenied": true,
+  "syntheticOnly": true,
+  "actualProductionAdapter": true,
+  "actualImageAndTextSubprocesses": true,
+  "wrongModelLockRefused": true,
+  "dimensions": 512,
+  "imageMs": 8725.557084,
+  "textMs": 7574.932625000001,
+  "vectorDigest": "5c7a5a5dda8c9c1dfac4f7c2c5a685072e1c8bc6b2cc3ed6314c76217722ad19",
+  "sourceSha256": {
+    "tools/media-visual-index/clip_worker.py": "06a54c9ebc745dd37574389deeb136c6671c0d0fbae25b209dad1371d17077fa",
+    "tools/media-visual-index/prove_model.py": "33551a1f71d60965523ca765741c7279d8a8798c6936893206f6b2bc05f2e898",
+    "artifacts/api-server/src/lib/media/visualIndex/localClipEncoder.ts": "f2cb41c7ff21b98a50c11bb2cf56af4b3063ce60aa41b9a39faae72152107e5d",
+    "artifacts/api-server/src/lib/media/visualIndex/contracts.ts": "4683f7e5f71988f1088803e7985954b4d09c7f27228b74cf092a907cf624618b"
+  },
+  "travelRetrievalQuality": false,
+  "deployed": false,
+  "eligibleForReplacement": false,
+  "runtime": {
+    "python": "3.12.16",
+    "platform": "macOS26.6.2-arm64",
+    "packages": {
+      "torch": "2.6.0",
+      "transformers": "4.57.1",
+      "safetensors": "0.6.2",
+      "Pillow": "12.3.0",
+      "numpy": "2.3.5"
+    }
+  },
+  "shapeVerifier": {
+    "modelId": "openai/clip-vit-base-patch32@d44250afa9f05af7eca021052567539406661018:clip-rgb224-v1",
+    "syntheticOnly": true,
+    "redCircleTextCosine": 0.3158232219970633,
+    "blueSquareTextCosine": 0.2673572357038417,
+    "imageVectorDigest": "31d2c1e0d838031772370705ea1ed6abfd065dddcd252cc1a14c4bac0a87eec0"
+  },
+  "latencyScope": "One image and one text subprocess; not a benchmark"
+}

@@ -10,8 +10,12 @@
  *   affect the user experience.
  * • Dedup: identical events within the dedup window are dropped.
  */
-import { useCallback, useEffect, useRef } from 'react';
-import { freshToken } from '../services/apiToken.ts';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { AppState } from 'react-native';
+import { useFeatureFlags } from '../context/FeatureFlagsContext.tsx';
+import { captureMessagingOwnerRequest, type MessagingOwnerRequest } from '../services/messagingOwnerRequest.ts';
+import { fetchOwnedApi } from '../services/ownedApiRequest.ts';
+import { mediaAnalyticsPayload } from '../services/mediaAnalyticsPayload.ts';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -94,72 +98,101 @@ const DEDUP_WINDOW_MS = 5_000;
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useMediaAnalytics(sessionId?: string) {
+  const { isEnabled } = useFeatureFlags();
+  const enabled = isEnabled('MEDIA_ANALYTICS_ENABLED');
+  const enabledNow = useRef(enabled);
+  useLayoutEffect(() => { enabledNow.current = enabled; }, [enabled]);
   const queue = useRef<Array<{ type: MediaEventType; payload: MediaEventPayload }>>([]);
+  const owner = useRef<MessagingOwnerRequest | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dedupRef = useRef<Map<string, number>>(new Map());
-  const unmountedRef = useRef(false);
+  const mounted = useRef(true);
+  const inFlight = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    return () => {
-      unmountedRef.current = true;
-      // Flush on unmount (best-effort)
-      if (queue.current.length > 0) void flush();
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const clearTimer = useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = null;
   }, []);
+  const discard = useCallback(() => {
+    clearTimer();
+    queue.current = [];
+    dedupRef.current.clear();
+    owner.current = null;
+    inFlight.current?.abort();
+  }, [clearTimer]);
 
-  const flush = useCallback(async () => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-    if (queue.current.length === 0) return;
-
-    const events = queue.current.splice(0);
+  const flush = useCallback(async function flushBatch(): Promise<void> {
+    clearTimer();
+    const capturedOwner = owner.current;
+    if (!enabledNow.current || !capturedOwner?.isCurrent()) { discard(); return; }
+    if (inFlight.current || queue.current.length === 0) return;
+    const events = queue.current.splice(0, BATCH_SIZE_MAX);
+    const controller = new AbortController();
+    inFlight.current = controller;
     try {
-      const token = await freshToken();
-      if (!token) return;
-      const base = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-      // Best-effort — ignore errors
-      await fetch(`${base}/api/media/analytics/batch`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ events }),
+      await fetchOwnedApi('/api/media/analytics/batch', {
+        method: 'POST', body: { events }, owner: capturedOwner,
+        signal: controller.signal, isCurrent: () => enabledNow.current,
       });
     } catch {
-      // Silently swallow — analytics must never affect the user experience
+      // Best effort; never retry an ambiguously accepted analytics batch.
+    } finally {
+      if (inFlight.current === controller) inFlight.current = null;
+      // One in-flight batch per hook. A one-shot delay drains any arrivals;
+      // there is no periodic network work while the queue is empty.
+      if (queue.current.length && enabledNow.current && owner.current?.isCurrent()) {
+        clearTimer();
+        timerRef.current = setTimeout(() => void flushBatch(), DEBOUNCE_MS);
+      }
     }
-  }, []);
+  }, [clearTimer, discard]);
+
+  useEffect(() => {
+    if (!enabled) discard();
+  }, [enabled, discard]);
+
+  useEffect(() => {
+    mounted.current = true;
+    const subscription = AppState.addEventListener('change', state => {
+      if (state !== 'active') void flush();
+    });
+    return () => {
+      mounted.current = false;
+      subscription.remove();
+      clearTimer();
+      void flush();
+    };
+  }, [clearTimer, flush]);
 
   const record = useCallback(
     (type: MediaEventType, payload: MediaEventPayload = {}) => {
-      // Dedup check for impression/view events
-      const deduplicatedTypes: MediaEventType[] = ['impression', 'qualified_view', 'completion'];
-      if (deduplicatedTypes.includes(type)) {
+      if (!mounted.current || !enabledNow.current) return;
+      const safePayload = mediaAnalyticsPayload({ ...payload, session_id: payload.session_id ?? sessionId });
+      if (!safePayload) return;
+      const capturedOwner = captureMessagingOwnerRequest();
+      if (!capturedOwner?.isCurrent()) { discard(); return; }
+      // A logout/login, even to the same account, invalidates the old epoch.
+      // Capture at the action, never when a later batch obtains its token.
+      if (!owner.current?.isCurrent()) discard();
+      owner.current = capturedOwner;
+      if (['impression', 'qualified_view', 'completion'].includes(type)) {
         const key = `${type}:${payload.media_id ?? payload.post_id ?? ''}`;
+        const at = Date.now();
         const last = dedupRef.current.get(key);
-        if (last && Date.now() - last < DEDUP_WINDOW_MS) return;
-        dedupRef.current.set(key, Date.now());
+        if (last !== undefined && at >= last && at - last < DEDUP_WINDOW_MS) return;
+        dedupRef.current.delete(key);
+        dedupRef.current.set(key, at);
+        if (dedupRef.current.size > 128) dedupRef.current.delete(dedupRef.current.keys().next().value!);
       }
-
-      queue.current.push({
-        type,
-        payload: { ...payload, session_id: payload.session_id ?? sessionId },
-      });
-
-      if (queue.current.length >= BATCH_SIZE_MAX) {
-        void flush();
-        return;
-      }
-
-      if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => void flush(), DEBOUNCE_MS);
+      // Bound memory under a stalled transport. Dropping telemetry is preferable
+      // to retaining a growing action history or delaying the product action.
+      if (queue.current.length >= 50) return;
+      queue.current.push({ type, payload: safePayload });
+      clearTimer();
+      if (queue.current.length >= BATCH_SIZE_MAX) void flush();
+      else timerRef.current = setTimeout(() => void flush(), DEBOUNCE_MS);
     },
-    [flush, sessionId],
+    [clearTimer, discard, flush, sessionId],
   );
 
   return { record, flush };

@@ -331,12 +331,17 @@ export function createCautionZone(body: CautionZoneBody): Promise<AdminApiResult
 // worker is switched on.
 
 export interface DeletionRequest {
-  /** The user id; the table is keyed by user_id and the route echoes it as id. */
+  /** Stable receipt identity; the profile FK may become null during erasure. */
   id: string;
-  user_id: string;
+  user_id: string | null;
+  deletion_request_id?: string;
+  can_reconcile?: boolean;
   requested_at: string | null;
   scheduled_at: string | null;
   status: string;
+  recovery_generation: string;
+  recovery_verified: boolean;
+  execution_started_at: string | null;
 }
 
 export interface DeletionStep {
@@ -362,8 +367,8 @@ export async function listDeletionRequests(): Promise<AdminApiResult<DeletionReq
 }
 
 /** Irreversible: deletes the account now. A failed step comes back as the error text. */
-export async function executeDeletionRequest(userId: string): Promise<AdminApiResult<DeletionOutcome>> {
-  const r = await adminPost<Partial<DeletionOutcome>>(`/api/admin/deletion-requests/${encodeURIComponent(userId)}/execute`, {});
+export async function executeDeletionRequest(userId: string, generation: string, reason: string): Promise<AdminApiResult<DeletionOutcome>> {
+  const r = await adminPost<Partial<DeletionOutcome>>(`/api/admin/deletion-requests/${encodeURIComponent(userId)}/execute`, { generation, reason });
   if (!r.ok) return r;
   return {
     ok: true,
@@ -375,4 +380,20 @@ export async function executeDeletionRequest(userId: string): Promise<AdminApiRe
       warnings: Array.isArray(r.data?.warnings) ? r.data.warnings : [],
     },
   };
+}
+
+/** Verify an existing dispatch result; this endpoint never sends another erase. */
+export async function reconcileDeletionRequest(requestId: string, generation: string, reason: string): Promise<AdminApiResult<{ completed: true }>> {
+  const result = await adminPost<{ completed?: boolean }>(`/api/admin/deletion-requests/${encodeURIComponent(requestId)}/reconcile`, { generation, reason });
+  if (!result.ok) return result;
+  if (result.data.completed !== true) return { ok: false, error: 'Deletion completion was not confirmed. The existing claim remains held.' };
+  return { ok: true, data: { completed: true } };
+}
+
+/** Restore the selected deletion generation; malformed success is not recovery. */
+export async function recoverDeletionRequest(userId: string, generation: string, reason: string): Promise<AdminApiResult<{ recovered: true; accountStatus: string }>> {
+  const r = await adminPost<{ recovered?: boolean; accountStatus?: string }>(`/api/admin/deletion-requests/${encodeURIComponent(userId)}/recover`, { generation, reason });
+  if (!r.ok) return r;
+  if (r.data.recovered !== true || !['active', 'deactivated'].includes(r.data.accountStatus ?? '')) return { ok: false, error: 'Profile recovery was not confirmed. Refresh its current state.' };
+  return { ok: true, data: { recovered: true, accountStatus: r.data.accountStatus! } };
 }

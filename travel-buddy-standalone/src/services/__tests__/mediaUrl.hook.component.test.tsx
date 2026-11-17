@@ -64,13 +64,17 @@ function stubFetch(
 
 // ── Setup / teardown ─────────────────────────────────────────────────────────
 
+const originalApiBase = process.env.EXPO_PUBLIC_API_BASE_URL;
 beforeEach(() => {
+  process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
   _origFetch = globalThis.fetch;
   _resetBatchSignCache();
   _setTestSignTokenProvider(async () => 'test-access-token');
 });
 
 afterEach(() => {
+  if (originalApiBase === undefined) delete process.env.EXPO_PUBLIC_API_BASE_URL;
+  else process.env.EXPO_PUBLIC_API_BASE_URL = originalApiBase;
   globalThis.fetch = _origFetch;
   _resetBatchSignCache();
   _setTestSignTokenProvider(null);

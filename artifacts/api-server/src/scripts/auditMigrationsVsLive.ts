@@ -438,7 +438,7 @@ const ALLOWLIST = new Set([
   //
   // If a direct-from-client read of post-media is ever required, restore the
   // policy from 2089's DOWN block and delete this entry in the same change.
-  "policy:objects.post_media_storage_public_read",
+  "policy:storage.objects.post_media_storage_public_read",
   // RETIRED 2026-09-09: `function:is_blocked` and `function:viewer_in_call`
   // used to sit here. Both existed for one reason — this auditor resolved
   // claimed functions in `public` only, so the authz-schema membership
@@ -632,12 +632,12 @@ export async function fetchLiveSchema(): Promise<LiveSchema> {
        join pg_namespace n on n.oid = p.pronamespace
        where n.nspname in ('public', 'authz')`,
     ),
-    liveQuery<{ name: string }>(
-      `select indexname as name from pg_indexes where schemaname = 'public'`,
+    liveQuery<{ name: string; s: string }>(
+      `select indexname as name, schemaname as s from pg_indexes where schemaname <> 'information_schema' and left(schemaname, 3) <> 'pg_'`,
     ),
-    liveQuery<{ t: string; p: string }>(
-      // storage included: some migrations create policies on storage.objects
-      `select tablename as t, policyname as p from pg_policies where schemaname in ('public','storage')`,
+    liveQuery<{ t: string; p: string; s: string }>(
+      // Realtime and private schemas also carry canonical policy claims.
+      `select tablename as t, policyname as p, schemaname as s from pg_policies where schemaname <> 'information_schema' and left(schemaname, 3) <> 'pg_'`,
     ),
     liveQuery<{ e: string; v: string }>(
       `select t.typname as e, e.enumlabel as v
@@ -709,8 +709,8 @@ export async function fetchLiveSchema(): Promise<LiveSchema> {
     columns: new Set(cols.map((r) => `${relationClaimKey(r.s, r.t)}.${lc(r.c)}`)),
     functions: new Set(fns.filter((r) => r.s === "public").map((r) => lc(r.name))),
     authzFunctions: new Set(fns.filter((r) => r.s === "authz").map((r) => lc(r.name))),
-    indexes: new Set(idxs.map((r) => lc(r.name))),
-    policies: new Set(pols.map((r) => lc(`${r.t}.${r.p}`))),
+    indexes: new Set(idxs.map((r) => relationClaimKey(r.s, r.name))),
+    policies: new Set(pols.map((r) => `${relationClaimKey(r.s, r.t)}.${lc(r.p)}`)),
     enums: new Set(enums.map((r) => lc(r.e))),
     enumValues: new Set(enums.map((r) => lc(`${r.e}.${r.v}`))),
     triggers: new Set(trgs.map((r) => lc(`${r.t}.${r.g}`))),
@@ -920,21 +920,24 @@ export function parseMigration(sql: string): Claim[] {
   // CREATE [UNIQUE] INDEX [CONCURRENTLY] [IF NOT EXISTS] <name>
   scan(
     new RegExp(
-      String.raw`create\s+(?:unique\s+)?index\s+(?:concurrently\s+)?(?:if\s+not\s+exists\s+)?${ident}\s+on\b`,
+      String.raw`create\s+(?:unique\s+)?index\s+(?:concurrently\s+)?(?:if\s+not\s+exists\s+)?${ident}\s+on\s+(?:only\s+)?${schemaQualIdent}`,
       "gi",
     ),
-    (m) => add("index", name(m), `index ${name(m)}`),
+    (m) => {
+      const index = relationClaimKey(m[3], name(m));
+      add("index", index, `index ${index}`);
+    },
   );
 
   // CREATE POLICY <name> ON <table>
   scan(
     new RegExp(
-      String.raw`create\s+policy\s+${ident}\s+on\s+${qualIdent}`,
+      String.raw`create\s+policy\s+${ident}\s+on\s+${schemaQualIdent}`,
       "gi",
     ),
     (m) => {
       const pol = name(m, 1);
-      const table = name(m, 3);
+      const table = tableKey(m, 3);
       add("policy", `${table}.${pol}`, `policy "${pol}" on ${table}`);
     },
   );

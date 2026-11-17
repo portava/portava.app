@@ -32,6 +32,7 @@ import { initCityTimezonePersistence } from "./compass/CompassGraphEngine.js";
 import { assertRequiredEnv } from "./lib/envValidation";
 import { startWorkerLoop, queryStampWorkerHealth, startHealthMonitorLoop } from "./lib/stamps/generationWorker";
 import { startVisualGenerationWorker } from "./lib/visuals/generationWorker";
+import { startHiggsfieldGenerationWorker } from "./lib/media/generation/worker.js";
 import { startFxRefreshLoop } from "./lib/fxRefreshScheduler"; import "./lib/paymentsStartupLog.js"; // payments/identity provider mode: one startup line, booleans only (lib/paymentsMode.ts)
 import { startXXCatalogSweeper } from "./lib/stamps/xxCatalogRepair";
 import { startCorrectionSweep } from "./lib/stamps/countryGeocoder";
@@ -45,7 +46,6 @@ import { startPostPlaceBackfillWorker } from "./lib/places/postPlaceBackfillWork
 import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js"; import { startMediaProcessingWorker } from "./lib/media/mediaProcessingWorker.js"; import { startPendingUploadSweepScheduler } from "./lib/media/pendingUploadSweepScheduler.js"; import { startMessageMediaPartsSweepScheduler } from "./lib/messageMediaPartsSweep.js"; // census-telegraph T223 (3656)
 import { startPlaceCollectionsWorker } from "./lib/places/placeCollectionsWorker.js";
 import { startCompassSearchDecayFlushScheduler } from "./lib/compassSearchDecayFlushScheduler.js";
-import { startAccountDeletionScheduler } from "./lib/accountDeletionScheduler.js";
 import { startStoryRetentionScheduler } from "./lib/storyRetentionScheduler.js"; import { startDiscoveryServeLogRetentionScheduler } from "./lib/discoveryServeLogRetentionScheduler.js"; import { startRankingDebugSamplePurgeScheduler } from "./lib/rankingDebugSamplePurgeScheduler.js"; // census-discovery §120; §133 (DV-52) the flag-gated debug-sample purge
 import { startLocationSnapshotPurgeScheduler } from "./lib/locationSnapshotPurgeScheduler.js";
 import { startIntelRetentionScheduler } from "./lib/intelRetentionScheduler.js";
@@ -236,10 +236,6 @@ app.listen(port, (err) => {
   // without it.
   registerScopedTrustApplier();
   startIntelAttributionScheduler();
-  // Executes due user_deletion_requests. Irreversible, so it is gated behind
-  // the `account_deletion_worker_enabled` feature flag and fails closed —
-  // starting it here is safe even before the flag is turned on.
-  startAccountDeletionScheduler();
   // Purges the Story archive on the owner-decided windows (365d expired, 30d
   // owner-deleted, 30d engagement). Hourly.
   //
@@ -275,6 +271,7 @@ app.listen(port, (err) => {
   // Unconditionally started: it is a low-overhead poller; jobs are only
   // created when generation is explicitly requested via the API.
   startVisualGenerationWorker();
+  startHiggsfieldGenerationWorker();
 
   // FX daily refresh — only when FX_REFRESH_ENABLED=true. Pulls ECB reference
   // rates (frankfurter.dev) into fx_rates once a day so budget conversions stay

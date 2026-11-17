@@ -1,3 +1,6 @@
+import { memoryEditFixture } from './helpers/memoryEditFixture.js';
+import { makeKernelRpc } from './memoryCommandKernelFake.js';
+import { memoryItemWriterFake } from "./helpers/memoryItemWriterFake.js";
 import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -91,6 +94,7 @@ function baseState(): FakeState {
 }
 
 function makeClient(state: FakeState) {
+  const editRpc = makeKernelRpc({ tables: state as unknown as Record<string, any[]>, rpcCalls: [], failOn: new Set(), absent: false });
   function from(table: string) {
     const filters: Array<(r: any) => boolean> = [];
     let pendingInsert: any = null;
@@ -216,6 +220,7 @@ function makeClient(state: FakeState) {
 
   return {
     from,
+    rpc: async(name:string,args:unknown)=> name === 'memory_field_edits_ready' || name === 'memory_kernel_execute' ? editRpc(name,args) : (await memoryItemWriterFake({from},name,args))??{data:null,error:{message:'rpc not modelled'}},
     auth: {
       getUser: async (token: string) => {
         const map: Record<string, { id: string }> = {
@@ -445,7 +450,7 @@ describe("PATCH /api/memories/:id", () => {
   it("updates title for owner", async () => {
     const app = await startApp(baseState());
     try {
-      const { status, body } = await patch(app.baseUrl, `/api/memories/${MEM_ID}`, auth("owner-tok"), { title: "Updated title" });
+      const { status, body } = await patch(app.baseUrl, `/api/memories/${MEM_ID}`, auth("owner-tok"), memoryEditFixture(app.state.memories[0], { title: "Updated title" }));
       assert.equal(status, 200);
       assert.ok(body?.memory?.title === "Updated title");
     } finally { await app.close(); }
@@ -456,6 +461,8 @@ describe("PATCH /api/memories/:id", () => {
     try {
       const { status } = await patch(app.baseUrl, `/api/memories/${MEM_ID}`, auth("owner-tok"), {});
       assert.equal(status, 400);
+      const onlyBase = await patch(app.baseUrl, `/api/memories/${MEM_ID}`, auth("owner-tok"), { expected: { state: "published" } });
+      assert.equal(onlyBase.status, 400);
     } finally { await app.close(); }
   });
 });
@@ -840,6 +847,8 @@ describe("GET /api/trips/:tripId/memory", () => {
 interface SerializedMemory {
   id: string;
   ownerId: string;
+  title: string | null;
+  caption: string | null;
   truthClass: string;
   establishesCurrentStatus: boolean;
 }
@@ -847,6 +856,35 @@ interface MemoryBody { memory: SerializedMemory }
 interface MemoryListBody { memories: SerializedMemory[] }
 const one = (b: unknown): MemoryBody => b as MemoryBody;
 const many = (b: unknown): MemoryListBody => b as MemoryListBody;
+
+describe("H1 primary Memory fact projection", () => {
+  it("detail, feed and profile views preserve facts without publishing layout, narrative or private controls", async () => {
+    const state = baseState();
+    Object.assign(state.memories[0], {
+      narrative: { title: "Invented title", placeId: "invented-place" },
+      presentation_json: { title: "Layout title" },
+      internal_notes: "not a viewer field",
+      allowed_user_ids: [FRIEND_ID], hidden_user_ids: ["hidden-person"],
+    });
+    const original = structuredClone(state.memories[0]);
+    const app = await startApp(state);
+    try {
+      for (const path of [`/api/memories/${MEM_ID}`, "/api/memories", `/api/users/${USER_ID}/memories`]) {
+        const result = await get(app.baseUrl, path, auth("stranger-tok"));
+        assert.equal(result.status, 200, path);
+        const rows = path === `/api/memories/${MEM_ID}` ? [one(result.body).memory] : many(result.body).memories;
+        assert.equal(rows.length, 1, path);
+        assert.equal(rows[0].title, "Tokyo 2024", path);
+        assert.equal(rows[0].caption, "Great trip", path);
+        assert.equal(rows[0].truthClass, "historical", path);
+        assert.equal(rows[0].establishesCurrentStatus, false, path);
+        for (const key of ["narrative", "presentation_json", "internal_notes", "allowedUserIds", "hiddenUserIds", "audience", "facts"])
+          assert.equal(Object.hasOwn(rows[0], key), false, `${path}: ${key}`);
+      }
+      assert.deepEqual(state.memories[0], original, "projecting three views must not write back to the canonical source");
+    } finally { await app.close(); }
+  });
+});
 
 describe("§1 historical truth class on canonical Memory payloads", () => {
   it("a single Memory read carries truthClass historical and establishesCurrentStatus false", async () => {
@@ -904,7 +942,7 @@ describe("§1 historical truth class on canonical Memory payloads", () => {
       assert.equal(one(created.body).memory.truthClass, "historical");
       assert.equal(one(created.body).memory.establishesCurrentStatus, false);
 
-      const patched = await patch(app.baseUrl, `/api/memories/${MEM_ID}`, auth("owner-tok"), { title: "Dinner, corrected" });
+      const patched = await patch(app.baseUrl, `/api/memories/${MEM_ID}`, auth("owner-tok"), memoryEditFixture(app.state.memories[0], { title: "Dinner, corrected" }));
       assert.equal(patched.status, 200);
       assert.equal(one(patched.body).memory.truthClass, "historical");
       assert.equal(one(patched.body).memory.establishesCurrentStatus, false);
@@ -951,7 +989,7 @@ describe("§24 source version, from the route", () => {
     const app = await startApp(state);
     const cap = captureLines();
     try {
-      const { status } = await patch(app.baseUrl, `/api/memories/${MEM_ID}`, auth("owner-tok"), { title: "Corrected" });
+      const { status } = await patch(app.baseUrl, `/api/memories/${MEM_ID}`, auth("owner-tok"), memoryEditFixture(app.state.memories[0], { title: "Corrected" }));
       assert.equal(status, 200);
     } finally {
       cap.restore();

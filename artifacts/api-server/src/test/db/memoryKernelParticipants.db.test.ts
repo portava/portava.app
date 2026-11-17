@@ -1,3 +1,4 @@
+import { memoryEditFixture } from '../helpers/memoryEditFixture.js';
 /**
  * memoryKernelParticipants.db.test.ts — the §17 writes that used to happen
  * AFTER memory_kernel_execute returned, now inside it (migration 3911), driven
@@ -99,6 +100,10 @@ function install(): void {
 }
 
 function call(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> {
+  if (method === "PATCH" && /^\/api\/memories\/[0-9a-f-]+$/.test(path) && body && typeof body === "object") {
+    const row = rows<Record<string, unknown>>(`SELECT * FROM public.memories WHERE id='${path.split('/').at(-1)}'`)[0];
+    if (row) body = memoryEditFixture(row, body as Record<string, unknown>);
+  }
   return new Promise((resolvePromise, reject) => {
     const url = new URL(path, base);
     const payload = body === undefined ? undefined : JSON.stringify(body);
@@ -467,9 +472,18 @@ describe("§17: a Memory's participants, type, occurrence text and source post a
       assert.equal(created.status, 201, JSON.stringify(created.body));
       m = String(created.body.memory.id);
       install();
+      const beforeSeq = lastSeq(m);
+      const beforeRow = rows(`SELECT * FROM public.memories WHERE id='${m}'`)[0];
       const res = await call("PATCH", `/api/memories/${m}`, { state: "published" }, { "idempotency-key": randomUUID() });
+      if (kernel === "2711") {
+        assert.equal(res.status, 503, JSON.stringify(res.body));
+        assert.equal(lastSeq(m), beforeSeq);
+        assert.deepEqual(rows(`SELECT * FROM public.memories WHERE id='${m}'`)[0], beforeRow);
+        assert.equal(writes().filter(x => CANONICAL_WRITE.test(x) || KERNEL_RPC.test(x)).length, 0);
+        return;
+      }
       assert.equal(res.status, 200, JSON.stringify(res.body));
-      const ev = evAt(m, 2)!;
+      const ev = evAt(m, beforeSeq + 1)!;
       assert.deepEqual([ev.type, ev.command_type], ["memory.confirmed", "CONFIRM_MEMORY"]);
       assert.equal(scalar(`SELECT state FROM public.memories WHERE id = '${m}'`), "published");
       assert.equal(xminOf("memories", `id = '${m}'`), ev.xmin);
@@ -478,9 +492,18 @@ describe("§17: a Memory's participants, type, occurrence text and source post a
 
     test(`Q2[${kernel}] PATCH visibility is CHANGE_VISIBILITY: memory.visibility_changed, written with the audience`, async () => {
       flags = { ...PROD_FLAGS }; install();
+      const beforeSeq = lastSeq(m);
+      const beforeRow = rows(`SELECT * FROM public.memories WHERE id='${m}'`)[0];
       const res = await call("PATCH", `/api/memories/${m}`, { visibility: "friends_only" }, { "idempotency-key": randomUUID() });
+      if (kernel === "2711") {
+        assert.equal(res.status, 503, JSON.stringify(res.body));
+        assert.equal(lastSeq(m), beforeSeq);
+        assert.deepEqual(rows(`SELECT * FROM public.memories WHERE id='${m}'`)[0], beforeRow);
+        assert.equal(writes().filter(x => CANONICAL_WRITE.test(x) || KERNEL_RPC.test(x)).length, 0);
+        return;
+      }
       assert.equal(res.status, 200, JSON.stringify(res.body));
-      const ev = evAt(m, 3)!;
+      const ev = evAt(m, beforeSeq + 1)!;
       assert.deepEqual([ev.type, ev.command_type], ["memory.visibility_changed", "CHANGE_VISIBILITY"]);
       assert.equal(scalar(`SELECT visibility FROM public.memories WHERE id = '${m}'`), "friends_only");
       assert.equal(xminOf("memories", `id = '${m}'`), ev.xmin);
@@ -489,27 +512,41 @@ describe("§17: a Memory's participants, type, occurrence text and source post a
 
     test(`Q3[${kernel}] PATCH placeId is CHANGE_PLACE: memory.corrected, with the new place; on 3911 its occurrence text is in the same UPDATE, on 2711 it is the route's own write`, async () => {
       flags = { ...PROD_FLAGS }; install();
+      const beforeSeq = lastSeq(m);
+      const beforeRow = rows(`SELECT * FROM public.memories WHERE id='${m}'`)[0];
       const res = await call("PATCH", `/api/memories/${m}`, { placeId: `prov:${TAG}-q3`, placeDisplayNameAtOccurrence: "Q Place Three" }, { "idempotency-key": randomUUID() });
+      if (kernel === "2711") {
+        assert.equal(res.status, 503, JSON.stringify(res.body));
+        assert.equal(lastSeq(m), beforeSeq);
+        assert.deepEqual(rows(`SELECT * FROM public.memories WHERE id='${m}'`)[0], beforeRow);
+        assert.equal(writes().filter(x => CANONICAL_WRITE.test(x) || KERNEL_RPC.test(x)).length, 0);
+        return;
+      }
       assert.equal(res.status, 200, JSON.stringify(res.body));
-      const ev = evAt(m, 4)!;
+      const ev = evAt(m, beforeSeq + 1)!;
       assert.deepEqual([ev.type, ev.command_type], ["memory.corrected", "CHANGE_PLACE"]);
       assert.deepEqual(rows(`SELECT place_id, place_display_name_at_occurrence FROM public.memories WHERE id = '${m}'`),
         [{ place_id: `prov:${TAG}-q3`, place_display_name_at_occurrence: "Q Place Three" }], "a changed place never keeps the old place's text");
-      if (kernel === "3911") {
-        assert.equal(xminOf("memories", `id = '${m}'`), ev.xmin);
-        assertOnlyTheKernelWroteTheMemory("Q3");
-      } else {
-        // 2711, production today: the kernel moves the place, then the route writes the text itself — the §CA.4 hole 3911 closes.
-        assert.equal(writes().filter((x) => /^WITH w AS \(UPDATE public\.memories SET place_display_name_at_occurrence = /.test(x)).length, 1, "on 2711 the occurrence text is a direct write after the kernel");
-      }
+      assert.equal(xminOf("memories", `id = '${m}'`), ev.xmin);
+      assertOnlyTheKernelWroteTheMemory("Q3");
     });
 
     test(`Q4[${kernel}] POST /memories/:id/items is ADD_MEDIA: memory.corrected, written with the item`, async () => {
       flags = { ...PROD_FLAGS }; install();
+      const beforeSeq = lastSeq(m);
       const res = await call("POST", `/api/memories/${m}/items`, { mediaUrl: `https://example.test/${TAG}-q4.jpg`, mediaType: "image/jpeg", position: 0 }, { "idempotency-key": randomUUID() });
+      if (kernel === "2711") {
+        assert.equal(res.status, 503, JSON.stringify(res.body));
+        assert.equal(lastSeq(m), beforeSeq);
+        assert.equal(scalar(`SELECT count(*) FROM public.memory_items WHERE memory_id='${m}'`), "0");
+        // An existing pre-cutover item still needs REMOVE_MEDIA coverage.
+        item = randomUUID();
+        exec(`INSERT INTO public.memory_items(id,memory_id,media_url,media_type,position) VALUES('${item}','${m}','https://example.test/existing.jpg','image/jpeg',0)`);
+        return;
+      }
       assert.equal(res.status, 201, JSON.stringify(res.body));
       item = String(res.body.item?.id ?? res.body.id);
-      const ev = evAt(m, 5)!;
+      const ev = evAt(m, beforeSeq + 1)!;
       assert.deepEqual([ev.type, ev.command_type], ["memory.corrected", "ADD_MEDIA"]);
       assert.equal(xminOf("memory_items", `id = '${item}'`), ev.xmin);
       assertOnlyTheKernelWroteTheMemory("Q4");
@@ -517,9 +554,10 @@ describe("§17: a Memory's participants, type, occurrence text and source post a
 
     test(`Q5[${kernel}] DELETE /memories/:id/items/:itemId is REMOVE_MEDIA: memory.corrected, and the item is gone with it`, async () => {
       flags = { ...PROD_FLAGS }; install();
+      const beforeSeq = lastSeq(m);
       const res = await call("DELETE", `/api/memories/${m}/items/${item}`, undefined, { "idempotency-key": randomUUID() });
       assert.ok(res.status === 200 || res.status === 204, JSON.stringify(res));
-      const ev = evAt(m, 6)!;
+      const ev = evAt(m, beforeSeq + 1)!;
       assert.deepEqual([ev.type, ev.command_type], ["memory.corrected", "REMOVE_MEDIA"]);
       assert.equal(scalar(`SELECT count(*) FROM public.memory_items WHERE id = '${item}'`), "0");
       assertOnlyTheKernelWroteTheMemory("Q5");
@@ -527,9 +565,10 @@ describe("§17: a Memory's participants, type, occurrence text and source post a
 
     test(`Q6[${kernel}] the tagged person approving is ADD_PERSON: memory.corrected, written with the consent`, async () => {
       flags = { ...PROD_FLAGS }; install();
+      const beforeSeq = lastSeq(m);
       const res = await call("PATCH", `/api/memories/${m}/tags/${viewer}`, { action: "approve" }, { authorization: `Bearer ${VIEWER_TOKEN}`, "idempotency-key": randomUUID() });
       assert.equal(res.status, 200, JSON.stringify(res.body));
-      const ev = evAt(m, 7)!;
+      const ev = evAt(m, beforeSeq + 1)!;
       assert.deepEqual([ev.type, ev.command_type], ["memory.corrected", "ADD_PERSON"]);
       assert.equal(scalar(`SELECT status FROM public.memory_tags WHERE memory_id = '${m}' AND tagged_user_id = '${viewer}'`), "approved");
       assert.equal(xminOf("memory_tags", `memory_id = '${m}' AND tagged_user_id = '${viewer}'`), ev.xmin);
@@ -539,9 +578,10 @@ describe("§17: a Memory's participants, type, occurrence text and source post a
 
     test(`Q7[${kernel}] the owner removing the person is REMOVE_PERSON: memory.corrected, written with the removal`, async () => {
       flags = { ...PROD_FLAGS }; install();
+      const beforeSeq = lastSeq(m);
       const res = await call("PATCH", `/api/memories/${m}/tags/${viewer}`, { action: "remove" }, { "idempotency-key": randomUUID() });
       assert.equal(res.status, 200, JSON.stringify(res.body));
-      const ev = evAt(m, 8)!;
+      const ev = evAt(m, beforeSeq + 1)!;
       assert.deepEqual([ev.type, ev.command_type], ["memory.corrected", "REMOVE_PERSON"]);
       assert.equal(scalar(`SELECT status FROM public.memory_tags WHERE memory_id = '${m}' AND tagged_user_id = '${viewer}'`), "removed");
       assert.equal(xminOf("memory_tags", `memory_id = '${m}' AND tagged_user_id = '${viewer}'`), ev.xmin);
@@ -551,9 +591,18 @@ describe("§17: a Memory's participants, type, occurrence text and source post a
 
     test(`Q8[${kernel}] PATCH state → archived is ARCHIVE_MEMORY: memory.archived, written with the state change`, async () => {
       flags = { ...PROD_FLAGS }; install();
+      const beforeSeq = lastSeq(m);
+      const beforeRow = rows(`SELECT * FROM public.memories WHERE id='${m}'`)[0];
       const res = await call("PATCH", `/api/memories/${m}`, { state: "archived" }, { "idempotency-key": randomUUID() });
+      if (kernel === "2711") {
+        assert.equal(res.status, 409, JSON.stringify(res.body)); // Earlier historical publish was refused: draft cannot archive.
+        assert.equal(lastSeq(m), beforeSeq);
+        assert.deepEqual(rows(`SELECT * FROM public.memories WHERE id='${m}'`)[0], beforeRow);
+        assert.equal(writes().filter(x => CANONICAL_WRITE.test(x) || KERNEL_RPC.test(x)).length, 0);
+        return;
+      }
       assert.equal(res.status, 200, JSON.stringify(res.body));
-      const ev = evAt(m, 9)!;
+      const ev = evAt(m, beforeSeq + 1)!;
       assert.deepEqual([ev.type, ev.command_type], ["memory.archived", "ARCHIVE_MEMORY"]);
       assert.equal(scalar(`SELECT state FROM public.memories WHERE id = '${m}'`), "archived");
       assert.equal(xminOf("memories", `id = '${m}'`), ev.xmin);
@@ -586,6 +635,14 @@ describe("§17: a Memory's participants, type, occurrence text and source post a
       const src = String(c.body.memory.id);
       const items: string[] = [];
       for (const n of [1, 2]) {
+        if (kernel === "2711") {
+          // Historical items predate the new source-insertion contract. Keep
+          // testing their graph split without bypassing today's ADD_MEDIA gate.
+          const existing = randomUUID();
+          exec(`INSERT INTO public.memory_items(id,memory_id,media_url,media_type,position) VALUES('${existing}','${src}','https://example.test/existing-${n}.jpg','image/jpeg',${n})`);
+          items.push(existing); continue;
+        }
+
         const r = await call("POST", `/api/memories/${src}/items`, { mediaUrl: `https://example.test/${TAG}-q10-${n}.jpg`, position: n }, { "idempotency-key": randomUUID() });
         assert.equal(r.status, 201, JSON.stringify(r.body));
         items.push(String(r.body.item?.id ?? r.body.id));

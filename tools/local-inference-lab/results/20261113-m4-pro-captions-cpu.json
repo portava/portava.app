@@ -1,0 +1,19 @@
+{
+  "kind": "cpu_probe_observed_from_run_log",
+  "eligibleForReplacement": false,
+  "completedAllCases": false,
+  "firstCase": {
+    "completed": "public_jfk",
+    "seconds": 130.476,
+    "wordErrorRate": 0.0,
+    "audioSeconds": 11
+  },
+  "failedCase": "tts_english",
+  "failure": "timeout",
+  "timeoutSeconds": 180,
+  "remainingCasesNotRun": [
+    "tts_spanish",
+    "tts_vietnamese",
+    "silence"
+  ]
+}

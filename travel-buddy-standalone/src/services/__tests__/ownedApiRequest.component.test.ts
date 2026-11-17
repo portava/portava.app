@@ -136,3 +136,20 @@ for (const target of ['comments', 'replies'] as const) {
     expect(await pending).toEqual({ok: false, denied: false});
   });
 }
+
+it.each(['/api/users/me/saved-places', '/api/posts/post/share-preview', '/api/post-references/ref', '/api/posts/post/destinations'])(
+  'accepts the native transport final URL for %s without reparsing it', async path => {
+    const originalURL = globalThis.URL;
+    // Use the shipped native implementation, not Node's WHATWG URL. It appends
+    // a slash when parsing response.url as an absolute URL without a query.
+    globalThis.URL = require('react-native/Libraries/Blob/URL').URL;
+    try {
+      fetchMock.mockImplementation(async (url: string) => ({ ok: true, status: 200, url, json: async () => ({ ok: true }) }));
+      const response = await fetchOwnedApi(path);
+      expect(await response.json()).toEqual({ ok: true });
+      expect(fetchMock.mock.lastCall[0]).toBe(`https://api.test${path}`);
+      fetchMock.mockResolvedValue({ ok: true, status: 200, url: `https://other.test${path}` });
+      await expect(fetchOwnedApi(path)).rejects.toThrow('redirected');
+    } finally { globalThis.URL = originalURL; }
+  },
+);

@@ -33,7 +33,7 @@ const moment = (id: string, subject: string, route: string, over: Record<string,
   transition: { kind: 'crowd_shift', claimType: 'crowd.level', from: 'busy', to: 'packed' },
   occurredAt: new Date(Date.now() - 4 * 60_000).toISOString(),
   relevanceWindow: { from: '', until: '' }, reason: { code: 'crowd_shift', text: 'Crowd went from busy to packed' },
-  truthClass: 'corroborated', confidence: 'high', freshness: 'fresh', coverage: 'several', expiresAt: '', claimRef: 's1',
+  truthClass: 'corroborated', confidence: 'high', freshness: 'fresh', coverage: 'several', expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(), claimRef: 's1',
   attention: { route, reasons: [], factors: {} }, ...over,
 });
 

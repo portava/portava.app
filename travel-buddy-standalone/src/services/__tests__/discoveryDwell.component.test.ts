@@ -1,3 +1,10 @@
+// SDK boundary only; real observed owner, token binding and owned HTTP transport run.
+jest.mock('../../lib/supabase.ts', () => {
+  const listeners = new Set();
+  return { isSupabaseConfigured: true, supabase: { auth: { listeners,
+    onAuthStateChange: (listener: unknown) => { listeners.add(listener); return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } }; },
+  } } };
+});
 /**
  * discoveryDwell — `04` §7's three dwell kinds, classified from real signals,
  * and the sender's gates (census-discovery DV-41, §55).
@@ -17,12 +24,14 @@
  *
  * Run with: pnpm test:component
  */
+import { seedObservedOwnerSession, disposeObservedOwnerSession, observedOwnerAccessToken, emitObservedAuthEvent, observedOwnerSession } from './observedOwnerSessionFixture.ts';
+import { setDiscoveryViewerFromSession } from '../discoveryViewerScope.ts';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // NOTE: intentionally exhaustive — apiToken imports the Supabase client; only
 // freshToken is needed and a controllable token is all these tests require.
-const mockFreshToken = jest.fn<Promise<string | null>, []>(async () => 'test-token');
+const mockFreshToken = jest.fn<Promise<string | null>, []>();
 jest.mock('../apiToken.ts', () => ({ freshToken: () => mockFreshToken() }));
 
 import {
@@ -43,13 +52,15 @@ const ORIGINAL_FETCH = global.fetch;
 const ORIGINAL_BASE = process.env.EXPO_PUBLIC_API_BASE_URL;
 
 beforeEach(() => {
+  setDiscoveryViewerFromSession('dwell-owner-a'); seedObservedOwnerSession('dwell-owner-a','dwell-session-a');
   process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
   global.fetch = fetchMock as unknown as typeof fetch;
   fetchMock.mockReset();
-  fetchMock.mockImplementation(() => Promise.resolve({ ok: true, status: 200 } as Response));
+  fetchMock.mockImplementation((_url, init) => Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, recorded: JSON.parse(String(init?.body)).dwell.length, duplicates: 0 }) } as Response));
   mockFreshToken.mockReset();
-  mockFreshToken.mockImplementation(async () => 'test-token');
+  mockFreshToken.mockImplementation(async () => observedOwnerAccessToken('dwell-owner-a','dwell-session-a'));
 });
+afterEach(() => { disposeObservedOwnerSession(); setDiscoveryViewerFromSession(null); });
 afterAll(() => {
   global.fetch = ORIGINAL_FETCH;
   process.env.EXPO_PUBLIC_API_BASE_URL = ORIGINAL_BASE;
@@ -143,6 +154,7 @@ describe('K7 — the sender', () => {
   });
 
   it('signed OUT sends nothing', async () => {
+    disposeObservedOwnerSession(); setDiscoveryViewerFromSession(null);
     mockFreshToken.mockImplementation(async () => null);
     await expect(sendDwellEmission(emission, { enabled: true })).resolves.toBe('skipped_signed_out');
     expect(fetchMock).not.toHaveBeenCalled();
@@ -153,7 +165,7 @@ describe('K7 — the sender', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe('https://api.test/api/rank-events/dwell');
-    expect((init!.headers as Record<string, string>).Authorization).toBe('Bearer test-token');
+    expect((init!.headers as Record<string, string>).Authorization).toBe(`Bearer ${observedOwnerAccessToken('dwell-owner-a','dwell-session-a')}`);
     expect(JSON.parse(String(init!.body))).toEqual(emission);
   });
 
@@ -184,5 +196,89 @@ describe('K8 — the interaction window', () => {
     expect(decl).toBeGreaterThan(0);
     expect(src.slice(Math.max(0, decl - 400), decl)).toMatch(/UNRATIFIED/);
     expect(DWELL_INTERACTION_WINDOW_MS).toBeGreaterThan(0);
+  });
+});
+
+describe('K9 — owner and live collection boundaries across awaits', () => {
+  const emission: DwellEmission = { item_id: 'db/p1', surface: 'discovery', recommendation_id: RID, client_event_id: CEID, dwell: [{kind:'active',ms:5000}] };
+  const flush = async () => { for(let i=0;i<20;i++) await Promise.resolve(); };
+  it('never sends old-view bytes with a token resolved after an account switch', async () => {
+    let resolve!: (value:string)=>void;
+    mockFreshToken.mockImplementationOnce(()=>new Promise(done=>{resolve=done;}));
+    const pending=sendDwellEmission(emission,{enabled:true}); await flush();
+    setDiscoveryViewerFromSession('dwell-owner-b');
+    emitObservedAuthEvent('SIGNED_IN',observedOwnerSession('dwell-owner-b','dwell-session-b'));
+    resolve(observedOwnerAccessToken('dwell-owner-b','dwell-session-b'));
+    expect(await pending).toBe('refused'); expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it('rechecks collection after token work and never retries a withdrawn measurement', async () => {
+    let enabled=true,resolve!: (value:string)=>void;
+    mockFreshToken.mockImplementationOnce(()=>new Promise(done=>{resolve=done;}));
+    const pending=sendDwellEmission(emission,{enabled:true,isCurrent:()=>enabled}); await flush();
+    enabled=false;resolve(observedOwnerAccessToken('dwell-owner-a','dwell-session-a'));
+    expect(await pending).toBe('refused');expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockFreshToken).toHaveBeenCalledTimes(1);
+  });
+  it('does not retry a failed request after the original session ends', async () => {
+    fetchMock.mockImplementationOnce(async()=>{
+      emitObservedAuthEvent('SIGNED_OUT',null);
+      emitObservedAuthEvent('SIGNED_IN',observedOwnerSession('dwell-owner-a','replacement-session'));
+      return {ok:false,status:503} as Response;
+    });
+    expect(await sendDwellEmission(emission,{enabled:true})).toBe('refused');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it('aborts stalled transport on an owner change without waiting for its deadline', async () => {
+    fetchMock.mockImplementationOnce(()=>new Promise(()=>{}));
+    const pending=sendDwellEmission(emission,{enabled:true});await flush();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    setDiscoveryViewerFromSession('dwell-owner-b');
+    expect(await pending).toBe('refused');
+    expect(fetchMock.mock.calls[0][1]!.signal!.aborted).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('K10 — confirmed receipts and same-account session replacement', () => {
+  const emission: DwellEmission = { item_id: 'db/p1', surface: 'discovery', recommendation_id: RID, client_event_id: CEID, dwell: [{ kind: 'active', ms: 5000 }] };
+  const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
+  it('does not accept malformed or partial success; retries once with the identical body', async () => {
+    for (const receipt of [null, [], {}, { ok: true }, { ok: true, recorded: 0, duplicates: 0 },
+      { ok: true, recorded: -1, duplicates: 2 }, { ok: true, recorded: 0.5, duplicates: 0.5 }]) {
+      fetchMock.mockClear();
+      fetchMock.mockImplementation(async () => ({ ok: true, status: 200, json: async () => receipt } as Response));
+      expect(await sendDwellEmission(emission, { enabled: true })).toBe('failed');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[0][1]!.body).toBe(fetchMock.mock.calls[1][1]!.body);
+    }
+  });
+  it('accepts a confirmed exact duplicate after an ambiguous response, but never an explicit refusal', async () => {
+    fetchMock.mockImplementationOnce(async () => ({ ok: true, status: 200, json: async (): Promise<unknown> => { throw new Error('truncated response'); } } as Response));
+    fetchMock.mockImplementationOnce(async () => ({ ok: true, status: 200, json: async () => ({ ok: true, recorded: 0, duplicates: 1 }) } as Response));
+    expect(await sendDwellEmission(emission, { enabled: true })).toBe('sent');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    fetchMock.mockClear();
+    fetchMock.mockImplementation(async () => ({ ok: true, status: 200, json: async () => ({ ok: false, recorded: 1, duplicates: 0 }) } as Response));
+    expect(await sendDwellEmission(emission, { enabled: true })).toBe('refused');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it('SDK session replacement aborts a stalled request while Discovery viewer stays the same', async () => {
+    fetchMock.mockImplementationOnce(() => new Promise(() => {}));
+    const pending = sendDwellEmission(emission, { enabled: true }); await flush();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    emitObservedAuthEvent('SIGNED_IN', observedOwnerSession('dwell-owner-a', 'replacement-session'));
+    await flush();
+    expect(fetchMock.mock.calls[0][1]!.signal!.aborted).toBe(true);
+    expect(await pending).toBe('refused');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it('a receipt decoded after the original session ends cannot acknowledge or retry', async () => {
+    let resolve!: (value: unknown) => void;
+    fetchMock.mockImplementationOnce(async () => ({ ok: true, status: 200, json: () => new Promise(done => { resolve = done; }) } as Response));
+    const pending = sendDwellEmission(emission, { enabled: true }); await flush();
+    emitObservedAuthEvent('SIGNED_IN', observedOwnerSession('dwell-owner-a', 'replacement-session'));
+    resolve({ ok: true, recorded: 1, duplicates: 0 });
+    expect(await pending).toBe('refused');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

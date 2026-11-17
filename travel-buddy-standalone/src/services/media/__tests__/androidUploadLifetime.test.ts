@@ -111,3 +111,79 @@ it('a persisted notification cancellation blocks replay after a fresh JS lifetim
     assert.equal(lifetime.signal.reason, 'user'); assert.equal(n.uploads(), 0);
   } finally { lifetime.dispose(); }
 });
+
+it('cancellation after media verification never publishes and retries failed cleanup after restart', async () => {
+ let cancelled=false, published=0, removes=0;
+ const runtime=deps({isCancelled:()=>cancelled, complete:async()=>{cancelled=true;return {ok:true,data:{}};},
+  publish:async()=>{published++;return {ok:true,data:{}};}, discardShell:async()=>{if(++removes===1)throw new Error('offline');}});
+ let job=await runPostcardUpload(newPostcardUploadJob('job','a',input,1),runtime);
+ assert.equal(job.stage,'cancelled');assert.equal(job.cleanupPending,true);assert.equal(published,0);
+ job=await runPostcardUpload(JSON.parse(JSON.stringify(job)),runtime);
+ assert.equal(job.cleanupPending,false);assert.equal(removes,2);assert.equal(published,0);
+});
+it('cancellation while publication acknowledgement is in flight withdraws the owned operation',async()=>{
+ let cancelled=false, removes=0;
+ const job=await runPostcardUpload(newPostcardUploadJob('job','a',input,1),deps({isCancelled:()=>cancelled,
+  publish:async()=>{cancelled=true;return {ok:true,data:{}};},discardShell:async()=>{removes++;}}));
+ assert.equal(job.stage,'cancelled');assert.equal(removes,1);
+});
+it('a failed publication retries only publication, retains outcome identities and sends no draft input',async()=>{
+ let publish=0, upload=0;
+ const runtime=deps({putWhole:async()=>{upload++;return {ok:true};},publish:async()=>++publish===1?{ok:false,retryable:true,message:'network'}:{ok:true,data:{}}});
+ let job=await runPostcardUpload(newPostcardUploadJob('job','a',{...input,caption:'private caption',trackOutcomes:true},1),runtime);
+ assert.equal(job.stage,'verified');assert.equal(job.retryable,true);
+ const failureId=job.pendingOutcomes![0]!.event_id;
+ job=await runPostcardUpload(JSON.parse(JSON.stringify(job)),runtime);
+ assert.equal(job.stage,'done');assert.equal(upload,1);assert.equal(job.pendingOutcomes![0]!.event_id,failureId);
+ assert.deepEqual(job.pendingOutcomes!.map(e=>e.outcome),['upload_failed','published']);
+ assert.equal(JSON.stringify(job.pendingOutcomes).includes('private caption'),false);
+ assert.equal(JSON.stringify(job.pendingOutcomes).includes('file:///'),false);
+});
+it('a durable cancelled job cannot resume bytes after queue reconstruction',async()=>{
+ const storage=new Map<string,string>();let puts=0;
+ const paused={...newPostcardUploadJob('job','a',input,1),stage:'slot' as const,postId:'post',mediaId:'media',uploadUrl:'signed',fileSizeBytes:5,cancelRequested:true};
+ storage.set(queueKey('a'),JSON.stringify([paused]));
+ const queue=new PostcardUploadQueue({storage:{getItem:async k=>storage.get(k)??null,setItem:async(k,v)=>{storage.set(k,v);}},accountId:async()=> 'a',newId:()=> 'unused',now:()=>1,deps:async()=>deps({putWhole:async()=>{puts++;return {ok:true};}})});
+ await queue.resumePending();assert.equal(puts,0);assert.equal((await queue.list())[0]!.stage,'cancelled');
+});
+
+it('prepared upload copies retry local cleanup without deleting the retained saved draft',async()=>{
+ let cleanup=0;
+ const runtime=deps({isCancelled:()=>true,releaseUploadAsset:async job=>{assert.equal(job.input.retainedDraftAssetUri,'file:///saved-original');if(++cleanup===1)throw new Error('disk');}});
+ const prepared={...input,retainedDraftAssetUri:'file:///saved-original'};
+ let job=await runPostcardUpload(newPostcardUploadJob('job','a',prepared,1),runtime);
+ assert.equal(job.stage,'cancelled');assert.equal(job.localAssetPending,true);
+ job=await runPostcardUpload(JSON.parse(JSON.stringify(job)),runtime);
+ assert.equal(job.localAssetPending,false);assert.equal(cleanup,2);
+});
+it('account change during durable enqueue marks the old account job cancelled before it can ever publish',async()=>{
+ const storage=new Map<string,string>();let account='a',published=0;
+ const queue=new PostcardUploadQueue({storage:{getItem:async k=>storage.get(k)??null,setItem:async(k,v)=>{storage.set(k,v);account='b';}},accountId:async()=>account,newId:()=> 'job',now:()=>1,deps:async()=>deps({publish:async()=>{published++;return {ok:true,data:{}};}})});
+ assert.equal(await queue.enqueue(input,{start:false}),null);assert.equal(JSON.parse(storage.get(queueKey('a'))!)[0].cancelRequested,true);
+ account='a';await queue.resumePending();assert.equal(published,0);
+});
+
+it('cancellation during publication journal acknowledgement retains the draft and retries withdrawal',async()=>{
+ let cancelled=false,cleared=0,removed=0,doneEmitted=0;
+ const job=await runPostcardUpload(newPostcardUploadJob('job','a',{...input,draftKey:'draft'},1),deps({publish:async()=>({ok:true,data:{}}),persist:async job=>{if(job.stage==='done')cancelled=true;},finishLocalDraft:async()=>{cleared++;},discardShell:async()=>{removed++;}}),{isCancelled:()=>cancelled,onStage:job=>{if(job.stage==='done')doneEmitted++;}});
+ assert.equal(job.stage,'cancelled');assert.equal(removed,1);assert.equal(cleared,0);assert.equal(doneEmitted,0);
+});
+
+it('cancellation of an acknowledged job persists one cancellation outcome and retains the saved draft', async () => {
+ const storage=new Map<string,string>();let cleared=0,removed=0;const events:string[]=[];
+ const done={...newPostcardUploadJob('job','a',{...input,trackOutcomes:true},1),stage:'done' as const,postId:'post',mediaId:'media',localDraftPending:true};
+ storage.set(queueKey('a'),JSON.stringify([done]));
+ const queue=new PostcardUploadQueue({storage:{getItem:async k=>storage.get(k)??null,setItem:async(k,v)=>{storage.set(k,v);}},accountId:async()=> 'a',newId:()=> 'unused',now:()=>1,deps:async()=>deps({finishLocalDraft:async()=>{cleared++;},discardShell:async()=>{removed++;},recordOutcome:async event=>{events.push(event.outcome);return true;}})});
+ await queue.cancel('job');await queue.resumePending();await queue.resumePending();
+ assert.equal(cleared,0);assert.equal(removed,1);assert.deepEqual(events,['upload_cancelled']);
+ const saved=(await queue.list())[0]!;assert.equal(saved.stage,'cancelled');assert.equal(saved.localDraftPending,false);assert.equal(saved.cleanupPending,false);
+});
+
+it('exhausted retries still deliver a structured failure outcome', async () => {
+ const storage=new Map<string,string>();const events:string[]=[];
+ const paused={...newPostcardUploadJob('job','a',{...input,trackOutcomes:true},1),stage:'slot' as const,postId:'post',mediaId:'media',runs:100};
+ storage.set(queueKey('a'),JSON.stringify([paused]));
+ const queue=new PostcardUploadQueue({storage:{getItem:async k=>storage.get(k)??null,setItem:async(k,v)=>{storage.set(k,v);}},accountId:async()=> 'a',newId:()=> 'unused',now:()=>1,deps:async()=>deps({recordOutcome:async event=>{events.push(event.outcome);assert.equal(event.failure_code,'unknown');return true;}})});
+ await queue.resumePending();await queue.resumePending();
+ assert.deepEqual(events,['upload_failed']);assert.equal((await queue.list())[0]!.stage,'failed');
+});

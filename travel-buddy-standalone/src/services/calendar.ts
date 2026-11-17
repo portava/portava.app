@@ -3,8 +3,9 @@
  *
  * Web: expo-calendar has no web support; all calls are no-ops on web.
  *
- * Testability: both react-native and expo-calendar are loaded via dynamic
- * import so this module can be imported in a Node.js test environment.
+ * Testability: native dependencies are loaded lazily so this module can be
+ * imported in Node.js. React Native uses a property-only require: Metro's
+ * namespace import would eagerly read unrelated lazy native exports.
  * Call _setTestCalendarDeps() before calling addMeetupToCalendar in tests
  * to inject mock native implementations (same test-slot pattern as the
  * api-server's _setTestClient slot).  Pass null to restore production behaviour.
@@ -59,7 +60,7 @@ export async function addMeetupToCalendar(meetup: MeetupDetail): Promise<Calenda
   // Resolve platform — either the test-slot override or the real native value.
   const platform: string = _testDeps
     ? _testDeps.platform
-    : (await import('react-native')).Platform.OS;
+    : (require('react-native') as typeof import('react-native')).Platform.OS;
 
   if (platform === 'web') {
     return { ok: false, reason: 'error', message: 'Calendar not supported on web' };

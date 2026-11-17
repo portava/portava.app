@@ -1,3 +1,5 @@
+import {activeMediaAccountRead} from './helpers/mediaAccountReadFixture.js';
+import { mediaObjectPurgeFixture } from "./helpers/mediaObjectPurgeFixture.js";
 import { before, after, beforeEach, afterEach, test, mock } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -62,6 +64,9 @@ beforeEach(() => {
     },
   });
   fake.client.rpc = async (name: string, args: any) => {
+      if (name === "account_recovery_status") return activeMediaAccountRead(name, args);
+    if (name === "postcard_canonical_lifecycle_ready") return {data:true,error:null};
+    if (name === "advance_media_object_purge") return mediaObjectPurgeFixture(id => fake.tables.media_assets.find(row => row.id === id), [])(args);
     if (name === "media_caption_asr_epoch") {
       if (fake.tables.media_assets[0].owner_user_id !== args.p_owner_id) return { data: null, error: null };
       if (!fake.tables.media_caption_asr_epochs.length) fake.tables.media_caption_asr_epochs.push({ asset_id: ASSET, consent_epoch: randomBytes(32).toString("hex") });
@@ -321,11 +326,32 @@ test("lifecycle purge removes all generations, preserves unrelated assets, repor
   objects.set(captionArtifactPath(ASSET, 90), "old-unservable");
   objects.set("manual-captions/other/v1.json", "unrelated");
   fake.tables.media_assets[0].deleted_at = "2026-10-15T12:00:00Z";
+  fake.tables.media_assets[0].purge_status = "pending";
   removeFails = true;
   await assert.rejects(purgeAuthoredCaptionTracks(fake.client, ASSET));
   removeFails = false;
   await purgeAuthoredCaptionTracks(fake.client, ASSET);
   assert.deepEqual([...objects.keys()], ["manual-captions/other/v1.json"]);
+});
+
+test("caption purge leaves journal-owned files for their object owner and advances past a full retained page", async () => {
+  await save();objects.clear();
+  const delegated=Array.from({length:100},(_,i)=>captionArtifactPath(ASSET,100+i));
+  for(const path of delegated)objects.set(path,"owned by object journal");
+  const ordinary=captionArtifactPath(ASSET,999);objects.set(ordinary,"old caption");
+  fake.tables.media_assets[0].deleted_at="2026-10-15T12:00:00Z";
+  fake.tables.media_assets[0].purge_status="pending";
+  await purgeAuthoredCaptionTracks(fake.client,ASSET,delegated);
+  assert.equal(objects.has(ordinary),false);assert.equal(objects.size,100);
+  assert.ok(delegated.every(path=>objects.has(path)));
+});
+
+test("caption purge without permanent authority leaves manifest and bytes retained", async () => {
+  await save();const before=[...objects.keys()];
+  fake.tables.media_assets[0].deleted_at="2026-10-15T12:00:00Z";
+  fake.tables.media_assets[0].purge_status="retained";
+  await assert.rejects(purgeAuthoredCaptionTracks(fake.client,ASSET),/Permanent derivative erasure authority unavailable/);
+  assert.deepEqual([...objects.keys()],before);
 });
 
 test("multiple manual languages preserve originals and resolve only the requested language", async () => {

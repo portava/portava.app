@@ -9,6 +9,7 @@ import { purgeAuthoredCaptionTracks } from "./AuthoredCaptionsService.js";
 import { purgeRevokedTranslationDrafts, revokeCaptionTranslation } from "./CaptionTranslationService.js";
 import { eraseDubbingSource } from "../../lib/media/dubbing/composition.js";
 import { validAssetId } from "../../lib/media/adaptive/types.js";
+import { requireDerivativeErasure } from "../../lib/media/derivativeErasure.js";
 
 export interface DerivativeErasureSource {
   id: string;
@@ -79,6 +80,7 @@ async function purgeCaptionTranslation(sc: SupabaseClient, source: DerivativeEra
 
 export async function purgeDerivedMedia(sc: SupabaseClient, source: DerivativeErasureSource, env: NodeJS.ProcessEnv = process.env): Promise<void> {
   if (!source.deleted_at && !["owner_deleted", "removed"].includes(source.moderation_status)) throw new Error("Source must be withdrawn before derivative erasure");
+  const objectPaths = await requireDerivativeErasure(sc, source);
   const schema = await derivativeSchemaStatus(sc);
   if (!schema) return;
   if (schema.media_derivative_jobs) {
@@ -95,7 +97,7 @@ export async function purgeDerivedMedia(sc: SupabaseClient, source: DerivativeEr
   }
   if (source.media_type === "video" && schema.media_caption_manifests) {
     await purgeCaptionTranslation(sc, source);
-    await purgeAuthoredCaptionTracks(sc, source.id);
+    await purgeAuthoredCaptionTracks(sc, source.id, objectPaths);
   }
   if (schema.media_visual_embeddings) {
     await eraseVisualIndexAsset(sc, { assetId: source.id, sourceVersion: source.version, bucket: source.storage_bucket, path: source.storage_path });

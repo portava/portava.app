@@ -36,6 +36,63 @@ test("rejects stops with no coordinates — emits warning", () => {
   assert.ok(result.warnings[0]!.includes("No-coord stop"));
 });
 
+test("skips invalid WGS84 candidates without altering valid stop identity", () => {
+  const invalid = [
+    { lat: 90.001, lng: 0 }, { lat: -90.001, lng: 0 },
+    { lat: 0, lng: 180.001 }, { lat: 0, lng: -180.001 },
+    { lat: Infinity, lng: 0 }, { lat: 0, lng: -Infinity },
+  ];
+  const result = optimizeRoute([
+    ...invalid.map((point, index) => ({ ...point, title: `Invalid ${index}` })),
+    { title: 'Origin', lat: 0, lng: 0, sourceId: 'origin' },
+    { title: 'Destination', lat: 1, lng: 1, sourceId: 'destination' },
+  ], { style: 'custom' });
+  assert.deepEqual(result.stops.map(({ stop }) => stop.sourceId), ['origin', 'destination']);
+  assert.equal(result.warnings.length, invalid.length);
+  assert.ok(Number.isFinite(result.totalDistanceMeters));
+});
+
+test("invalid explicit endpoints refuse the route rather than substituting a stop", () => {
+  for (const endpoint of ['startLocation', 'endLocation'] as const) {
+    for (const point of [
+      { lat: NaN, lng: 0 }, { lat: 0, lng: Infinity },
+      { lat: -91, lng: 0 }, { lat: 0, lng: 181 },
+    ]) {
+      const result = optimizeRoute([
+        makestop('A', 0, 0), makestop('B', 1, 1),
+      ], { style: 'custom', [endpoint]: point });
+      assert.deepEqual(result.stops, []);
+      assert.deepEqual(result.legs, []);
+      assert.equal(result.totalDistanceMeters, 0);
+      assert.equal(result.totalDurationSeconds, 0);
+      assert.match(result.warnings.join(' '), /invalid coordinates; route unavailable/);
+      assert.equal(result.isApproximated, true);
+    }
+  }
+});
+
+test("zero, poles and antimeridian endpoints remain valid approximations", () => {
+  const result = optimizeRoute([makestop('Origin', 0, 0), makestop('Other', 0, 180)], {
+    style: 'custom', startLocation: { lat: -90, lng: -180 }, endLocation: { lat: 90, lng: 180 },
+  });
+  assert.equal(result.stops.length, 4);
+  assert.equal(result.warnings.length, 0);
+  assert.ok(Number.isFinite(result.totalDistanceMeters));
+  assert.ok(Number.isFinite(result.totalDurationSeconds));
+  assert.ok(result.legs.every(leg => leg.isApproximated === true));
+});
+
+test("antipodal rounding cannot produce non-finite distances", () => {
+  const result = optimizeRoute([
+    makestop('A', 2.500000000000001, 0),
+    makestop('B', -2.500000000000001, 180),
+  ], { style: 'custom' });
+  assert.ok(Number.isFinite(result.totalDistanceMeters));
+  assert.ok(result.totalDistanceMeters > 20_000_000);
+  assert.ok(Number.isFinite(result.totalDurationSeconds));
+  assert.equal(result.legs[0]!.isApproximated, true);
+});
+
 test("labels all distances as approximated", () => {
   const stops: CandidateStop[] = [
     makestop("X", 1.28, 103.85),

@@ -1,3 +1,4 @@
+import { PERMANENT_DELETION_TEST_OPTIONS } from './helpers/accountDeletionAuthorizationFixture.js';
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
 import { executeAccountDeletion } from '../services/accountDeletion/AccountDeletionService.js';
@@ -7,7 +8,7 @@ import { accountMediaFixture, accountId, otherId, assetId, source, translation, 
 const fetchBefore = globalThis.fetch;
 globalThis.fetch = async () => { throw new Error('Synthetic test forbids network'); };
 after(() => { globalThis.fetch = fetchBefore; });
-const execute = (fixture: ReturnType<typeof accountMediaFixture>) => executeAccountDeletion(fixture.client, accountId, { actorId: null });
+const execute = (fixture: ReturnType<typeof accountMediaFixture>) => executeAccountDeletion(fixture.client, accountId, { ...PERMANENT_DELETION_TEST_OPTIONS });
 
 for (const owner of [accountId, otherId]) test(`canonical owner ${owner === accountId ? 'same' : 'different from uploader'} uses actual lifecycle and returned versions`, async () => {
   const fixture = accountMediaFixture({ media_assets: [source(owner)] });
@@ -37,21 +38,25 @@ for (const table of ['media_caption_translation_artifacts', 'media_dubbing_artif
 });
 for (const phase of ['withdraw', 'complete', 'delete']) test(`${phase} zero-row response preserves the retry subject`, async () => {
   const fixture = accountMediaFixture({ media_assets: [source()] });
-  fixture.state.before = operation => operation.table === 'media_assets' &&
-    (phase === 'withdraw' ? operation.values?.purge_status === 'pending' : phase === 'complete' ? operation.values?.purge_status === 'completed' : operation.action === 'delete')
+  fixture.state.before = operation => (phase === 'complete' ? operation.table === 'advance_media_object_purge' && operation.values?.p_phase === 'completed' : operation.table === 'media_assets' &&
+    (phase === 'withdraw' ? operation.values?.purge_status === 'pending' : operation.action === 'delete'))
     ? { data: [], error: null } : undefined;
   assert.equal((await execute(fixture)).ok, false);
   assert.deepEqual(fixture.state.authDeleted, []);
   assert.equal(fixture.rows.media_assets!.length, 1);
 });
-test('failed storage leaves withdrawn source; healthy retry reaches the existing canonical purge', async () => {
+test('uncertain storage leaves the source withdrawn until actual absence reconciles the existing purge', async () => {
   const fixture = accountMediaFixture({ media_assets: [source()] });
   fixture.state.before = operation => operation.action === 'remove' ? { data: null, error: new Error('Unavailable') } : undefined;
   assert.equal((await execute(fixture)).ok, false);
   assert.equal(fixture.rows.media_assets![0]!.purge_status, 'failed');
   assert.deepEqual(fixture.state.authDeleted, []);
   fixture.state.before = () => undefined;
+  assert.equal((await execute(fixture)).ok, false,'a healthy response cannot authorize repeating an uncertain removal');
+  const dispatched=fixture.operations.filter(operation=>operation.action==='remove').flatMap(operation=>operation.paths!);
+  for(const path of dispatched)fixture.state.objects.delete(`post-media/${path}`);
   assert.equal((await execute(fixture)).ok, true);
+  for(const path of dispatched)assert.equal(fixture.operations.filter(operation=>operation.action==='remove' && operation.paths!.includes(path)).length,1);
   assert.equal(fixture.rows.media_assets!.length, 0);
 });
 for (const field of ['owner_user_id', 'version', 'storage_path', 'uploader_user_id']) test(`withdrawal returned ${field} mismatch cannot authorize cleanup`, async () => {
@@ -89,10 +94,11 @@ for (const phase of ['withdraw', 'delete']) test(`unknown ${phase} reply never c
   fixture.state.after = (_operation, reply) => reply;
   assert.equal((await execute(fixture)).ok, true);
 });
-test('completed retry source still receives fresh canonical cleanup before deletion', async () => {
+test('legacy completed source without verified receipt cannot authorize another erase', async () => {
   const fixture = accountMediaFixture({ media_assets: [{ ...source(), deleted_at: '2026-10-16T00:00:00Z', moderation_status: 'owner_deleted', purge_status: 'completed' }] });
-  assert.equal((await execute(fixture)).ok, true);
-  assert.ok(fixture.operations.some(operation => operation.action === 'remove'));
+  assert.equal((await execute(fixture)).ok, false);
+  assert.equal(fixture.operations.some(operation => operation.action === 'remove'),false);
+  assert.equal(fixture.rows.media_assets!.length,1);
 });
 test('unrelated canonical source is not selected by owner-or-uploader', async () => {
   const fixture = accountMediaFixture({ media_assets: [source(otherId, otherId)] });

@@ -225,15 +225,18 @@ export type WallRealWorldOutcome = 'see_place' | 'add_to_trip' | 'book_buddy';
  * (services/intelConsent.ts), this is false and no outcome is recorded.
  */
 let realWorldOutcomeConsented = false;
+let consentOwner: import('../../../services/messagingOwnerRequest.ts').MessagingOwnerRequest | undefined;
 
 /** Set at app boot from the server-authoritative intel-contribution consent. */
-export function setRealWorldOutcomeConsent(consented: boolean): void {
+export function setRealWorldOutcomeConsent(consented: boolean, owner?: import('../../../services/messagingOwnerRequest.ts').MessagingOwnerRequest): void {
   realWorldOutcomeConsented = consented;
+  consentOwner = owner;
 }
 
 /** Reset the consent snapshot (fail-closed). Test cleanup + app teardown. */
 export function resetRealWorldOutcomeConsent(): void {
   realWorldOutcomeConsented = false;
+  consentOwner = undefined;
 }
 
 /**
@@ -246,5 +249,5 @@ export function recordRealWorldOutcome(
   projection: WallProjection,
   outcome: WallRealWorldOutcome,
 ): void {
-  trackRealWorldOutcome(projection, outcome, realWorldOutcomeConsented);
+  trackRealWorldOutcome(projection, outcome, realWorldOutcomeConsented && consentOwner?.isCurrent() === true);
 }

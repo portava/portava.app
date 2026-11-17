@@ -1,3 +1,5 @@
+import { memoryEditFixture } from './helpers/memoryEditFixture.js';
+import { makeKernelRpc } from './memoryCommandKernelFake.js';
 /**
  * The public Memory surface: what may appear on it, and what a page of it means.
  *
@@ -98,6 +100,7 @@ function baseState(over: Partial<State> = {}): State {
  * on it.
  */
 function makeClient(state: State) {
+  const editRpc = makeKernelRpc({ tables: Object.fromEntries(Object.entries(state).filter(([, value]) => Array.isArray(value))), rpcCalls: [], failOn: new Set(), absent: false });
   function from(table: string) {
     const filters: Array<(r: Row) => boolean> = [];
     let pendingUpdate: any = null;
@@ -173,7 +176,7 @@ function makeClient(state: State) {
     from,
     async rpc(fn: string, _args: any) {
       if (fn === "memory_public_feed") return { data: state.rpcRows ?? [], error: null };
-      return { data: null, error: { message: `unknown rpc ${fn}` } };
+      return editRpc(fn, _args);
     },
     auth: {
       getUser: async (tok: string) => {
@@ -218,11 +221,11 @@ async function get(base: string, path: string, tok?: string) {
   const res = await fetch(`${base}${path}`, { headers: hdrs });
   return { status: res.status, body: await res.json().catch(() => null) };
 }
-async function patchReq(base: string, path: string, tok: string, body: unknown) {
-  const res = await fetch(`${base}${path}`, {
+async function patchReq(app: Awaited<ReturnType<typeof startApp>>, path: string, tok: string, body: unknown) {
+  const res = await fetch(`${app.baseUrl}${path}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", connection: "close", Authorization: `Bearer ${tok}` },
-    body: JSON.stringify(body),
+    body: JSON.stringify(memoryEditFixture(app.state.memories.find(row => row.id === path.split("/").at(-1)) ?? {}, body as Record<string, unknown>)),
   });
   return { status: res.status, body: await res.json().catch(() => null) };
 }
@@ -336,8 +339,8 @@ describe("§25 fixture — public-to-private revocation", () => {
       const single = await get(app.baseUrl, `/api/memories/${M_PUBLIC}`, "viewer-tok");
       assert.equal(single.status, 200, "precondition: a stranger can read it directly");
 
-      const revoked = await patchReq(app.baseUrl, `/api/memories/${M_PUBLIC}`, "owner-tok", { visibility: "only_me" });
-      assert.equal(revoked.status, 200);
+      const revoked = await patchReq(app, `/api/memories/${M_PUBLIC}`, "owner-tok", { visibility: "only_me" });
+      assert.equal(revoked.status, 200, JSON.stringify(revoked.body));
 
       const after = await get(app.baseUrl, "/api/memories", "viewer-tok");
       assert.deepEqual(idsOf(after.body), [], "revocation must clear the public feed");

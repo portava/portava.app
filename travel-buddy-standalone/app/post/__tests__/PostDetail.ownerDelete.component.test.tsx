@@ -182,3 +182,22 @@ it('owner: Delete asks first, reports a failed delete, and goes back after a del
   expect(router.back).toHaveBeenCalledTimes(1);
   alertSpy.mockRestore();
 });
+
+it('owner: opens image understanding from the post media menu', async () => {
+  mockGetPostById.mockResolvedValue({ ok: true, data: { ...OWN_POST, media: [
+    { id: '55555555-5555-4555-8555-555555555555', media_type: 'image', url: 'https://media.example.test/photo.jpg' },
+  ] } });
+  await render(<PostDetail />);
+  await fireEvent.press(await screen.findByLabelText('More options'));
+  await fireEvent.press(await screen.findByTestId('overflow-image-understanding'));
+  await waitFor(() => expect(screen.getByText('Image understanding')).toBeTruthy());
+});
+
+it('another author: does not expose image understanding consent', async () => {
+  mockGetPostById.mockResolvedValue({ ok: true, data: { ...OWN_POST, authorId: 'user-2', author: { ...OWN_POST.author, id: 'user-2' }, media: [
+    { id: '55555555-5555-4555-8555-555555555555', media_type: 'image', url: 'https://media.example.test/photo.jpg' },
+  ] } });
+  await render(<PostDetail />);
+  await fireEvent.press(await screen.findByLabelText('More options'));
+  expect(screen.queryByTestId('overflow-image-understanding')).toBeNull();
+});

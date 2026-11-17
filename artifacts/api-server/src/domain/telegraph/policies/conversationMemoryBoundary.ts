@@ -939,6 +939,7 @@ export const CLIENT_SHARED_STORE_RE =
   /\bcreateContext\s*[<(]|\buseSyncExternalStore\s*[<(]|from\s+["'](?:zustand|jotai|valtio|mobx|redux|@reduxjs\/toolkit|react-redux|recoil)/;
 
 export const REVIEWED_CLIENT_SHARED_STORES: readonly { readonly file: string; readonly carries: string }[] = [
+  { file: "src/hooks/useMediaScopeKey.ts", carries: "Subscribes to Discovery's viewer/epoch invalidation and returns only that serialized scope. Thread media uses it to re-check authorization after account or privacy changes. No message text, attachment bytes or draft input enters the hook or store." },
   { file: "src/features/telegraph/sharing/threadSharePlayback.tsx", carries: "The thread-local context carries message ids, visible/video membership, pause and mute choices, and callbacks. It schedules playback and contains no message text or Memory writer." },
   { file: "src/hooks/usePostPlaybackLayer.ts", carries: "The playback layer carries opaque symbols and subscriber callbacks. A stack grants playback to the topmost post modal. It stores no post or message contents." },
   { file: "src/hooks/usePrivateSurfaceKey.ts", carries: "The hook subscribes to account/session epoch changes and exposes a remount key. It carries owner identifiers and generation numbers so private screens discard stale state." },
@@ -1056,6 +1057,7 @@ export interface ReviewedClientModuleState {
 }
 
 export const REVIEWED_CLIENT_MODULE_STATE: readonly ReviewedClientModuleState[] = [
+  { file: "src/services/profile.ts", writers: ["subscribeOwnProfileChanges"], carries: "Only zero-argument notification callbacks enter ownProfileListeners. Persisted profile edits notify subscribers to re-read their own authenticated profile; the callback receives no profile or conversation content. Unsubscribe removes the callback." },
   { file: "src/hooks/usePostPlaybackLayer.ts", writers: ["enterPostPlaybackLayer"], carries: "The shared stack contains opaque layer symbols and notifies subscribers. Its writer pushes a symbol and returns a cleanup that removes it. It never stores media or message data." },
   { file: "src/services/discoveryViewerScope.ts", writers: ["onDiscoveryScopeChange"], carries: "The module adds/removes subscriber callbacks to signal viewer-scope replacement. Its state is account identity, epoch and listeners. Conversation bodies are not passed through those callbacks." },
   { file: "src/components/trip/NeighborhoodMatchSheet.tsx", writers: ["self:LocationCheckSheet"], carries: "`_sessionMapFullScreen = true` when the person opens the map full screen — one boolean UI preference for the session; no content." },

@@ -79,6 +79,8 @@ import {
   type MediaSessionState, type MediaRankedItem,
 } from "../services/ranking/MediaFeedRankingService.js"; import { isWatchStage24RankingEnabled, orderWatchCandidatesByStage24 } from "../services/media/WatchStage24Ranking.js";
 import { recordMediaEvent } from "../lib/mediaAnalytics.js";
+import { filterCurrentPostAuthors } from "../lib/postAuthorAudience.js";
+import { writeMediaViewReceipt } from "../lib/mediaViewReceipt.js";
 import { resolveGemCoords, type GemCoordContext } from "../services/hiddenGems/HiddenGemPrivacyGuard.js"; import { FailedSources, readWhole, readWholeColumn, afterKey, countRowsPerId, exactCount, known } from "../lib/feedReads.js"; import { loadGemPageReads } from "../lib/mediaFeedReads.js"; import { recountPostCounter, recountGemSaves } from "../lib/postCounters.js"; // census-media §47
 
 const router = Router();
@@ -93,27 +95,6 @@ const DEFAULT_LIMIT = 20;
 const QUALIFIED_VIEW_MIN_MS = 3_000;
 /** Minimum completion fraction to count as a completion view. */
 const COMPLETION_VIEW_MIN_MS = 10_000;
-
-/**
- * In-memory deduplication window for view events.
- * Key: `${userId}:${mediaId}:${type}`, value: timestamp of last recorded event.
- * Evicted after TTL_MS to allow legitimate re-watches.
- */
-const VIEW_DEDUP_TTL_MS = 60_000; // 1 minute
-const viewDedupMap = new Map<string, number>();
-
-/** Prune stale dedup entries (called on each view request, not on a timer). */
-function pruneViewDedup(): void {
-  const now = Date.now();
-  for (const [key, ts] of viewDedupMap) {
-    if (now - ts > VIEW_DEDUP_TTL_MS) viewDedupMap.delete(key);
-  }
-  // Hard cap to prevent unbounded growth
-  if (viewDedupMap.size > 10_000) {
-    const oldest = viewDedupMap.keys().next().value as string | undefined;
-    if (oldest) viewDedupMap.delete(oldest);
-  }
-}
 
 /**
  * Grid-mode post columns — strictly lightweight.
@@ -548,9 +529,10 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
 }
 const viewBodySchema = z.object({
   type: z.enum(["impression", "qualified_view", "completion", "rewatch"]),
-  watchedMs: z.number().int().min(0).optional(),
-  sessionId: z.string().optional(),
-});
+  watchedMs: z.number().int().min(0).max(86_400_000).optional(),
+  sessionId: z.string().uuid().optional(),
+  eventId: z.string().uuid().optional(),
+}).strict();
 
 // ── GET /api/media/feed?mode=grid ─────────────────────────────────────────────
 
@@ -597,7 +579,8 @@ async function handleGridFeed(req: any, res: any): Promise<void> {
   }
   const { filter, limit, sessionId: clientSessionId, lat: queryLat, lng: queryLng } = parsed.data;
   const cursorToken = parsed.data.cursor;
-  const sessionId = clientSessionId ?? randomUUID();
+  const sessionId = clientSessionId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientSessionId)
+    ? clientSessionId.toLowerCase() : randomUUID();
 
   // Decode cursor
   const cursor = cursorToken ? decodeCursor(cursorToken) : null;
@@ -785,7 +768,7 @@ async function handleGridFeed(req: any, res: any): Promise<void> {
   });
 
   // ── Analytics (fire-and-forget) ─────────────────────────────────────────────
-  recordMediaEvent("impression", {
+  recordMediaEvent("feed_served", {
     viewer_id:  user.id,
     filter,
     mode:       "grid",
@@ -821,7 +804,8 @@ router.get("/media/gems-feed", asyncHandler(async (req, res) => {
     return;
   }
   const { areaMode, category, city: cityParam, tripId, limit, sessionId: clientSessionId } = parsed.data;
-  const sessionId = clientSessionId ?? randomUUID();
+  const sessionId = clientSessionId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientSessionId)
+    ? clientSessionId.toLowerCase() : randomUUID();
 
   // ── Near Me: requires nearby flag ─────────────────────────────────────────
   if (areaMode === "near_me" && !(await isFlagEnabled(sc, "MEDIA_HIDDEN_GEMS_NEARBY_ENABLED"))) {
@@ -1279,7 +1263,8 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   }
   const { feedType, limit, sessionId: clientSessionId } = parsed.data;
   const cursorToken = parsed.data.cursor;
-  const sessionId = clientSessionId ?? randomUUID();
+  const sessionId = clientSessionId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientSessionId)
+    ? clientSessionId.toLowerCase() : randomUUID();
 
   // ── Feature flag gates ─────────────────────────────────────────────────────
   const flagName = feedType === "following" ? "MEDIA_FOLLOWING_ENABLED" : "MEDIA_FOR_YOU_ENABLED";
@@ -1428,7 +1413,8 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   } catch (err) { watchFailed.note("compass_user_preferences", err); }
 
   // ── Seen IDs (for fatigue penalty) ────────────────────────────────────────
-  // Load recent impressions for the viewer so seen items are penalised.
+  // Only observed impressions count as seen. A serve, completion or qualified
+  // view is not a second exposure and must not multiply fatigue.
   const seenIds = new Set<string>();
   try {
     const { data: seenRows, error: seenErr } = await sc
@@ -1436,6 +1422,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
       .select("item_id")
       .eq("user_id", user.id)
       .eq("surface", "watch_feed")
+      .eq("event_type", "watch_impression")
       .gte("served_at", new Date(nowMs - 7 * 24 * 60 * 60 * 1000).toISOString())
       .limit(500); if (seenErr) watchFailed.note("rank_events", seenErr); // census-media §47: ranked without the seen penalty, and that is said
     for (const r of (seenRows as any[]) ?? []) seenIds.add(r.item_id as string);
@@ -1534,7 +1521,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
           .select("id, item_id", { count: "exact" })
           .eq("user_id", user.id)
           .eq("session_id", sessionId)
-          .eq("surface", "watch_feed").order("id", { ascending: true }).limit(size), "id", after), (r) => String(r.id));
+          .eq("surface", "watch_feed").eq("event_type", "watch_impression").order("id", { ascending: true }).limit(size), "id", after), (r) => String(r.id));
       if (!sessionRead.ok) watchFailed.note("rank_events", sessionRead.error);
       const sessionRows = sessionRead.ok ? sessionRead.value : [];
       // Map item_id → author_id using the already-loaded eligible candidates.
@@ -1731,8 +1718,8 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     });
   });
 
-  // ── Log impressions (fire-and-forget) ──────────────────────────────────────
-  void (async () => {
+  // ── Persist served items (not observed views) ──────────────────────────────────────
+  await (async () => {
     try {
       if (items.length === 0) return;
       const servedAt = new Date(nowMs).toISOString();
@@ -1758,6 +1745,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
       // the same defect fixed in rankLog and rankingAnalytics.
       const { error: impressionErr } = await sc.from("rank_events").insert(impressionRows);
       if (impressionErr) {
+        watchFailed.note("rank_events", impressionErr);
         req.log.warn(
           { err: impressionErr, surface: "watch_feed", count: impressionRows.length },
           "media/feed: rank_events impression insert rejected",
@@ -1773,6 +1761,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
           .catch((e) => req.log.warn({ err: e }, "media/feed: ranking snapshot write failed"));
       }
     } catch (err) {
+      watchFailed.note("rank_events", err);
       // Never breaks the feed. This covers THROWN failures only; a PostgREST
       // rejection resolves with { error } and is handled at the insert above.
       req.log.warn({ err }, "media/feed: impression logging threw");
@@ -1780,7 +1769,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   })();
 
   // ── Analytics (fire-and-forget) ────────────────────────────────────────────
-  recordMediaEvent("impression", {
+  recordMediaEvent("feed_served", {
     viewer_id:  user.id,
     feed_type:  feedType,
     mode:       "watch",
@@ -2002,7 +1991,7 @@ router.post("/media/:id/view", asyncHandler(async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
     return;
   }
-  const { type, watchedMs, sessionId } = parsed.data;
+  const { type, watchedMs, sessionId, eventId } = parsed.data;
 
   // Reject off-screen / preload signals by checking minimum thresholds
   if (type === "qualified_view" && (watchedMs == null || watchedMs < QUALIFIED_VIEW_MIN_MS)) {
@@ -2017,7 +2006,7 @@ router.post("/media/:id/view", asyncHandler(async (req, res) => {
   // Self-view rejection: verify the post exists and check authorship
   const { data: postRow, error: postErr } = await sc
     .from("posts")
-    .select("id, author_id, status, visibility, post_status")
+    .select("id, author_id, status, visibility, post_status, trip_id")
     .eq("id", id)
     .maybeSingle();
 
@@ -2040,60 +2029,51 @@ router.post("/media/:id/view", asyncHandler(async (req, res) => {
     return;
   }
 
-  // Prune stale dedup entries
-  pruneViewDedup();
-
-  // Single clock read — used for both dedup TTL and served_at timestamp
-  const nowMs = Date.now();
-
-  // Dedup: same user + item + type within TTL window
-  const dedupKey = `${user.id}:${id}:${type}`;
-  const lastTs = viewDedupMap.get(dedupKey);
-  if (lastTs && nowMs - lastTs < VIEW_DEDUP_TTL_MS) {
-    res.json({ counted: false });
-    return;
-  }
-  viewDedupMap.set(dedupKey, nowMs);
-
-  // ── Persist to rank_events (durable — counted reflects write success) ────────
-  //
-  // rank_events.outcome has a CHECK constraint: only legacy funnel values
-  // (impression, tap, save, join, rsvp, attended) and 'analytics' are allowed.
-  // Watch-specific subtypes are stored in event_type; outcome is normalized:
-  //   impression → "impression"
-  //   qualified_view / completion / rewatch → "analytics"
-  //
-  // watchedMs is stored via event_type suffix rather than a metadata column
-  // (rank_events has no metadata column in the live schema).
-  const dbOutcome: string = type === "impression" ? "impression" : "analytics";
-  const dbEventType: string =
-    type === "impression"     ? "watch_impression" :
-    type === "qualified_view" ? "watch_qualified_view" :
-    type === "completion"     ? "watch_completion" :
-    "watch_rewatch";
-
-  let counted = false;
+  // A supplied id is not proof of audience. Check current blocks, post
+  // audience and current author restrictions before recording an observation.
   try {
-    const { error: insertErr } = await sc.from("rank_events").insert({
-      event_type:   dbEventType,
-      item_id:      id,
-      content_type: "post",
-      surface:      "watch_feed",
-      user_id:      user.id,
-      session_id:   sessionId ?? null,
-      served_at:    new Date(nowMs).toISOString(),
-      outcome:      dbOutcome,
-    });
-    if (insertErr) {
-      req.log.warn({ err: insertErr, type, itemId: id }, "media/view: rank_events insert failed");
-      counted = false;
-    } else {
-      counted = true;
+    const pair = await readPairExclusion(sc, user.id, postRow.author_id);
+    if (!pair.ok) throw new Error("access unavailable");
+    if (isExcluded(pair, postRow.author_id)) {
+      sendError(res, "not_found", "Media item not found"); return;
     }
-  } catch (err) {
-    req.log.warn({ err, type, itemId: id }, "media/view: rank_events insert threw");
-    counted = false;
+    const visibleAuthors = await filterCurrentPostAuthors(sc, user.id, [postRow], { throwOnUnavailable: true });
+    if (!visibleAuthors.length) { sendError(res, "not_found", "Media item not found"); return; }
+    const visibility = postRow.visibility;
+    let allowed = visibility === "public";
+    if (visibility === "followers_only") {
+      const follow = await sc.from("user_follows").select("following_id")
+        .eq("follower_id", user.id).eq("following_id", postRow.author_id).maybeSingle();
+      if (follow.error) throw new Error("access unavailable");
+      allowed = !!follow.data;
+    } else if (visibility === "trip_only") {
+      allowed = !!postRow.trip_id && await isAcceptedTripMember(sc, postRow.trip_id, user.id);
+    }
+    // private is owner-only; self views were already rejected above. Unknown
+    // visibility never grants access. Following does not grant private access.
+    if (!allowed) { sendError(res, "not_found", "Media item not found"); return; }
+  } catch {
+    sendError(res, "degraded_unavailable", "Could not check access to this item. Please try again."); return;
   }
+
+  // Old clients without a stable event identity cannot be safely retried. They
+  // remain non-fatal but explicitly uncounted; no guessed session or clock key.
+  if (!sessionId || !eventId) {
+    res.json({ counted: false, stored: false, reason: "view_identity_required" }); return;
+  }
+  const receipt = await writeMediaViewReceipt(sc, {
+    viewerId: user.id, itemId: id, type, watchedMs, sessionId, eventId,
+  });
+  if (receipt.status === "failed") {
+    sendError(res, "degraded_unavailable", "Could not save this view. Please try again."); return;
+  }
+  if (receipt.status === "conflict") {
+    sendError(res, "conflict", "This view identity was already used for a different event."); return;
+  }
+  if (receipt.status === "unserved") {
+    res.json({ counted: false, stored: false, reason: "view_session_unbound" }); return;
+  }
+  const counted = receipt.status === "inserted";
 
   // ── Analytics (fire-and-forget) ────────────────────────────────────────────
   if (counted) {
@@ -2115,7 +2095,7 @@ router.post("/media/:id/view", asyncHandler(async (req, res) => {
     );
   }
 
-  res.json({ counted });
+  res.json({ counted, stored: true, duplicate: !counted });
 }));
 
 // ── UUID validation helper ─────────────────────────────────────────────────────

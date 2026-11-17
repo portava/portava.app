@@ -154,7 +154,11 @@ const APPLIED_MIGRATIONS = process.env.FLAG_SCHEMA_APPLIED
  * A snapshot with neither field is treated as legacy and only WARNS, so an old
  * capture does not hard-fail a checkout that has not been refreshed yet.
  */
-function checkSnapshotFreshness(snapshotPath: string): string[] {
+export function checkSnapshotFreshness(
+  snapshotPath: string,
+  appliedPath: string = APPLIED_MIGRATIONS,
+  warn: (message: string) => void = console.log,
+): string[] {
   const problems: string[] = [];
   let raw: any;
   try {
@@ -190,22 +194,22 @@ function checkSnapshotFreshness(snapshotPath: string): string[] {
       problems.push(`SNAPSHOT CHECKSUM MISMATCH (flags): recorded ${raw.checksums.flags}, recomputed ${flagSum}.`);
     }
   } else {
-    console.log("  (legacy snapshot: no checksums recorded — cannot verify it was not hand-edited)");
+    warn("  (legacy snapshot: no checksums recorded — cannot verify it was not hand-edited)");
   }
 
   // ── 2. staleness against the repository's own record of production ────────
   const watermark: string | undefined = raw.productionMigrationWatermark;
   if (!watermark) {
-    console.log("  (legacy snapshot: no productionMigrationWatermark — cannot detect staleness)");
+    warn("  (legacy snapshot: no productionMigrationWatermark — cannot detect staleness)");
     return problems;
   }
-  if (!existsSync(APPLIED_MIGRATIONS)) {
-    problems.push(`production-applied-migrations.json missing at ${APPLIED_MIGRATIONS}; staleness cannot be checked.`);
+  if (!existsSync(appliedPath)) {
+    problems.push(`production-applied-migrations.json missing at ${appliedPath}; staleness cannot be checked.`);
     return problems;
   }
   let applied: any;
   try {
-    applied = JSON.parse(readFileSync(APPLIED_MIGRATIONS, "utf8"));
+    applied = JSON.parse(readFileSync(appliedPath, "utf8"));
   } catch (e) {
     return [...problems, `production-applied-migrations.json is not readable JSON: ${String(e)}`];
   }
@@ -290,6 +294,41 @@ type Known = {
  * trap, so the fixture now reads whichever entry happens to exist.
  */
 export const KNOWN: Record<string, Known> = {
+  ...Object.fromEntries(["intel_capture_quick_signal", "intel_claim_projection_crowd", "intel_limited_live", "intel_live_label_crowd", "live_places_enabled"].map(flag => [flag, {
+    classification: "guarded" as const,
+    objects: ["account_recovery_status()"],
+    note: "4040 is unapplied in the committed production snapshot. These existing evidence readers reach mediaAccess, which requires exact userId, active accountStatus and mediaAccessAllowed=true from the existing account recovery RPC before any cached allow. Missing/error/malformed replies deny. Mounted SQL tests cover actual account media erasure, explicit recovery and removal of the RPC with a warm avatar cache. No flag change or deployed proof; remove only after verified rollout and snapshot refresh.",
+  }])),
+  media_captions_enabled: {
+    classification: "guarded",
+    objects: ["account_recovery_status()"],
+    note: "The scanner currently reaches account_recovery_status through shared media access; strict per-viewer receipt checks deny when this function is absent. Extracting the enqueue-only entry point removed the indirect purge reference from this flag closure. The registry retains the independently required erasure dependency: 4041 is unapplied in the committed production snapshot. Shared derivative erasure requires the service-only postcard lifecycle readiness proof before the existing purge manifest; false, missing or unreadable protections refuse erasure. The manifest still checks permanent-deletion authority and exact source identity/version. Real PostgreSQL tests disable the retention trigger and prove refusal before the manifest with unchanged source/audit, then restore it and prove the authorized path. The registry also declares the readiness function. No flag change or rollout is implied; remove after verified application and snapshot refresh.",
+  },
+  telegraph_history_bound_enabled: {
+    classification: "guarded",
+    objects: ["post_media.deleted_at"],
+    note: "4039 is unapplied in the committed production snapshot. Shared post-media access probes the withdrawal column before ownership, derivative or message/history authorization. The actual per-source read also fails closed after cached readiness. A mounted PostgreSQL test removes the column and proves owner signing refuses with both warm and cold readiness, issues no URL and retains the row; restoring the column restores normal access. This declaration records a guarded rollout gap, not deployed functionality; remove after verified application and snapshot refresh.",
+  },
+  memory_kernel_enabled: {
+    classification: "guarded",
+    objects: ["insert_memory_media_item()"],
+    note: "4041 is unapplied in the committed production snapshot. Every ADD_MEDIA checks the service-only source readiness proof before either kernel or legacy insertion; it verifies exact writer/kernel/guard definitions, the enabled trigger and canonical foreign key. Candidate confirmation checks the same proof before claiming its episode. The reusable PostgreSQL tests disable the guard and prove 503 with no item/claim; missing/malformed transport results refuse. Registry also declares the source readiness function. This is a guarded rollout gap, not deployed correctness; remove after verified application and snapshot refresh.",
+  },
+  telegraph_forwarding_enabled: {
+    classification: "guarded",
+    objects: ["account_recovery_status()"],
+    note: "Forwarded attachment upload uses the common media upload guard and exact active-account snapshot. Missing or unreadable4040authority refuses before provider writes. This is a pending rollout dependency, not a deployed guarantee.",
+  },
+  media_canonical_enabled: {
+    classification: "guarded",
+    objects: ["post_media.deleted_at", "postcard_canonical_lifecycle_ready()", "account_recovery_status()"],
+    note: "4038/4039 remain unapplied in the committed production snapshot. The4039source read on post_media.deleted_at fails closed before ownership or completion writes if the column is unavailable. Postcard capture completion invokes this service-only read-only lifecycle proof before canonical or Storage writes and refuses missing/false/malformed/unreadable results. The real PostgreSQL capture suite removes/disables/replaces the installed protections and proves refusal with zero effects. Other canonical writers retain their existing column guard. Remove only after verified migration application and snapshot refresh; this declaration is not rollout evidence.",
+  },
+  passport_memories_enabled: {
+    classification: "guarded",
+    objects: ["passport_memory_source_set()", "passport_memory_sources", "passport_memory_sources.memory_id", "passport_memory_sources.passport_memory_id"],
+    note: "4035 remains pending in the November14 production snapshot. PASSPORT_MEMORY_SOURCES now probes the private association before the owner command or People read; unavailable is explicit, and the mounted route test proves zero commands when the probe fails. This is a guarded rollout gap, not deployed functionality. Remove only after verified4035 application and snapshot refresh.",
+  },
   rent_buddy_enabled: {
     classification: "guarded",
     objects: ["rent_buddy_earnings_ledger.platform_fee_basis_points"],
@@ -666,7 +705,7 @@ function main(): void {
     if (gone.length) fail(`STALE: KNOWN.${r.f.flag} lists ${gone.join(", ")} but that is no longer absent-and-referenced. Strike it.`);
   }
   for (const flag of Object.keys(KNOWN)) {
-    if (!seenFlags.has(flag)) fail(`STALE: KNOWN.${flag} is no longer in the state (flag off, migration applied, or the read is gone). Strike the entry.`);
+    if (!seenFlags.has(flag)) fail(`STALE: KNOWN.${flag} lists ${KNOWN[flag]!.objects.join(", ")} but is no longer in the state (flag off, migration applied, or the read is gone). Strike the entry.`);
   }
 
   // ── Registry ──────────────────────────────────────────────────────────────
@@ -821,4 +860,6 @@ function entriesAfterWatermark(
   return late;
 }
 
-main();
+// Consumers import KNOWN and the freshness guard without running the full CLI
+// or inheriting its exit status. Direct invocation still runs every check.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

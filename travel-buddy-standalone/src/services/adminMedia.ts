@@ -175,3 +175,20 @@ export function moderateMediaItem(
     ...(opts.reason ? { reason: opts.reason } : {}),
   });
 }
+
+// Retained Memory references use the existing admin transport and SQL owner.
+export type MemoryMediaBindingReview = {
+  itemId: string; memoryId: string; memoryTitle: string | null; reviewedUrlHash: string;
+  status: 'candidate' | 'external_reference' | 'unsupported_reference' | 'missing_source' | 'ambiguous_source' | 'owner_mismatch' | 'unavailable';
+  source: { bucket: string; path: string } | null; assetId: string | null;
+};
+export type MemoryMediaBindingPage = { items: MemoryMediaBindingReview[]; nextCursor: string | null };
+export function getMemoryMediaBindings(after?: string): Promise<AdminApiResult<MemoryMediaBindingPage>> {
+  const query = new URLSearchParams({ limit: '25' }); if (after) query.set('after', after);
+  return adminGet(`/api/admin/media/memory-bindings?${query}`);
+}
+export function reconcileMemoryMediaReference(item: MemoryMediaBindingReview, reason: string): Promise<AdminApiResult<{ok:true;itemId:string;assetId:string;alreadyBound:boolean}>> {
+  return adminPost(`/api/admin/media/memory-bindings/${encodeURIComponent(item.itemId)}/reconcile`, {
+    assetId: item.assetId, reviewedUrlHash: item.reviewedUrlHash, reason,
+  });
+}

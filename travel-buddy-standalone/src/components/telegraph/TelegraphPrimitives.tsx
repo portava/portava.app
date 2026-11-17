@@ -10,6 +10,7 @@ import { space, type as t } from '../../theme/tokens.ts';
 import { TG_AVATAR, TG_SPACING } from '../../theme/telegraphTokens.ts';
 import { useTelegraphTheme, useTelegraphStyles, type TelegraphPalette, type TelegraphScheme } from '../../features/telegraph/theme/telegraphTheme.ts';
 import { useHydratedMedia } from '../../services/mediaUrl.ts';
+import { hydratedMediaSource } from '../../services/mediaRequestSource.ts';
 
 // ── TelegraphAvatar ───────────────────────────────────────────────────────────
 
@@ -41,7 +42,7 @@ export function TelegraphAvatar({ kind = 'single', uri, name, size = TG_AVATAR.r
 
   // Hydrate the URI through the signed-URL layer so that when post-media /
   // profile-media buckets go private the avatar still loads.
-  const { resolved: hydratedMap } = useHydratedMedia(uri ? [uri] : []);
+  const { resolved: hydratedMap, sources } = useHydratedMedia(uri ? [uri] : []);
   // undefined = still loading (show image with plain URI); null = server rejected
   const effectiveUri = uri
     ? (hydratedMap[uri] === null ? null : (hydratedMap[uri] ?? uri))
@@ -62,7 +63,7 @@ export function TelegraphAvatar({ kind = 'single', uri, name, size = TG_AVATAR.r
     );
   }
   if (effectiveUri) {
-    return <Image source={{ uri: effectiveUri }} style={[base, { backgroundColor: palette.haze }]} />;
+    return <Image source={hydratedMediaSource(effectiveUri, sources) ?? undefined} style={[base, { backgroundColor: palette.haze }]} />;
   }
   return (
     <View style={[base, av.fallback]}>

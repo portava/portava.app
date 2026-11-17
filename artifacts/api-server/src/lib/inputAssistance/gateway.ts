@@ -218,6 +218,7 @@ const WRITING_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>([
 ]);
 
 export interface GenerateParams {
+  signal?: AbortSignal;
   context: InputContext;
   policy: InputFieldPolicy;
   text: string;
@@ -254,6 +255,7 @@ export async function generateSuggestions(
   sc: any,
   params: GenerateParams,
 ): Promise<InputSuggestion[]> {
+  params.signal?.throwIfAborted();
   const { context, policy, text, userId, limit, sessionContext, lat, lng, city, draft, tz, aiAssist: aiAsked, coverage, outcomeLearning, distanceOrigin } = params; const aiAssist = params.catalogOnly === true ? false : aiAsked; // PR-D2-7c
 
   // no_assistance fields produce nothing (§6). generic_text lands here.
@@ -800,6 +802,7 @@ export async function generateSuggestions(
     q.length >= 1
   ) {
     const aiRows = await buildAiAssistedWriting(sc, {
+      signal: params.signal,
       context,
       policy,
       text: trimmed,

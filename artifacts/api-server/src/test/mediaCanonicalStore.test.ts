@@ -321,6 +321,22 @@ describe("recordMediaAssetDetailed — the write is legible, and still gated", (
     },
   );
 
+  it("capture-critical callers refuse metadata-dropping fallback even when the operator enabled it", async () => {
+    for (const missingAtProbe of [true, false]) {
+      resetCanonicalSchemaMemo();
+      const { client, attempts } = makeWriteClient({
+        flags: { media_canonical_enabled: true, media_canonical_schema_fallback_enabled: true },
+        ...(missingAtProbe ? { probe: { error: pgrstMissingColumn("captured_at") } } : {}),
+        upsertResults: [{ error: pgrstMissingColumn("captured_at") }, { id: "must-not-drop-capture" }],
+      });
+      const result = await recordMediaAssetDetailed(client, INPUT, { allowSchemaFallback: false });
+      assert.equal(result.outcome, missingAtProbe ? "refused_schema" : "failed");
+      assert.equal(result.assetId, null);
+      assert.equal(attempts.length, missingAtProbe ? 0 : 1, "no degraded retry may discard captured_at after a stale positive probe");
+      assert.deepEqual(result.droppedColumns, []);
+    }
+  });
+
   it("missing column + fallback flag ON: retries once without the 2250 columns", async () => {
     const { client, attempts } = makeWriteClient({
       flags: { media_canonical_enabled: true, media_canonical_schema_fallback_enabled: true },

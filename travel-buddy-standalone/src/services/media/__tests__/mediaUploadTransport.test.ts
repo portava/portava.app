@@ -493,6 +493,105 @@ describe('MD284 — the queue owns the upload: it survives the screen, the app a
     return { storage, accountId: async () => account, newId: () => `job-${++id}`, now: () => 1_000 + id, deps: async () => deps };
   }
 
+  it('preserves a photo capture instant across a completion outage and a fresh process without uploading twice', async () => {
+    const capturedAt = '2026-03-04T03:06:07.000Z';
+    const file = new FakeFile(bytesOf(CHUNK * 2));
+    const srv = fakeServer(file.size);
+    const calls = freshCalls();
+    const asset = normalizePickedAsset({ uri: 'file:///photo.jpg', type: 'image', mimeType: 'image/jpeg',
+      fileSize: file.size, width: 1200, height: 900, photoCapturedAt: capturedAt });
+    const q1 = new PostcardUploadQueue(runtime(pipelineDeps(srv, file, calls, {
+      complete: async (_post, _media, params) => {
+        calls.completed.push(params);
+        return { ok: false, retryable: true, message: 'completion response lost' };
+      },
+    })));
+    await q1.enqueue({ ...input({}, file.size), asset });
+    await q1.resumePending();
+    const stored = (await q1.list())[0]!;
+    assert.equal(stored.stage, 'poster');
+    assert.equal(stored.input.asset.photoCapturedAt, capturedAt);
+    const puts = [...srv.puts];
+    const q2 = new PostcardUploadQueue(runtime(pipelineDeps(srv, file, calls)));
+    await q2.resumePending();
+    assert.equal((await q2.list())[0]!.stage, 'done');
+    assert.equal(calls.completed.length, 2);
+    assert.deepEqual(calls.completed.map(p => p.photoCapturedAt), [capturedAt, capturedAt]);
+    assert.deepEqual(srv.puts, puts, 'landed bytes are not uploaded again');
+    assert.equal(calls.shells, 1);
+    assert.equal(calls.slots, 1);
+    assert.deepEqual([...srv.assembled!], [...file.bytes]);
+  });
+
+  it('does not manufacture capture time for an undated photo or send photo metadata on a video', async () => {
+    for (const asset of [{ isVideo: false, mimeType: 'image/jpeg', durationSeconds: null },
+      { isVideo: true, photoCapturedAt: '2026-03-04T03:06:07.000Z' }]) {
+      const file = new FakeFile(bytesOf(CHUNK));
+      const calls = freshCalls();
+      const job = await runPostcardUpload(newPostcardUploadJob('capture-scope', 'acct-A', input(asset, file.size), 1000),
+        pipelineDeps(fakeServer(file.size), file, calls));
+      assert.equal(job.stage, 'done');
+      assert.equal(Object.hasOwn(calls.completed[0]!, 'photoCapturedAt'), false);
+    }
+  });
+
+  it('a failed storage read never erases an existing upload or starts a new one', async () => {
+    const file = new FakeFile(bytesOf(CHUNK));
+    const calls = freshCalls();
+    const existing = newPostcardUploadJob('saved', 'acct-A', input({}, file.size), 1000);
+    const saved = JSON.stringify([existing]); storage.map.set(queueKey('acct-A'), saved);
+    const rt = runtime(pipelineDeps(fakeServer(file.size), file, calls));
+    let readable = false;
+    rt.storage = { ...storage, getItem: async key => { if (!readable) throw new Error('device locked'); return storage.getItem(key); } };
+    const queue = new PostcardUploadQueue(rt);
+    await assert.rejects(queue.enqueue(input({}, file.size)), /device locked/);
+    await assert.rejects(queue.resumePending(), /device locked/);
+    assert.equal(storage.map.get(queueKey('acct-A')), saved);
+    assert.equal(calls.shells, 0);
+    readable = true;
+    await queue.resumePending();
+    assert.equal((await queue.list())[0]?.stage, 'done');
+    assert.equal(calls.shells, 1);
+  });
+
+  it('a storage write failure pauses the visible job and preserves its last durable journal', async () => {
+    const file = new FakeFile(bytesOf(CHUNK));
+    const saved = JSON.stringify([newPostcardUploadJob('saved', 'acct-A', input({}, file.size), 1000)]);
+    storage.map.set(queueKey('acct-A'), saved);
+    const rt = runtime(pipelineDeps(fakeServer(file.size), file, freshCalls()));
+    rt.storage = { ...storage, setItem: async () => { throw new Error('disk full'); } };
+    const queue = new PostcardUploadQueue(rt);
+    const events: PostcardUploadJob[] = [];
+    queue.subscribe(event => events.push(event.job));
+    await assert.rejects(queue.resumePending(), /disk full/);
+    assert.equal(storage.map.get(queueKey('acct-A')), saved);
+    assert.equal(events.at(-1)?.retryable, true);
+    assert.match(events.at(-1)?.lastError ?? '', /device storage/);
+  });
+
+  it('corrupt, truncated and cross-account journals are preserved without running or replacing them', async () => {
+    const file = new FakeFile(bytesOf(CHUNK));
+    const calls = freshCalls();
+    for (const saved of ['', '{broken', '{}', '[null]', JSON.stringify([{ accountId: 'acct-A' }]), JSON.stringify([newPostcardUploadJob('foreign', 'acct-B', input({}, file.size), 1000)])]) {
+      storage.map.set(queueKey('acct-A'), saved);
+      const queue = new PostcardUploadQueue(runtime(pipelineDeps(fakeServer(file.size), file, calls)));
+      await assert.rejects(queue.enqueue(input({}, file.size)));
+      await assert.rejects(queue.list());
+      assert.equal(storage.map.get(queueKey('acct-A')), saved);
+    }
+    assert.equal(calls.shells, 0);
+  });
+
+  it('an account switch during the storage read cannot reveal the previous account uploads', async () => {
+    const file = new FakeFile(bytesOf(CHUNK));
+    const rt = runtime(pipelineDeps(fakeServer(file.size), file, freshCalls()));
+    rt.storage = { ...storage, getItem: async () => {
+      account = 'acct-B';
+      return JSON.stringify([newPostcardUploadJob('private', 'acct-A', input({}, file.size), 1000)]);
+    } };
+    assert.deepEqual(await new PostcardUploadQueue(rt).list(), []);
+  });
+
   it('a job is DURABLE before its first request, and a NEW process resumes it to done without re-creating the post', async () => {
     const file = new FakeFile(bytesOf(CHUNK * 3));
     const srv = fakeServer(file.size);
@@ -653,10 +752,12 @@ describe('MD320 — the device enforces the server envelope before a byte travel
   it('resizes when required, fails CLOSED when a required resize fails, and never touches a video', async () => {
     const seen: unknown[] = [];
     _setTestMediaNatives({ manipulate: async (uri, actions) => { seen.push(actions); return { uri: `${uri}.jpg`, width: 4096, height: 3072 }; } });
-    const big = normalizePickedAsset({ uri: 'file:///big.heic', mimeType: 'image/heic', width: 8000, height: 6000, fileSize: 30_000_000 });
+    const big = normalizePickedAsset({ uri: 'file:///big.heic', mimeType: 'image/heic', width: 8000, height: 6000, fileSize: 30_000_000,
+      photoCapturedAt: '2026-03-04T03:06:07.000Z' });
     const r = await prepareImageForUpload(big);
     assert.equal(r.ok && r.resized, true);
     assert.equal(r.ok && r.asset.mimeType, 'image/jpeg');
+    assert.equal(r.ok && r.asset.photoCapturedAt, '2026-03-04T03:06:07.000Z');
     assert.deepEqual(seen, [[{ resize: { width: 4096 } }]]);
     const small = await prepareImageForUpload(normalizePickedAsset({ uri: 'file:///s.jpg', width: 1200, height: 900, fileSize: 400_000 }));
     assert.equal(small.ok && small.resized, false);

@@ -72,7 +72,7 @@ beforeEach(() => {
     return { remove: jest.fn() };
   });
   mockList.mockReset().mockResolvedValue({ ok: true, source, segments: [] });
-  mockResolve.mockReset().mockResolvedValue({ ok: true, uri: 'https://storage.test/storage/v1/object/sign/post-media/original.mp4?token=private' });
+  mockResolve.mockReset().mockResolvedValue({ ok: true, uri: `https://rumazi.com/api/media/file/${source.mediaRef}?viewer=${ownerId}`, headers: { Authorization: 'Bearer original-session' } });
   mockCreate.mockReset().mockResolvedValue({ ok: true, segment, created: true });
   mockDelete.mockReset().mockResolvedValue({ ok: true });
 });
@@ -105,7 +105,7 @@ it('seeks and plays the segment on the one original player, stopping at the end'
   expect(latestPlayer()).toBe(video);
   expect(video.props.source).toBeUndefined();
   expect(video.props.useNativeControls).toBe(false);
-  expect(video.loadAsync).toHaveBeenCalledWith({ uri: expect.stringContaining('/object/sign/') }, expect.objectContaining({ shouldPlay: false, isLooping: false }));
+  expect(video.loadAsync).toHaveBeenCalledWith({ uri: expect.stringContaining('/api/media/file/'), headers: { Authorization: 'Bearer original-session' } }, expect.objectContaining({ shouldPlay: false, isLooping: false }));
   expect(video.setPositionAsync).toHaveBeenCalledWith(1000, { toleranceMillisBefore: 0, toleranceMillisAfter: 0 });
   expect(video.playAsync).toHaveBeenCalledTimes(1);
   expect(mockResolve).toHaveBeenCalledWith(expect.anything(), source.mediaRef, expect.any(AbortSignal));
@@ -192,6 +192,23 @@ it('stops and discards playback preparation when the account changes', async () 
   await act(async () => { for (const listener of mockListeners) listener('SIGNED_IN', { user: { id: ownerId } }); });
   await ready();
   expect(screen.getByText('No segments yet.')).toBeTruthy();
+});
+
+it('refreshes imperative playback headers on the same player without losing position or draft', async () => {
+  await render(<MemoryVideoSegments {...props} />); await ready(); await draft();
+  const video = latestPlayer();
+  await fireEvent.press(screen.getByLabelText('Play original video')); await ready();
+  await act(async () => video.props.onPlaybackStatusUpdate({ isLoaded: true, positionMillis: 2500, isPlaying: true }));
+  mockResolve.mockResolvedValue({ ok: true, uri: `https://rumazi.com/api/media/file/${source.mediaRef}?viewer=${ownerId}`, headers: { Authorization: 'Bearer refreshed-session' } });
+  await act(async () => { for (const listener of mockListeners) listener('TOKEN_REFRESHED', { user: { id: ownerId } }); });
+  await waitFor(() => expect(video.loadAsync).toHaveBeenCalledTimes(2));
+  await ready();
+  expect(latestPlayer()).toBe(video);
+  expect(video.loadAsync).toHaveBeenLastCalledWith(expect.objectContaining({ headers: { Authorization: 'Bearer refreshed-session' } }), expect.anything());
+  expect(video.setPositionAsync).toHaveBeenLastCalledWith(2500, expect.anything());
+  expect(video.playAsync).toHaveBeenCalledTimes(2);
+  expect(screen.getByLabelText('Segment start in seconds').props.value).toBe('1.125');
+  expect(screen.getByLabelText('Segment label').props.value).toBe('Arrival');
 });
 
 it('stops and clears content on background or navigation blur; account switches render no owner controls', async () => {

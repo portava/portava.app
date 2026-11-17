@@ -1,3 +1,4 @@
+import { activeMediaAccountRead } from './helpers/mediaAccountReadFixture.js';
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import http from "node:http";
@@ -26,6 +27,7 @@ function fixture() {
     memory_items: [{ id: ITEM, memory_id: MEMORY, media_url: `post-media/${OWNER}/original.mp4` }],
     media_assets: [{ id: ASSET, owner_user_id: OWNER, storage_bucket: "post-media", storage_path: `${OWNER}/original.mp4`, media_type: "video", version: 3, duration_ms: 4000, deleted_at: null, processing_status: "ready", moderation_status: "active" }],
     profiles: [{ id: OWNER, account_status: "active", user_account_states: [] }, { id: OTHER, account_status: "active", user_account_states: [] }],
+    media_asset_lifecycle_events: [],
     post_media: [],
     post_media_moderation_ledger: [],
     stories: [],
@@ -44,6 +46,7 @@ function fixture() {
         : { data: single ? tables[table].filter((row) => filters.every((filter) => filter(row)))[0] ?? null
           : tables[table].filter((row) => filters.every((filter) => filter(row))), error: null };
       const query = {
+        contains(column: string, values: Row) { filters.push(row => Object.entries(values).every(([key, value]) => row[column]?.[key] === value)); return query; },
         select() { return query; },
         eq(column: string, value: unknown) { filters.push((row) => row[column] === value); return query; },
         in(column: string, values: unknown[]) { filters.push((row) => values.includes(row[column])); return query; },
@@ -53,7 +56,8 @@ function fixture() {
       };
       return query;
     },
-    async rpc(name: string, args: { p_command: Row }) {
+    async rpc(name: string, args: { p_command: Row; p_user?: unknown }) {
+      if (name === "account_recovery_status") return activeMediaAccountRead(name, args);
       assert.equal(name, "memory_video_segments_execute");
       const command = args.p_command;
       calls.push(structuredClone(command));

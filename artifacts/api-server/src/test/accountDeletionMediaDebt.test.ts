@@ -1,3 +1,4 @@
+import { PERMANENT_DELETION_TEST_OPTIONS } from './helpers/accountDeletionAuthorizationFixture.js';
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
 import { executeAccountDeletion } from '../services/accountDeletion/AccountDeletionService.js';
@@ -6,11 +7,11 @@ import { accountMediaFixture, accountId, otherId, translation, dubbing, source }
 const fetchBefore = globalThis.fetch;
 globalThis.fetch = async () => { throw new Error('Synthetic test forbids network'); };
 after(() => { globalThis.fetch = fetchBefore; });
-const execute = (fixture: ReturnType<typeof accountMediaFixture>) => executeAccountDeletion(fixture.client, accountId, { actorId: null });
+const execute = (fixture: ReturnType<typeof accountMediaFixture>) => executeAccountDeletion(fixture.client, accountId, { ...PERMANENT_DELETION_TEST_OPTIONS });
 function pending(fixture: ReturnType<typeof accountMediaFixture>) {
   assert.deepEqual(fixture.state.authDeleted, []);
   assert.equal(fixture.state.rows.profiles![0]!.account_status, 'active');
-  assert.equal(fixture.state.rows.user_deletion_requests![0]!.status, 'pending');
+  assert.equal(fixture.state.rows.user_deletion_requests![0]!.status, 'failed');
   assert.equal(fixture.state.rows.user_deletion_requests![0]!.user_id, accountId);
 }
 
@@ -78,7 +79,8 @@ test('post-auth observed debt keeps request subject pending without claiming aut
   };
   assert.equal((await execute(fixture)).ok, false);
   assert.deepEqual(fixture.state.authDeleted, [accountId]);
-  assert.equal(fixture.rows.user_deletion_requests![0]!.status, 'pending');
+  assert.equal(fixture.rows.user_deletion_requests![0]!.status, 'executing');
+  assert.equal(fixture.rows.user_deletion_requests![0]!.execution_subject_id, accountId);
   assert.equal(fixture.rows.user_deletion_requests![0]!.user_id, accountId);
 });
 

@@ -1,19 +1,7 @@
 /**
- * Media file access routes — private-bucket signed URL relay.
- *
- *   GET  /api/media/file/:bucket/*  — authorize, then 302 to a short-lived
- *         signed URL.  Fail-closed: unauthorized or unknown objects 403/404.
- *   POST /api/media/sign            — batch variant for feed hydration:
- *         { urls: string[] } → { signed: { [url]: string | null } }
- *
- * Both buckets (post-media, profile-media) are PRIVATE.  The feature flag
- * `media_private_buckets_enabled` that previously gated the signed-URL path
- * has been retired — signed URLs are always issued.  Authorization runs
- * before signing in both routes.
- *
- * Generic cover fallback: when the path resolves to an AI-generated event or
- * trip header whose `show_header_publicly` column is explicitly false, the
- * route redirects to GENERIC_COVER_URL instead of signing the real asset.
+ * Private media delivery. Batch resolution returns viewer-bound app locators,
+ * never provider bearer URLs. GET/HEAD recheck current permission and stream
+ * authenticated storage bytes; browser AV uses the media-only cookie adapter.
  */
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
@@ -23,9 +11,21 @@ import { checkRateLimit } from "../lib/rateLimit.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js";
 import { authorizeMediaAccess, mediaAccessDeadline } from "../lib/mediaAccess.js";
 
-const router = Router();
+import { deliverPrivateMedia } from "../lib/media/privateMediaDelivery.js";
+import { requireMediaViewer, establishMediaBrowserSession, clearMediaBrowserSession } from "../lib/media/mediaBrowserSession.js";
 
-const SIGNED_TTL_SECONDS = 3600;
+const router = Router();
+router.use((req, res, next) => {
+  if (req.path.startsWith("/media/file") || req.path === "/media/sign") {
+    res.setHeader("Cache-Control", "private, no-store, max-age=0");
+    res.setHeader("Vary", "Authorization, Cookie");
+  }
+  next();
+});
+router.post("/media/file/session", asyncHandler(establishMediaBrowserSession));
+router.delete("/media/file/session", clearMediaBrowserSession);
+
+const LOCATOR_CACHE_SECONDS = 3600;
 const ALLOWED_BUCKETS = new Set(["post-media", "profile-media"]);
 
 /**
@@ -42,7 +42,7 @@ const GENERIC_COVER_URL =
  * NOT an owner/member/RSVP-holder who should always see the real image.
  *
  * Fail-CLOSED since census-media §28.8 (was Fail-OPEN: any DB error → false): an unreadable setting serves the generic cover, which blocks nothing.
- * Owners and direct members always receive the real signed URL regardless of
+ * Owners and direct members always receive the real asset regardless of
  * show_header_publicly — the flag masks the cover from casual/public viewers.
  */
 async function isHeaderPrivate(
@@ -103,71 +103,34 @@ async function isHeaderPrivate(
   }
 }
 
-/**
- * Sign a private-bucket object.  Returns null when Supabase storage rejects
- * the request (object not found, permissions, etc.).
- *
- * When `transform` is supplied, the signed URL is generated via the
- * `/render/image/sign/` path which applies Supabase's on-the-fly image
- * transformation (resize to the requested width/quality).  This is the only
- * way to get a resized derivative from a private bucket — appending query
- * params to a regular signed URL has no effect.
- */
-async function signUrl(
-  sc: any,
-  bucket: string,
-  path: string,
-  transform?: { width?: number; quality?: number },
-  ttlSeconds: number = SIGNED_TTL_SECONDS,
-): Promise<string | null> {
-  const options = transform
-    ? {
-        transform: {
-          ...(transform.width   !== undefined && { width:   transform.width   }),
-          ...(transform.quality !== undefined && { quality: transform.quality }),
-          resize: "contain" as const,
-        },
-      }
-    : undefined;
-  const { data, error } = await sc.storage
-    .from(bucket)
-    .createSignedUrl(path, ttlSeconds, options);
-  if (error || !data?.signedUrl) return null;
-  return data.signedUrl as string;
+/** An identity-bound locator contains no credential and grants no access. */
+function deliveryUrl(viewerId: string, bucket: string, path: string, transform?: { width?: number; quality?: number }): string {
+  const query = new URLSearchParams({ viewer: viewerId });
+  if (transform?.width !== undefined) query.set("width", String(transform.width));
+  if (transform?.quality !== undefined) query.set("quality", String(transform.quality));
+  return `/api/media/file/${[bucket, ...path.split("/")].map(encodeURIComponent).join("/")}?${query}`;
 }
 
-/**
- * How long a signed URL for this object may live, in seconds.
- *
- * A signed URL is a bearer token: it keeps working for its whole TTL no matter
- * what happens to the row that authorized it. Where access has a deadline — a
- * story's `expires_at` — the token must not outlive it, or "expired" means only
- * "no longer listed" for anyone holding a link. Previously the expiry sweep
- * deleted the bytes and that is what really ended the token; stories are now
- * kept for the owner's archive, so the boundary is enforced here instead.
- *
- * Never returns less than 1: Supabase rejects a non-positive TTL, and a caller
- * that has already passed `authorizeMediaAccess` is entitled to the object at
- * this instant. A deadline in the past means the authorization layer should
- * have refused, so the shortest possible token is the honest answer.
- */
-async function ttlSecondsFor(
+/** Advisory locator cache lifetime. Locators confer no authority: every byte
+ * request rechecks current access. Keep expiry-sensitive objects from staying
+ * in hydration caches beyond their source deadline. */
+async function cacheSecondsFor(
   sc: any,
   viewerId: string,
   bucket: string,
   path: string,
 ): Promise<number> {
   const deadline = await mediaAccessDeadline(sc, viewerId, bucket, path);
-  if (deadline === null) return SIGNED_TTL_SECONDS;
+  if (deadline === null) return LOCATOR_CACHE_SECONDS;
   const remaining = Math.floor((deadline - Date.now()) / 1000);
-  return Math.max(1, Math.min(SIGNED_TTL_SECONDS, remaining));
+  return Math.max(1, Math.min(LOCATOR_CACHE_SECONDS, remaining));
 }
 
 // ── GET /api/media/file/:bucket/*path ─────────────────────────────────────────
 router.get(
   "/media/file/:bucket/*path",
   asyncHandler(async (req, res) => {
-    const auth = await requireUser(req, res);
+    const auth = await requireMediaViewer(req, res);
     if (!auth) return;
     const { user } = auth;
 
@@ -193,30 +156,8 @@ router.get(
       return;
     }
 
-    const allowed = await authorizeMediaAccess(sc, user.id, bucket, path);
-    if (!allowed) {
-      sendError(res, "forbidden", "Not authorized for this media");
-      return;
-    }
-
-    // Generic cover fallback: private event/trip header with show_header_publicly=false.
-    // Owners and members always receive the real signed URL regardless.
-    if (await isHeaderPrivate(sc, path, user.id)) {
-      res.setHeader("Cache-Control", "private, max-age=60");
-      res.redirect(302, GENERIC_COVER_URL);
-      return;
-    }
-
-    // Optional image-transform: ?width=<n> and/or ?quality=<n> produce a
-    // /render/image/sign/ URL that Supabase resizes on the fly.  This is the
-    // only supported resize path for private-bucket media — transform params
-    // appended to a plain /object/sign/ URL have no effect.  Values are
-    // clamped to sane ranges to prevent abuse.
-    //
-    // width=0 is dropped entirely (not clamped to 1) — same as the batch POST
-    // handler.  quality=0 is also dropped entirely (mirrors width=0 rule): a
-    // caller that passes ?quality=0 receives a plain /object/sign/ URL, not a
-    // /render/image/sign/ URL with quality=1 silently promoted.
+    // Preserve the existing controls; the transport applies them through the
+    // authenticated image-render endpoint rather than a provider bearer URL.
     let transform: { width?: number; quality?: number } | undefined;
     const rawWidth = req.query.width;
     if (rawWidth !== undefined && rawWidth !== null && rawWidth !== "") {
@@ -231,7 +172,7 @@ router.get(
       if (Number.isFinite(parsedQuality)) {
         // Round first so that sub-unit fractions like 0.1 don't slip through
         // the > 0 guard only to land as quality=0 after rounding inside
-        // createSignedUrl.  Clamp to [0, 100], then drop if rounded to 0.
+        // storage rendering. Clamp to [0, 100], then drop if rounded to 0.
         const qualityRounded = Math.round(Math.min(Math.max(parsedQuality, 0), 100));
         if (qualityRounded > 0) {
           transform = { ...transform, quality: qualityRounded };
@@ -239,14 +180,13 @@ router.get(
       }
     }
 
-    const ttl = await ttlSecondsFor(sc, user.id, bucket, path);
-    const signedUrl = await signUrl(sc, bucket, path, transform, ttl);
-    if (!signedUrl) { sendError(res, "not_found", "Media unavailable"); return; }
-
-    // no-store: the signed URL has a finite lifetime (SIGNED_TTL_SECONDS).
-    // Caching the redirect would allow the same URL to be reused near expiry.
-    res.setHeader("Cache-Control", "no-store");
-    res.redirect(302, signedUrl);
+    await deliverPrivateMedia(req, res, sc, user.id, bucket, path, transform, {
+      onAuthorized: async () => {
+        if (!await isHeaderPrivate(sc, path, user.id)) return true;
+        if (!res.destroyed) res.redirect(302, GENERIC_COVER_URL);
+        return false;
+      },
+    });
   }),
 );
 
@@ -279,34 +219,14 @@ router.post(
       return;
     }
 
-    // Optional image-transform options applied at sign time.  When supplied,
-    // createSignedUrl produces a /render/image/sign/ URL which Supabase's CDN
-    // resizes on the fly — the only supported resize path for private buckets.
-    // Values are clamped to sane ranges to prevent misuse.
+    // The locator carries bounded transform controls. The GET request
+    // applies them only after checking current media access.
     let transform: { width?: number; quality?: number } | undefined;
     const rawTransform = body.transform;
     if (rawTransform !== null && rawTransform !== undefined && typeof rawTransform === "object" && !Array.isArray(rawTransform)) {
       const t = rawTransform as Record<string, unknown>;
-      // width=0 (or any non-positive number) is treated as an explicit "no resize"
-      // signal that drops the ENTIRE transform — including a concurrent valid
-      // quality value.  A caller that passes { width: 0, quality: 75 } receives
-      // a plain /object/sign/ URL (no transform forwarded at all), not a
-      // /render/image/sign/ URL with only quality forwarded.  This matches the
-      // intuition: width=0 means "I don't want a resized derivative", so
-      // forwarding quality alone would produce an unexpected transform URL.
-      //
-      // ROUNDED FIRST, then tested — the same correction the quality arm below
-      // already carries, which this arm did not. MEASURED: `{ width: 0.1 }`
-      // cleared the `<= 0` test, cleared the `> 0` test, and then
-      // `Math.round(Math.min(0.1, 3000))` produced 0, so `width: 0` was
-      // forwarded to createSignedUrl — a /render/image/sign/ URL asking for a
-      // zero-pixel image. Every value below 0.5 did this. The GET handler never
-      // could (it clamps with `Math.max(parsedWidth, 1)`), so the comment there
-      // claiming the two handlers agree on width=0 was true of the literal 0 and
-      // false of everything that rounds to it.
-      // `!Number.isNaN` rather than `Number.isFinite`: `Math.min(Infinity, 3000)`
-      // already clamps to 3000 and that answer is unchanged from before, while
-      // NaN must fall through to `undefined` exactly as `NaN > 0` used to.
+      // Preserve width opt-out: a rounded non-positive width drops the
+      // whole transform, including quality. Infinity is clamped; NaN omitted.
       const widthRounded =
         typeof t.width === "number" && !Number.isNaN(t.width)
           ? Math.round(Math.min(t.width, 3000))
@@ -328,7 +248,7 @@ router.post(
     }
 
     const signed: Record<string, string | null> = {};
-    let issuedTtlSeconds = SIGNED_TTL_SECONDS;
+    let issuedTtlSeconds = LOCATOR_CACHE_SECONDS;
     for (const raw of urls) {
       const url = typeof raw === "string" ? raw : "";
       const ref = appStorageUrlInfo(url);
@@ -339,16 +259,13 @@ router.post(
         signed[url] = GENERIC_COVER_URL;
         continue;
       }
-      const ttl = await ttlSecondsFor(sc, user.id, ref.bucket, ref.path);
-      // The response carries ONE ttl for the whole batch, so it must report the
-      // shortest token actually issued. Reporting the constant would tell a
-      // client a story link is good for an hour when it dies at expiry, and the
-      // client would cache it exactly that long.
+      const ttl = await cacheSecondsFor(sc, user.id, ref.bucket, ref.path);
+      // Report the shortest source deadline for this batch's locator cache.
       if (ttl < issuedTtlSeconds) issuedTtlSeconds = ttl;
-      signed[url] = (await signUrl(sc, ref.bucket, ref.path, transform, ttl)) ?? null;
+      signed[url] = deliveryUrl(user.id, ref.bucket, ref.path, transform);
     }
 
-    res.json({ signed, ttlSeconds: issuedTtlSeconds });
+    res.json({ signed, ttlSeconds: issuedTtlSeconds, delivery: "authenticated" });
   }),
 );
 

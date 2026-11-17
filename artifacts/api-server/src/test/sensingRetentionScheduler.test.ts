@@ -264,13 +264,22 @@ describe("sensing TTL sweep — registration and cadence", () => {
     // checkProjectionConsumers, check-guard-coverage, checkGuardReachability);
     // a comment is not a statement.
     //
-    // Not weakened: a migration that actually schedules still matches
-    // `cron.schedule(`, and one that installs the extension still matches the
-    // CREATE EXTENSION form.
+    // The intelligence monitor uses pg_cron for aggregate counts. Installing
+    // pg_cron or scheduling unrelated work does not duplicate this purge.
+    // Follow called SQL functions too, so wrapping the purge cannot hide it.
     const stripSqlComments = (t: string) =>
       t.replace(/\/\*[\s\S]*?\*\//g, " ").split("\n").map((l) => l.replace(/--.*$/, "")).join("\n");
-    const SCHEDULES = /\bcron\s*\.\s*schedule\s*\(|create\s+extension[^;]*\bpg_cron\b/i;
-    const scheduled = sql.filter((f) => SCHEDULES.test(stripSqlComments(readFileSync(join(dir, f), "utf8"))));
+    const sources = sql.map(f => ({ f, code: stripSqlComments(readFileSync(join(dir, f), "utf8")) }));
+    const purgeNames = new Set(['purge_expired_sensing_contributions', 'purge_expired_sensing_publications']);
+    const callsPurge = (code: string) => [...purgeNames].some(name => new RegExp(`\\b${name}\\s*\\(`, 'i').test(code));
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const { code } of sources) for (const match of code.matchAll(/create\s+(?:or\s+replace\s+)?function\s+(?:public\.)?(\w+)[\s\S]*?\bas\s+(\$\w*\$)([\s\S]*?)\2/gi)) {
+        if (!purgeNames.has(match[1]!) && callsPurge(match[3]!)) { purgeNames.add(match[1]!); changed = true; }
+      }
+    }
+    const scheduled = sources.filter(({ code }) => [...code.matchAll(/\bcron\s*\.\s*schedule(?:_in_database)?\s*\([\s\S]*?;/gi)].some(m => callsPurge(m[0]))).map(({ f }) => f);
     assert.deepEqual(scheduled, [], "a migration schedules a sweep — the Node scheduler would double it");
   });
 });

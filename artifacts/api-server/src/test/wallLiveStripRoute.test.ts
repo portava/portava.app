@@ -69,6 +69,58 @@ const PLACES = [
     latitude: 13.75, longitude: 100.50, status: "active", merged_into_place_id: null },
 ];
 
+const FIXTURE_COORDINATES = new Set(PLACES.flatMap((place) => [place.latitude, place.longitude]));
+
+/** Inspect JSON fields, not substrings of the serialized response. In particular,
+ * valid temporal fields may contain the same digits as one fixture's latitude. */
+function assertNoPreciseCoordinates(value: unknown, path = "strip", field = ""): void {
+  if (Array.isArray(value)) {
+    value.forEach((child, index) => assertNoPreciseCoordinates(child, `${path}[${index}]`));
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, child] of Object.entries(value)) {
+      const words = key.replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase().split(/[^a-z]+/);
+      assert.ok(!words.some((word) => ["lat", "lng", "lon", "latitude", "longitude", "coords", "coordinates", "geohash", "geolocation"].includes(word)),
+        `coordinate field at ${path}.${key}`);
+      assertNoPreciseCoordinates(child, `${path}.${key}`, key);
+    }
+    return;
+  }
+  if (typeof value === "number") {
+    assert.ok(!FIXTURE_COORDINATES.has(value), `fixture coordinate at ${path}: ${value}`);
+  } else if (typeof value === "string") {
+    // Only well-formed timestamps in the schema's temporal fields are exempt;
+    // a coordinate string hidden under one of those names still fails below.
+    if ((field === "observedAt" || field === "validUntil") &&
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) &&
+        Number.isFinite(Date.parse(value))) return;
+    for (const decimal of value.match(/[+-]?\d+\.\d+/g) ?? []) {
+      assert.ok(!FIXTURE_COORDINATES.has(Number(decimal)), `fixture coordinate at ${path}: ${decimal}`);
+    }
+  }
+}
+
+describe("the strip coordinate privacy assertion", () => {
+  it("allows timestamp fractions that share coordinate digits", () => {
+    assert.doesNotThrow(() => assertNoPreciseCoordinates({
+      observedAt: "2026-11-14T07:04:16.107Z", validUntil: "2026-11-14T08:04:16.100Z",
+    }));
+  });
+
+  it("rejects nested coordinate fields even when their values differ from the corpus", () => {
+    for (const key of ["latitude", "longitude", "location_lat", "locationLng", "coordinates", "geohash"]) {
+      assert.throws(() => assertNoPreciseCoordinates([{ subject: { [key]: 51.501 } }]), /coordinate field/);
+    }
+  });
+
+  it("rejects fixture coordinates in arbitrary numeric, string, array, and label fields", () => {
+    for (const value of [16.10, "16.100", [108.20], "Meet at 16.05,108.20", { observedAt: "16.100" }]) {
+      assert.throws(() => assertNoPreciseCoordinates({ payload: value }), /fixture coordinate/);
+    }
+  });
+});
+
 const PROFILES: Record<string, any> = {
   [VIEWER]: { id: VIEWER, display_name: "Viewer", username: "viewer", avatar_url: null,
     account_status: "active", current_city: "Da Nang", home_city: "Da Nang", interests: ["food"] },
@@ -340,10 +392,10 @@ describe("Live For You strip — the routes serve the full multi-kind set (§4/T
 
   it("no strip item carries a coordinate for anyone (§23)", async () => {
     const res = await get("/api/wall/live?limit=4");
-    const raw = JSON.stringify(res.json.liveForYou);
-    for (const n of ["16.05", "16.10", "16.15", "16.20", "13.75", "108.2", "108.25", "100.5"]) {
-      assert.ok(!raw.includes(n), `strip leaked the coordinate fragment ${n}: ${raw}`);
-    }
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.json.liveForYou) && res.json.liveForYou.length > 0,
+      "the seeded corpus must produce a strip to inspect");
+    assertNoPreciseCoordinates(res.json.liveForYou);
     for (const item of res.json.liveForYou as any[]) {
       // The coarse ref and nothing else — no latitude/longitude field may exist.
       assert.deepEqual(Object.keys(item.subject ?? {}).sort(), ["city", "country", "name", "placeId"]);

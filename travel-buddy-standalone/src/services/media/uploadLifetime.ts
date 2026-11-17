@@ -14,13 +14,14 @@ export function createUploadLifetime(owner: MessagingOwnerRequest, observe?: (ch
   const controller = new AbortController();
   const check = () => { if (!owner.isCurrent()) controller.abort('session'); };
   const unsubscribe = observe?.(check);
-  // Also covers observer replacement and same-account session rotation.
-  const timer = setInterval(check, 250);
+  // Session and scope subscriptions invoke check; stage boundaries also verify
+  // the owner. Never run an idle polling timer for an upload lifetime.
+  check();
   return {
     owner, signal: controller.signal,
     key: jobId ? `upload_${jobId}` : `upload_${Date.now().toString(36)}_${++sequence}`,
     isCurrent: () => owner.isCurrent(),
     cancel: () => controller.abort(owner.isCurrent() ? 'user' : 'session'),
-    dispose: () => { clearInterval(timer); unsubscribe?.(); controller.abort('disposed'); },
+    dispose: () => { unsubscribe?.(); controller.abort('disposed'); },
   };
 }

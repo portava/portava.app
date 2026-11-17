@@ -20,7 +20,7 @@ it('never auto-consents or enqueues and sends the original revision only after e
   expect(captions.requestCaptionAsr).not.toHaveBeenCalled();
   await fireEvent.press(screen.getByLabelText("I have permission to transcribe this video's audio locally"));
   await fireEvent.press(screen.getByLabelText('Request local caption draft'));
-  expect(captions.requestCaptionAsr).toHaveBeenCalledWith(source, '', true, available.consentEpoch, expect.anything());
+  expect(captions.requestCaptionAsr).toHaveBeenCalledWith(source, '', true, available.consentEpoch, expect.anything(), undefined);
   await screen.findByText(/Transcription: pending.*Review the generated draft/);
   expect(screen.getByRole('checkbox').props.accessibilityState.checked).toBe(false);
 });
@@ -33,7 +33,7 @@ it('language changes reset consent and select only the advertised language list'
   expect(screen.getByRole('checkbox').props.accessibilityState.checked).toBe(false);
   await fireEvent.press(screen.getByRole('checkbox'));
   await fireEvent.press(screen.getByLabelText('Request local caption draft'));
-  expect(captions.requestCaptionAsr).toHaveBeenCalledWith(source, 'en', true, available.consentEpoch, expect.anything());
+  expect(captions.requestCaptionAsr).toHaveBeenCalledWith(source, 'en', true, available.consentEpoch, expect.anything(), undefined);
 });
 
 it('OFF/unavailable runtime refuses requests but permits confirmed revocation and reports pending erasure', async () => {
@@ -80,7 +80,7 @@ it('clears consent after revoke and cannot re-request until a fresh status suppl
   expect(captions.requestCaptionAsr).not.toHaveBeenCalled();
   await fireEvent.press(screen.getByRole('checkbox'));
   await fireEvent.press(screen.getByLabelText('Request local caption draft'));
-  expect(captions.requestCaptionAsr).toHaveBeenCalledWith(source, '', true, refreshed.consentEpoch, expect.anything());
+  expect(captions.requestCaptionAsr).toHaveBeenCalledWith(source, '', true, refreshed.consentEpoch, expect.anything(), undefined);
 });
 
 it('a rejected stale request clears permission and cannot auto-retry with an old epoch', async () => {
@@ -108,7 +108,7 @@ it('a late initial status cannot overwrite the fresh post-revocation epoch', asy
   await act(async () => initial(available));
   await fireEvent.press(screen.getByRole('checkbox'));
   await fireEvent.press(screen.getByLabelText('Request local caption draft'));
-  expect(captions.requestCaptionAsr).toHaveBeenCalledWith(source, '', true, refreshed.consentEpoch, expect.anything());
+  expect(captions.requestCaptionAsr).toHaveBeenCalledWith(source, '', true, refreshed.consentEpoch, expect.anything(), undefined);
 });
 
 it('failed status refresh after withdrawal never reuses the pre-revoke epoch', async () => {
@@ -154,4 +154,31 @@ it('does not carry consent or a late request response to another source generati
   expect(screen.queryByText(/The video or captions changed/)).toBeNull();
   await fireEvent.press(screen.getByLabelText('Request local caption draft'));
   expect(captions.requestCaptionAsr).toHaveBeenCalledTimes(1);
+});
+
+
+it('names Deepgram before opt-in and sends the exact reviewed provider receipt', async () => {
+  const processing = { provider: 'deepgram' as const, modelVersion: 'deepgram:nova-3:fixture', configVersion: 'reviewed', disclosureVersion: 'deepgram-audio-opt-out-v1' };
+  jest.mocked(captions.getCaptionAsrStatus).mockResolvedValue({ ...available, processing });
+  await render(<CaptionAsrSheet source={source} onClose={jest.fn()} onRevoked={jest.fn()} />);
+  await screen.findByText(/With your permission.*Deepgram/);
+  expect(captions.requestCaptionAsr).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByLabelText('Request caption draft with Deepgram'));
+  expect(captions.requestCaptionAsr).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByRole('checkbox'));
+  await fireEvent.press(screen.getByLabelText('Request caption draft with Deepgram'));
+  expect(captions.requestCaptionAsr).toHaveBeenCalledWith(source, '', true, available.consentEpoch, expect.anything(), processing);
+});
+
+
+it('cannot reuse consent checked before the provider disclosure has loaded', async () => {
+  let resolve!: (status: captions.CaptionAsrStatus) => void;
+  jest.mocked(captions.getCaptionAsrStatus).mockImplementation(() => new Promise((done) => { resolve = done; }));
+  await render(<CaptionAsrSheet source={source} onClose={jest.fn()} onRevoked={jest.fn()} />);
+  expect(screen.getByRole('checkbox').props.accessibilityState.disabled).toBe(true);
+  await fireEvent.press(screen.getByRole('checkbox'));
+  await act(async () => resolve({ ...available, processing: { provider: 'deepgram', modelVersion: 'deepgram:nova-3:fixture', configVersion: 'reviewed', disclosureVersion: 'deepgram-audio-opt-out-v1' } }));
+  expect(screen.getByRole('checkbox').props.accessibilityState.checked).toBe(false);
+  await fireEvent.press(screen.getByLabelText('Request caption draft with Deepgram'));
+  expect(captions.requestCaptionAsr).not.toHaveBeenCalled();
 });

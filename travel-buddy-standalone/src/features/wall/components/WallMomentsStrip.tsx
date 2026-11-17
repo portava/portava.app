@@ -16,7 +16,7 @@
  *   - looked, nothing changed      → says exactly that, for the places it looked at
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, Pressable, ActivityIndicator, StyleSheet, AppState } from 'react-native';
 import { router } from 'expo-router';
 import { Activity } from 'lucide-react-native';
 
@@ -42,6 +42,7 @@ export function WallMomentsStrip({ liveItems, load = fetchWallMoments }: Props) 
   const key = subjectIds.join(',');
   const names = useMemo(() => new Map(liveItems.map((i) => [i.subjectId, i.subject?.name ?? null])), [liveItems]);
   const [read, setRead] = useState<MomentsRead | undefined>(undefined);
+  const [now, setNow] = useState(Date.now);
   const seen = useRef<Set<string>>(new Set());
   // census-wall §19: the places asked about change under this strip whenever the
   // Live strip refreshes. Only the newest request may land; a slower answer about
@@ -52,12 +53,25 @@ export function WallMomentsStrip({ liveItems, load = fetchWallMoments }: Props) 
     if (key.length === 0) return;
     const mine = ++generation.current;
     setRead(undefined);
-    const r = await load(key.split(','), Array.from(seen.current));
+    const r = await load(key.split(','), Array.from(seen.current)).catch((): MomentsRead => ({
+      state: 'unavailable', call: { kind: 'unavailable', status: null, detail: 'Could not check changes. Try again.' },
+    }));
     if (mine !== generation.current) return;
     setRead(r);
   }, [key, load]);
 
-  useEffect(() => { void run(); }, [run]);
+  useEffect(() => { void run(); return () => { generation.current += 1; }; }, [run]);
+  useEffect(() => {
+    const listener = AppState.addEventListener('change', (state) => { if (state === 'active') setNow(Date.now()); });
+    return () => listener.remove();
+  }, []);
+  useEffect(() => {
+    if (read?.state !== 'ok') return;
+    const future = read.moments.map((m) => Date.parse(m.expiresAt)).filter((at) => at > now);
+    if (!future.length) return;
+    const timer = setTimeout(() => setNow(Date.now()), Math.max(1, Math.min(60_000, Math.min(...future) - Date.now())));
+    return () => clearTimeout(timer);
+  }, [read, now]);
   // Moments shown once are sent back as `seen`, so the Attention Engine does not route the same change again.
   useEffect(() => { if (read?.state === 'ok') for (const m of shownMoments(read.moments).shown) seen.current.add(m.id); }, [read]);
 
@@ -86,7 +100,7 @@ export function WallMomentsStrip({ liveItems, load = fetchWallMoments }: Props) 
     );
   }
 
-  const { shown, held } = shownMoments(read.moments);
+  const { shown, held, expired } = shownMoments(read.moments, Math.max(now, Date.now()));
   const refused = read.subjects.filter((x) => x.refusal !== null).length;
   const looked = read.subjects.length - refused;
 
@@ -103,11 +117,12 @@ export function WallMomentsStrip({ liveItems, load = fetchWallMoments }: Props) 
           </View>
         </Pressable>
       ))}
-      {shown.length === 0 && looked > 0 ? (
+      {shown.length === 0 && looked > 0 && expired === 0 ? (
         <Text style={s.sub} testID="wall-moments-none">
           No change worth showing at the {looked} live place{looked === 1 ? '' : 's'} near you since they were last read.
         </Text>
       ) : null}
+      {expired > 0 ? <View><Text style={s.meta}>Earlier changes are no longer current.</Text><Pressable onPress={run} accessibilityRole="button"><Text style={s.sub}>Check again</Text></Pressable></View> : null}
       {held > 0 ? <Text style={s.meta} testID="wall-moments-held">{held} quieter change{held === 1 ? '' : 's'} not shown here.</Text> : null}
       {refused > 0 ? (
         <Text style={s.error} testID="wall-moments-refused">{refused} place{refused === 1 ? '' : 's'} couldn't be checked — not the same as nothing changing.</Text>

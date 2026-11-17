@@ -12,6 +12,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { accountDeletionAuthorizationFixture, PERMANENT_DELETION_TEST_OPTIONS } from "./helpers/accountDeletionAuthorizationFixture.js";
 import {
   executeAccountDeletion,
   DELETION_POLICY_VERSION,
@@ -35,6 +36,8 @@ interface Fixture {
  * about how many times a method happened to be called.
  */
 function fakeClient(fx: Fixture) {
+  const rows: Record<string, any[]> = {};
+  const authorize = accountDeletionAuthorizationFixture(rows, USER);
   const rpcCalls: Array<{ fn: string; args: any }> = [];
   const deletes: Array<{ table: string; eq: Record<string, unknown> }> = [];
   const updates: Array<{ table: string; values: any; eq: Record<string, unknown> }> = [];
@@ -60,6 +63,10 @@ function fakeClient(fx: Fixture) {
         if (op === "update") updates.push({ table, values, eq });
 
         let data: any[] = [];
+        if (table === "user_deletion_requests" && op === "update") {
+          data = rows[table]!.filter(row => Object.entries(eq).every(([col, value]) => row[col] === value));
+          for (const row of data) Object.assign(row, values);
+        }
         if (op === "select") {
           if (table === "posts") {
             data = (fx.posts ?? []).map((id) => ({ id }));
@@ -80,6 +87,7 @@ function fakeClient(fx: Fixture) {
 
   return {
     _rpcCalls: rpcCalls,
+    _rows: rows,
     _deletes: deletes,
     _updates: updates,
     from(table: string) {
@@ -90,7 +98,7 @@ function fakeClient(fx: Fixture) {
         upsert: async () => ({ data: null, error: null }),
       };
     },
-    rpc: async (fn: string, args: any) => { rpcCalls.push({ fn, args }); return { data: null, error: null }; },
+    rpc: async (fn: string, args: any) => { rpcCalls.push({ fn, args }); const receipt = authorize(fn, args); if (receipt) return receipt; return { data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null }; },
     storage: { from: () => ({ remove: async () => ({ data: null, error: null }) }) },
     auth: { admin: { deleteUser: async () => ({ data: null, error: null }) } },
   };
@@ -99,7 +107,7 @@ function fakeClient(fx: Fixture) {
 describe("ruling 4 — posts tombstone when others have contributed", () => {
   it("TOMBSTONES a post that carries someone else's comment", async () => {
     const sc = fakeClient({ posts: ["p-shared"], postsWithOtherComments: ["p-shared"] });
-    const out = await executeAccountDeletion(sc as any, USER, {} as any);
+    const out = await executeAccountDeletion(sc as any, USER, PERMANENT_DELETION_TEST_OPTIONS);
 
     // Filtered, not compared whole: the worker also calls erase_intel_for_actor,
     // and asserting the full RPC list would break every time an unrelated step
@@ -115,7 +123,7 @@ describe("ruling 4 — posts tombstone when others have contributed", () => {
 
   it("HARD-DELETES a post nobody else has touched", async () => {
     const sc = fakeClient({ posts: ["p-lonely"] });
-    const out = await executeAccountDeletion(sc as any, USER, {} as any);
+    const out = await executeAccountDeletion(sc as any, USER, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.deepEqual(sc._rpcCalls.filter((c) => c.fn === "tombstone_post"), [],
       "nothing to preserve, so no tombstone");
@@ -127,7 +135,7 @@ describe("ruling 4 — posts tombstone when others have contributed", () => {
   it("TOMBSTONES a post named by a moderation report even with no comments", async () => {
     // Ruling 4 lists moderation dependency alongside third-party comments.
     const sc = fakeClient({ posts: ["p-reported"], reportedPosts: ["p-reported"] });
-    const out = await executeAccountDeletion(sc as any, USER, {} as any);
+    const out = await executeAccountDeletion(sc as any, USER, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.deepEqual(
       sc._rpcCalls.filter((c) => c.fn === "tombstone_post").map((c) => c.args.p_post_id),
@@ -141,7 +149,7 @@ describe("ruling 4 — posts tombstone when others have contributed", () => {
       postsWithOtherComments: ["p-shared"],
       reportedPosts: ["p-reported"],
     });
-    const out = await executeAccountDeletion(sc as any, USER, {} as any);
+    const out = await executeAccountDeletion(sc as any, USER, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.deepEqual(
       sc._rpcCalls.filter((c) => c.fn === "tombstone_post").map((c) => c.args.p_post_id).sort(),
@@ -152,33 +160,31 @@ describe("ruling 4 — posts tombstone when others have contributed", () => {
 });
 
 describe("ruling 3 — a completed receipt stops naming a person", () => {
-  it("clears user_id and stamps versions and counts in ONE statement", async () => {
+  it("prepares counts on the exact claim and completes through the canonical receipt owner", async () => {
     const sc = fakeClient({ posts: ["p-shared"], postsWithOtherComments: ["p-shared"] });
-    await executeAccountDeletion(sc as any, USER, {} as any);
-
-    const receipt = sc._updates.find((u) => u.table === "user_deletion_requests");
-    assert.ok(receipt, "the worker must write a completion receipt");
-
-    assert.equal(receipt.values.user_id, null,
-      "a completed receipt must not name the person it is about");
-    assert.equal(receipt.values.status, "completed");
-    assert.equal(receipt.values.policy_version, DELETION_POLICY_VERSION);
-    assert.equal(receipt.values.worker_version, DELETION_WORKER_VERSION);
-    assert.deepEqual(receipt.values.tombstoned_counts, { posts: 1 });
-    assert.deepEqual(receipt.values.deleted_counts, { posts: 0 });
-
-    // The WHERE still targets the user — it is evaluated before the SET. Doing
-    // this in two statements would leave a window in which a completed receipt
-    // still identified someone.
-    assert.equal(receipt.eq.user_id, USER);
+    await executeAccountDeletion(sc as any, USER, PERMANENT_DELETION_TEST_OPTIONS);
+    const claim = sc._rpcCalls.find(call => call.fn === 'claim_account_permanent_deletion')!;
+    const prepared = sc._rpcCalls.find(call => call.fn === 'prepare_account_auth_deletion')!;
+    const settled = sc._rpcCalls.find(call => call.fn === 'settle_account_auth_deletion')!;
+    assert.equal(prepared.args.p_token, claim.args.p_token);
+    assert.equal(prepared.args.p_request, 'cccccccc-0000-4000-8000-000000000001');
+    assert.equal(prepared.args.p_policy, DELETION_POLICY_VERSION);
+    assert.equal(prepared.args.p_worker, DELETION_WORKER_VERSION);
+    assert.deepEqual(prepared.args.p_tombstoned, { posts: 1 });
+    assert.deepEqual(prepared.args.p_deleted, { media_events: 0, posts: 0 });
+    assert.equal(settled.args.p_request, prepared.args.p_request);
+    assert.equal(settled.args.p_generation, PERMANENT_DELETION_TEST_OPTIONS.generation);
+    assert.equal(sc._updates.some(row => row.table === 'user_deletion_requests'), false, 'no parallel raw receipt writer');
+    const receipt = sc._rows.user_deletion_requests![0]!;
+    assert.equal(receipt.status, 'completed'); assert.equal(receipt.user_id, null); assert.equal(receipt.execution_subject_id, null);
   });
 
   it("carries no identifying field beyond the user_id it is clearing", async () => {
     const sc = fakeClient({ posts: [] });
-    await executeAccountDeletion(sc as any, USER, {} as any);
-    const receipt = sc._updates.find((u) => u.table === "user_deletion_requests")!;
+    await executeAccountDeletion(sc as any, USER, PERMANENT_DELETION_TEST_OPTIONS);
+    const receipt = sc._rows.user_deletion_requests![0]!;
 
-    for (const key of Object.keys(receipt.values)) {
+    for (const key of Object.keys(receipt)) {
       assert.doesNotMatch(key, /email|username|handle|ip_address|device|hash/,
         `receipt field "${key}" would make the record identifying`);
     }

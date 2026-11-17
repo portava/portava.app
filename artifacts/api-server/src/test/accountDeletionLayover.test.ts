@@ -23,6 +23,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { accountDeletionAuthorizationFixture, PERMANENT_DELETION_TEST_OPTIONS } from "./helpers/accountDeletionAuthorizationFixture.js";
 import { executeAccountDeletion, LAYOVER_AUDIT_RETENTION_DAYS } from "../services/accountDeletion/AccountDeletionService.js";
 
 const USER_ID = "33333333-3333-4333-8333-333333333333";
@@ -31,6 +32,8 @@ type Op = { table: string; op: string; filters: any[]; payload?: any };
 function makeStub(opts: { fail?: Record<string, Record<string, any>> } = {}) {
   const ops: Op[] = [];
   const authDeleted: string[] = [];
+  const rows: Record<string, any[]> = {};
+  const authorize = accountDeletionAuthorizationFixture(rows, USER_ID);
   function builder(table: string) {
     const q: any = {
       _op: "select", _filters: [] as any[], _payload: undefined as any, _single: false,
@@ -48,6 +51,11 @@ function makeStub(opts: { fail?: Record<string, Record<string, any>> } = {}) {
       single() { q._single = true; return q._run(); },
       then(resolve: any, reject: any) { return q._run().then(resolve, reject); },
       _run() {
+        if (table === "user_deletion_requests" && q._op === "update") {
+          const matched = rows[table]!.filter(row => q._filters.every(([op, col, value]: any[]) => op === "eq" && row[col] === value));
+          for (const row of matched) Object.assign(row, q._payload);
+          return Promise.resolve({ data: matched, error: null });
+        }
         if (q._op === "update" || q._op === "delete") {
           ops.push({ table, op: q._op, filters: q._filters.slice(), payload: q._payload });
           const err = opts.fail?.[`${table}:${q._op}`];
@@ -64,7 +72,7 @@ function makeStub(opts: { fail?: Record<string, Record<string, any>> } = {}) {
     _ops: ops,
     _authDeleted: authDeleted,
     from: (t: string) => builder(t),
-    rpc: async () => ({ data: null, error: null }),
+    rpc: async (fn: string, args: Record<string, unknown>) => authorize(fn, args) ?? ({ data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null }),
     storage: { from: () => ({ remove: async () => ({ data: [], error: null }) }) },
     auth: { admin: { deleteUser: async (id: string) => { authDeleted.push(id); return { data: {}, error: null }; } } },
   };
@@ -76,23 +84,23 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{1
 
 describe("account deletion — layover (census-layover L163, OD-MAP-4)", () => {
   it("nulls only the deleting curator before tombstoning, and leaves source facts in place", async () => {
-    const c=makeStub();const result=await executeAccountDeletion(c as any,USER_ID,{actorId:null});assert.equal(result.ok,true);
+    const c=makeStub();const result=await executeAccountDeletion(c as any,USER_ID,PERMANENT_DELETION_TEST_OPTIONS);assert.equal(result.ok,true);
     const op=c._ops.find(o=>o.table==='layover_objective_facts');assert.ok(op);
     assert.equal(op.op,'update');assert.deepEqual(op.payload,{stated_by:null});assert.deepEqual(op.filters,[['eq','stated_by',USER_ID]]);
     assert.ok(c._ops.indexOf(op)<c._ops.findIndex(o=>o.table==='profiles'&&o.op==='update'));
   });
   for(const code of ['42P01','PGRST205']) it(`genuinely absent objective schema ${code} has no source identifiers to erase`,async()=>{
     const c=makeStub({fail:{'layover_objective_facts:update':{code,message:'relation public.layover_objective_facts does not exist'}}});
-    assert.equal((await executeAccountDeletion(c as any,USER_ID,{actorId:null})).ok,true);
+    assert.equal((await executeAccountDeletion(c as any,USER_ID,PERMANENT_DELETION_TEST_OPTIONS)).ok,true);
   });
   for(const [code,message] of [['57014','timeout'],['42501','permission denied'],['42703','column stated_by does not exist'],['42P01','relation unrelated_trigger_dependency does not exist']]) it(`objective erasure fault ${code}/${message} blocks account finalization`,async()=>{
-    const c=makeStub({fail:{'layover_objective_facts:update':{code,message}}});const result=await executeAccountDeletion(c as any,USER_ID,{actorId:null});
+    const c=makeStub({fail:{'layover_objective_facts:update':{code,message}}});const result=await executeAccountDeletion(c as any,USER_ID,PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(result.ok,false);assert.equal(result.steps.find(x=>x.step==='anonymise_layover_objective_sources')?.ok,false);
     assert.equal(result.steps.some(x=>x.step==='anonymise_profile'),false);assert.deepEqual(c._authDeleted,[]);
   });
   it("pseudonymises the events, then deletes the crew memberships, then the sessions — each scoped to this user", async () => {
     const c = makeStub();
-    const out = await executeAccountDeletion(c as any, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c as any, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps.filter((s) => !s.ok)));
     assert.deepEqual(layoverOps(c).map((o) => `${o.op} ${o.table}`), [
       "update layover_events", "delete layover_crew_members", "delete layover_sessions",
@@ -116,15 +124,15 @@ describe("account deletion — layover (census-layover L163, OD-MAP-4)", () => {
 
   it("each deletion gets its OWN pseudonym — two departed travellers are never joined", async () => {
     const a = makeStub(); const b = makeStub();
-    await executeAccountDeletion(a as any, USER_ID, { actorId: null });
-    await executeAccountDeletion(b as any, USER_ID, { actorId: null });
+    await executeAccountDeletion(a as any, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
+    await executeAccountDeletion(b as any, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.notEqual(layoverOps(a)[0]!.payload.erasure_pseudonym, layoverOps(b)[0]!.payload.erasure_pseudonym);
   });
 
   for (const code of ["42703", "PGRST204"]) {
     it(`a database without 3621 (${code}) erases the events with their sessions and the deletion proceeds`, async () => {
       const c = makeStub({ fail: { "layover_events:update": { code, message: "column erasure_pseudonym does not exist" } } });
-      const out = await executeAccountDeletion(c as any, USER_ID, { actorId: null });
+      const out = await executeAccountDeletion(c as any, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
       assert.equal(out.steps.find((s) => s.step === "pseudonymise_layover_events")?.ok, true);
       assert.ok(layoverOps(c).some((o) => o.op === "delete" && o.table === "layover_sessions"));
       assert.ok(out.steps.some((s) => s.step === "anonymise_profile"));
@@ -133,7 +141,7 @@ describe("account deletion — layover (census-layover L163, OD-MAP-4)", () => {
 
   it("a FAILED pseudonymisation deletes no session and aborts before the profile is anonymised", async () => {
     const c = makeStub({ fail: { "layover_events:update": { code: "57014", message: "statement timeout" } } });
-    const out = await executeAccountDeletion(c as any, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c as any, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, false);
     assert.ok(!layoverOps(c).some((o) => o.table === "layover_sessions"), "sessions deleted around an event that kept its user");
     assert.equal(out.steps.find((s) => s.step === "anonymise_profile"), undefined);
@@ -143,7 +151,7 @@ describe("account deletion — layover (census-layover L163, OD-MAP-4)", () => {
 
   it("a FAILED session delete aborts before the profile is anonymised (the request stays retryable)", async () => {
     const c = makeStub({ fail: { "layover_sessions:delete": { code: "57014", message: "statement timeout" } } });
-    const out = await executeAccountDeletion(c as any, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c as any, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, false);
     assert.equal(out.steps.find((s) => s.step === "delete_layover_sessions")?.ok, false);
     assert.equal(out.steps.find((s) => s.step === "anonymise_profile"), undefined);
@@ -152,14 +160,14 @@ describe("account deletion — layover (census-layover L163, OD-MAP-4)", () => {
 
   it("a FAILED crew-membership delete deletes no session either", async () => {
     const c = makeStub({ fail: { "layover_crew_members:delete": { code: "57014", message: "statement timeout" } } });
-    const out = await executeAccountDeletion(c as any, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c as any, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, false);
     assert.ok(!layoverOps(c).some((o) => o.table === "layover_sessions"));
   });
 
   it("a database without 2984's crew tables (42P01) is nothing to erase there, not a failure", async () => {
     const c = makeStub({ fail: { "layover_crew_members:delete": { code: "42P01", message: "relation does not exist" } } });
-    const out = await executeAccountDeletion(c as any, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c as any, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.steps.find((s) => s.step === "delete_layover_crew_memberships")?.ok, true);
     assert.ok(layoverOps(c).some((o) => o.op === "delete" && o.table === "layover_sessions"));
   });

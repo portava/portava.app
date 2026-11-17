@@ -31,6 +31,7 @@ import type { MediaUploadResult } from '../services/media.ts';
 export type MediaItemUploadState = 'idle' | 'uploading' | 'done' | 'error';
 
 export interface MediaItem {
+  photoCapturedAt?: string | null;
   /** Stable React key (random ID). */
   id: string;
   uri: string;
@@ -129,6 +130,7 @@ function assetToMediaItem(
   return {
     id: makeId(),
     uri: asset.uri,
+    photoCapturedAt: (asset as ImagePicker.ImagePickerAsset & { photoCapturedAt?: string | null }).photoCapturedAt,
     mimeType: asset.mimeType ?? (isVideo ? 'video/mp4' : 'image/jpeg'),
     fileName: asset.fileName ?? null,
     fileSize: asset.fileSize ?? null,
@@ -299,6 +301,7 @@ export function useMediaComposer(policyKey: ContentPolicyKey): UseMediaComposerR
     try {
       result = await uploadMedia({
         uri: currentItem.uri,
+        photoCapturedAt: currentItem.photoCapturedAt,
         mimeType: currentItem.mimeType,
         fileName: currentItem.fileName,
         fileSize: currentItem.fileSize,

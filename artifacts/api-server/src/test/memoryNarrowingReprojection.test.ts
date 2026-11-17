@@ -1,3 +1,5 @@
+import { memoryEditFixture } from './helpers/memoryEditFixture.js';
+import { makeKernelRpc } from './memoryCommandKernelFake.js';
 /**
  * §21 "Make private: revoke public derivatives and public indexing, retain the
  * Memory" — on the §18 registry (2730, applied). Census H189 and H114.
@@ -49,6 +51,7 @@ interface FakeOpts { failWrites?: Set<string>; failReads?: Set<string> }
 let gen = 0;
 
 function makeClient(store: Record<string, any[]>, opts: FakeOpts = {}) {
+  const editRpc = makeKernelRpc({ tables: store, rpcCalls: [], failOn: new Set(), absent: false });
   function chain(table: string) {
     const filters: Array<(r: any) => boolean> = []; let countExact = false;
     let mode: "select" | "upsert" | "update" | "insert" | "delete" = "select";
@@ -93,7 +96,7 @@ function makeClient(store: Record<string, any[]>, opts: FakeOpts = {}) {
   }
   return {
     from: (t: string) => chain(t),
-    rpc: async () => ({ data: null, error: { message: "rpc not modelled", code: "PGRST202" } }),
+    rpc: async (name: string, args: unknown) => name === "memory_field_edits_ready" || name === "memory_kernel_execute" ? editRpc(name,args) : ({ data: null, error: { message: "rpc not modelled", code: "PGRST202" } }),
     auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },
   };
 }
@@ -130,7 +133,7 @@ async function patch(app: App, id: string, body: unknown) {
   const res = await fetch(`${app.base}/api/memories/${id}`, {
     method: "PATCH",
     headers: { Authorization: `Bearer ${OWNER}`, "Content-Type": "application/json", "Idempotency-Key": `n-${++keyN}`, connection: "close" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(memoryEditFixture(app.store.memories.find(m => m.id === id), body as Record<string, unknown>)),
   });
   return { status: res.status, body: await res.text() };
 }

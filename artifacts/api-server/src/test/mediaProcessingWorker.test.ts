@@ -1,3 +1,4 @@
+import {activeMediaAccountRead} from './helpers/mediaAccountReadFixture.js';
 /**
  * census-media §30 (MD338) — the media processing lifecycle has a worker, and
  * an owner's retry cannot take a `ready` asset off a read path.
@@ -1024,7 +1025,7 @@ const BYTE_GATE_LIVE_COLUMNS: Record<string, readonly string[]> = {
     "feed_storage_path", "feed_url", "width", "height", "duration_seconds",
     "file_size_bytes", "sort_order", "moderation_status", "processing_status",
     "phash", "dedup_processed", "canonical_place_id", "stamp_overlay",
-    "created_at", "updated_at",
+    "created_at", "updated_at", "deleted_at",
   ],
   media_attachments: ATTACHMENT_COLUMNS,
   circle_member_visibility_overrides: [
@@ -1087,7 +1088,7 @@ function byteGateClient(tables: Record<string, Row[]>): any {
     };
     return b;
   }
-  return { from: builder };
+  return { from: builder, rpc: async (name:string,args:any)=>activeMediaAccountRead(name,args) };
 }
 
 describe("census-media §32 — PRIVACY: a swept entity asset reaches nobody its entity would not be shown to", () => {

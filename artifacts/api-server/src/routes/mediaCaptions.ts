@@ -86,10 +86,10 @@ export default router;
 router.get("/media/captions/:assetId/asr", endpoint(async (req, res) => getCaptionAsrStatus(res.locals.captionClient, res.locals.captionUser, req.params.assetId)));
 
 router.post("/media/captions/:assetId/asr", endpoint(async (req, res) => {
-  const parsed = z.object({ version: generation, revisionKey: revision, expectedConsentEpoch: revision, targetLanguage: z.string().max(35).default(""), consent: z.literal(true) }).strict().safeParse(req.body);
-  if (!parsed.success) throw new CaptionError("invalid_payload", "Confirm permission for local transcription of this video.");
+  const parsed = z.object({ version: generation, revisionKey: revision, expectedConsentEpoch: revision, targetLanguage: z.string().max(35).default(""), consent: z.literal(true), processing: z.object({ provider: z.enum(["local", "deepgram"]), modelVersion: z.string().min(1).max(200), configVersion: z.string().min(1).max(200), disclosureVersion: z.string().min(1).max(80) }).strict().optional() }).strict().safeParse(req.body);
+  if (!parsed.success) throw new CaptionError("invalid_payload", "Confirm permission for transcription of this video.");
   if (!checkRateLimit("media_caption_asr_request", res.locals.captionUser, 5, 3600_000).allowed) throw new CaptionError("rate_limited", "Please wait before requesting more transcription.");
-  return enqueueCaptionAsr(res.locals.captionClient, res.locals.captionUser, req.params.assetId, parsed.data.version, parsed.data.revisionKey, parsed.data.targetLanguage, parsed.data.consent, parsed.data.expectedConsentEpoch);
+  return enqueueCaptionAsr(res.locals.captionClient, res.locals.captionUser, req.params.assetId, parsed.data.version, parsed.data.revisionKey, parsed.data.targetLanguage, parsed.data.consent, parsed.data.expectedConsentEpoch, parsed.data.processing);
 }));
 
 router.delete("/media/captions/:assetId/asr", endpoint(async (req, res) => revokeCaptionAsr(res.locals.captionClient, res.locals.captionUser, req.params.assetId)));

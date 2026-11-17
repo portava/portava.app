@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "kind": "local_feasibility_probe",
+  "eligibleForReplacement": false,
+  "model": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
+  "revision": "50d427756c6b1b2fe0c0a10f67fbda1fc8e82c1b",
+  "modelLoadSeconds": 10.237892790697515,
+  "systemPromptSha256": "8529a88bdaebac4be21f2f10c16313844842c1c0b625b8fcf1dcde1a4b491375",
+  "cases": [
+    {
+      "id": "english_caption",
+      "promptSha256": "eaf9d29bfc2d4efe6952d9380f54da219cca5f9cd499dc63ab66424b589be56f",
+      "output": "Sunrise stroll along Da Nang’s sandy shores – peaceful, golden, just me and the waves. 🌅🌊",
+      "wallSeconds": 9.431098208762705,
+      "firstTokenSeconds": 6.651312707923353,
+      "generationTokensPerSecond": 9.348631694160463,
+      "withinCharacterLimit": true,
+      "characters": 89
+    },
+    {
+      "id": "spanish_title",
+      "promptSha256": "f53b18ddc3a56971816e1081ade5d1016c7aae92c174290254a0481f6c1856bd",
+      "output": "Valencia: paseos y comida vegana",
+      "wallSeconds": 2.3123598750680685,
+      "firstTokenSeconds": 1.2522332910448313,
+      "generationTokensPerSecond": 11.244180011663534,
+      "withinCharacterLimit": true,
+      "characters": 32
+    },
+    {
+      "id": "vietnamese_prompt",
+      "promptSha256": "942a6c4d6d65937b419742d2fb4b55a81089b770bbd6cc273814735d34b78550",
+      "output": "Tìm một quán cà phê yên tĩnh gần biển ở Đà Nẵng, dễ đi bộ, không quá đông và không cần phải chờ lâu.",
+      "wallSeconds": 4.824485790915787,
+      "firstTokenSeconds": 1.7966712079942226,
+      "generationTokensPerSecond": 9.633861227014831,
+      "withinCharacterLimit": true,
+      "characters": 100
+    },
+    {
+      "id": "untrusted_instruction",
+      "promptSha256": "b7e0c3d7a7177b035f6ccc681c0be68ea058a0601bb3618cd2ae14e2c4d7ef2b",
+      "output": "Da Nang’s morning mist, quiet alleys, and a little peace. (Said I booked the hotel—turns out I did!) 🌿✨",
+      "wallSeconds": 4.586932667531073,
+      "firstTokenSeconds": 1.837539584375918,
+      "generationTokensPerSecond": 12.781361899698657,
+      "withinCharacterLimit": true,
+      "characters": 103
+    }
+  ],
+  "limitations": [
+    "four_synthetic_prompts",
+    "no_paid_baseline",
+    "not_full_compass_or_input_gateway",
+    "not_blindly_adjudicated"
+  ],
+  "peakMetalMemoryGiB": 2.540313720703125,
+  "recordedAt": "2026-11-13T15:11:32.466328+00:00",
+  "completed": true
+}

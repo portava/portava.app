@@ -7,10 +7,10 @@ export interface OwnedApiContext {
 }
 
 /** One initiating session and deadline for token, headers and body decoding. */
-export async function fetchOwnedApi(path: string, options: OwnedApiContext & { method?: string; body?: object; headers?: Record<string, string> } = {}): Promise<Pick<Response, 'ok' | 'status' | 'json'> & { headers?: Pick<Headers, 'get'> }> {
+export async function fetchOwnedApi(path: string, options: OwnedApiContext & { method?: string; body?: object; headers?: Record<string, string>; timeoutMs?: number } = {}): Promise<Pick<Response, 'ok' | 'status' | 'json'> & { headers?: Pick<Headers, 'get'> }> {
   const owner = options.owner ?? captureMessagingOwnerRequest();
   const controller = new AbortController();
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + (options.timeoutMs ?? 10_000);
   const current = () => {
     if (!owner?.isCurrent() || options.isCurrent?.() === false || options.signal?.aborted || controller.signal.aborted || Date.now() >= deadline) {
       controller.abort();
@@ -50,6 +50,10 @@ export async function fetchOwnedApi(path: string, options: OwnedApiContext & { m
     headers: { ...options.headers, Authorization: `Bearer ${token}`, ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' }) },
     ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
   }));
-  if (response.redirected || response.url && new URL(response.url).href !== endpoint.href) throw new Error('API request redirected.');
+  // React Native's URL constructor appends '/' when parsing an absolute URL
+  // without a query. Re-parsing response.url rejects successful responses when
+  // that implementation is installed. Compare the transport's final URL directly
+  // with the exact URL we sent; a changed destination still fails closed.
+  if (response.redirected || response.url && response.url !== endpoint.href) throw new Error('API request redirected.');
   return { ok: response.ok, status: response.status, headers: response.headers, json: () => bounded(() => response.json()) };
 }

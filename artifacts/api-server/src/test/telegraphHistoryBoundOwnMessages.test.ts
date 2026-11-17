@@ -1,3 +1,4 @@
+import {activeMediaAccountRead} from './helpers/mediaAccountReadFixture.js';
 /**
  * Telegraph §14.3 — Q6, the OWN-MESSAGE REJOIN EXCEPTION.
  *
@@ -288,7 +289,7 @@ function makeClient(state: State) {
     _db: db,
     _observed: observed,
     from,
-    rpc: async () => ({ data: null, error: { message: "rpc not modelled" } }),
+    rpc: async (name:string,args:any) => activeMediaAccountRead(name,args),
     auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },
   };
 }

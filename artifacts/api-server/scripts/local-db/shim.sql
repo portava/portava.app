@@ -58,3 +58,18 @@ GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authenticated, service_role;
+
+-- Schema-only Realtime surface for applying policies from 4025. This harness
+-- executes SQL/RLS, not WebSocket delivery. Any actual broadcast fails loudly.
+CREATE SCHEMA realtime;
+CREATE TABLE realtime.messages (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  topic text, extension text, payload jsonb, event text, private boolean DEFAULT false);
+ALTER TABLE realtime.messages ENABLE ROW LEVEL SECURITY;
+GRANT USAGE ON SCHEMA realtime TO anon, authenticated, service_role;
+GRANT SELECT, INSERT ON realtime.messages TO anon, authenticated, service_role;
+CREATE FUNCTION realtime.topic() RETURNS text LANGUAGE sql STABLE AS $$
+  SELECT nullif(current_setting('realtime.topic', true), '')
+$$;
+CREATE FUNCTION realtime.send(jsonb,text,text,boolean DEFAULT true) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'local-db has no Realtime transport; run this delivery proof against Supabase'; END
+$$;

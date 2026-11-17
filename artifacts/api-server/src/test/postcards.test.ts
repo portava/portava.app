@@ -1,3 +1,4 @@
+import { activeMediaAccountRead } from "./helpers/mediaAccountReadFixture.js";
 /**
  * postcards.test.ts — backend tests for the Postcards media upload API.
  *
@@ -17,6 +18,7 @@
  */
 import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { adminPostcardWithdrawalReceipt } from './helpers/postcardWithdrawalFixture.js';
 import http from 'node:http';
 import app from '../app.js';
 import { _setTestClient } from '../lib/http.js';
@@ -159,9 +161,9 @@ function buildFakeClient(tokenToId: Record<string, string>) {
         if (deleteMode) returning = true; // census-media §37.10: delete().select() returns the deleted rows, as PostgREST does
         return b;
       },
-      eq(col: string, val: any)    { filtered = filtered.filter((r) => r[col] === val); return b; },
+      eq(col: string, val: any)    { filtered = filtered.filter((r) => (r[col] ?? null) === val); return b; },
       neq(col: string, val: any)   { filtered = filtered.filter((r) => r[col] !== val); return b; },
-      is(col: string, val: any)    { filtered = filtered.filter((r) => r[col] === val); return b; },
+      is(col: string, val: any)    { filtered = filtered.filter((r) => (r[col] ?? null) === val); return b; },
       in(col: string, vals: any[]) { filtered = filtered.filter((r) => vals.includes(r[col])); return b; },
       ilike(col: string, pattern: string) {
         // Case-insensitive LIKE with % / _ wildcards (enough for these tests)
@@ -269,6 +271,18 @@ function buildFakeClient(tokenToId: Record<string, string>) {
   }
 
   return {
+    async rpc(name: string, args: any) {
+      if (name === "account_recovery_status") return activeMediaAccountRead(name, args);
+      if (name !== 'withdraw_postcard_media') return { data: null, error: { message: 'unhandled RPC' } };
+      const row = allPostMedia.find(r => r.id === args.p_media && r.post_id === args.p_post);
+      if (!row || row.moderation_status !== args.p_expected_moderation) return { data: false, error: null };
+      if (args.p_admin_reason && allProfiles.some(p => p.id === args.p_actor && p.role === 'admin')) {
+        return adminPostcardWithdrawalReceipt({ post_media: allPostMedia }, args);
+      }
+      if (row.user_id !== args.p_actor || ['flagged', 'rejected', 'limited'].includes(row.moderation_status)) return { data: false, error: null };
+      if (!row.deleted_at) Object.assign(row, { deleted_at: new Date().toISOString(), processing_status: 'pending', public_url: '', thumbnail_url: null, feed_url: null });
+      return { data: true, error: null };
+    },
     auth: {
       async getUser(token: string) {
         const id = tokenToId[token];
@@ -856,7 +870,7 @@ describe('DELETE /api/postcards/:id/media/:mediaId', () => {
     assert.equal(status, 200);
     assert.equal(body.ok, true);
     assert.equal(body.mediaCount, 0, 'mediaCount should decrement to 0');
-    assert.equal(allPostMedia.length, 0, 'media row should be removed from store');
+    assert.equal(allPostMedia.length, 1, 'cleanup receipt remains'); assert.ok(allPostMedia[0].deleted_at); assert.equal(allPostMedia[0].processing_status, 'pending');
     assert.equal(posts[POST_ID]?.media_count, 0, 'post.media_count should update');
   });
 
@@ -882,7 +896,7 @@ describe('DELETE /api/postcards/:id/media/:mediaId', () => {
     seedReadyImage();
     const { status } = await apiReq('DELETE', `/postcards/${POST_ID}/media/${MEDIA_ID}`, undefined, 'fake-admin');
     assert.equal(status, 200);
-    assert.equal(allPostMedia.length, 0, 'admin delete should remove the media row');
+    assert.equal(allPostMedia.length, 1, 'admin withdrawal retains cleanup receipt'); assert.ok(allPostMedia[0].deleted_at);
   });
 });
 
@@ -1876,7 +1890,7 @@ describe('census-media §37.9 — a moderation decision on a postcard file refre
     assert.ok(names(before!, ['post_id', 'user_id', 'processing_status', 'moderation_status']), before);
     const upd = selects.find((c) => /storage_bucket/.test(c) && !/thumbnail_storage_path/.test(c));
     assert.ok(upd && names(upd, ['post_id', 'user_id']), `the status update returns the post and uploader: ${upd}`);
-    const del = selects.find((c) => /thumbnail_storage_path/.test(c));
+    const del = selects.find((c) => /recovery_snapshot/.test(c) && /moderation_status/.test(c));
     assert.ok(del && names(del, ['post_id', 'processing_status', 'moderation_status', 'public_url']), `the delete read names the file's state: ${del}`);
   });
 
@@ -1936,6 +1950,11 @@ describe('census-media §37.10 — the owner delete moves the cover, an uncounta
     let reached!: () => void; const reachedP = new Promise<void>((r) => { reached = r; });
     let used = false;
     const client = buildFakeClient(tokens());
+    const rpc = client.rpc.bind(client);
+    client.rpc = async (name: string, args: any) => {
+      if (!used && name === 'withdraw_postcard_media' && match('post_media', 'withdraw', args)) { used = true; reached(); await gate; }
+      return rpc(name, args);
+    };
     const from = client.from.bind(client);
     (client as any).from = (table: string) => {
       const calls: Array<[string, any[]]> = [];
@@ -2121,21 +2140,22 @@ describe('census-media §37.10 — the owner delete moves the cover, an uncounta
     assert.ok(allPostcards.every((pc) => pc.media_url !== url(A_ID)), 'no passport cover is left on the rejected file');
   });
 
-  it('ITEM 4 — the admin delete decides from the row it deleted (RETURNING), not from its earlier read', async () => {
+  it('ITEM 4 — admin withdrawal refuses a stale moderation decision and a reviewed retry updates the cover', {timeout:5000}, async () => {
     seedFile(A_ID, 0, 'flagged');
-    const g = gatedClient((table, verb) => table === 'post_media' && verb === 'delete');
+    const g = gatedClient((table, verb) => table === 'post_media' && verb === 'withdraw');
     _setTestClient(g.client, true);
-    const deleting = moderate(A_ID, 'delete'); // reads 'flagged', audits, then waits at the row delete
-    await g.reached;
-    const approved = await moderate(A_ID, 'approve');
-    assert.equal(approved.status, 200, JSON.stringify(approved.body));
-    assert.equal(posts[POST_ID].media_count, 1, 'precondition: the approval counted the file');
-    g.release();
-    const deleted = await deleting;
-    assert.equal(deleted.status, 200, JSON.stringify(deleted.body));
-    assert.equal(allPostMedia.length, 0);
-    assert.equal(posts[POST_ID].media_count, 0, 'the deleted file was counted when it was deleted');
-    assert.equal(allPostcards[0].media_url, null, 'and the cover left it');
+    const deleting = moderate(A_ID, 'delete');
+    try {
+      await g.reached;
+      const approved = await moderate(A_ID, 'approve');
+      assert.equal(approved.status, 200, JSON.stringify(approved.body));
+      assert.equal(posts[POST_ID].media_count, 1);
+    } finally {g.release();}
+    assert.equal((await deleting).status, 409);
+    assert.equal(allPostMedia[0].deleted_at, undefined);assert.equal(posts[POST_ID].media_count, 1);
+    const retry = await moderate(A_ID, 'delete');assert.equal(retry.status, 200, JSON.stringify(retry.body));
+    assert.equal(allPostMedia.length, 1);assert.ok(allPostMedia[0].deleted_at);
+    assert.equal(posts[POST_ID].media_count, 0);assert.equal(allPostcards[0].media_url, null);
   });
 
   it('ITEM 4 — a status that keeps moving under the write is refused as a conflict after bounded retries; nothing is re-derived from a state nobody can vouch for', async () => {
@@ -2252,12 +2272,12 @@ describe('DELETE /api/postcards/:id/media/:mediaId — 2098 moderation pin (409,
   });
 
   for (const state of ['pending', 'approved']) {
-    it(`a '${state}' row is still the owner's to delete (200, row and object removed)`, async () => {
+    it(`a '${state}' row is still the owner's to delete (200, content withdrawn and cleanup receipt retained)`, async () => {
       seed(state);
       const { status, body } = await apiReq('DELETE', `/postcards/${POST_ID}/media/${MEDIA_ID}`, undefined, TOKEN_OWNER);
       assert.equal(status, 200, JSON.stringify(body));
-      assert.equal(allPostMedia.length, 0);
-      assert.ok(removed.includes(`${OWNER_ID}/${POST_ID}/${MEDIA_ID}.jpg`), JSON.stringify(removed));
+      assert.equal(allPostMedia.length, 1); assert.ok(allPostMedia[0].deleted_at); assert.equal(allPostMedia[0].processing_status, 'pending');
+      assert.deepEqual(removed, [], 'withdrawal retains bytes for admin recovery');
     });
   }
 

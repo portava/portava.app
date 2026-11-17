@@ -22,10 +22,11 @@
  * The term DEFINITIONS live in `lib/mediaRankingSignals.ts`, one header each.
  *
  * ── §2 "AUTHENTIC MEDIA OUTRANKS GENERATED FALLBACK MEDIA" ───────────────────
- * Not a weight — a weight can be outvoted. After scoring and the diversity
- * pass, the ordering is stably PARTITIONED: every row whose displayed asset is
+ * Not a weight — a weight can be outvoted. Diversity selection exhausts the
+ * real/unknown tier first: every row whose displayed asset is
  * `synthetic` (generated / derivative / generatively altered) is placed after
- * every row that is not, whatever either scored. Provenance is read from
+ * every row that is not, whatever either scored. Synthetic items cannot spend
+ * real creators' diversity allowance. Provenance is read from
  * `canonical_media` only; a row without it is `unknown`, which is neither
  * promoted nor demoted.
  */
@@ -234,10 +235,15 @@ export function rankMediaCandidates(
   });
 
   while (remaining.length > 0) {
+    // Apply the provenance tier BEFORE diversity. Otherwise generated items
+    // consume place/author slots, distort real imagery's ordering, then move
+    // to the back where their influence is invisible.
+    const realRemaining = remaining.some(entry => entry.score.provenanceClass !== "synthetic");
     let best = 0;
     let bestAdjusted = -Infinity;
     for (let i = 0; i < remaining.length; i++) {
       const entry = remaining[i];
+      if (realRemaining && entry.score.provenanceClass === "synthetic") continue;
       const k = keyOf(entry.row);
       const adjusted =
         entry.score.score -
@@ -257,10 +263,7 @@ export function rankMediaCandidates(
     authorCounts.set(k.author, (authorCounts.get(k.author) ?? 0) + 1);
   }
 
-  // §2: authentic (and unknown) before generated, whatever the scores said.
-  const kept = output.filter((e) => e.score.provenanceClass !== "synthetic");
-  const demoted = output.filter((e) => e.score.provenanceClass === "synthetic");
-  return [...kept, ...demoted].map((e) => e.row);
+  return output.map((e) => e.row);
 }
 
 /** The viewer fields the ranker reads. `ViewerResolved` satisfies it. */

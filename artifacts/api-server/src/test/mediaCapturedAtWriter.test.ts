@@ -1,3 +1,4 @@
+import { activeMediaAccountRead } from "./helpers/mediaAccountReadFixture.js";
 /**
  * media_assets.captured_at — the column that had no writer (Wall §16, Media §6).
  *
@@ -32,6 +33,7 @@ import express from "express";
 import sharp from "sharp";
 import {
   capturedAtFromImageBytes,
+  capturedAtFromPhotoMetadata,
   EARLIEST_PLAUSIBLE_CAPTURE_ISO,
   CAPTURE_CLOCK_SKEW_MS,
 } from "../lib/mediaAssets.js";
@@ -41,23 +43,22 @@ import postsRouter from "../routes/posts.js";
 // ── The extractor ─────────────────────────────────────────────────────────────
 
 /** Wrap a hand-built TIFF block in a minimal JPEG APP1 segment. */
-function jpegWithExifDate(dateTime: string): Buffer {
-  const ascii = Buffer.from(`${dateTime}\0`, "latin1");
-  // IFD0 with one entry: DateTime (0x0132), ASCII, pointing past the IFD.
-  const ifd0Off = 8;
-  const entries = 1;
-  const dataOff = ifd0Off + 2 + entries * 12 + 4;
-  const tiff = Buffer.alloc(dataOff + ascii.length);
-  tiff.write("II", 0, "latin1");
-  tiff.writeUInt16LE(42, 2);
-  tiff.writeUInt32LE(ifd0Off, 4);
-  tiff.writeUInt16LE(entries, ifd0Off);
-  tiff.writeUInt16LE(0x0132, ifd0Off + 2);
-  tiff.writeUInt16LE(2, ifd0Off + 4); // ASCII
-  tiff.writeUInt32LE(ascii.length, ifd0Off + 6);
-  tiff.writeUInt32LE(dataOff, ifd0Off + 10);
-  tiff.writeUInt32LE(0, ifd0Off + 2 + entries * 12);
-  ascii.copy(tiff, dataOff);
+function jpegWithExifDate(dateTime: string, offset = '+00:00'): Buffer {
+  const ascii = Buffer.from(`${dateTime}\0`, 'latin1');
+  const zone = Buffer.from(`${offset}\0`, 'latin1');
+  const sub = 26, dataOff = sub + 2 + 2 * 12 + 4;
+  const tiff = Buffer.alloc(dataOff + ascii.length + zone.length);
+  tiff.write('II', 0, 'latin1'); tiff.writeUInt16LE(42, 2); tiff.writeUInt32LE(8, 4);
+  tiff.writeUInt16LE(1, 8);
+  const entry = (at: number, tag: number, type: number, count: number, value: number) => {
+    tiff.writeUInt16LE(tag, at); tiff.writeUInt16LE(type, at + 2);
+    tiff.writeUInt32LE(count, at + 4); tiff.writeUInt32LE(value, at + 8);
+  };
+  entry(10, 0x8769, 4, 1, sub);
+  tiff.writeUInt16LE(2, sub);
+  entry(sub + 2, 0x9003, 2, ascii.length, dataOff);
+  entry(sub + 14, 0x9011, 2, zone.length, dataOff + ascii.length);
+  ascii.copy(tiff, dataOff); zone.copy(tiff, dataOff + ascii.length);
 
   const app1 = Buffer.concat([Buffer.from("Exif\0\0", "latin1"), tiff]);
   const lenB = Buffer.alloc(2);
@@ -75,7 +76,7 @@ function jpegWithExifDate(dateTime: string): Buffer {
 const NOW = new Date("2026-09-01T12:00:00.000Z");
 
 describe("capturedAtFromImageBytes — the §6 clock", () => {
-  it("reads DateTime out of a JPEG's EXIF block", () => {
+  it("reads an offset-qualified original capture time from a JPEG", () => {
     const out = capturedAtFromImageBytes(jpegWithExifDate("2026:07:14 09:30:00"), NOW);
     assert.equal(out, "2026-07-14T09:30:00.000Z");
   });
@@ -107,8 +108,7 @@ describe("capturedAtFromImageBytes — the §6 clock", () => {
     const stamp = tooFar.toISOString().slice(0, 19).replace(/-/g, ":").replace("T", " ");
     assert.equal(capturedAtFromImageBytes(jpegWithExifDate(stamp), NOW), null);
 
-    // Control: just INSIDE the allowance is accepted — EXIF has no timezone, so
-    // a photo taken "now" in a far-east zone legitimately reads ahead of us.
+    // Control: an explicitly UTC capture just inside the device-clock allowance is accepted.
     const justInside = new Date(NOW.getTime() + CAPTURE_CLOCK_SKEW_MS - 60_000);
     const okStamp = justInside.toISOString().slice(0, 19).replace(/-/g, ":").replace("T", " ");
     assert.ok(capturedAtFromImageBytes(jpegWithExifDate(okStamp), NOW));
@@ -123,7 +123,7 @@ const USER_ID = "user-1";
 let server: http.Server;
 let base = "";
 
-function upload(body: Buffer, contentType: string): Promise<{ status: number; body: any }> {
+function upload(body: Buffer, contentType: string, photoCapturedAt?: string): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
     const url = new URL(base + "/api/media/upload");
     const req = http.request(
@@ -136,6 +136,7 @@ function upload(body: Buffer, contentType: string): Promise<{ status: number; bo
           authorization: `Bearer ${TOKEN}`,
           "content-type": contentType,
           "content-length": String(body.length),
+          ...(photoCapturedAt ? { 'x-photo-captured-at': photoCapturedAt } : {}),
         },
       },
       (res) => {
@@ -208,6 +209,7 @@ function makeClient(flags: Record<string, boolean>) {
     return b;
   }
   const client: any = {
+    rpc: activeMediaAccountRead,
     from: builder,
     storage: {
       from(bucket: string) {
@@ -275,7 +277,7 @@ describe("POST /api/media/upload — supplies captured_at to the canonical write
       .jpeg()
       // IFD2 is the EXIF SubIFD, where a real camera puts DateTimeOriginal —
       // so this also exercises exifFacts' 0x8769 pointer path, not just IFD0.
-      .withExif({ IFD2: { DateTimeOriginal: "2026:03:04 05:06:07" } } as any)
+      .withExif({ IFD2: { DateTimeOriginal: "2026:03:04 05:06:07", OffsetTimeOriginal: "+02:00" } } as any)
       .toBuffer();
 
     const res = await upload(withExif, "image/jpeg");
@@ -286,9 +288,44 @@ describe("POST /api/media/upload — supplies captured_at to the canonical write
     assert.ok(asset, "the canonical dual-write must run with media_canonical_enabled on");
     assert.equal(
       asset.row.captured_at,
-      "2026-03-04T05:06:07.000Z",
+      "2026-03-04T03:06:07.000Z",
       "captured_at must carry the EXIF capture instant, not null and not the upload time",
     );
+  });
+
+  it("preserves converted-photo metadata through the actual upload writer without retaining EXIF", async () => {
+    const client = makeClient({ media_canonical_enabled: true });
+    _setTestClient(client, true); _setTestServiceClient(client);
+    const plain = await sharp({create:{width:64,height:48,channels:3,background:'#3a5'}}).jpeg().toBuffer();
+    assert.equal(capturedAtFromImageBytes(plain), null);
+    const capture = '2026-03-03T18:45:00.000Z';
+    const response = await upload(plain, 'image/jpeg', capture);
+    assert.equal(response.status,201,JSON.stringify(response.body)); await settle();
+    const asset = client._inserted.find((i:any)=>i.table==='media_assets');
+    assert.equal(asset?.row.captured_at,capture);
+    assert.equal(asset?.row.source_type,'user');
+  });
+
+  it('keeps raw photos without an original timezone unknown at the actual canonical writer', async () => {
+    for (const tags of [{ IFD2: { DateTimeOriginal: '2026:03:04 05:06:07' } },
+      { IFD0: { DateTime: '2026:03:04 05:06:07' } }]) {
+      const client = makeClient({ media_canonical_enabled: true });
+      _setTestClient(client, true); _setTestServiceClient(client);
+      const bytes = await sharp({ create: { width: 64, height: 48, channels: 3, background: '#3a5' } })
+        .jpeg().withExif(tags).toBuffer();
+      const response = await upload(bytes, 'image/jpeg');
+      assert.equal(response.status, 201, JSON.stringify(response.body)); await settle();
+      const asset = client._inserted.find((i: any) => i.table === 'media_assets');
+      assert.ok(asset);
+      assert.equal(asset.row.captured_at, null, 'neither a timezone-free original nor a modification date is an instant');
+    }
+  });
+
+  it("refuses malformed, rolled-over, ancient and future client capture metadata", () => {
+    for (const raw of [null, [], {}, '2026-02-30T00:00:00.000Z', '2026-03-04', '1989-01-01T00:00:00.000Z', '2099-01-01T00:00:00.000Z']) {
+      assert.equal(capturedAtFromPhotoMetadata(raw,NOW),null);
+    }
+    assert.equal(capturedAtFromPhotoMetadata('2026-03-04T05:06:07.000Z',NOW),'2026-03-04T05:06:07.000Z');
   });
 
   it("leaves captured_at null for an image with no EXIF date — the honest unknown", async () => {

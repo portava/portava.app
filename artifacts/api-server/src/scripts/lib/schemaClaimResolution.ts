@@ -35,8 +35,8 @@ export interface LiveSchema {
    * and still SAY that it resolved somewhere other than public.
    */
   authzFunctions: Set<string>;
-  indexes: Set<string>;
-  policies: Set<string>; // "table.policy"
+  indexes: Set<string>; // public index name or schema.index
+  policies: Set<string>; // "table.policy" or "schema.table.policy"
   enums: Set<string>;
   enumValues: Set<string>; // "enum.value"
   triggers: Set<string>; // "table.trigger"

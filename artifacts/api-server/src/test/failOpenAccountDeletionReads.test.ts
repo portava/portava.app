@@ -1,3 +1,4 @@
+import { accountDeletionAuthorizationFixture, PERMANENT_DELETION_TEST_OPTIONS } from "./helpers/accountDeletionAuthorizationFixture.js";
 /**
  * FAIL-OPEN unchecked reads — the account-deletion tombstone decision.
  *
@@ -57,15 +58,17 @@ function makeStub(opts: StubOpts = {}) {
   const deletedPosts: string[] = [];
   const tombstoned: string[] = [];
 
+  const rows: Record<string, any[]> = {};
+  const authorize = accountDeletionAuthorizationFixture(rows, USER_ID);
   function builder(table: string) {
     const q: any = {
       _op: "select",
       _filters: [] as any[],
       _limit: undefined as number | undefined,
       _single: false,
-      select() { q._op = "select"; return q; },
+      select() { return q; },
       delete() { q._op = "delete"; return q; },
-      update() { q._op = "update"; return q; },
+      update(v: any) { q._op = "update"; q._values = v; return q; },
       insert() { q._op = "insert"; return q; },
       upsert() { q._op = "upsert"; return q; },
       eq(c: string, v: any) { q._filters.push(["eq", c, v]); return q; },
@@ -80,6 +83,11 @@ function makeStub(opts: StubOpts = {}) {
       maybeSingle() { q._single = true; return q._run(); },
       then(resolve: any, reject: any) { return q._run().then(resolve, reject); },
       _run() {
+        if (table === "user_deletion_requests" && q._op === "update") {
+          const matched = rows[table]!.filter(row => q._filters.every(([op, col, value]: any[]) => op === "eq" && row[col] === value));
+          for (const row of matched) Object.assign(row, q._values);
+          return Promise.resolve({ data: matched, error: null });
+        }
         if (table === "posts" && q._op === "delete") {
           const id = q._filters.find((f: any[]) => f[0] === "eq" && f[1] === "id")?.[2];
           if (id) deletedPosts.push(id);
@@ -117,8 +125,10 @@ function makeStub(opts: StubOpts = {}) {
     _tombstoned: tombstoned,
     from: (t: string) => builder(t),
     rpc: async (fn: string, args: Record<string, unknown>) => {
+      const receipt = authorize(fn, args);
+      if (receipt) return receipt;
       if (fn === "tombstone_post") tombstoned.push(args.p_post_id as string);
-      return { data: null, error: null };
+      return { data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null };
     },
     storage: { from: () => ({ remove: async () => ({ data: [], error: null }) }) },
     auth: { admin: { deleteUser: async () => ({ data: {}, error: null }) } },
@@ -132,7 +142,7 @@ function postsStep(out: any) {
 describe("AccountDeletionService.hasThirdPartyInterest — posts_comments", () => {
   it("FAILURE: an unreadable posts_comments hard-deletes NOTHING", async () => {
     const c = makeStub({ failReadsOn: "posts_comments" });
-    const out = await executeAccountDeletion(c as any, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c as any, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.deepEqual(
       c._deletedPosts, [],
@@ -150,7 +160,7 @@ describe("AccountDeletionService.hasThirdPartyInterest — posts_comments", () =
 
   it("HEALTHY: a post with a foreign comment is tombstoned, not deleted", async () => {
     const c = makeStub({ commentedPosts: new Set(["post-B"]) });
-    const out = await executeAccountDeletion(c as any, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c as any, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.deepEqual(c._tombstoned, ["post-B"]);
     assert.deepEqual(c._deletedPosts.sort(), ["post-A", "post-C"]);
@@ -163,7 +173,7 @@ describe("AccountDeletionService.hasThirdPartyInterest — posts_comments", () =
 describe("AccountDeletionService.hasThirdPartyInterest — moderation_reports", () => {
   it("FAILURE: an unreadable moderation_reports hard-deletes NOTHING", async () => {
     const c = makeStub({ failReadsOn: "moderation_reports" });
-    const out = await executeAccountDeletion(c as any, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c as any, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.deepEqual(
       c._deletedPosts, [],
@@ -176,7 +186,7 @@ describe("AccountDeletionService.hasThirdPartyInterest — moderation_reports", 
 
   it("HEALTHY: a reported post is tombstoned; an unreported one is still deleted", async () => {
     const c = makeStub({ reportedPosts: new Set(["post-C"]) });
-    const out = await executeAccountDeletion(c as any, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c as any, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.deepEqual(c._tombstoned, ["post-C"]);
     assert.deepEqual(c._deletedPosts.sort(), ["post-A", "post-B"]);
@@ -185,7 +195,7 @@ describe("AccountDeletionService.hasThirdPartyInterest — moderation_reports", 
 
   it("HEALTHY: with neither comments nor reports, every post is still hard-deleted", async () => {
     const c = makeStub();
-    const out = await executeAccountDeletion(c as any, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c as any, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.deepEqual(c._deletedPosts.sort(), [...ALL_POSTS].sort());
     assert.deepEqual(c._tombstoned, []);

@@ -73,6 +73,7 @@ jest.mock('../../services/postEngagement.ts', () => ({ fetchMySavedPostIds: jest
 jest.mock('../../services/compass.ts', () => ({ clearCachedFeed: jest.fn().mockResolvedValue(undefined) }));
 
 import { SessionProvider, useSession } from '../SessionContext.tsx';
+import { useMediaScopeKey } from '../../hooks/useMediaScopeKey.ts';
 import {
   currentDiscoveryScope,
   onDiscoveryScopeChange,
@@ -82,8 +83,9 @@ import {
 let signOutFromUi: (() => Promise<void>) | null = null;
 function Probe() {
   const { userId, signOut } = useSession();
+  const mediaScope = useMediaScopeKey();
   signOutFromUi = signOut;
-  return <Text>{userId ?? 'signed-out'}</Text>;
+  return <><Text>{userId ?? 'signed-out'}</Text><Text testID="media-scope">{mediaScope}</Text></>;
 }
 
 beforeEach(() => {
@@ -131,12 +133,16 @@ describe('SessionProvider → Discovery viewer scope', () => {
     expect(currentDiscoveryScope().viewer).toBe('anon');
   });
 
-  it('CONTROL: a token refresh for the SAME user does not move the scope or clear anything', async () => {
-    await mountProvider();
+  it('a same-user refresh updates media credentials while preserving Discovery caches', async () => {
+    const ui = await mountProvider();
+    const mediaScope = ui.getByTestId('media-scope').props.children;
+    const discoveryScope = currentDiscoveryScope();
     const cleared = jest.fn();
     const off = onDiscoveryScopeChange(cleared);
     await act(async () => { mockAuthCallback!('user-x'); });
     expect(cleared).not.toHaveBeenCalled();
+    expect(currentDiscoveryScope()).toEqual(discoveryScope);
+    expect(ui.getByTestId('media-scope').props.children).not.toEqual(mediaScope);
     off();
   });
 

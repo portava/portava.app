@@ -9,6 +9,7 @@
  */
 import { isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import { fetchOwnedApi } from './ownedApiRequest.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
@@ -449,16 +450,21 @@ export async function draftTripFromText(text: string): Promise<{
 } | null> {
   if (!isSupabaseConfigured || !apiBase()) return null;
   try {
-    const res = await authedFetch(`${apiBase()}/api/trips/draft-from-text`, {
+    const res = await fetchOwnedApi('/api/trips/draft-from-text', {
       method: 'POST',
-      body: JSON.stringify({ text }),
+      body: { text },
+      timeoutMs: 30_000,
     });
     if (!res.ok) {
       let serverMsg: string | undefined;
       try { serverMsg = ((await res.json()) as { error?: string }).error; } catch { /* ignore */ }
       throw new Error(serverMsg ?? 'service_error');
     }
-    return await res.json();
+    const result = await res.json();
+    if (result?.confirmed !== false || !result.draft || typeof result.draft !== 'object' || Array.isArray(result.draft)) {
+      throw new Error('invalid_draft');
+    }
+    return result;
   } catch (err) {
     throw err;
   }

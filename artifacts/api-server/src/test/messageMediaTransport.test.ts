@@ -1,3 +1,4 @@
+import { activeMediaAccountRead } from "./helpers/mediaAccountReadFixture.js";
 /**
  * Resumable MESSAGE-media upload (census-telegraph T223, migration 3656) and the
  * sweep for its abandoned raw parts.
@@ -110,7 +111,7 @@ function makeClient() {
   const bucket = bucketFake();
   return {
     from, storage: { from: () => bucket },
-    rpc: async () => ({ data: null, error: { message: "not modelled" } }),
+    rpc: activeMediaAccountRead,
     auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },
   };
 }

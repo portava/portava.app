@@ -55,6 +55,7 @@ import {
 import { color, space, radius, avatar, icon, dot } from '../../../theme/tokens.ts';
 import { CachedImage } from '../../../components/CachedImage.tsx';
 import { useHydratedMedia } from '../../../services/mediaUrl.ts';
+import { hydratedMediaSource } from '../../../services/mediaRequestSource.ts';
 import { Avatar } from '../../../components/ui/Avatar.tsx';
 import { StampButton } from '../../../components/stamps/StampButton.tsx';
 
@@ -276,7 +277,7 @@ function PerspectiveFrame({ media }: { media: MediaProjection }) {
    * used, which is already correct for the absolute URLs some rows hold; a
    * `null` means the server refused to sign it, which is a playback error.
    */
-  const { resolved: hydrated } = useHydratedMedia(isVideo && media.url ? [media.url] : []);
+  const { resolved: hydrated, sources } = useHydratedMedia(isVideo && media.url ? [media.url] : []);
   const hydratedUrl = media.url ? hydrated[media.url] : undefined;
   const sourceState = playbackUriState(media.url ?? null, hydrated); const playbackUri = sourceState.state === 'ready' ? sourceState.uri : null; // 2026-10-24: no player until the source is loadable (a bare ref is never handed to <Video>)
   const unresolvable = isVideo && sourceState.state === 'unavailable'; void hydratedUrl;
@@ -351,7 +352,7 @@ function PerspectiveFrame({ media }: { media: MediaProjection }) {
         isVideo && playbackUri && !unresolvable ? (
           <Video key={playbackUri}
             ref={videoRef}
-            source={{ uri: playbackUri }}
+            source={hydratedMediaSource(playbackUri, sources) ?? undefined}
             style={StyleSheet.absoluteFill}
             resizeMode={ResizeMode.CONTAIN}
             shouldPlay={false}

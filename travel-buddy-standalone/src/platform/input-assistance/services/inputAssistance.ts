@@ -66,12 +66,11 @@ export async function requestSuggestions(
     const token = await budget.wait(freshToken);
     if (!token) return { ok: false, aborted: false, unavailable: true, error: 'Not signed in' };
     if (!budget.current(token)) return { ok: false, aborted: true, unavailable: false, error: 'Account changed' };
-    const res = await budget.wait(() => fetch(`${base}/api/input-assistance/suggest`, {
+    const res = await budget.fetch(base, '/api/input-assistance/suggest', token, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(buildSuggestBody(req)),
-      signal: budget.signal,
-    }));
+    });
 
     if (!res.ok) {
       return {
@@ -162,12 +161,11 @@ export async function requestMapSearchPage(
     const token = await budget.wait(freshToken);
     if (!token) return { ok: false, error: 'Not signed in' };
     if (!budget.current(token)) return { ok: false, error: 'Account changed' };
-    const res = await budget.wait(() => fetch(`${base}/api/input-assistance/suggest`, {
+    const res = await budget.fetch(base, '/api/input-assistance/suggest', token, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(buildMapSearchBody(query, opts)),
-      signal: budget.signal,
-    }));
+    });
     if (!res.ok) {
       const body = (await budget.wait(() => res.json()).catch(() => ({}))) as Record<string, unknown>;
       return { ok: false, error: (body.message as string) ?? `HTTP ${res.status}` };

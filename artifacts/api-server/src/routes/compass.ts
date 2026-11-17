@@ -1,3 +1,4 @@
+import { providerModel } from "../lib/providerVersions.js";
 /**
  * Compass API routes
  *
@@ -22,6 +23,7 @@ import { randomUUID } from "node:crypto";
 import { refuseExplicitTripAdd } from "../compass/CompassTripActionGate.js";
 import { itineraryOutline, itineraryPromptForTurn, requestedItineraryCity } from "../compass/CompassItineraryOutline.js";
 import { CompassVenueStream, groundVenueTerms } from "../compass/CompassVenueTerms.js";
+import { priorCompassCards, compassReasoningPolicy, compassFocusLines } from "../compass/CompassTurnContext.js";
 import { Router } from "express";
 import { z } from "zod";
 import { COMPASS_QUICK_ACTION_TYPES } from "../lib/compassDecisionActions.js";
@@ -136,6 +138,7 @@ import {
 import { buildProjectedMemoryBlock } from "../compass/ProjectedMemoryPrompt.js";
 import { buildRememberSurface } from "../compass/PassportRemembersService.js";
 import { generateRecap, buildOnThisDay, type RecapKind } from "../compass/MemoryRecapsService.js"; import { trackPartialToolLog, partialToolLogOf, compassAiFailureFallback, compassAiFailureFallbackWithRetrieval } from "../compass/compassMemoryFallback.js"; // census H266: the deterministic Memory fallback
+import { CompassReasoningBudget, CompassReasoningTimeout } from "../compass/CompassReasoningBudget.js";
 import { recordIntentFromQuery } from "../lib/intentMemory.js";
 import { buildLiveChatContextLines }             from "../compass/CompassLiveEngine.js";
 import {
@@ -1115,6 +1118,8 @@ const askBodySchema = z.object({
   intentMode: z.string().max(40).optional(),
   prompt:              z.string().min(1).max(1000),
   city:                z.string().max(80).optional(),
+  /** Device context is distinct from an explicitly selected destination. */
+  currentCity:         z.string().max(80).optional(),
   conversationId:      z.string().uuid().optional(),
   /** compass-phase1-spec §1 `trip_id`: the trip this conversation is about.
    *  Recorded on a NEW conversation only where migration 2996 is applied. */
@@ -1195,16 +1200,18 @@ async function summariseFallback(
   convo:    any[],
   log:      { warn: (o: object, m: string) => void },
   userId:   string,
-  onDelta?: (delta: string) => void,
-  signal?:  AbortSignal,
+  onDelta: ((delta: string) => void) | undefined,
+  signal: AbortSignal | undefined,
+  budget: CompassReasoningBudget,
 ): Promise<string> {
   log.warn(
     { userId },
     "compass/ask: empty final turn — re-prompting with summarise instruction",
   );
   const opts = {
-    model:                 "gpt-5-mini",
-    max_completion_tokens: 1200,
+    model:                 providerModel("openai", "gpt-5-mini"),
+    max_completion_tokens: 3000,
+    response_format: { type: "json_object" as const },
     // Low reasoning effort: this is a text-only re-prompt after the model
     // already reasoned through tool calls in the previous round. At default
     // reasoning effort, gpt-5-mini can spend its entire completion-token
@@ -1220,16 +1227,16 @@ async function summariseFallback(
   };
   try {
     if (onDelta) {
-      const streamed = await streamModelRound(opts as any, onDelta, signal);
+      const streamed = await budget.run((roundSignal, timeoutMs) => streamModelRound(opts as any, onDelta, roundSignal, timeoutMs));
       return streamed.content;
     }
-    const completion = await getOpenAI().chat.completions.create(opts as any);
+    const completion = await budget.run((roundSignal, timeoutMs) => getOpenAI().chat.completions.create(opts as any, { timeout: timeoutMs, maxRetries: 0, signal: roundSignal }));
     const msg = (completion as any).choices?.[0]?.message;
     return String(msg?.content ?? "");
   } catch (err) {
     // A client disconnect during the summarise round must still abort the
     // request and suppress persistence — rethrow so the SSE handler sees it.
-    if (err instanceof ClientDisconnectedError || signal?.aborted) throw err;
+    if (err instanceof ClientDisconnectedError || err instanceof CompassReasoningTimeout || signal?.aborted) throw err;
     return "";
   }
 }
@@ -1263,13 +1270,14 @@ async function streamModelRound(
   onDelta: (delta: string) => void,
   /** Aborts the upstream OpenAI stream (e.g. on client disconnect). */
   signal?: AbortSignal,
+  timeoutMs = 25_000,
 ): Promise<{ content: string; toolCalls: any[] }> {
   const streamResp = await getOpenAI().chat.completions.create(
     {
       ...opts,
       stream: true,
     } as any,
-    signal ? ({ signal } as any) : undefined,
+    { signal, timeout: timeoutMs, maxRetries: 0 },
   );
 
   let content = "";
@@ -1279,7 +1287,7 @@ async function streamModelRound(
     // Belt-and-braces: the SDK's { signal } already aborts the underlying
     // request, but mocks / older transports may keep yielding — bail out
     // explicitly so an aborted round never completes.
-    if (signal?.aborted) throw new ClientDisconnectedError();
+    if (signal?.aborted) throw signal.reason ?? new ClientDisconnectedError();
     const delta = chunk.choices?.[0]?.delta;
     if (!delta) continue;
 
@@ -1318,9 +1326,12 @@ async function runToolCallingLoop(
   onDelta?: (delta: string) => void,
   /** Aborts model calls when the SSE client disconnects mid-answer. */
   signal?:  AbortSignal,
-  itinerary?: { prompt: string; city?: string },
+  itinerary?: { prompt: string; city?: string; followUp: boolean },
+  reasoning = compassReasoningPolicy(null, false),
+  budget = new CompassReasoningBudget(Date.now(), signal),
 ): Promise<ToolLoopOutcome> {
   if (signal?.aborted) throw new ClientDisconnectedError();
+  budget.check();
   const convo: any[] = [...messages];
   const toolLog: ToolExecution[] = trackPartialToolLog<ToolExecution>(messages); // H266: readable by the caller if a model call below throws
   const proposals: AddToTripProposal[] = [];
@@ -1332,7 +1343,9 @@ async function runToolCallingLoop(
   };
   if (itinerary) {
     const city = requestedItineraryCity(itinerary.prompt, undefined, itinerary.city);
-    const outline = itineraryOutline(itinerary.prompt, city);
+    // A standalone template cannot see earlier destinations, constraints or
+    // corrections. Follow-ups must reach the model with the full conversation.
+    const outline = itinerary.followUp ? null : itineraryOutline(itinerary.prompt, city);
     if (outline?.payload === null) return { finalRaw: JSON.stringify(outline), toolLog, proposals };
     if (outline && city) {
       // The short, explicit plan needs this authorized city search either way.
@@ -1349,19 +1362,10 @@ async function runToolCallingLoop(
   let endSearch = false;
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
     if (signal?.aborted) throw new ClientDisconnectedError();
-    const forceFinal = endSearch || round === MAX_TOOL_ROUNDS;
+    budget.check();
+    const forceFinal = endSearch || round === MAX_TOOL_ROUNDS || budget.shouldFinish();
     const requestOpts = {
-      model: "gpt-5-mini",
-      max_completion_tokens: 1200,
-      // Low reasoning effort keeps the completion-token budget available for
-      // actual visible output. At default effort, gpt-5-mini can burn the
-      // whole budget on hidden reasoning tokens and return empty content —
-      // forcing the summariseFallback re-prompt on every single request and
-      // roughly doubling response time (this was the root cause of the
-      // Compass chat feeling like it hung: ~30s round trips, sometimes with
-      // no real answer even after the fallback). "low" cut reasoning tokens
-      // from ~700 to <100 in testing with no loss of answer quality.
-      reasoning_effort: "low" as const,
+      ...reasoning,
       messages: convo,
       ...(forceFinal
         ? {}
@@ -1371,7 +1375,7 @@ async function runToolCallingLoop(
     let msg: any;
     let toolCalls: any[];
     if (onDelta) {
-      const streamed = await streamModelRound(requestOpts, onDelta, signal);
+      const streamed = await budget.run((roundSignal, timeoutMs) => streamModelRound(requestOpts, onDelta, roundSignal, timeoutMs));
       toolCalls = streamed.toolCalls;
       msg = {
         role: "assistant",
@@ -1379,7 +1383,7 @@ async function runToolCallingLoop(
         ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
       };
     } else {
-      const completion = await getOpenAI().chat.completions.create(requestOpts as any);
+      const completion = await budget.run((roundSignal, timeoutMs) => getOpenAI().chat.completions.create(requestOpts as any, { timeout: timeoutMs, maxRetries: 0, signal: roundSignal }));
       msg = (completion as any).choices?.[0]?.message;
       toolCalls = msg?.tool_calls ?? [];
     }
@@ -1391,16 +1395,25 @@ async function runToolCallingLoop(
       // once with an explicit summarise instruction so the client always receives
       // a visible reply — never a silent empty message.
       if (!finalRaw) {
-        finalRaw = await summariseFallback(convo, log, userId, onDelta, signal);
+        finalRaw = await summariseFallback(convo, log, userId, onDelta, signal, budget);
       }
       return { finalRaw, toolLog, proposals };
     }
 
     convo.push(msg);
     for (const tc of toolCalls) {
+      budget.check();
       const name = tc?.function?.name ?? "unknown";
       let args: Record<string, unknown> = {};
-      try { args = JSON.parse(tc?.function?.arguments ?? "{}"); } catch { /* empty args */ }
+      try {
+        const parsedArgs: unknown = JSON.parse(tc?.function?.arguments ?? "{}");
+        if (parsedArgs === null || typeof parsedArgs !== "object" || Array.isArray(parsedArgs)) throw new Error("not_object");
+        args = parsedArgs as Record<string, unknown>;
+      } catch {
+        // Repairable model error; never execute an action with guessed arguments.
+        convo.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify({ error: "Tool arguments must be a valid JSON object. Correct them before retrying." }) });
+        continue;
+      }
 
       const requestedCity = itinerary && name === "search_places" ? requestedItineraryCity(itinerary.prompt, args.city, itinerary.city) : undefined;
       if (requestedCity) args.city = requestedCity;
@@ -1410,6 +1423,15 @@ async function runToolCallingLoop(
       }
       const repeatedCitySearch = name === "search_places" && seededSearch && args.city === seededSearch.city && Object.keys(args).length === 1;
       let result = repeatedCitySearch ? seededSearch!.result : await executeCompassTool(sc, userId, profile as any, name, args);
+      const proposed = (result as { proposal?: AddToTripProposal } | null)?.proposal;
+      if (name === "add_to_trip" && proposed?.proposalId) {
+        // Every call still goes through current authorization. Repeated model
+        // calls for the same canonical item/day share one confirmation card.
+        const existing = proposals.find(p => p.tripId === proposed.tripId && p.placeId === proposed.placeId
+          && p.dayDate === proposed.dayDate && (p.placeId !== null || (p.title === proposed.title && p.category === proposed.category)));
+        if (existing) result = { ...(result as Record<string, unknown>), proposal: existing };
+        else proposals.push(proposed);
+      }
       if (!repeatedCitySearch) toolLog.push({ name, arguments: args, result });
       if (itinerary && name === "search_places") {
         if (emptyCity(result) && requestedCity && typeof args.query === "string" && args.query.trim()) {
@@ -1421,14 +1443,11 @@ async function runToolCallingLoop(
           const row = tool.result as { candidates?: unknown[]; liveListings?: unknown[] };
           return (tool.name === "search_places" || tool.name === "search_events") && (row?.candidates?.length || row?.liveListings?.length);
         })) {
-          const outline = itineraryOutline(itinerary.prompt, requestedCity);
+          const outline = itinerary.followUp ? null : itineraryOutline(itinerary.prompt, requestedCity);
           if (outline && toolCalls.length === 1) return { finalRaw: JSON.stringify(outline), toolLog, proposals };
           endSearch = true;
         }
       }
-      const proposal = (result as any)?.proposal;
-      if (name === "add_to_trip" && proposal?.proposalId) proposals.push(proposal as AddToTripProposal);
-
       log.info({ userId, tool: name }, "compass/ask: tool executed");
       convo.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(result) });
     }
@@ -1513,7 +1532,7 @@ router.post("/compass/ask", async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid request");
     return;
   }
-  const { prompt, city, conversationId: incomingConvId, tripId, circleOwnerId, mediaId, stream, intentMode, sensingZoneIds } = parsed.data;
+  const { prompt, city, currentCity, conversationId: incomingConvId, tripId, circleOwnerId, mediaId, stream, intentMode, sensingZoneIds } = parsed.data;
 
   // ── Conversation resolve ──────────────────────────────────────────────────
   let conversationId: string;
@@ -1535,9 +1554,12 @@ router.post("/compass/ask", async (req, res) => {
 
   // ── History load ──────────────────────────────────────────────────────────
   let history: Awaited<ReturnType<typeof loadHistory>> = [];
+  let historyUnavailable = false;
   try {
     history = await loadHistory(sc, conversationId);
-  } catch { /* non-fatal — proceed with empty history */ }
+  } catch {
+    historyUnavailable = true;
+  }
 
   // ── The layover, read BEFORE anything calls a model (census-compass §50, §51, §53, §57; CL-02) ──
   // Lead rulings L3-FC-3 / L3-FC-2 / L-CL02a (2026-10-07/08). A traveller in a
@@ -1611,6 +1633,16 @@ router.post("/compass/ask", async (req, res) => {
   // Past this point there is no live layover (L-CL02a): the model's prose is
   // never published to a traveller on one, so it needs no layover boundary.
 
+  if (historyUnavailable) {
+    // Certified layover answers above do not need conversation history. For a
+    // model turn, keep the same conversation for retry instead of forgetting
+    // the user's constraints and guessing what a follow-up refers to.
+    res.json({ conversationId, message: "I couldn't load our earlier conversation. Please retry so I can keep your plans and preferences in context.",
+      payload: null, quickActions: [], pendingProposals: [], uiBlocks: [],
+      promptVersion: COMPASS_ASK_PROMPT_VERSION, fallback: true, fallbackReason: "history_unavailable", retryable: true });
+    return;
+  }
+
   // ── Intent classification (classifier decides) ────────────────────────────
   // Promoted out of shadow mode: "itinerary" at ≥0.6 confidence takes the
   // itinerary branch (structured day-by-day payload); everything else —
@@ -1652,7 +1684,7 @@ router.post("/compass/ask", async (req, res) => {
   // The classified intent is still logged and returned for observability.
 
   // ── Build context block ───────────────────────────────────────────────────
-  const effectiveCity = city ?? "";
+  const effectiveCity = city?.trim() ?? "";
   let locationCtx: Awaited<ReturnType<typeof buildLocationCompassContext>> | null = null;
   let weatherBrief:          string   | null = null;
   let followedHashtagSlugs:  string[]        = [];
@@ -1673,7 +1705,7 @@ router.post("/compass/ask", async (req, res) => {
 
   try { locationCtx = await buildLocationCompassContext(auth.client, user.id); } catch { /* */ }
 
-  const wxCity = effectiveCity || locationCtx?.currentCity || null;
+  const wxCity = effectiveCity || locationCtx?.currentCity || currentCity || null;
   if (wxCity) {
     try { const wx = await getWeatherForAsk(wxCity); weatherBrief = wx?.briefSummary ?? null; }
     catch { /* non-fatal */ }
@@ -1749,20 +1781,23 @@ router.post("/compass/ask", async (req, res) => {
     structuredLines  = formatStructuredContextLines(structured);
   } catch { /* non-fatal — proceed without structured context */ }
 
-  const locLine = locationCtx?.currentCity
+  const locLine = effectiveCity || (locationCtx?.currentCity
     ? `${locationCtx.currentCity}${locationCtx.currentCountry ? `, ${locationCtx.currentCountry}` : ""}`
-    : effectiveCity || "unspecified";
+    : currentCity || "unspecified");
 
   const ctxLines: string[] = ["[Context \u2014 city-level only, no coordinates]"];
   ctxLines.push(`Location: ${locLine}`);
+  ctxLines.push(...compassFocusLines(effectiveCity, locationCtx?.currentCity || currentCity, tripId));
+  const priorCards = priorCompassCards(history);
+  ctxLines.push(...priorCards);
   if (locationCtx?.upcomingTripCity)
     ctxLines.push(`Upcoming trip: ${locationCtx.upcomingTripCity}${locationCtx.upcomingTripCountry ? `, ${locationCtx.upcomingTripCountry}` : ""}`);
   if (followedHashtagSlugs.length > 0)
     ctxLines.push(`Interests: ${followedHashtagSlugs.map((s) => `#${s}`).join(", ")}`);
   if (weatherBrief)
-    ctxLines.push(`Weather: ${weatherBrief}`);
+    ctxLines.push(`Weather for ${wxCity}: ${weatherBrief}`);
   if (topItemsContext.length > 0)
-    ctxLines.push(`Verified nearby places:\n${topItemsContext.join("\n")}`);
+    ctxLines.push(`Ranked app suggestions (not verification of current conditions):\n${topItemsContext.join("\n")}`);
 
   // ── Always-on trip grounding ──────────────────────────────────────────────
   // Grounds every chat turn in the user's active/upcoming trip. Skipped while
@@ -2019,9 +2054,11 @@ router.post("/compass/ask", async (req, res) => {
 
   // ── Build messages array ──────────────────────────────────────────────────
   const intentResult: IntentClassification | null = await classification;
+  const reasoning = compassReasoningPolicy(intentResult, priorCards.length > 0);
   const isItineraryIntent = intentResult?.intent === "itinerary" && intentResult.confidence >= 0.6;
   const itineraryRequest = isItineraryIntent || (planningPrompt !== prompt && /\b(?:plan|itinerary|weekend)\b/i.test(planningPrompt))
-    ? { prompt: planningPrompt, city } : undefined;
+    ? { prompt: planningPrompt, city: locationCtx?.currentCity || currentCity || city,
+      followUp: history.some(turn => turn.role === "user" || turn.role === "assistant") } : undefined;
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: "system", content: COMPASS_ASK_PROMPT },
     { role: "system", content: COMPASS_TOOLS_PROMPT_ADDENDUM },
@@ -2058,6 +2095,10 @@ router.post("/compass/ask", async (req, res) => {
   );
 
   // ── SSE streaming ─────────────────────────────────────────────────────────
+  const clientAbort = new AbortController();
+  res.on("close", () => {
+    if (!res.writableEnded) clientAbort.abort();
+  });
   if (stream) {
     res.setHeader("Content-Type",  "text/event-stream");
     res.setHeader("Cache-Control", "no-cache, no-transform"); res.setHeader("X-Accel-Buffering", "no");
@@ -2068,10 +2109,6 @@ router.post("/compass/ask", async (req, res) => {
     // a half-generated assistant message must never reach
     // compass_conversation_messages. A fully generated answer that completes
     // before the disconnect is still persisted normally.
-    const clientAbort = new AbortController();
-    res.on("close", () => {
-      if (!res.writableEnded) clientAbort.abort();
-    });
     try {
       // Tool rounds run silently server-side; the FINAL model round streams
       // its content token-by-token as delta events (same contract as before
@@ -2084,6 +2121,8 @@ router.post("/compass/ask", async (req, res) => {
         delta => venueStream.push(delta),
         clientAbort.signal,
         itineraryRequest,
+        reasoning,
+        new CompassReasoningBudget(turnNowMs, clientAbort.signal),
       ));
       const _parsed = _parseModelResponse(finalRaw);
       const _rawMessage  = finalRaw === "" ? compassAiFailureFallback(toolLog, SUMMARISE_EMPTY_FALLBACK_MESSAGE).message : _parsed.message;
@@ -2147,8 +2186,9 @@ router.post("/compass/ask", async (req, res) => {
         return;
       }
       req.log.error({ err, userId: user.id }, "compass/ask stream failed");
-      appendSystemEvent(sc, conversationId, "assistant_unavailable", { fallbackReason: "ai_error" }).catch(() => {});
-      res.write(`data: ${JSON.stringify({ error: true, conversationId, promptVersion: COMPASS_ASK_PROMPT_VERSION, fallback: true, fallbackReason: "ai_error", ...(await compassAiFailureFallbackWithRetrieval(partialToolLogOf(messages), () => executeCompassTool(sc, user.id, guardProfile as any, "memory_search", { query: prompt }), HONEST_FALLBACK_MESSAGE)) })}\n\n`);
+      const fallbackReason = err instanceof CompassReasoningTimeout ? "reasoning_timeout" : "ai_error";
+      appendSystemEvent(sc, conversationId, "assistant_unavailable", { fallbackReason }).catch(() => {});
+      res.write(`data: ${JSON.stringify({ error: true, conversationId, promptVersion: COMPASS_ASK_PROMPT_VERSION, fallback: true, fallbackReason, retryable: true, ...(await compassAiFailureFallbackWithRetrieval(partialToolLogOf(messages), () => executeCompassTool(sc, user.id, guardProfile as any, "memory_search", { query: prompt }), HONEST_FALLBACK_MESSAGE)) })}\n\n`);
       res.end();
     }
     return;
@@ -2157,8 +2197,10 @@ router.post("/compass/ask", async (req, res) => {
   // ── Non-streaming (default) ───────────────────────────────────────────────
   try {
     const { finalRaw, toolLog, proposals } = await withAskProjections(() => runToolCallingLoop(
-      sc, user.id, guardProfile, messages as any, req.log, undefined, undefined,
+      sc, user.id, guardProfile, messages as any, req.log, undefined, clientAbort.signal,
       itineraryRequest,
+      reasoning,
+      new CompassReasoningBudget(turnNowMs, clientAbort.signal),
     ));
     const _parsed = _parseModelResponse(finalRaw);
     const _rawMessage  = finalRaw === "" ? compassAiFailureFallback(toolLog, SUMMARISE_EMPTY_FALLBACK_MESSAGE).message : _parsed.message;
@@ -2213,11 +2255,13 @@ router.post("/compass/ask", async (req, res) => {
     compressConversationIfDue(sc, user.id, conversationId).catch(() => {});
     res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: [..._grounded.violations.map((v) => v.kind), ...venue.violations], toolsUsed: toolLog.map((t) => t.name) }, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
   } catch (err) {
+    if (clientAbort.signal.aborted) { res.end(); return; }
     req.log.error({ err, userId: user.id }, "compass/ask: LLM call failed");
     // spec §1 `system-event`: the conversation records that the assistant was
     // unavailable at this turn, so the history is honest about the gap. Never a
     // model turn (modelTurns drops it); refused where 2996 is not applied.
-    appendSystemEvent(sc, conversationId, "assistant_unavailable", { fallbackReason: "ai_error" }).catch(() => {});
+    const fallbackReason = err instanceof CompassReasoningTimeout ? "reasoning_timeout" : "ai_error";
+    appendSystemEvent(sc, conversationId, "assistant_unavailable", { fallbackReason }).catch(() => {});
     res.json({
       conversationId,
       ...(await compassAiFailureFallbackWithRetrieval(partialToolLogOf(messages), () => executeCompassTool(sc, user.id, guardProfile as any, "memory_search", { query: prompt }), HONEST_FALLBACK_MESSAGE)), // H266: Memory facts, rendered; the sentence only when there are none
@@ -2225,7 +2269,8 @@ router.post("/compass/ask", async (req, res) => {
       quickActions:   [],
       promptVersion:  COMPASS_ASK_PROMPT_VERSION,
       fallback:       true,
-      fallbackReason: "ai_error",
+      fallbackReason,
+      retryable: true,
     });
   }
 });

@@ -411,7 +411,7 @@ describe("intelProjection aggregator — assembleClaimInput (real evidence)", ()
     const db = makeDb({ flags: {}, observations: obs, confirmations: [], policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }] });
     const input = await assembleClaimInput(db as any, claim, NOW);
     assert.equal(input.distinctActors, 15);
-    assert.equal(input.distinctGroups, 6, "6 overlapping crews");
+    assert.equal(input.distinctGroups, 1, "shared actors connect all six crews into one dependent group");
     assert.equal(input.maxGroupShare, 1, "union share 1.0, NOT the diluted 15/90");
   });
 

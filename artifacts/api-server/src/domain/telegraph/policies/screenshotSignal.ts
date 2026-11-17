@@ -85,7 +85,9 @@ export function isScreenshotGuarantee(text: string): boolean {
 
 /** The capture APIs `code` uses, by literal name. */
 export function screenshotApisIn(code: string): string[] {
-  return SCREENSHOT_CAPTURE_APIS.filter((api) => code.includes(api));
+  return SCREENSHOT_CAPTURE_APIS.filter((api) => api === "FLAG_SECURE"
+    ? /(?<![\w$])FLAG_SECURE(?![\w$])/.test(code)
+    : code.includes(api));
 }
 
 // ── Hardening (lane T, mission 4, 2026-10-07): census-telegraph §45c ────────

@@ -777,7 +777,7 @@ directly via `isFlagEnabled` **does not** get this resolution. **[CLONE 13dcfe3]
 18 call sites.** **[CLONE 13dcfe3]** —
 `disable_unknown_message_requests` (`routes/messaging.ts:435`),
 `disable_messaging` (`:1682`, `:1996`),
-`disable_media_uploads` (`:2000`, `routes/postcards.ts:381`, `routes/posts.ts:92`,
+`disable_media_uploads` (`:2000`, `routes/postcards.ts:383`, `routes/posts.ts:92`,
 `routes/profile.ts:1019`, `:1092`, `routes/events.ts:5285`),
 `disable_location_sharing` (`routes/location.ts:94`),
 `disable_rent_buddy_booking` + `disable_rab_bookings` (`routes/rentABuddy.ts:1005-1006`),
@@ -1028,7 +1028,7 @@ word "permanently" is **not** established by either entry — see §10.4.
 ⚠ **CORRECTION, 2026-08-10 — FALSE EVIDENCE WITHDRAWN.** An earlier revision of
 this entry stated, under a `[CLONE 13dcfe3]` tag, that a grep for
 `processing_status` outside tests "returns only `routes/adminMedia.ts:63` (a
-read/list) and `routes/postcards.ts:449` (the write)". **That is false, was never
+read/list) and `routes/postcards.ts:451` (the write)". **That is false, was never
 reproducible, and must not be cited.** Re-run in the clone this session:
 
 ```
@@ -1139,8 +1139,8 @@ per §8.1, and applies to production only.
 | A | `POST /api/media/upload` | `routes/posts.ts:75-76` | yes (raw body) | yes, except the §7.2b HEIC fallback | `post-media` |
 | B | `POST /api/me/avatar/upload` | `routes/profile.ts:1002-1003` | yes | yes | `profile-media` |
 | C | `POST /api/me/cover/upload` | `routes/profile.ts:1075-1076` | yes | yes | `profile-media` |
-| D | `POST /api/postcards/:id/media/upload-url` | `routes/postcards.ts:369`, signed URL `:473-475` | **no** | **no, not at this step** | `post-media` |
-| D′ | `POST …/media/:mediaId/complete` | `routes/postcards.ts:513`; download `:571`, sniff `:574`, `processImage` `:576`, re-upload `upsert:true` `:577-579` | yes, **after** the object exists | yes, in place | `post-media` |
+| D | `POST /api/postcards/:id/media/upload-url` | `routes/postcards.ts:371`, signed URL `:473-475` | **no** | **no, not at this step** | `post-media` |
+| D′ | `POST …/media/:mediaId/complete` | `routes/postcards.ts:515`; download `:571`, sniff `:574`, `processImage` `:576`, re-upload `upsert:true` `:577-579` | yes, **after** the object exists | yes, in place | `post-media` |
 | E | `POST /admin/stamps/catalog/:id/upload` | `routes/stampCatalog.ts:961`, upload `:996-998` | yes (base64 JSON) | **no** (§7.2c) | `stamp-artwork` |
 | F | `POST /admin/stamps/catalog/:id/recompose` | `routes/stampCatalog.ts:1120`, `:1122` | server-generated raster | n/a | `stamp-artwork` |
 | G | Stamp generation worker | `lib/stamps/generationWorker.ts:484-488` (`uploadBufferToPath`), callers `:969-978` | provider bytes | hero buffer stored **as-is** | `stamp-artwork` |
@@ -1202,7 +1202,7 @@ byte-identical between the trees. Cite the standalone path.
 **[CLONE 13dcfe3]**, established by enumerating every `.storage.from(...).remove(...)`
 call in the server tree (eleven, excluding tests):
 `routes/adminMedia.ts:338`, `routes/admin.ts:1539`, `routes/memories.ts:663`,
-`routes/postcards.ts:787`, `routes/stories.ts:635`, `routes/profile.ts:746`,
+`routes/postcards.ts:816`, `routes/stories.ts:635`, `routes/profile.ts:746`,
 `:1158`, `:1185` — all user- or admin-initiated deletes;
 `lib/stamps/generationWorker.ts:1092` — that worker's own failure rollback;
 `services/accountDeletion/AccountDeletionService.ts:186` — reached from a
@@ -1242,14 +1242,14 @@ see the bucket" is at `:11-12`.
 
 **7.17 `thumbnailPath` is client-supplied, size-bounded only, and unscoped.**
 `completeSchema` accepts `thumbnailPath: z.string().max(500).optional()`
-(`routes/postcards.ts:508`); it is concatenated into `thumbnail_url` at `:595-596`
+(`routes/postcards.ts:510`); it is concatenated into `thumbnail_url` at `:595-596`
 and written to `thumbnail_storage_path` at `:632` with no ownership-prefix check
 and no sniff. The canonical composer's `completeUpload` payload
 (`travel-buddy-standalone/src/components/PostcardComposer.tsx:307-315`) does not
 include the field, so no shipped client sends it. **[CLONE 13dcfe3]**
 
 **7.18 On the postcard path the stored `mime_type`, the object `contentType` and
-the path extension can all disagree.** `routes/postcards.ts:625` writes
+the path extension can all disagree.** `routes/postcards.ts:628` writes
 `mime_type: p.mimeType` — the client's declared value — while `:579` re-uploaded
 the object with `contentType: img.mime`, and the path extension was fixed at
 `:463` from the declared MIME. `processImage` converts HEIC to JPEG
@@ -1277,7 +1277,7 @@ bucket does not yet exist, the first avatar upload creates it **public**.
 **[CLONE 13dcfe3]**
 
 **7.21 `disable_media_uploads` is checked on A, B, C and D, and not on E.**
-`routes/posts.ts:92`, `routes/profile.ts:1019`, `:1092`, `routes/postcards.ts:381`;
+`routes/posts.ts:92`, `routes/profile.ts:1019`, `:1092`, `routes/postcards.ts:383`;
 `routes/stampCatalog.ts:961-1006` contains no flag check. **[CLONE 13dcfe3]**
 For the failure direction of that check see §6.7 and §6.8.
 
@@ -1387,7 +1387,7 @@ public-read policy (§8.4) has no such predicate. **[CLONE 13dcfe3]**
 
 **8.6 Storage paths are guessable by construction.**
 `post-media/{user.id}/{postId}/{mediaId}.{ext}` on the postcard path
-(`routes/postcards.ts:463`) and `post-media/{user.id}/{Date.now()}.{ext}` on the
+(`routes/postcards.ts:465`) and `post-media/{user.id}/{Date.now()}.{ext}` on the
 post-media path (`routes/posts.ts:170-171`); the second carries roughly
 millisecond entropy scoped to a known user id. **[CLONE 13dcfe3]**
 

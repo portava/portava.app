@@ -1,3 +1,4 @@
+import { providerModel } from "../../lib/providerVersions.js";
 /**
  * LayoverCompassAssistant — §12 Compass as orchestrator and explainer on the
  * layover door, with the model and its twelve deterministic tools.
@@ -93,7 +94,7 @@ import type { CompassCrewCandidates } from "../layover/LayoverCrewVisibility.js"
 export const LAYOVER_COMPASS_ASSISTANT_FLAG = "layover_compass_assistant_enabled";
 
 /** The general chat's model (`routes/compass.ts` runToolCallingLoop), through the same client (`getOpenAI`). */
-export const ASSISTANT_MODEL = "gpt-5-mini";
+export const ASSISTANT_MODEL = providerModel("openai", "gpt-5-mini");
 
 export interface AssistantLimits {
   /** Tool rounds after the first completion; one more completion is forced tool-less. */

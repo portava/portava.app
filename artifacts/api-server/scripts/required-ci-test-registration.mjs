@@ -1,5 +1,7 @@
+const memoryOwnMediaFile = "src/test/memoryFromOwnMedia.pglite.test.ts";
 const mediaTranslationFile = "src/test/mediaCaptionTranslationHardDelete.native.test.ts";
 const mediaTranslationScript = "node scripts/run-memory-native-tests.mjs media-translation " + mediaTranslationFile;
+const memoryImportFile = "src/test/memoryImportBatches.pglite.test.ts";
 const accountMediaFile = "src/test/accountDeletionMediaBoundary.native.test.ts";
 const encodingFile = "src/test/mediaAdaptiveEncoding.real.test.ts";
 const apiJobHeader = [
@@ -36,12 +38,18 @@ const accountMediaStep = [
   "        timeout-minutes: 5",
   "        shell: bash",
   "        env:",
-  "          PORTAVA_TEST_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}",
+  "          LOCAL_DB_URL: postgresql://postgres:postgres@localhost:5432/portava_local",
+  "          PORTAVA_TEST_POSTGRES_BIN: /usr/lib/postgresql/16/bin",
+  "          PORTAVA_TEST_POSTGRES_MAJOR: '16'",
   "          TMPDIR: /tmp",
   "        run: |",
   "          set -euo pipefail",
   '          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:account-media-native 2>&1 | tee "$RUNNER_TEMP/account-media-native.log"',
 ].join("\n");
+const memoryImportStep = accountMediaStep.replace("Require native account media erasure suite", "Require reusable memory import SQL suite")
+  .replace("test:account-media-native", "test:memory-import-sql").replace("account-media-native.log", "memory-import-sql.log");
+const memoryOwnMediaStep = memoryImportStep.replace("Require reusable memory import SQL suite", "Require reusable Memory source-post SQL suite")
+  .replace("test:memory-import-sql", "test:memory-own-media-sql").replace("memory-import-sql.log", "memory-own-media-sql.log");
 const encodingCacheStep = [
   "      - name: Cache pinned media encoding source archives",
   "        uses: actions/cache@v4",
@@ -73,6 +81,27 @@ const encodingStep = [
   '          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:media-encoding 2>&1 | tee "$RUNNER_TEMP/media-encoding.log"',
 ].join("\n");
 
+const signalPrivacyGates = [
+  {
+    "file": "src/test/inputOutcomeConsent.postgres.test.ts",
+    "script": "test:input-outcome-native",
+    "command": "node scripts/run-memory-native-tests.mjs input-outcome src/test/inputOutcomeConsent.postgres.test.ts",
+    "step": "      - name: Require native input-outcome privacy suite\n        timeout-minutes: 5\n        shell: bash\n        env:\n          INPUT_OUTCOME_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}\n          TMPDIR: /tmp\n        run: |\n          set -euo pipefail\n          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:input-outcome-native 2>&1 | tee \"$RUNNER_TEMP/input-outcome-native.log\""
+  },
+  {
+    "file": "src/test/wallOutcomeConsent.postgres.test.ts",
+    "script": "test:wall-outcome-native",
+    "command": "node scripts/run-memory-native-tests.mjs wall-outcome src/test/wallOutcomeConsent.postgres.test.ts",
+    "step": "      - name: Require native wall-outcome privacy suite\n        timeout-minutes: 5\n        shell: bash\n        env:\n          WALL_OUTCOME_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}\n          TMPDIR: /tmp\n        run: |\n          set -euo pipefail\n          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:wall-outcome-native 2>&1 | tee \"$RUNNER_TEMP/wall-outcome-native.log\""
+  },
+  {
+    "file": "src/test/mediaEventPrivacy.postgres.test.ts",
+    "script": "test:media-events-native",
+    "command": "node scripts/run-memory-native-tests.mjs media-events src/test/mediaEventPrivacy.postgres.test.ts",
+    "step": "      - name: Require native media-events privacy suite\n        timeout-minutes: 5\n        shell: bash\n        env:\n          MEDIA_EVENT_POSTGRES_BIN: ${{ steps.memory-postgres.outputs.bin }}\n          TMPDIR: /tmp\n        run: |\n          set -euo pipefail\n          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server test:media-events-native 2>&1 | tee \"$RUNNER_TEMP/media-events-native.log\""
+  }
+];
+
 function requireStep(steps, expected) {
   const name = expected.split("\n")[0];
   if (steps.filter(step => step === expected).length !== 1
@@ -86,7 +115,9 @@ export function requiredCiTestFiles(scripts, workflow) {
   if (scripts["test:media-translation-native"] !== mediaTranslationScript) {
     throw new Error("Mandatory Media native command changed; review its execution registration");
   }
-  if (scripts["test:account-media-native"] !== "node scripts/run-memory-native-tests.mjs account-media " + accountMediaFile
+  if (scripts["test:memory-own-media-sql"] !== "node scripts/run-memory-native-tests.mjs own-media-sql " + memoryOwnMediaFile
+    || scripts["test:memory-import-sql"] !== "node scripts/run-memory-native-tests.mjs import-sql " + memoryImportFile
+    || scripts["test:account-media-native"] !== "node scripts/run-memory-native-tests.mjs account-media " + accountMediaFile
     || scripts["test:media-encoding"] !== "node scripts/run-media-encoding-tests.mjs " + encodingFile) {
     throw new Error("Mandatory account Media or encoding command changed; review its execution registration");
   }
@@ -114,12 +145,42 @@ export function requiredCiTestFiles(scripts, workflow) {
     || steps.filter(step => /^      - name: Build verified PostgreSQL for native Memory tests$/m.test(step)).length !== 1) {
     throw new Error("Mandatory Media native gate needs prior verified PostgreSQL preparation");
   }
-  const account = requireStep(steps, accountMediaStep);
+  const sqlJob = requiredSQLJob(workflow);
+  const sqlSteps = sqlJob.split(/(?=^      - )/m).map(step => step.trimEnd());
+  const account = requireStep(sqlSteps, accountMediaStep);
+  const imported = requireStep(sqlSteps, memoryImportStep);
+  const ownMedia = requireStep(sqlSteps, memoryOwnMediaStep);
+  const replay = sqlSteps.findIndex(step => step.startsWith("      - name: Restore baseline, replay the chain, run the database suites"));
+  if (replay < 0 || account <= replay || imported <= account || ownMedia <= imported) throw new Error("Recovery SQL suites require serialized replay and restoration");
   const cache = requireStep(steps, encodingCacheStep);
   const encodingPreparation = requireStep(steps, encodingPreparationStep);
   const encoding = requireStep(steps, encodingStep);
-  if (preparation >= account || cache >= encodingPreparation || encodingPreparation >= encoding) {
+  if (cache >= encodingPreparation || encodingPreparation >= encoding) {
     throw new Error("Mandatory account Media and encoding gates require their verified preparation first");
   }
-  return new Set([mediaTranslationFile, accountMediaFile, encodingFile]);
+  for (const gate of signalPrivacyGates) {
+    if (scripts[gate.script] !== gate.command) throw new Error('Mandatory signal privacy command changed: ' + gate.script);
+    if (requireStep(steps, gate.step) <= preparation) throw new Error('Signal privacy gate must follow verified PostgreSQL preparation');
+  }
+  return new Set([mediaTranslationFile, accountMediaFile, memoryImportFile, memoryOwnMediaFile, encodingFile, ...signalPrivacyGates.map(gate => gate.file)]);
+}
+
+/** The existing mandatory SQL job already executes every *.db.test.ts once.
+ * Pin its reviewed command, job and runner rather than adding duplicate API
+ * execution (which cannot provide independent PostgreSQL sessions). Changes to
+ * execution semantics require reviewing these pins, never an allowlist entry.
+ */
+export function requiredLocalDatabaseTestFiles(scripts, workflow, runner, files) {
+  if (scripts["test:db-local"] !== "bash scripts/local-db/up.sh && bash scripts/local-db/run-tests.sh") throw new Error("Required SQL command changed");
+  requiredSQLJob(workflow);
+  if (createHash("sha256").update(runner).digest("hex") !== "c0bd371f7c662c8ce081268470a4d1728d6607ee521d9e91db28eaf34c5482d3") throw new Error("Required SQL runner changed; review full discovery, serialization and no-skip assertions");
+  if (!files.length || files.some(file => !/^src\/test\/db\/[A-Za-z0-9_.-]+\.db\.test\.ts$/.test(file))) throw new Error("Required SQL file inventory is invalid");
+  return new Set(files);
+}
+import { createHash } from "node:crypto";
+
+function requiredSQLJob(workflow) {
+  const jobs = workflow.split(/(?=^  [a-zA-Z0-9_-]+:\s*$)/m).filter(job => job.startsWith("  api-server-local-db:\n"));
+  if (jobs.length !== 1 || createHash("sha256").update(jobs[0]).digest("hex") !== "d21d26132c8b3cadf6226b8c112219cc770800e69fca8a43134fa84eb8c0904b") throw new Error("Required SQL job changed; review unconditional fixture execution");
+  return jobs[0];
 }

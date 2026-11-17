@@ -41,7 +41,13 @@ jest.mock('../../../src/services/intelConsent', () => ({
   setIntelConsent: (...a: unknown[]) => mockSetIntelConsent(...a),
 }));
 
+// NOTE: intentionally exhaustive — controlled account snapshot for this screen.
+let mockSessionOwner = 'settings-owner';
+jest.mock('../../../src/services/messagingOwnerRequest', () => ({ captureMessagingOwnerRequest: () => { const id = mockSessionOwner; return { ownerId: id, sessionId: id, isCurrent: () => mockSessionOwner === id, invalidate: () => {} }; } }));
+jest.mock('../../../src/services/discoveryViewerScope', () => ({ ...jest.requireActual('../../../src/services/discoveryViewerScope'), onDiscoveryScopeChange: jest.fn(() => () => {}) }));
+
 import IntelPromptsSettingsScreen from '../intel-prompts';
+import { onDiscoveryScopeChange } from '../../../src/services/discoveryViewerScope';
 
 const GRANTED = {
   enabled: true, consentVersion: 'intel_contributions_v1', consentedAt: '2026-09-01T00:00:00Z',
@@ -52,7 +58,7 @@ const NEVER = { ...GRANTED, enabled: false, consentVersion: null, consentedAt: n
 /** The consent row's Switch. */
 const consentSwitch = (getByTestId: (id: string) => any) => getByTestId('intel-consent-switch');
 
-beforeEach(() => { mockReadIntelConsent.mockReset(); mockSetIntelConsent.mockReset(); });
+beforeEach(() => { mockSessionOwner = 'settings-owner'; mockReadIntelConsent.mockReset(); mockSetIntelConsent.mockReset(); (onDiscoveryScopeChange as jest.Mock).mockClear(); });
 
 describe('Intel settings — a consent that could not be read', () => {
   it('says so, offers Retry, keeps the switch DISABLED, and never tells the person to update the app', async () => {
@@ -96,4 +102,31 @@ describe('Intel settings — a refused write', () => {
     await waitFor(() => expect(consentSwitch(r.getByTestId).props.value).toBe(true));
     expect(r.queryByText(/Couldn.t save that change/)).toBeNull();
   });
+});
+
+it('failed withdrawal stays off locally, offers explicit retry, and never suggests unchanged permission', async () => {
+  mockReadIntelConsent.mockResolvedValue({ status: 'ok', state: GRANTED });
+  mockSetIntelConsent.mockResolvedValueOnce(null).mockResolvedValueOnce({ ...GRANTED, enabled: false, withdrawnAt: '2026-11-13T13:00:00Z', localWithdrawalPending: true });
+  const r = await render(<IntelPromptsSettingsScreen />);
+  await waitFor(() => expect(consentSwitch(r.getByTestId).props.value).toBe(true));
+  await act(async () => { fireEvent(consentSwitch(r.getByTestId), 'valueChange', false); });
+  expect(consentSwitch(r.getByTestId).props.value).toBe(false);
+  expect(r.getByText(/Off on this device/)).toBeTruthy();
+  expect(r.queryByText(/setting is unchanged/)).toBeNull();
+  fireEvent.press(r.getByTestId('intel-withdrawal-retry'));
+  await waitFor(() => expect(r.queryByTestId('intel-withdrawal-retry')).toBeNull());
+  expect(mockSetIntelConsent.mock.calls).toEqual([[false, undefined], [false, undefined]]);
+});
+
+it('a completed old-account grant cannot update the new-account settings screen', async () => {
+  mockReadIntelConsent.mockResolvedValue({ status: 'ok', state: NEVER });
+  let complete!: (value: unknown) => void;
+  mockSetIntelConsent.mockImplementation(() => new Promise(resolve => { complete = resolve; }));
+  const r = await render(<IntelPromptsSettingsScreen />);
+  await waitFor(() => expect(consentSwitch(r.getByTestId).props.disabled).toBe(false));
+  await act(async () => { fireEvent(consentSwitch(r.getByTestId), 'valueChange', true); });
+  await act(async () => { mockSessionOwner = 'new-owner'; for (const [notify] of (onDiscoveryScopeChange as jest.Mock).mock.calls) notify(); });
+  await waitFor(() => expect(mockReadIntelConsent).toHaveBeenCalledTimes(2));
+  await act(async () => { complete(GRANTED); });
+  expect(consentSwitch(r.getByTestId).props.value).toBe(false);
 });

@@ -1,3 +1,4 @@
+import { providerModel } from "./providerVersions.js";
 /**
  * Translation provider abstraction.
  *
@@ -102,7 +103,7 @@ const ISO_LANGUAGE_NAMES: Record<string, string> = {
  * recorded against a stored translation is the engine that produced it by
  * construction rather than by a developer remembering to update two literals.
  */
-export const OPENAI_TRANSLATION_MODEL = 'gpt-5-mini';
+export const OPENAI_TRANSLATION_MODEL = providerModel("openai", "gpt-5-mini");
 
 export class OpenAITranslationProvider implements TranslationProvider {
   async detectLanguage(text: string): Promise<DetectLanguageResult> {

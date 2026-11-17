@@ -44,6 +44,7 @@ import { _setTestServiceClient } from "../lib/supabase.js";
 import adminRouter from "../routes/admin.js";
 import adminMediaRouter from "../routes/adminMedia.js";
 import { makeLayoverDb } from "./helpers/fakeLayoverDb.js";
+import { adminPostcardWithdrawalReceipt } from "./helpers/postcardWithdrawalFixture.js";
 import { auditReportAction, checkActionReportLink, checkContentReportLink, linkableReportId, LEGACY_REPORTS_TABLE } from "../lib/moderationAudit.js";
 
 const REPORTER = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -122,6 +123,8 @@ function install(tables: Record<string, any[]>, opts: Install = {}) {
   const counter = { reads: 0 };
   const wrapped = {
     ...db,
+    rpc: async (name: string, args: Record<string, unknown>) => name === 'withdraw_postcard_media'
+      ? adminPostcardWithdrawalReceipt(tables, args) : db.rpc(name, args),
     from(t: string) {
       const b = db.from(t);
       if (t === "moderation_reports") counter.reads++;

@@ -1,35 +1,18 @@
+import { eraseAccountMediaEvents } from './mediaEvents.js';
+import { eraseAccountComposerUploads } from './composerUploads.js';
 /**
  * AccountDeletionService
  *
- * Single implementation of "execute an account deletion request", shared by:
- *   - POST /admin/deletion-requests/:id/execute   (routes/admin.ts, manual)
- *   - accountDeletionScheduler                    (lib/accountDeletionScheduler.ts)
- *   - POST /internal/deletion-requests/execute-due (routes/profile.ts, worker endpoint)
+ * The admin execution route is the sole production caller. It supplies an
+ * explicit reason and reviewed deletion generation; this service claims the
+ * existing request before any irreversible operation. Automatic scheduler and
+ * cron execution are retired.
  *
- * All paths MUST go through executeAccountDeletion() so the manual and the
- * scheduled path can never drift — a partial cascade in one of them is exactly
- * the kind of gap that turns the privacy policy into a false statement.
- *
- * ── Why a tombstone instead of `delete from profiles` ────────────────────────
- * Deleting the profiles row is NOT viable on the live schema:
- *   * 163 tables FK to profiles(id) ON DELETE CASCADE — that part would work;
- *   * but 54 more FK to it with NO ACTION (moderation_actions.performed_by,
- *     reports.reviewed_by, rent_buddy_earnings_ledger.*, posts.created_by, …).
- *     Any one referencing row makes the DELETE fail with a FK violation, so a
- *     row-delete strategy would abort partway for exactly the users who have
- *     the most history.
- *   * moderation and financial records are deliberately retained (the privacy
- *     policy says so), and they need a stable subject row to point at.
- *
- * So we keep an ANONYMISED tombstone profile and delete the user's *content*
- * explicitly. Because the tombstone survives, none of those 163 cascades fire
- * on their own — every content table below has to be handled here by hand.
- *
- * ── Why auth.admin.deleteUser is safe to call ────────────────────────────────
- * public.profiles has NO foreign key to auth.users (verified against the live
- * schema), so removing the auth user does not cascade into the tombstone. It
- * removes the email address, which is the one identifier that otherwise
- * persists forever. This is the step the audit called out as missing.
+ * Content and identity references are handled explicitly before auth deletion.
+ * Anonymising the profile is an intermediate step, not a promise to retain a
+ * tombstone: the current auth.users foreign key can cascade the profile away.
+ * Final completion therefore targets the stable claimed request ID and token,
+ * including when auth deletion has already cleared its user_id.
  *
  * ── Ordering ────────────────────────────────────────────────────────────────
  * Storage paths are collected BEFORE the owning DB rows are deleted, because
@@ -158,7 +141,7 @@ const REFERENCE_BUCKETS: readonly string[] = [POST_MEDIA_BUCKET, PROFILE_MEDIA_B
  * the STEPS change; bump the policy version when the RULES do.
  */
 export const DELETION_POLICY_VERSION = "d6-2026-08-23";
-export const DELETION_WORKER_VERSION = "2026-10-16.1";
+export const DELETION_WORKER_VERSION = "2026-11-14.1";
 
 /** Per-step outcome. Steps are independent so one failure cannot hide another. */
 export interface DeletionStepResult {
@@ -186,9 +169,11 @@ export interface DeletionOutcome {
 }
 
 export interface ExecuteOptions {
-  /** Admin user id for the audit row, or null when executed by the scheduler. */
+  /** Active admin authorizing permanent deletion; null is refused. */
   actorId: string | null;
   reason?: string | null;
+  /** The deletion generation explicitly selected by the admin. */
+  generation?: string;
   /**
    * When true the profile tombstone + auth user are left alone and only the
    * content cascade runs. Used by tests; not exposed over HTTP.
@@ -486,21 +471,75 @@ export { LAYOVER_AUDIT_RETENTION_DAYS } from "../../lib/layoverEventPseudonymisa
  * Execute a deletion request end to end.
  *
  * Fatal steps (profile anonymisation, auth-user deletion, marking the request
- * completed) fail the whole call, leaving the request pending so callers retry.
+ * completed) fail the call. Before Auth dispatch, a confirmed failed attempt may
+ * be explicitly retried; after dispatch its claim stays held for reconciliation.
  * Canonical Media uncertainty also blocks finalization, preserving source and
  * request identity for retry. Other content/storage steps retain their existing
  * independent best-effort outcomes.
  */
-export async function executeAccountDeletion(
+export async function executeAccountDeletion(sc: any, userId: string, opts: ExecuteOptions): Promise<DeletionOutcome> {
+  if (opts.contentOnly) return executeAccountDeletionSteps(sc, userId, opts);
+  const refused = (error: string): DeletionOutcome => ({ ok: false, userId, executedAt: new Date().toISOString(), steps: [{ step: 'authorize_permanent_deletion', ok: false, error }], warnings: [], deletedCounts: {}, tombstonedCounts: {} });
+  // No scheduler or stale client can begin erasure without an explicit admin
+  // command against the exact deletion generation reviewed in the UI.
+  if (!opts.actorId || !opts.generation || !opts.reason?.trim()) return refused('Explicit admin permanent deletion is required');
+  try {
+    const readiness = await sc.rpc('account_deletion_terminal_ready');
+    if (readiness.error || readiness.data !== true) return refused('Permanent deletion reconciliation schema is unavailable');
+  } catch { return refused('Permanent deletion reconciliation schema is unavailable'); }
+  const token = randomUUID();
+  let claim: { requestId: string; token: string };
+  try {
+    const { data, error } = await sc.rpc('claim_account_permanent_deletion', { p_actor: opts.actorId, p_user: userId, p_generation: opts.generation, p_token: token, p_reason: opts.reason, p_protocol: 1 });
+    if (error || data?.ok !== true || typeof data.requestId !== 'string' || data.token !== token) return refused(String(error?.message ?? data?.error ?? 'Deletion authorization unavailable'));
+    claim = data;
+  } catch { return refused('Deletion authorization could not be confirmed; reconcile the request before retrying'); }
+  // Never release an uncertain execution for automatic retry. A thrown operation
+  // leaves its existing claim visible for reconciliation, and recovery closed.
+  const outcome = await executeAccountDeletionSteps(sc, userId, opts, token, claim.requestId);
+  try {
+    const { data: finished, error: finishError } = await sc.rpc('finish_account_deletion_attempt', { p_request: claim.requestId, p_token: token, p_success: outcome.ok });
+    if (finishError || finished !== true) throw new Error('Execution receipt not confirmed');
+  } catch {
+    outcome.ok = false;
+    outcome.steps.push({ step: 'finalize_execution_claim', ok: false, error: 'Execution receipt could not be confirmed; reconciliation is required' });
+  }
+  return outcome;
+}
+
+/** Reconcile the existing terminal receipt without dispatching any erasure. */
+export async function reconcileAccountDeletion(sc: any, requestId: string,
+  opts: { actorId: string | null; generation: string; reason: string },
+): Promise<{ ok: true; completed: true; alreadyCompleted: boolean } | { ok: false; error: string }> {
+  try {
+    const { data, error } = await sc.rpc('settle_account_auth_deletion', {
+      p_actor: opts.actorId, p_request: requestId, p_generation: opts.generation, p_reason: opts.reason,
+    });
+    if (error || data?.ok !== true || data.completed !== true || typeof data.alreadyCompleted !== 'boolean') {
+      return { ok: false, error: String(error?.message ?? data?.error ?? 'Deletion outcome unavailable; keep the existing claim') };
+    }
+    return data;
+  } catch { return { ok: false, error: 'Deletion outcome unavailable; keep the existing claim' }; }
+}
+
+async function executeAccountDeletionSteps(
   sc: any,
   userId: string,
   opts: ExecuteOptions,
+  executionToken?: string,
+  deletionRequestId?: string,
 ): Promise<DeletionOutcome> {
   const executedAt = new Date().toISOString();
   const steps: DeletionStepResult[] = [];
   const warnings: string[] = [];
   const tombstonedCounts: Record<string, number> = {};
   const deletedCounts: Record<string, number> = {};
+  if (!opts.contentOnly) {
+    const eventsOk = await step(steps, 'erase_account_media_events', async () => {
+      const deleted = await eraseAccountMediaEvents(sc, userId); deletedCounts.media_events = deleted; return deleted;
+    });
+    if (!eventsOk) { warnings.push('Media event erasure unconfirmed — deletion remains pending before content removal'); return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts }; }
+  }
   const mediaOk = await step(steps, "erase_canonical_account_media", async () => {
     const count = await eraseAccountMedia(sc, userId);
     if (count > 0) deletedCounts.media_assets = count;
@@ -510,6 +549,9 @@ export async function executeAccountDeletion(
     warnings.push("Media cleanup unconfirmed — account deletion remains pending; retry is safe");
     return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
   }
+
+  const draftUploadsOk = await step(steps, 'erase_account_composer_uploads', () => eraseAccountComposerUploads(sc, userId));
+  if (!draftUploadsOk) { warnings.push('Draft upload cleanup unconfirmed — account deletion remains pending; retry is safe'); return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts }; }
 
   // ── 1. Collect storage paths BEFORE the rows that hold them are deleted ────
   const storageTargets: Array<{ bucket: string; path: string }> = [];
@@ -1508,26 +1550,9 @@ export async function executeAccountDeletion(
     return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
   }
 
-  // ── 5. Remove the auth user (this is what finally drops the email) ────────
-  // profiles has no FK to auth.users, so the tombstone above survives this.
-  const authOk = await step(steps, "auth_delete_user", async () => {
-    const res = await sc.auth.admin.deleteUser(userId);
-    if (res?.error) throw new Error(res.error.message ?? String(res.error));
-  });
-  if (!authOk) {
-    // Loud AND fatal: the email address is still on file, which is the exact
-    // GDPR claim the policy makes. The request is NOT marked completed below,
-    // so callers (scheduler / worker endpoint / admin) leave it pending and
-    // the whole cascade retries — every content step above is idempotent.
-    warnings.push("auth user not deleted — email address still on file");
-    logger.error(
-      { userId },
-      "executeAccountDeletion: auth.admin.deleteUser failed; email retained — leaving request retryable",
-    );
-  }
-
-  // ── 6. Bookkeeping ────────────────────────────────────────────────────────
-  await step(steps, "mark_account_state", async () => {
+  // Write account state before auth deletion: canonical profiles cascade from
+  // auth.users, so a later insert would reference a profile that no longer exists.
+  const accountStateOk = await step(steps, "mark_account_state", async () => {
     must(
       await sc.from("user_account_states").upsert(
         {
@@ -1543,36 +1568,34 @@ export async function executeAccountDeletion(
     );
   });
 
-  // Only mark the request completed when the auth user is actually gone —
-  // a "completed" request is never re-selected, so completing it while the
-  // email survives would strand personal data forever.
-  let markedOk = false;
-  if (authOk) {
-    markedOk = await step(steps, "mark_request_completed", async () => {
-      await assertAccountMediaEmpty(sc, userId);
-      must(
-        await sc
-          .from("user_deletion_requests")
-          .update({
-            status: "completed",
-            executed_at: executedAt,
-            completed_at: executedAt,
-            // Owner ruling 3: on completion the receipt stops naming a person.
-            // The WHERE below is evaluated before this SET, so clearing user_id
-            // in the same statement is safe — and doing it in a SECOND statement
-            // would leave a window where a completed receipt still identifies
-            // someone, which is the state the ruling forbids.
-            user_id: null,
-            policy_version: DELETION_POLICY_VERSION,
-            worker_version: DELETION_WORKER_VERSION,
-            deleted_counts: deletedCounts,
-            tombstoned_counts: tombstonedCounts,
-          })
-          .eq("user_id", userId),
-        "mark request completed",
-      );
+  if (!accountStateOk) return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
+
+  // Fence the sole Auth dispatch before it can erase the profile FK. A lost
+  // acknowledgement leaves this receipt executing; neither a clock nor retry
+  // may authorize another Auth write.
+  const prepared = await step(steps, "prepare_auth_deletion", async () => {
+    const result = must(await sc.rpc('prepare_account_auth_deletion', {
+      p_actor: opts.actorId, p_request: deletionRequestId, p_token: executionToken,
+      p_generation: opts.generation, p_deleted: deletedCounts, p_tombstoned: tombstonedCounts,
+      p_policy: DELETION_POLICY_VERSION, p_worker: DELETION_WORKER_VERSION,
+    }), 'prepare auth deletion');
+    if (result.data !== true) throw new Error('Auth dispatch was not newly authorized; reconcile the existing receipt');
+  });
+  if (!prepared) return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
+  await step(steps, "auth_delete_user", async () => {
+    const result = await sc.auth.admin.deleteUser(userId);
+    if (result?.error) throw new Error(result.error.message ?? String(result.error));
+  });
+  // An error may describe a lost response after Auth committed. Only current
+  // database identity absence plus the bound receipt can settle the outcome.
+  const markedOk = await step(steps, "mark_request_completed", async () => {
+    await assertAccountMediaEmpty(sc, userId);
+    const result = await reconcileAccountDeletion(sc, deletionRequestId!, {
+      actorId: opts.actorId, generation: opts.generation!, reason: opts.reason ?? '',
     });
-  }
+    if (!result.ok) throw new Error(result.error);
+  });
+  if (!markedOk) warnings.push('Auth deletion outcome is unconfirmed; the executing claim remains held for reconciliation');
 
   // Profile visibility just changed — drop any cached Compass Home payload so
   // the deleted account never serves stale personalised content. Lazy import
@@ -1582,7 +1605,7 @@ export async function executeAccountDeletion(
     invalidateCompassHomeCache(userId);
   } catch { /* cache invalidation is best-effort */ }
 
-  const ok = profileOk && authOk && markedOk;
+  const ok = profileOk && markedOk;
   logger.info(
     { userId, ok, warnings, failedSteps: steps.filter((s) => !s.ok).map((s) => s.step) },
     "executeAccountDeletion: finished",

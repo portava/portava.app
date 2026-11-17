@@ -59,6 +59,7 @@ interface PlaybackResume {
 
 interface PlaybackLease {
   generation: number;
+  credentialRevision: number;
   source: VideoSegmentSource | null;
   mediaRef: string;
   segment: MemoryVideoSegment | null;
@@ -87,6 +88,8 @@ function OwnerVideoSegments({ ownerId, memoryId, itemId, uri, style }: MemoryVid
   const actionSequence = useRef(0);
   const playbackGeneration = useRef(0);
   const playback = useRef<PlaybackLease | null>(null);
+  const credentialRevision = useRef(0);
+  const restartForCredentials = useRef<() => void>(() => {});
   const lastPlayback = useRef<PlaybackResume | null>(null);
   const relocation = useRef<{ epoch: number; resume: PlaybackResume | null } | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
@@ -195,6 +198,12 @@ function OwnerVideoSegments({ ownerId, memoryId, itemId, uri, style }: MemoryVid
       if (foreground.current) refresh(); else clear();
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'TOKEN_REFRESHED' && session?.user.id === ownerId) {
+        credentialRevision.current += 1;
+        // Never acquire a token inside the auth callback's session lock.
+        queueMicrotask(() => restartForCredentials.current());
+        return;
+      }
       if (event === 'SIGNED_OUT' || event === 'SIGNED_IN' || session?.user.id !== ownerId) {
         accountValid.current = event !== 'SIGNED_OUT' && session?.user.id === ownerId;
         clear();
@@ -244,6 +253,7 @@ function OwnerVideoSegments({ ownerId, memoryId, itemId, uri, style }: MemoryVid
     const signed = await resolveMemoryVideoOriginal(scope, mediaRef, controller.signal);
     if (!active()) return;
     if (!signed.ok) { refuse(signed.kind); return; }
+    const signedRevision = credentialRevision.current;
     const rechecked = await listMemoryVideoSegments(scope, controller.signal);
     if (!active()) return;
     if (latest.ok) {
@@ -259,7 +269,7 @@ function OwnerVideoSegments({ ownerId, memoryId, itemId, uri, style }: MemoryVid
     const video = player.current;
     if (!video || !active()) return;
     const lease: PlaybackLease = {
-      generation, source: latest.ok ? latest.source : null, mediaRef, segment: selected ?? null, video, expiresAt: Date.now() + 15000,
+      generation, credentialRevision: signedRevision, source: latest.ok ? latest.source : null, mediaRef, segment: selected ?? null, video, expiresAt: Date.now() + 15000,
     };
     playback.current = lease;
     range.current = selected ?? null;
@@ -273,7 +283,7 @@ function OwnerVideoSegments({ ownerId, memoryId, itemId, uri, style }: MemoryVid
     };
     await video.unloadAsync();
     if (!authorized()) return;
-    if (!isLoadablePlaybackUri(signed.uri)) { refuse('degraded_unavailable'); return; } await video.loadAsync({ uri: signed.uri }, { shouldPlay: false, isLooping: false, progressUpdateIntervalMillis: 50 }); // 2026-10-24: the one playback rule
+    if (!isLoadablePlaybackUri(signed.uri)) { refuse('degraded_unavailable'); return; } await video.loadAsync({ uri: signed.uri, ...(signed.headers ? { headers: signed.headers } : {}) }, { shouldPlay: false, isLooping: false, progressUpdateIntervalMillis: 50 }); // 2026-10-24: the one playback rule
     if (!authorized()) return;
     const position = Math.max(selected?.startMs ?? 0, Math.min(resume?.position ?? selected?.startMs ?? 0,
       selected?.endMs ?? (latest.ok ? latest.source.durationMs : Number.MAX_SAFE_INTEGER)));
@@ -283,6 +293,17 @@ function OwnerVideoSegments({ ownerId, memoryId, itemId, uri, style }: MemoryVid
     if (resume?.shouldPlay !== false) await video.playAsync();
     if (authorized()) setPlaying(resume?.shouldPlay !== false);
   });
+
+  restartForCredentials.current = () => {
+    const lease = playback.current;
+    const previous = lastPlayback.current;
+    if (!lease || !previous || busyRef.current || lease.credentialRevision === credentialRevision.current) return;
+    const resume = { ...previous };
+    stop();
+    // Reuse the original player and its existing source/permission checks;
+    // preserve segment, position, paused state, and the unsaved editor draft.
+    void play(resume.segment ?? undefined, resume);
+  };
 
   useEffect(() => {
     if (!previewing) return;
@@ -321,6 +342,7 @@ function OwnerVideoSegments({ ownerId, memoryId, itemId, uri, style }: MemoryVid
     };
     const timer = setInterval(() => {
       if (!active() || pending || busyRef.current) return;
+      if (playbackLease.credentialRevision !== credentialRevision.current) { restartForCredentials.current(); return; }
       pending = true;
       void recheck();
     }, 5000);

@@ -65,6 +65,8 @@ export interface AiWritingAssistResult {
   loading: boolean;
   /** True when the endpoint is unavailable (404/offline) — degrade silently. */
   unavailable: boolean;
+  /** A response for this exact seed arrived, including an empty/disabled answer. */
+  settled: boolean;
 }
 
 export function useAiWritingAssist(opts: UseAiWritingAssistOpts): AiWritingAssistResult {
@@ -97,13 +99,15 @@ export function useAiWritingAssist(opts: UseAiWritingAssistOpts): AiWritingAssis
   });
 
   const proposals = useMemo(
-    () => mapAiWritingSuggestions(gateway.suggestions),
-    [gateway.suggestions],
+    () => active && gateway.answeredText === text.trim()
+      ? mapAiWritingSuggestions(gateway.suggestions) : [],
+    [active, text, gateway.answeredText, gateway.suggestions],
   );
 
   return {
     proposals,
     loading: gateway.loading,
     unavailable: gateway.unavailable,
+    settled: active && (gateway.unavailable || gateway.answeredText === text.trim()),
   };
 }

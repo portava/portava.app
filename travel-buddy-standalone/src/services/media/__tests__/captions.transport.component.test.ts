@@ -164,3 +164,14 @@ it.each([
  } }));
  await expect(resolveCaptionSource('video')).rejects.toThrow(message);
 });
+
+
+it('refuses unknown processing disclosures and binds a managed request to the reviewed receipt', async () => {
+  const processing = { provider: 'deepgram' as const, modelVersion: 'deepgram:nova-3:fixture', configVersion: 'reviewed', disclosureVersion: 'deepgram-audio-opt-out-v1' };
+  jest.mocked(fetch).mockResolvedValueOnce(reply({ json: async () => ({ ...status, processing: { ...processing, disclosureVersion: 'unknown' } }) }));
+  await expect(getCaptionAsrStatus(source)).rejects.toThrow(/disclosure/);
+  jest.mocked(fetch).mockResolvedValueOnce(reply({ json: async () => ({ ...status, processing }) }));
+  const reviewed = await getCaptionAsrStatus(source);
+  await requestCaptionAsr(source, 'en', true, reviewed.consentEpoch, undefined, reviewed.processing);
+  expect(JSON.parse(jest.mocked(fetch).mock.calls.at(-1)![1]!.body as string).processing).toEqual(processing);
+});

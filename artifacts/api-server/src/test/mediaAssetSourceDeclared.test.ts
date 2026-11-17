@@ -211,6 +211,7 @@ function functionNamed(file: string, name: string): ts.FunctionDeclaration {
 // Changing this list is a census change: the owner's answer to §35's MD37
 // question replaces the sentinel at exactly these sites.
 const UNDECLARED_INVENTORY: Readonly<Record<string, number>> = {
+  "routes/postcards.ts · <module> · recordMediaAssetDetailed": 1, // Completion now stages capture before EXIF stripping; a timestamp does not declare camera versus library.
   "lib/mediaAssets.ts · recordPostMediaAttachments · recordEntityMedia": 1,
   "routes/postcards.ts · syncPostcardAfterMediaChange · recordEntityMedia": 1, // census-media §37.9: the /complete step became a named function IN PLACE (was: "routes/postcards.ts · <module> · recordEntityMedia": 1)
   "routes/posts.ts · storeVerifiedMediaUpload · recordMediaAssetDetailed": 1,

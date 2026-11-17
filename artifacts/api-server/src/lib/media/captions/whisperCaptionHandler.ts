@@ -1,3 +1,4 @@
+import { ManagedMediaError } from "../managedMediaRequest.js";
 import { spawn } from "node:child_process";
 import { access, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -14,6 +15,8 @@ export type { CaptionProcessingConsent } from "../../../services/media/CaptionAs
 
 export interface WhisperCaptionConfig {
   enabled: boolean;
+  provider?: "local" | "deepgram";
+  disclosureVersion?: string;
   pythonPath: string;
   ffmpegPath: string;
   modelPath: string;
@@ -77,12 +80,15 @@ export function whisperSegmentsToVtt(answer: unknown, durationMs: number, allowe
   return { vtt, language: result.language };
 }
 
-export function createWhisperCaptionHandler(config: WhisperCaptionConfig, runTool: typeof runCaptionTool = runCaptionTool) {
+export type CaptionTranscriber = (audioPath: string, signal: AbortSignal, timeoutMs: number, durationMs: number) => Promise<unknown>;
+
+export function createWhisperCaptionHandler(config: WhisperCaptionConfig, runTool: typeof runCaptionTool = runCaptionTool, transcribe?: CaptionTranscriber) {
   return async (sc: SupabaseClient, job: CaptionJob, signal: AbortSignal, isCurrent: () => Promise<boolean> = async () => true) => {
     const started = Date.now();
     signal.throwIfAborted();
     if (!config.enabled || !(await isFlagEnabled(sc, "media_captions_enabled"))) throw new CaptionJobError("disabled", false);
     if (job.kind !== "captions" || job.modelVersion !== config.modelVersion || job.configVersion !== config.configVersion || !config.allowedLanguages.length || (job.targetLanguage !== null && !config.allowedLanguages.includes(job.targetLanguage))) throw new CaptionJobError("unvalidated_configuration", false);
+    if (config.provider === "deepgram" && (!transcribe || job.consent?.disclosureVersion !== config.disclosureVersion || !config.disclosureVersion)) throw new CaptionJobError("managed_consent_required", false);
     if (job.consent?.transcription !== true || job.consent.ownerId !== job.requestedBy || !Number.isFinite(Date.parse(job.consent.recordedAt))) throw new CaptionJobError("consent_required", false);
     const asset = await readCaptionAsset(sc, job.assetId);
     if (asset.owner_user_id !== job.requestedBy || asset.version !== job.sourceVersion) throw new CaptionJobError("stale_or_forbidden", false);
@@ -111,10 +117,13 @@ export function createWhisperCaptionHandler(config: WhisperCaptionConfig, runToo
       return { state: "draft_ready" as const, draftId, artifactKey: path, cached: true, sourceVersion: job.sourceVersion, inputBytes: 0, outputBytes: 0, metrics: { elapsedMs: Date.now() - started, mediaSeconds: 0, estimatedProviderCostUsd: 0 } };
     }
     try {
-      if (![config.pythonPath, config.ffmpegPath, config.modelPath].every(isAbsolute)) throw new Error();
-      await access(config.pythonPath, constants.X_OK);
+      if (!isAbsolute(config.ffmpegPath)) throw new Error();
       await access(config.ffmpegPath, constants.X_OK);
-      await access(join(config.modelPath, "model.bin"), constants.R_OK);
+      if (!transcribe) {
+        if (![config.pythonPath, config.modelPath].every(isAbsolute)) throw new Error();
+        await access(config.pythonPath, constants.X_OK);
+        await access(join(config.modelPath, "model.bin"), constants.R_OK);
+      }
     } catch { throw new CaptionJobError("local_model_or_tools_unavailable", false); }
     const timeout = Math.min(Math.max(config.timeoutMs ?? 600000, 1000), 600000);
     const temporary = await mkdtemp(join(tmpdir(), "portava-captions-"));
@@ -130,9 +139,12 @@ export function createWhisperCaptionHandler(config: WhisperCaptionConfig, runToo
       await writeFile(input, Buffer.from(await media.data.arrayBuffer()), { mode: 0o600 });
       await runTool(config.ffmpegPath, ["-nostdin", "-v", "error", "-threads", "2", "-protocol_whitelist", "file,pipe", "-format_whitelist", "mov,matroska,webm,avi,mpegts,ogg", "-i", input, "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000", "-t", String((asset.duration_ms + 1000) / 1000), audio], signal, timeout);
       await ensureCurrent();
-      const output = await runTool(config.pythonPath, [fileURLToPath(new URL("./transcribe.py", import.meta.url)), "--model", config.modelPath, "--audio", audio, "--language", job.targetLanguage ?? "auto"], signal, timeout);
       let answer: unknown;
-      try { answer = JSON.parse(output); } catch { throw new CaptionJobError("invalid_asr_output", false); }
+      if (transcribe) answer = await transcribe(audio, signal, timeout, asset.duration_ms);
+      else {
+        const output = await runTool(config.pythonPath, [fileURLToPath(new URL("./transcribe.py", import.meta.url)), "--model", config.modelPath, "--audio", audio, "--language", job.targetLanguage ?? "auto"], signal, timeout);
+        try { answer = JSON.parse(output); } catch { throw new CaptionJobError("invalid_asr_output", false); }
+      }
       const track = whisperSegmentsToVtt(answer, asset.duration_ms, config.allowedLanguages);
       if (job.targetLanguage !== null && track.language !== job.targetLanguage) throw new CaptionJobError("language_mismatch", false);
       const draft: CaptionDraft = { source: asset, draftId, ...track, sourceKind: "asr", aiLabel: "AI transcription · needs creator review", modelVersion: job.modelVersion, configVersion: job.configVersion, revisionKey: job.revisionKey, consentId: job.consentId, jobId: job.jobId };
@@ -144,7 +156,7 @@ export function createWhisperCaptionHandler(config: WhisperCaptionConfig, runToo
       wroteDraft = true;
       await ensureCurrent();
       signal.throwIfAborted();
-      return { state: "draft_ready" as const, draftId, artifactKey: path, cached: false, sourceVersion: job.sourceVersion, inputBytes: media.data.size, outputBytes: encoded.length, metrics: { elapsedMs: Date.now() - started, mediaSeconds: asset.duration_ms / 1000, estimatedProviderCostUsd: 0 } };
+      return { state: "draft_ready" as const, draftId, artifactKey: path, cached: false, sourceVersion: job.sourceVersion, inputBytes: media.data.size, outputBytes: encoded.length, metrics: { elapsedMs: Date.now() - started, mediaSeconds: asset.duration_ms / 1000, estimatedProviderCostUsd: transcribe ? null : 0 } };
     } catch (error) {
       if (wroteDraft) {
         const removed = await sc.storage.from("post-media").remove([path]);
@@ -162,10 +174,11 @@ export interface CaptionQueueContext {
 }
 
 export function createWhisperMediaJobHandler(sc: SupabaseClient, config: WhisperCaptionConfig, dependencies: {
+  transcribe?: CaptionTranscriber;
   readConsent?(job: CaptionQueueContext["job"]): Promise<CaptionProcessingConsent | null>;
   jobError(code: string, retryable: boolean): Error;
 }, runTool: typeof runCaptionTool = runCaptionTool) {
-  const handler = createWhisperCaptionHandler(config, runTool);
+  const handler = createWhisperCaptionHandler(config, runTool, dependencies.transcribe);
   const readConsent = dependencies.readConsent ?? ((job: CaptionQueueContext["job"]) => readCaptionProcessingConsent(sc, job));
   const request = (context: CaptionQueueContext, consent: CaptionProcessingConsent): CaptionJob => ({
     assetId: context.job.assetId, sourceVersion: context.job.sourceVersion, kind: "captions", modelVersion: context.job.modelVersion,
@@ -192,7 +205,7 @@ export function createWhisperMediaJobHandler(sc: SupabaseClient, config: Whisper
         const { inputBytes, outputBytes, ...metadata } = result;
         return { result: { ...metadata, revisionKey: context.job.revisionKey, captionRevisionKey: consent.revisionKey, consentId: consent.consentId, modelVersion: config.modelVersion }, inputBytes, outputBytes };
       } catch (error) {
-        if (error instanceof CaptionJobError) throw dependencies.jobError(error.code, error.retryable);
+        if (error instanceof CaptionJobError || error instanceof ManagedMediaError) throw dependencies.jobError(error.code, error.retryable);
         if (error instanceof CaptionError) throw dependencies.jobError("caption_source_unavailable", error.code === "degraded_unavailable");
         throw dependencies.jobError(context.signal.aborted ? "cancelled" : "caption_processing_failed", !context.signal.aborted);
       }

@@ -29,6 +29,7 @@ import type { TripRow } from '../services/trips.ts';
 import { groupMemoriesByTrip, groupMemoriesByPlace } from './passport/memoryViews.ts';
 import { MemoriesMapView } from './passport/MemoriesMapView';
 import { OwnMemoryAlbums } from '../features/memories/social/OwnMemoryAlbums.tsx';
+import { MemoryPeopleView } from './passport/MemoryPeopleView.tsx';
 
 const CATEGORIES = [
   { key: 'city', label: '🏙 City' },
@@ -763,16 +764,17 @@ export function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalPr
 /**
  * The Memories views this surface offers.
  *
- * 'all' is the ungrouped grid. The rest are §15's views, minus 'people' —
- * see the note at the `viewMode` state below for why People is not here.
+ * 'all' is the ungrouped grid. The rest are §15's five views. People reads its
+ * private owner-chosen source associations fresh, outside the Passport cache.
  */
-export type MemoriesViewMode = 'all' | 'trips' | 'places' | 'timeline' | 'map';
+export type MemoriesViewMode = 'all' | 'trips' | 'places' | 'people' | 'timeline' | 'map';
 
 /** Tab order: the grid first, then §15's views in the order §15 names them. */
 const MEMORY_VIEW_TABS: ReadonlyArray<readonly [MemoriesViewMode, string]> = [
   ['all', 'All'],
   ['trips', 'Trips'],
   ['places', 'Places'],
+  ['people', 'People'],
   ['timeline', 'Timeline'],
   ['map', 'Map'],
 ] as const;
@@ -807,13 +809,8 @@ export function MemoriesTab({ memories, loading, onReload, collapsed, trips, unr
   const [expanded, setExpanded] = useState(false);
   const [editMemory, setEditMemory] = useState<PassportMemory | null>(null);
   const [viewVideoMemory, setViewVideoMemory] = useState<PassportMemory | null>(null);
-  // §15 Memories views. "All" is the ungrouped grid the five §15 views are views
-  // OF — not one of them. Of §15's five (Trips, Places, People, Timeline, Map),
-  // four are built here. **People is absent deliberately**: `PassportMemory`
-  // carries no participant field, and the memory-participant visibility contract
-  // that would give it one belongs to the Highlights/Memories lane
-  // (`artifacts/api-server/src/services/memory/`). A People tab rendered against
-  // data that does not exist would be a label, not a view.
+  // People never infers participants from a trip or a matching UUID. Its own
+  // live reader uses explicit associations and the canonical consent policy.
   const [viewMode, setViewMode] = useState<MemoriesViewMode>('all');
 
   React.useEffect(() => {
@@ -987,7 +984,7 @@ export function MemoriesTab({ memories, loading, onReload, collapsed, trips, unr
         </View>
       ) : (
         <>
-          {/* §15 view switcher — the grid plus the four §15 views this lane can build. */}
+          {/* §15 view switcher — the grid plus all five named views. */}
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -1019,6 +1016,8 @@ export function MemoriesTab({ memories, loading, onReload, collapsed, trips, unr
               ))}
             </View>
           )}
+
+          {viewMode === 'people' && <MemoryPeopleView />}
 
           {viewMode === 'timeline' && (
             <View style={mt.list} testID="memories-view-timeline-list">

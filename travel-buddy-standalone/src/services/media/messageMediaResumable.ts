@@ -55,12 +55,13 @@ export async function uploadMessageMediaResumable(
   transport: ResumableTransport,
   env: ResumableEnv,
   onProgress?: (fraction: number) => void,
+  photoCapturedAt?: string | null,
 ): Promise<MessageResumableOutcome> {
   if (unsupportedThisRun) return { kind: 'unsupported' };
   const r = await uploadSlotResumable(
     { postId: 'message', mediaId: uploadId },
     file, mimeType, transport, env, onProgress,
-    { path: MESSAGE_UPLOAD_SESSION_PATH, body: sessionBody(uploadId, mimeType, file.size), unsupportedCodes: ['not_found'] },
+    { path: MESSAGE_UPLOAD_SESSION_PATH, body: { ...sessionBody(uploadId, mimeType, file.size), ...(mimeType.startsWith('image/') && photoCapturedAt ? { photoCapturedAt } : {}) }, unsupportedCodes: ['not_found'] },
   );
   if (r.ok) {
     const b = (r.assembled ?? {}) as Record<string, unknown>;

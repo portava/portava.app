@@ -1,3 +1,4 @@
+import './composerDraftTestRuntime.ts';
 /**
  * PostcardComposer — empty-state media pick test.
  *
@@ -99,6 +100,7 @@ jest.mock('../../lib/location/locationPayload.ts', () => ({
 
 // ── Import component under test ───────────────────────────────────────────────
 import { PostcardComposer } from '../PostcardComposer.tsx';
+import * as draftAssets from '../../services/composerDraftAsset.ts';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -191,5 +193,21 @@ describe('PostcardComposer — empty-state pick flow', () => {
 
     // The "Change" button in the preview area should now be visible.
     expect(getByText('Change')).toBeTruthy();
+  });
+
+  it('a copy completing after close is removed without resurrecting the selected media', async () => {
+    let finish!: (uri: string) => void;
+    const copy = jest.mocked(draftAssets.preserveDraftAsset).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const remove = jest.mocked(draftAssets.discardDraftAsset);
+    copy.mockClear(); remove.mockClear();
+    try {
+      const view = await render(<PostcardComposer visible onClose={jest.fn()} onSuccess={jest.fn()} />);
+      await act(async () => { fireEvent.press(view.getByText('Camera')); resolvePick!([makeAsset()]); });
+      await waitFor(() => expect(copy).toHaveBeenCalled());
+      await act(async () => { fireEvent.press(view.getByLabelText('Close postcard composer')); });
+      await act(async () => { finish('file:///owned/durable.jpg'); });
+      expect(remove).toHaveBeenCalledWith('file:///owned/durable.jpg', 'draft-owner');
+      expect(view.queryByText('Change')).toBeNull();
+    } finally { copy.mockClear(); remove.mockClear(); }
   });
 });

@@ -26,7 +26,7 @@ import { tripOperationalProjectionsGate } from "../domain/trips/policies/tripOpe
 import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
-import { optimizeRoute, type RouteStyle, type CandidateStop } from "../services/routeOptimizer.js";
+import { optimizeRoute, isValidRouteCoordinates, type RouteStyle, type CandidateStop } from "../services/routeOptimizer.js";
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine.js";
 import type { CompassContext } from "../compass/types.js";
 import { makeConfidence } from "../lib/liveIntelligence.js";
@@ -45,7 +45,9 @@ const LocationSchema = z.object({
   label: z.string().optional(),
   lat: z.number(),
   lng: z.number(),
-}).strict();
+}).strict().refine(isValidRouteCoordinates, {
+  message: "Coordinates must be finite WGS84 latitude/longitude values",
+});
 
 const CandidateStopSchema = z.object({
   title: z.string().min(1),
@@ -55,6 +57,8 @@ const CandidateStopSchema = z.object({
   sourceId: z.string().optional(),
   openingHoursNote: z.string().nullable().optional(),
   category: z.string().nullable().optional(),
+}).refine(isValidRouteCoordinates, {
+  message: "Coordinates must be finite WGS84 latitude/longitude values",
 });
 
 const CreateRoutePlanSchema = z.object({

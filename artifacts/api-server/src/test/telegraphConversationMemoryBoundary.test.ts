@@ -777,7 +777,9 @@ function serverEndpoints(a: Analysis = server): { reads: Set<string>; creates: S
       const m = /^router\.(get|post|put|patch|delete)\(\s*["'`]([^"'`]+)["'`]/.exec(u.code);
       if (!m) continue;
       const path = m[2]!.replace(/:[A-Za-z0-9_]+/g, "X").replace(/\*[A-Za-z0-9_]*/g, "X");
-      const mentionsAny = (names: Set<string>) => [...names].some((x) => new RegExp(`(^|[^A-Za-z0-9_$.])${x.replace(/\$/g, "\\$")}\\s*[(.]`).test(u.code));
+      // Use the same reference recognizer as the call graph. A typed call
+      // such as dispatchMemoryCommand<Result>(...) must classify the endpoint.
+      const mentionsAny = (names: Set<string>) => [...names].some((x) => references(u.code, x));
       if (m[1] === "get" && (serverReads(f, u.code, consts, fileCode).length > 0 || mentionsAny(n.readers))) reads.add(path);
       if (m[1] !== "get" && (serverCreates(f, u.code, consts, fileCode).length > 0 || mentionsAny(n.creators))) creates.add(path);
     }
@@ -827,6 +829,16 @@ function clientAnalysis(extra: Map<string, string> = new Map(), ep: { reads: Set
 
 describe("T366 — the mobile app (§45c: 'the mobile app is not scanned at all')", () => {
   const client = clientAnalysis();
+
+  it("typed command calls retain their endpoint creation classification", () => {
+    const source = `
+export async function createItem(sc) { return sc.from("memory_items").insert({ memory_id: "synthetic" }); }
+router.post("/typed-item", async (req, res) => { return createItem<{ id: string }>(req.sc); });
+router.post("/unrelated", async (req, res) => { return unrelated<{ id: string }>(req.sc); });`;
+    const a = analyse(new Map([["/synthetic/typed.ts", source]]), () => null, serverReads, serverCreates);
+    assert.deepEqual([...serverEndpoints(a).creates], ["/typed-item"]);
+    assert.ok(endpoints.creates.has("/memories/X/items"), "the real typed ADD_MEDIA command is a Memory creation");
+  });
 
   it("the endpoint vocabularies come from the server analysis, and are not vacuous", () => {
     for (const p of ["/threads/X/messages", "/me/saved-messages", "/telegraph/search"]) assert.ok(endpoints.reads.has(p), `${p} is not seen as a history read`);
@@ -1461,7 +1473,10 @@ describe("T366 wave 5 correction — a history read consumed only as a yes/no (R
   });
 
   it("mutation: decide leaving something in module state, selecting what was said, reading a second history table, or no longer reading one, is refused", () => {
-    const state = problemsIn(mutate(DECIDE, (u) => u.replace("): Promise<boolean> {", "): Promise<boolean> {\n  allowCache.set(path, Date.now());")));
+    // The production allow cache was retired. Plant a real module binding as
+    // well as its write; calling an undeclared former cache is not a state leak.
+    const stateSource = 'const leakedHistory = new Map<string, number>();\n' + mutate(DECIDE, (u) => u.replace("): Promise<boolean> {", "): Promise<boolean> {\n  leakedHistory.set(path, Date.now());"));
+    const state = problemsIn(stateSource);
     assert.ok(state.includes("writes module-level state another unit can read"), JSON.stringify(state));
     const body = problemsIn(mutate(DECIDE, (u) => u.replace('.select("thread_id, sender_id, created_at")', '.select("thread_id, sender_id, created_at, body")')));
     assert.ok(body.some((p) => p.startsWith("selects ")), JSON.stringify(body));

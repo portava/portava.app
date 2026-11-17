@@ -1,3 +1,4 @@
+import { withServiceRequest } from './serviceRequest.ts';
 /**
  * Stamps service — typed wrappers for the new stamp API endpoints.
  * Re-exports shared types + functions from passportStamps.ts and
@@ -38,40 +39,46 @@ async function freshToken(): Promise<string | null> {
 }
 
 async function apiGet<T>(path: string): Promise<ApiResult<T>> {
-  const token = await freshToken();
-  if (!token) return { ok: false, message: 'Not authenticated' };
-  try {
-    const res = await fetch(`${apiBase()}/api${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return { ok: false, message: (body as any)?.message ?? `API ${res.status}` };
+  return withServiceRequest<ApiResult<T>>(async (request) => {
+    const token = await request.token(freshToken);
+    if (!token) return { ok: false, message: 'Not authenticated' };
+    try {
+      const res = await request.fetch(`${apiBase()}/api${path}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        return { ok: false, message: (body as any)?.message ?? `API ${res.status}` };
+      }
+      return { ok: true, data: await res.json() };
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
     }
-    return { ok: true, data: await res.json() };
-  } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
-  }
+
+  }).catch((e: unknown): ApiResult<T> => { return { ok: false, message: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 async function apiPatch<T>(path: string, body: unknown): Promise<ApiResult<T>> {
-  const token = await freshToken();
-  if (!token) return { ok: false, message: 'Not authenticated' };
-  try {
-    const res = await fetch(`${apiBase()}/api${path}`, {
-      method: 'PATCH',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const b = await res.json().catch(() => ({}));
-      return { ok: false, message: (b as any)?.message ?? `API ${res.status}` };
+  return withServiceRequest<ApiResult<T>>(async (request) => {
+    const token = await request.token(freshToken);
+    if (!token) return { ok: false, message: 'Not authenticated' };
+    try {
+      const res = await request.fetch(`${apiBase()}/api${path}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        return { ok: false, message: (b as any)?.message ?? `API ${res.status}` };
+      }
+      if (res.status === 204) return { ok: true, data: {} as T };
+      return { ok: true, data: await res.json() };
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
     }
-    if (res.status === 204) return { ok: true, data: {} as T };
-    return { ok: true, data: await res.json() };
-  } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
-  }
+
+  }).catch((e: unknown): ApiResult<T> => { return { ok: false, message: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 function mapDefinition(d: any): StampDefinition | null {
@@ -132,7 +139,8 @@ export interface StampProgress {
 export async function getMyRecentStamps(limit = 20): Promise<ApiResult<PassportStampNew[]>> {
   const res = await apiGet<{ stamps: any[] }>(`/stamps/me?limit=${limit}`);
   if (!res.ok) return { ok: false, message: res.message };
-  return { ok: true, data: ((res.data as any)?.stamps ?? []).map(mapStamp) };
+  if (!Array.isArray(res.data?.stamps) || res.data.stamps.some((stamp) => !stamp || typeof stamp.id !== 'string')) return { ok: false, message: 'Unreadable stamps response' };
+  return { ok: true, data: res.data.stamps.map(mapStamp) };
 }
 
 /** @deprecated Use getMyRecentStamps() — /stamps/recent returns globally public stamps. */
@@ -154,7 +162,8 @@ export async function getUserStamps(
   const qs = params.toString() ? `?${params.toString()}` : '';
   const res = await apiGet<{ stamps: any[] }>(`/stamps/user/${encodeURIComponent(userId)}${qs}`);
   if (!res.ok) return { ok: false, message: res.message };
-  return { ok: true, data: ((res.data as any)?.stamps ?? []).map(mapStamp) };
+  if (!Array.isArray(res.data?.stamps) || res.data.stamps.some((stamp) => !stamp || typeof stamp.id !== 'string')) return { ok: false, message: 'Unreadable stamps response' };
+  return { ok: true, data: res.data.stamps.map(mapStamp) };
 }
 
 /** GET /stamps/me/progress — next achievable stamp progress. */
@@ -162,7 +171,8 @@ export async function getMyProgress(): Promise<ApiResult<StampProgress>> {
   const res = await apiGet<{ progress: any[] }>('/stamps/me/progress');
   if (!res.ok) return { ok: false, message: res.message };
 
-  const items: any[] = res.data?.progress ?? [];
+  if (!Array.isArray(res.data?.progress) || res.data.progress.some((p) => !p || !Number.isFinite(p.progress_count) || !Number.isFinite(p.progress_target) || p.progress_count < 0 || p.progress_target < 0)) return { ok: false, message: 'Unreadable stamp progress' };
+  const items: any[] = res.data.progress;
   const incomplete = items
     .filter((p) => p.progress_target > 0 && p.progress_count < p.progress_target)
     .map((p) => ({
@@ -198,7 +208,8 @@ export async function getProfileStamps(
 ): Promise<ApiResult<PassportStampNew[]>> {
   const res = await apiGet<{ stamps: any[] }>(`/stamps/profile/${encodeURIComponent(username)}`);
   if (!res.ok) return { ok: false, message: res.message };
-  return { ok: true, data: ((res.data as any)?.stamps ?? []).map(mapStamp) };
+  if (!Array.isArray(res.data?.stamps) || res.data.stamps.some((stamp) => !stamp || typeof stamp.id !== 'string')) return { ok: false, message: 'Unreadable stamps response' };
+  return { ok: true, data: res.data.stamps.map(mapStamp) };
 }
 
 /**
@@ -208,26 +219,29 @@ export async function getProfileStamps(
 export async function getStampById(
   stampId: string,
 ): Promise<ApiResult<{ stamp: PassportStampNew; isOwner: boolean }>> {
-  const token = await freshToken();
-  if (!token) return { ok: false, message: 'Not authenticated' };
-  try {
-    const res = await fetch(`${apiBase()}/api/stamps/${encodeURIComponent(stampId)}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (res.status === 404) return { ok: false, message: 'Stamp not found' };
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return { ok: false, message: (body as any)?.message ?? `API ${res.status}` };
+  return withServiceRequest<ApiResult<{ stamp: PassportStampNew; isOwner: boolean }>>(async (request) => {
+    const token = await request.token(freshToken);
+    if (!token) return { ok: false, message: 'Not authenticated' };
+    try {
+      const res = await request.fetch(`${apiBase()}/api/stamps/${encodeURIComponent(stampId)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.status === 404) return { ok: false, message: 'Stamp not found' };
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        return { ok: false, message: (body as any)?.message ?? `API ${res.status}` };
+      }
+      const json = await res.json();
+      const stamp = mapStamp((json as any).stamp);
+      const { data: { user } } = await request.wait(() => supabase.auth.getUser());
+      // formatStamp() in the API server converts user_id → userId (camelCase)
+      const isOwner = user?.id != null && (json as any).stamp?.userId === user.id;
+      return { ok: true, data: { stamp, isOwner } };
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
     }
-    const json = await res.json();
-    const stamp = mapStamp((json as any).stamp);
-    const { data: { user } } = await supabase.auth.getUser();
-    // formatStamp() in the API server converts user_id → userId (camelCase)
-    const isOwner = user?.id != null && (json as any).stamp?.userId === user.id;
-    return { ok: true, data: { stamp, isOwner } };
-  } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
-  }
+
+  }).catch((e: unknown): ApiResult<{ stamp: PassportStampNew; isOwner: boolean }> => { return { ok: false, message: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 // ---------------------------------------------------------------------------
@@ -235,7 +249,7 @@ export async function getStampById(
 // ---------------------------------------------------------------------------
 
 export interface EntityStampResult {
-  count: number;
+  count: number | null;
   isStamped: boolean;
 }
 
@@ -255,31 +269,36 @@ export async function stampEntity(
   entityType: string,
   entityId: string,
 ): Promise<ApiResult<EntityStampResult>> {
-  const token = await freshToken();
-  stampDebug('stampEntity() called', { entityType, entityId, hasToken: !!token, apiBase: apiBase() });
-  if (!token) {
-    stampDebug('stampEntity() — no auth token, aborting');
-    return { ok: false, message: 'Not authenticated' };
-  }
-  try {
-    const res = await fetch(`${apiBase()}/api/stamps`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entityType, entityId }),
-    });
-    stampDebug('stampEntity() response status', res.status);
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      stampDebug('stampEntity() FAILED', body);
-      return { ok: false, message: (body as any)?.message ?? `API ${res.status}` };
+  return withServiceRequest<ApiResult<EntityStampResult>>(async (request) => {
+    const token = await request.token(freshToken);
+    stampDebug('stampEntity() called', { entityType, entityId, hasToken: !!token, apiBase: apiBase() });
+    if (!token) {
+      stampDebug('stampEntity() — no auth token, aborting');
+      return { ok: false, message: 'Not authenticated' };
     }
-    const data = await res.json().catch(() => ({}));
-    stampDebug('stampEntity() SUCCESS body', data);
-    return { ok: true, data: { count: (data as any).stampCount ?? 0, isStamped: true } };
-  } catch (e) {
-    stampDebug('stampEntity() THREW', e);
-    return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
-  }
+    try {
+      const res = await request.fetch(`${apiBase()}/api/stamps`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entityType, entityId }),
+      });
+      stampDebug('stampEntity() response status', res.status);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        stampDebug('stampEntity() FAILED', body);
+        return { ok: false, message: (body as any)?.message ?? `API ${res.status}` };
+      }
+      const data = await res.json().catch(() => null);
+      if (!Number.isSafeInteger(data?.stampCount) || data.stampCount < 0 || data.isStamped !== true) {
+        return { ok: false, message: 'Stamp could not be confirmed. Refresh to check its status.' };
+      }
+      return { ok: true, data: { count: data.countUnavailable === true ? null : data.stampCount, isStamped: true } };
+    } catch (e) {
+      stampDebug('stampEntity() THREW', e);
+      return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
+    }
+
+  }).catch((e: unknown): ApiResult<EntityStampResult> => { return { ok: false, message: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 /**
@@ -291,25 +310,31 @@ export async function unstampEntity(
   entityType: string,
   entityId: string,
 ): Promise<ApiResult<EntityStampResult>> {
-  const token = await freshToken();
-  if (!token) return { ok: false, message: 'Not authenticated' };
-  try {
-    const res = await fetch(
-      `${apiBase()}/api/stamps/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`,
-      {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      },
-    );
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return { ok: false, message: (body as any)?.message ?? `API ${res.status}` };
+  return withServiceRequest<ApiResult<EntityStampResult>>(async (request) => {
+    const token = await request.token(freshToken);
+    if (!token) return { ok: false, message: 'Not authenticated' };
+    try {
+      const res = await request.fetch(
+        `${apiBase()}/api/stamps/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`,
+        {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        return { ok: false, message: (body as any)?.message ?? `API ${res.status}` };
+      }
+      const data = await res.json().catch(() => null);
+      if (!Number.isSafeInteger(data?.stampCount) || data.stampCount < 0 || data.isStamped !== false) {
+        return { ok: false, message: 'Stamp removal could not be confirmed. Refresh to check its status.' };
+      }
+      return { ok: true, data: { count: data.countUnavailable === true ? null : data.stampCount, isStamped: false } };
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
     }
-    const data = res.status === 204 ? {} : await res.json().catch(() => ({}));
-    return { ok: true, data: { count: (data as any).stampCount ?? 0, isStamped: false } };
-  } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
-  }
+
+  }).catch((e: unknown): ApiResult<EntityStampResult> => { return { ok: false, message: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 // ── Collections + catalog browse — TM-social PASS-F09 ─────────────────────────
@@ -351,22 +376,25 @@ export type StampBrowseResult<T> =
   | { ok: false; disabled: boolean; message: string };
 
 async function stampBrowseGet<T>(path: string): Promise<StampBrowseResult<T>> {
-  const token = await freshToken();
-  if (!token) return { ok: false, disabled: false, message: 'Not authenticated' };
-  try {
-    const res = await fetch(`${apiBase()}/api${path}`, { headers: { Authorization: `Bearer ${token}` } });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      return {
-        ok: false,
-        disabled: res.status === 503 && (body as any)?.error === 'feature_not_available',
-        message: (body as any)?.message ?? `API ${res.status}`,
-      };
+  return withServiceRequest<StampBrowseResult<T>>(async (request) => {
+    const token = await request.token(freshToken);
+    if (!token) return { ok: false, disabled: false, message: 'Not authenticated' };
+    try {
+      const res = await request.fetch(`${apiBase()}/api${path}`, { headers: { Authorization: `Bearer ${token}` } });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return {
+          ok: false,
+          disabled: res.status === 503 && (body as any)?.error === 'feature_not_available',
+          message: (body as any)?.message ?? `API ${res.status}`,
+        };
+      }
+      return { ok: true, data: body as T };
+    } catch (e) {
+      return { ok: false, disabled: false, message: e instanceof Error ? e.message : 'Network error' };
     }
-    return { ok: true, data: body as T };
-  } catch (e) {
-    return { ok: false, disabled: false, message: e instanceof Error ? e.message : 'Network error' };
-  }
+
+  }).catch((e: unknown): StampBrowseResult<T> => { return { ok: false, disabled: false, message: e instanceof Error ? e.message : 'Network error' }; });
 }
 
 /** GET /stamps/me/collections — each active collection with my earned/total. */

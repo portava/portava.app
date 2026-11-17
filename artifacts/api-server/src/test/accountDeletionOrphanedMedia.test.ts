@@ -73,6 +73,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { accountDeletionAuthorizationFixture, PERMANENT_DELETION_TEST_OPTIONS } from "./helpers/accountDeletionAuthorizationFixture.js";
 import {
   executeAccountDeletion,
   POST_MEDIA_BUCKET,
@@ -104,6 +105,8 @@ function makeClient(opts: {
   const storageRemoved: Array<{ bucket: string; paths: string[] }> = [];
   const authDeleted: string[] = [];
 
+  const authorize = accountDeletionAuthorizationFixture(rows, USER_ID);
+
   function builder(table: string) {
     const q: any = {
       _op: "select",
@@ -111,7 +114,7 @@ function makeClient(opts: {
       _values: undefined as any,
       _single: false,
       _limit: 0,
-      select() { q._op = "select"; return q; },
+      select() { return q; },
       delete() { q._op = "delete"; return q; },
       update(v: any) { q._op = "update"; q._values = v; return q; },
       upsert(v: any) { q._op = "upsert"; q._values = v; return q; },
@@ -128,6 +131,11 @@ function makeClient(opts: {
       single() { q._single = true; return q._run(); },
       then(resolve: any, reject: any) { return q._run().then(resolve, reject); },
       _run() {
+        if (table === "user_deletion_requests" && q._op === "update") {
+          const matched = rows[table]!.filter(row => q._filters.every(([op, col, value]: any[]) => op === "eq" && row[col] === value));
+          for (const row of matched) Object.assign(row, q._values);
+          return Promise.resolve({ data: matched, error: null });
+        }
         ops.push({ table, op: q._op, filters: q._filters, values: q._values });
         const key = `${table}.${q._op}`;
         if (fail[key] || fail[table]) {
@@ -148,8 +156,10 @@ function makeClient(opts: {
     _authDeleted: authDeleted,
     from: (t: string) => builder(t),
     rpc: async (fn: string, args: Record<string, unknown>) => {
+      const receipt = authorize(fn, args);
+      if (receipt) return receipt;
       ops.push({ table: `rpc:${fn}`, op: "rpc", values: args });
-      return { data: null, error: null };
+      return { data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null };
     },
     storage: {
       from: (bucket: string) => ({
@@ -228,7 +238,7 @@ describe("account deletion — stories.media_url", () => {
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: "admin-1" });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     assert.deepEqual(removedIn(c, POST_MEDIA_BUCKET).sort(), [
@@ -249,7 +259,7 @@ describe("account deletion — stories.media_url", () => {
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.deepEqual(removedPaths(c), [`${USER_ID}/mine.jpg`],
       `unexpected removes: ${JSON.stringify(c._storageRemoved)}`);
@@ -265,7 +275,7 @@ describe("account deletion — stories.media_url", () => {
       rows: { stories: [{ media_url: `${POST_MEDIA_BUCKET}/${OTHER_ID}/not-mine.jpg` }] },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.deepEqual(removedPaths(c), []);
     assert.equal(stepOf(out, "collect_story_media_paths")?.count, 0);
@@ -276,7 +286,7 @@ describe("account deletion — stories.media_url", () => {
       rows: { stories: [{ media_url: `${POST_MEDIA_BUCKET}/${USER_ID}/s.jpg` }] },
     });
 
-    await executeAccountDeletion(c, USER_ID, { actorId: null });
+    await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     const readAt = indexOfOp(c, "stories", "select");
     const deletedAt = indexOfOp(c, "stories", "delete");
@@ -296,7 +306,7 @@ describe("account deletion — stories.media_url", () => {
       fail: { "stories.select": "connection reset" },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     const s = stepOf(out, "collect_story_media_paths");
     assert.ok(s, "the step must be recorded even when it fails");
@@ -325,7 +335,7 @@ describe("account deletion — messages.media_url and media_thumbnail_url", () =
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     const removed = removedPaths(c);
@@ -351,7 +361,7 @@ describe("account deletion — messages.media_url and media_thumbnail_url", () =
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.deepEqual(removedPaths(c), [],
       `another user's message media reached remove(): ${JSON.stringify(c._storageRemoved)}`);
@@ -368,7 +378,7 @@ describe("account deletion — messages.media_url and media_thumbnail_url", () =
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.deepEqual(removedPaths(c), [`${USER_ID}/ok.mp4`]);
     assert.equal(stepOf(out, "collect_message_media_paths")?.count, 1);
@@ -384,7 +394,7 @@ describe("account deletion — messages.media_url and media_thumbnail_url", () =
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.deepEqual(removedPaths(c), [`${USER_ID}/mine.jpg`],
       `unexpected removes: ${JSON.stringify(c._storageRemoved)}`);
@@ -402,7 +412,7 @@ describe("account deletion — messages.media_url and media_thumbnail_url", () =
       },
     });
 
-    await executeAccountDeletion(c, USER_ID, { actorId: null });
+    await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     const readAt = indexOfOp(c, "messages", "select");
     const deletedAt = indexOfOp(c, "messages", "delete");
@@ -421,7 +431,7 @@ describe("account deletion — messages.media_url and media_thumbnail_url", () =
       fail: { "messages.select": "statement timeout" },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.equal(stepOf(out, "collect_message_media_paths")?.ok, false);
     assert.ok(out.warnings.some((w: string) => w.includes("message media")),
@@ -447,7 +457,7 @@ describe("account deletion — hidden_gems.image_url", () => {
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     assert.deepEqual(removedIn(c, POST_MEDIA_BUCKET).sort(), [
@@ -470,7 +480,7 @@ describe("account deletion — hidden_gems.image_url", () => {
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.deepEqual(removedPaths(c), [`${USER_ID}/mine.jpg`],
       `unexpected removes: ${JSON.stringify(c._storageRemoved)}`);
@@ -483,7 +493,7 @@ describe("account deletion — hidden_gems.image_url", () => {
       rows: { hidden_gems: [{ image_url: publicUrl(POST_MEDIA_BUCKET, `${OTHER_ID}/theirs.jpg`) }] },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.deepEqual(removedPaths(c), []);
     assert.equal(stepOf(out, "collect_hidden_gem_media_paths")?.count, 0);
@@ -494,7 +504,7 @@ describe("account deletion — hidden_gems.image_url", () => {
       rows: { hidden_gems: [{ image_url: `${POST_MEDIA_BUCKET}/${USER_ID}/g.jpg` }] },
     });
 
-    await executeAccountDeletion(c, USER_ID, { actorId: null });
+    await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     const readAt = indexOfOp(c, "hidden_gems", "select");
     const deletedAt = indexOfOp(c, "hidden_gems", "delete");
@@ -513,7 +523,7 @@ describe("account deletion — hidden_gems.image_url", () => {
       fail: { "hidden_gems.select": "permission denied" },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.equal(stepOf(out, "collect_hidden_gem_media_paths")?.ok, false);
     assert.ok(out.warnings.some((w: string) => w.includes("hidden gem media")),
@@ -542,7 +552,7 @@ describe("account deletion — reviews.photos (text[])", () => {
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     assert.deepEqual(removedIn(c, POST_MEDIA_BUCKET).sort(), [
@@ -576,7 +586,7 @@ describe("account deletion — reviews.photos (text[])", () => {
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     const s = stepOf(out, "collect_review_photo_paths");
     assert.equal(s?.ok, true, "a bad element must not fail the step");
@@ -604,7 +614,7 @@ describe("account deletion — reviews.photos (text[])", () => {
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.equal(stepOf(out, "collect_review_photo_paths")?.ok, true);
     assert.deepEqual(removedPaths(c), [`${USER_ID}/good.jpg`]);
@@ -615,7 +625,7 @@ describe("account deletion — reviews.photos (text[])", () => {
       rows: { reviews: [{ photos: [`${POST_MEDIA_BUCKET}/${USER_ID}/p.jpg`] }] },
     });
 
-    await executeAccountDeletion(c, USER_ID, { actorId: null });
+    await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     const readAt = indexOfOp(c, "reviews", "select");
     const deletedAt = indexOfOp(c, "reviews", "delete");
@@ -634,7 +644,7 @@ describe("account deletion — reviews.photos (text[])", () => {
       fail: { "reviews.select": "connection reset" },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.equal(stepOf(out, "collect_review_photo_paths")?.ok, false);
     assert.ok(out.warnings.some((w: string) => w.includes("review photo")),
@@ -662,7 +672,7 @@ describe("account deletion — all four columns in one run", () => {
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: "admin-1" });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
     assert.equal(out.ok, true, JSON.stringify(out.steps.filter((s: any) => !s.ok)));
 
     assert.deepEqual(removedIn(c, POST_MEDIA_BUCKET).sort(), [
@@ -688,7 +698,7 @@ describe("account deletion — all four columns in one run", () => {
       rows: { stories: [], messages: [], hidden_gems: [], reviews: [] },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.equal(out.ok, true, JSON.stringify(out.steps));
     assert.deepEqual(removedPaths(c), [], "nothing to remove, so nothing is removed");
@@ -717,7 +727,7 @@ describe("account deletion — all four columns in one run", () => {
       },
     });
 
-    await executeAccountDeletion(c, USER_ID, { actorId: null });
+    await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     const reads = ["stories", "messages", "hidden_gems", "reviews"].map((t) => {
       const i = indexOfOp(c, t, "select");
@@ -767,7 +777,7 @@ describe("account deletion — passport_memories is deliberately untouched", () 
       },
     });
 
-    await executeAccountDeletion(c, USER_ID, { actorId: null });
+    await executeAccountDeletion(c, USER_ID, PERMANENT_DELETION_TEST_OPTIONS);
 
     assert.equal(indexOfOp(c, "passport_memories", "select"), -1,
       "passport_memories is not read today");

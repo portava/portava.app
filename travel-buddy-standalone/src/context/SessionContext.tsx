@@ -12,6 +12,8 @@ import { clearCachedFeed } from '../services/compass.ts';
 import { SECURE_KEYS, deleteSecure } from '../lib/secureStore.ts';
 import { isAccountScopedStorageEnabled } from '../config/accountScopedStorageFlag.ts';
 import { setDiscoveryViewerFromSession } from '../services/discoveryViewerScope.ts';
+import { clearMediaBrowserSession } from '../services/mediaBrowserSession.ts';
+import { notifyMediaCredentialsChanged } from '../hooks/useMediaScopeKey.ts';
 import { clearTelegraphOutboxForOwner } from '../features/telegraph/outbox/runtime.ts';
 // Prefixes of the per-account scoped keys introduced for reminders,
 // discoveryBookmarks, and the checkpoint-arrival queue (see each service's
@@ -89,6 +91,8 @@ interface SessionContextValue {
   accountStatus: AccountStatus | null;
   accountStatusLoaded: boolean;
   deletionScheduledAt: string | null;
+  reactivateUntil: string | null;
+  selfRecoverableUntil: string | null;
   refreshAccountStatus: () => Promise<void>;
 }
 
@@ -102,6 +106,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [accountStatus, setAccountStatus] = useState<AccountStatus | null>(null);
   const [accountStatusLoaded, setAccountStatusLoaded] = useState(false);
   const [deletionScheduledAt, setDeletionScheduledAt] = useState<string | null>(null);
+  const [reactivateUntil, setReactivateUntil] = useState<string | null>(null);
+  const [selfRecoverableUntil, setSelfRecoverableUntil] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true; let lastUid: string | null | undefined; let authEpoch = 0;
@@ -116,6 +122,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       if (changed) { telegraphRealtime.setViewer(null); clearThreadCursors(); }
       lastUid = uid;
       setDiscoveryViewerFromSession(uid);
+      if (uid && uid === outgoingUserId) notifyMediaCredentialsChanged();
       const publish = () => { if (active && epoch === authEpoch) { telegraphRealtime.setViewer(uid); setUserId(uid); setLoading(false); } };
       if (changed) {
         // Invalidate pending writes immediately; await storage erasure before
@@ -177,7 +184,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       // onAuthStateChange, and the round trip alone was enough to raise the
       // wall. Nothing about the account was ever in question.
       setAccountStatus(null);
-      setDeletionScheduledAt(null);
+      setDeletionScheduledAt(null); setReactivateUntil(null); setSelfRecoverableUntil(null);
       setAccountStatusLoaded(false);
       return;
     }
@@ -193,6 +200,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     if (result.ok && result.data) {
       setAccountStatus(result.data.accountStatus);
       setDeletionScheduledAt(result.data.deletionScheduledAt);
+      setReactivateUntil(result.data.reactivateUntil ?? null);
+      setSelfRecoverableUntil(result.data.selfRecoverableUntil ?? null);
     } else if (result.errorKind === 'network_unreachable' || result.errorKind === TOKEN_UNAVAILABLE) {
       // Fail-OPEN, and ONLY for the two kinds that mean NO SERVER VERDICT
       // EXISTS:
@@ -216,7 +225,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       // (unauthenticated / forbidden / deactivated / server errors) all still
       // fail closed below.
       setAccountStatus('active');
-      setDeletionScheduledAt(null);
+      setDeletionScheduledAt(null); setReactivateUntil(null); setSelfRecoverableUntil(null);
       statusRetryTimerRef.current = setTimeout(() => {
         statusRetryTimerRef.current = null;
         // Same generation fence: only retry while this user is still signed in.
@@ -229,7 +238,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       // Keep accountStatus = null (unknown) so AccountStatusGate blocks the
       // app and shows a retry screen until the status is confirmed.
       setAccountStatus(null);
-      setDeletionScheduledAt(null);
+      setDeletionScheduledAt(null); setReactivateUntil(null); setSelfRecoverableUntil(null);
     }
     setAccountStatusLoaded(true);
   }, [clearStatusRetry]);
@@ -325,6 +334,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     // none of the outgoing account's may be painted after this point.
     telegraphRealtime.setViewer(null);
     setDiscoveryViewerFromSession(null);
+    // Wait for the same bounded, deduplicated clear triggered by the scope
+    // change, so successful browser sign-out also clears media-element auth.
+    await clearMediaBrowserSession();
     // Wipe other AsyncStorage keys that may hold private entity data.
     // Lazy-require keeps this from crashing on web (where AsyncStorage is
     // unavailable) — getStorage() in compass.ts does the same.
@@ -345,7 +357,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     await unregisterPushDeviceOnSignOut().catch(() => 'failed'); await svcSignOut(); // TM-social PLAT-F20: DELETE /me/devices/:id needs the OUTGOING token, so it runs before the session is torn down (bounded; never blocks sign-out)
     setUserId(null);
     setAccountStatus(null);
-    setDeletionScheduledAt(null);
+    setDeletionScheduledAt(null); setReactivateUntil(null); setSelfRecoverableUntil(null);
     setAccountStatusLoaded(false);
   }, [userId]);
 
@@ -360,7 +372,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       roleLoaded,
       accountStatus,
       accountStatusLoaded,
-      deletionScheduledAt,
+      deletionScheduledAt, reactivateUntil, selfRecoverableUntil,
       refreshAccountStatus,
     }}>
       {children}
@@ -381,7 +393,7 @@ export function useSession(): SessionContextValue {
       roleLoaded: true,
       accountStatus: null,
       accountStatusLoaded: true,
-      deletionScheduledAt: null,
+      deletionScheduledAt: null, reactivateUntil: null, selfRecoverableUntil: null,
       refreshAccountStatus: async () => {},
     };
   }

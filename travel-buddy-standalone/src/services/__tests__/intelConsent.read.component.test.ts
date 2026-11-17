@@ -6,7 +6,7 @@
 // NOTE: intentionally exhaustive — the real module builds a Supabase client.
 jest.mock('../../lib/supabase.ts', () => ({ isSupabaseConfigured: true }));
 // NOTE: intentionally exhaustive — the real token store is native.
-jest.mock('../apiToken.ts', () => ({ freshToken: jest.fn().mockResolvedValue('tok') }));
+jest.mock('../messagingOwnerRequest.ts', () => ({ captureMessagingOwnerRequest: () => ({ ownerId: 'read-owner', sessionId: 'session', isCurrent: () => true }), messagingOwnerToken: jest.fn().mockResolvedValue('tok') }));
 
 import { readIntelConsent, getIntelConsent } from '../intelConsent.ts';
 

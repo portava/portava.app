@@ -1,5 +1,8 @@
 import React from 'react';
-import { render, fireEvent, screen, waitFor } from '@testing-library/react-native';
+import { render, fireEvent, screen, waitFor, cleanup } from '@testing-library/react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { seedObservedOwnerSession, disposeObservedOwnerSession } from '../../../services/__tests__/observedOwnerSessionFixture.ts';
+import { setDiscoveryViewerFromSession } from '../../../services/discoveryViewerScope.ts';
 import { StoryComposer } from '../../../components/StoryComposer.tsx';
 import { UnifiedPostComposer } from '../../../components/PulseCreate.tsx';
 import { bindCameraRecording, issueRecordingStamp } from '../recordingStamp.ts';
@@ -9,6 +12,20 @@ import { createStory, uploadStoryMedia } from '../../../services/stories.ts';
 let mockAsset: any;
 const mockPostCreate = jest.fn();
 const mockOwner = { ownerId: 'creator', sessionId: 's', isCurrent: () => true, invalidate: jest.fn() };
+// NOTE: SDK boundary only. The actual owner observer and local draft store run.
+jest.mock('../../../lib/supabase.ts', () => {
+  const listeners = new Set();
+  return { isSupabaseConfigured: true, supabase: { auth: { listeners,
+    onAuthStateChange: (listener: unknown) => { listeners.add(listener); return { data: { subscription: { unsubscribe: () => listeners.delete(listener) } } }; },
+  } } };
+});
+// NOTE: intentionally exhaustive authenticated session boundary for the composers.
+jest.mock('../../../context/SessionContext.tsx', () => ({ useSession: () => ({ userId: 'creator', signOut: jest.fn() }) }));
+// NOTE: native file copying is covered separately; recovery keeps the live recording URI.
+jest.mock('../../../services/composerDraftAsset.ts', () => ({
+  preserveDraftAsset: async (uri: string) => uri, restoreDraftAsset: async (uri: string) => uri,
+  discardDraftAsset: async () => {}, releaseDraftPreview: () => {},
+}));
 // NOTE: these are the device picker, auth and publication boundaries. Both actual composers run the publication and retry logic.
 jest.mock('../../../hooks/usePrivateSurfaceKey.ts', () => ({ usePrivateSurfaceKey: () => 'creator:s' }));
 jest.mock('../../../hooks/useMediaPicker.ts', () => ({ useMediaPicker: () => ({ pickMedia: async () => [mockAsset] }) }));
@@ -25,13 +42,17 @@ jest.mock('../../../services/storyRetentionPolicy.ts', () => ({ ...jest.requireA
   fetchStoryRetentionPolicy: async () => ({ status: 'ok', policy: {} }), composerRetentionLine: () => 'Story retention available' }));
 jest.mock('react-native-safe-area-context', () => ({ ...jest.requireActual('react-native-safe-area-context'), useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 const stamp = { kind: 'portava_recording' as const, code: 'PV-UNIQUE', id: 'stamp', issuedAt: new Date().toISOString(), targetType: 'post' as const, targetId: 'post' };
-beforeEach(() => {
+beforeEach(async () => {
+  await AsyncStorage.clear();
+  setDiscoveryViewerFromSession('creator');
+  seedObservedOwnerSession('creator', 's');
   jest.clearAllMocks(); mockAsset = { uri: 'file:///clip.mov', type: 'video', mimeType: 'video/quicktime', duration: 4000, fileSize: 400 };
   jest.mocked(uploadMedia).mockResolvedValue({ ok: true, url: 'post-media/creator/clip.mov', mediaType: 'video/quicktime', captureAccepted: true });
   mockPostCreate.mockResolvedValue({ ok: true, data: { id: 'post' } });
   jest.mocked(createStory).mockResolvedValue({ ok: true, story: { id: 'story' } as any });
   jest.mocked(issueRecordingStamp).mockResolvedValue(stamp);
 });
+afterEach(async () => { await cleanup(); disposeObservedOwnerSession(); setDiscoveryViewerFromSession(null); });
 function tagCameraResult() {
   bindCameraRecording({ captureToken: 'opaque', expiresAt: new Date(Date.now() + 60000).toISOString(), owner: mockOwner }, mockAsset, mockAsset);
 }

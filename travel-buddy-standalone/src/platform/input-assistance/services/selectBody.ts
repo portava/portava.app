@@ -186,15 +186,14 @@ export async function recordSelectionWith(deps: SelectDeps, req: SelectRequest):
     if (!token) return { recorded: false, reason: 'no_token' };
 
     if (!budget.current(token)) return { recorded: false, reason: 'account_changed' };
-    const res = await budget.wait(() => deps.fetchImpl(`${base}/api/input-assistance/select`, {
+    const res = await budget.fetch(base, '/api/input-assistance/select', token, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(buildSelectBody(req)),
-      signal: budget.signal,
-    }));
+    }, deps.fetchImpl);
     if (!res || !res.ok) {
       return { recorded: false, reason: res ? `http_${res.status}` : 'no_response' };
     }

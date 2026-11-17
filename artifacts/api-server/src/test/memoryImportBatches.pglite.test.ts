@@ -1,7 +1,10 @@
+import { accountDeletionAuthorizationFixture, PERMANENT_DELETION_TEST_OPTIONS } from "./helpers/accountDeletionAuthorizationFixture.js";
 import { after, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { Client } from "pg";
+import { openSnapshotLease } from "./db/pressedSnapshot.js";
+import { pressedPostgresServer } from "./db/pressedPostgres.js";
 import http from "node:http";
 import { Socket } from "node:net";
 import express from "express";
@@ -15,7 +18,7 @@ interface Database {
   close(): Promise<void>;
 }
 
-const runtime = process.env.MEMORY_IMPORT_PGLITE_MODULE;
+const reusableTarget = process.env.LOCAL_DB_URL;
 const OWNER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const OTHER = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const FIRST = "10000000-0000-4000-8000-000000000001";
@@ -28,7 +31,7 @@ const migration = (name: string) => readFileSync(new URL(`../migrations/${name}`
 let database: Database;
 
 async function value(sql: string, parameters: unknown[] = []): Promise<any> {
-  return (await database.query<{ result: unknown }>(`SELECT ${sql} AS result`, parameters)).rows[0]!.result;
+  return (await database.query<{ result: unknown }>(`SELECT to_jsonb(${sql}) AS result`, parameters)).rows[0]!.result;
 }
 async function create(ids = [FIRST, SECOND], owner = OWNER, key = KEY) {
   return value("public.memory_import_batches_create($1::uuid, $2::uuid, $3::uuid[])", [owner, key, ids]);
@@ -41,6 +44,8 @@ async function enable() {
 }
 
 function accountDeletionClient() {
+  const receiptRows: Record<string, any[]> = {};
+  const authorize = accountDeletionAuthorizationFixture(receiptRows, OWNER);
   const persisted = new Set(["profiles", "memories", "memory_tags", "memory_corrections",
     "memory_import_batches", "memory_import_batch_items"]);
   const operations: Array<{ table: string; operation: string }> = [];
@@ -60,6 +65,11 @@ function accountDeletionClient() {
       let limit: number | undefined;
       const execute = async () => {
         operations.push({ table, operation });
+        if (table === "user_deletion_requests" && operation === "update") {
+          const matched = receiptRows[table]!.filter(row => filters.every(filter => filter.operator === "=" && row[filter.column] === filter.value));
+          for (const row of matched) Object.assign(row, patch);
+          return { data: matched, error: null, count: matched.length };
+        }
         if (!persisted.has(table)) return { data: single ? null : [], error: null, count: 0 };
         const parameters: unknown[] = [];
         const bind = (input: unknown) => { parameters.push(input); return `$${parameters.length}`; };
@@ -108,7 +118,7 @@ function accountDeletionClient() {
       };
       return query;
     },
-    rpc: async () => ({ data: null, error: null }),
+    rpc: async (fn: string, args: Record<string, unknown>) => authorize(fn, args) ?? ({ data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null }),
     storage: { from: () => ({ remove: async (paths: string[]) => { assert.deepEqual(paths, []); return { data: [], error: null }; } }) },
     auth: { admin: { deleteUser: async (ownerId: string) => {
       assert.equal(await value("(SELECT account_status FROM profiles WHERE id = $1)", [ownerId]), "deleted");
@@ -139,12 +149,32 @@ async function rejectPlace(memoryId: string, body: unknown, ownerId = OWNER) {
   } finally { _clearTestClient(); _setTestServiceClient(null); }
 }
 
-describe("H37 durable owner-selected existing-memory backfill (isolated PostgreSQL)", { skip: !runtime }, () => {
+describe("H37 durable owner-selected existing-memory backfill (isolated PostgreSQL)", { skip: !reusableTarget }, () => {
   before(async () => {
-    const { PGlite } = await import(pathToFileURL(runtime!).href);
-    database = new PGlite() as Database;
+    const target = pressedPostgresServer(reusableTarget!);
+    const connection = new Client({ connectionString: target.toString() });
+    await connection.connect();
+    let lease: Awaited<ReturnType<typeof openSnapshotLease>>;
+    try {
+      lease = await openSnapshotLease(connection, target);
+    } catch (error) { await connection.end(); throw error; }
+    database = {
+      exec: sql => connection.query(sql),
+      query: async <Row = Record<string, unknown>>(sql: string, parameters: unknown[] = []) => {
+        const result = await connection.query(sql, parameters);
+        return { rows: result.rows as Row[] };
+      },
+      close: async () => { try { await lease.restore(); } finally { await connection.end(); } },
+    };
+    await lease.clear();
     await database.exec(`
-      CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
+      DO $roles$ BEGIN
+        IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon; END IF;
+        IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated; END IF;
+        IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF;
+      END $roles$;
+      CREATE SCHEMA public AUTHORIZATION postgres;
+      GRANT USAGE ON SCHEMA public TO anon,authenticated,service_role;
       CREATE SCHEMA auth;
       CREATE TABLE auth.users(id uuid PRIMARY KEY);
       CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS 'SELECT NULL::uuid';
@@ -569,7 +599,7 @@ describe("H37 durable owner-selected existing-memory backfill (isolated PostgreS
     try {
       const { executeAccountDeletion } = await import("../services/accountDeletion/AccountDeletionService.js");
       const client = accountDeletionClient();
-      const result = await executeAccountDeletion(client as any, OWNER, { actorId: null });
+      const result = await executeAccountDeletion(client as any, OWNER, PERMANENT_DELETION_TEST_OPTIONS);
       assert.equal(result.ok, true, JSON.stringify({ steps: result.steps.filter((entry) => !entry.ok), warnings: result.warnings }));
       for (const name of ["delete_memories", "anonymise_profile", "auth_delete_user"]) {
         assert.equal(result.steps.find((entry) => entry.step === name)?.ok, true, name);

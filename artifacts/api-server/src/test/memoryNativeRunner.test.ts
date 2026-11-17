@@ -18,6 +18,8 @@ const manifests = [
   { profile: "content", file: "src/test/reportedContentRemoval.native.test.ts", name: "reported-content audited removal: PostgreSQL 17", variable: "PORTAVA_TEST_POSTGRES_BIN" },
   { profile: "sensing", file: "src/test/sensingAtomicAdmission.native.test.ts", name: "Sensing atomic admission: real PostgreSQL 17", variable: "PORTAVA_TEST_POSTGRES_BIN" },
   { profile: "place", file: "src/test/placeGovernance.native.test.ts", name: "canonical place governance: real PostgreSQL17", variable: "PORTAVA_TEST_POSTGRES_BIN" },
+  { profile: "import-sql", file: "src/test/memoryImportBatches.pglite.test.ts", name: "H37 durable owner-selected existing-memory backfill (isolated PostgreSQL)", variable: "PORTAVA_TEST_POSTGRES_BIN" },
+  { profile: "own-media-sql", file: "src/test/memoryFromOwnMedia.pglite.test.ts", name: "MD385 own-media historical SQL and deployment contract", variable: "PORTAVA_TEST_POSTGRES_BIN" },
 ];
 const files = manifests.slice(0, 4).map((manifest) => manifest.file);
 const imports = 'import assert from "node:assert/strict"; import { describe, it } from "node:test";';
@@ -51,7 +53,7 @@ async function invoke(options: FixtureOptions = {}) {
     }
     await writeFile(join(directory, "package.json"), JSON.stringify({ type: "module" }));
     if (!options.missingLoader) await symlink(await realpath(join(apiRoot, "node_modules/tsx")), join(directory, "node_modules/tsx"), "dir");
-    for (const name of ["initdb", "pg_ctl", "psql", "postgres"]) {
+    for (const name of ["initdb", "pg_ctl", "psql", "postgres", "pg_dump", "pg_restore"]) {
       const target = join(directory, "bin", name);
       if (name === "initdb" && options.binaryShape === "missing") continue;
       if (name === "initdb" && options.binaryShape === "directory") await mkdir(target);
@@ -67,14 +69,16 @@ async function invoke(options: FixtureOptions = {}) {
       } else if (options.outsideFile && index === 0) {
         await symlink(join(apiRoot, manifest.file), join(directory, manifest.file), "file");
       } else await writeFile(join(directory, manifest.file), index === (options.fixtureIndex ?? 0) && options.source !== undefined
-        ? options.source : healthy(manifest.name, ["media-translation", "account-media"].includes(manifest.profile)
-          ? Array.from({ length: manifest.profile === "account-media" ? 15 : 28 }, (_, index) => `it("native assertion ${index}", () => assert.equal(1, 1));`).join("\n")
+        ? options.source : healthy(manifest.name, ["media-translation", "account-media", "import-sql", "own-media-sql"].includes(manifest.profile)
+          ? Array.from({ length: manifest.profile === "own-media-sql" ? 17 : manifest.profile === "account-media" ? 15 : manifest.profile === "import-sql" ? 25 : 28 }, (_, index) => `it("native assertion ${index}", () => assert.equal(1, 1));`).join("\n")
           : undefined));
     }
     const binaryDirectory = options.directoryShape === "relative" ? "bin" : options.directoryShape === "missing"
       ? join(directory, "no-bin") : options.directoryShape === "file" ? join(directory, "package.json") : join(directory, "bin");
     const environment: NodeJS.ProcessEnv = {
       PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR,
+      LOCAL_DB_URL: "postgresql://postgres@127.0.0.1:9/portava_ci_repairs",
+      PORTAVA_TEST_CLUSTER_ID: "1",
       ...Object.fromEntries(manifests.map(({ variable }) => [variable, binaryDirectory])),
       ...options.environment,
     };
@@ -103,7 +107,7 @@ async function invoke(options: FixtureOptions = {}) {
 
 function assertExecuted(result: Awaited<ReturnType<typeof invoke>>, selected = files) {
   assert.equal(result.status, 0, result.output);
-  const count = (file: string) => file === manifests[5]!.file ? 28 : file === manifests[6]!.file ? 15 : 1;
+  const count = (file: string) => file === manifests[5]!.file ? 28 : file === manifests[6]!.file ? 15 : file === manifests[10]!.file ? 25 : file === manifests[11]!.file ? 17 : 1;
   const total = selected.reduce((sum, file) => sum + count(file), 0);
   assert.ok(result.output.includes(`memory-native: PASS: ${total} tests; all ${selected.length} native suites executed; no skips or todos`), result.output);
   for (const file of selected) assert.ok(result.output.includes(`${file}: suites=1 executed=${count(file)}`), result.output);
@@ -116,11 +120,16 @@ function assertRefused(result: Awaited<ReturnType<typeof invoke>>, expected: Reg
 }
 
 describe("Memory native runner fail-closed executable controls", () => {
+  for (const target of [undefined, "postgresql://hosted.invalid/portava_ci_repairs", "postgresql://postgres@127.0.0.1/production", "postgresql://postgres@127.0.0.1/portava_ci_repairs?host=hosted.invalid"]) {
+    it(`refuses an unverified reusable target: ${target === undefined ? "missing" : "invalid target"}`, async () => {
+      assertRefused(await invoke({ argumentsList: ["import-sql", manifests[10]!.file], environment: { LOCAL_DB_URL: target } }), /designated reusable database/);
+    });
+  }
   it("matches the builders' actual suite names and explicit binary variables", async () => {
-    for (const { file, name, variable } of manifests) {
+    for (const { file, name, variable, profile } of manifests) {
       const source = await readFile(join(apiRoot, file), "utf8");
       assert.ok(source.includes(`describe(${JSON.stringify(name)}`) || source.includes(`describe('${name}'`), file);
-      assert.ok(source.includes(`process.env.${variable}`), file);
+      assert.ok(source.includes(`process.env.${["import-sql","own-media-sql"].includes(profile) ? "LOCAL_DB_URL" : variable}`), file);
     }
   });
 
@@ -131,7 +140,7 @@ describe("Memory native runner fail-closed executable controls", () => {
         : profile === "content" ? "test:reported-content-native"
         : profile === "sensing" ? "test:sensing-privacy-native"
         : profile === "media-translation" ? "test:media-translation-native"
-          : profile === "account-media" ? "test:account-media-native" : `test:memory-${profile}-native`;
+          : profile === "own-media-sql" ? "test:memory-own-media-sql" : profile === "import-sql" ? "test:memory-import-sql" : profile === "account-media" ? "test:account-media-native" : `test:memory-${profile}-native`;
       assert.equal(scripts[command], `node scripts/run-memory-native-tests.mjs ${profile} ${file}`);
     }
     assert.equal(scripts["test:memory-native"], `node scripts/run-memory-native-tests.mjs all ${files.join(" ")}`);
@@ -229,7 +238,7 @@ describe("Memory native runner fail-closed executable controls", () => {
   }
 
   for (const [fixtureIndex, { profile, file, name }] of manifests.entries()) {
-    if (!["review", "media-translation", "account-media"].includes(profile)) continue;
+    if (!["review", "media-translation", "account-media", "import-sql"].includes(profile)) continue;
     for (const [label, source, expected] of [
       ["skipped test", healthy(name, 'it("skipped", { skip: true }, () => {}); it("control", () => {});'), /Skipped test/],
       ["todo test", healthy(name, 'it("todo", { todo: true }, () => {});'), /Todo test/],

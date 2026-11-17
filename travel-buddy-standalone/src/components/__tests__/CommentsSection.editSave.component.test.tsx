@@ -19,11 +19,13 @@
  */
 
 import React from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, render, fireEvent, waitFor } from '@testing-library/react-native';
 import { CommentsSection, CommentsSheet } from '../CommentsSheet.tsx';
 import {
   listComments,
   editComment,
+  addComment,
   listReplies,
 } from '../../services/postEngagement.ts';
 
@@ -471,4 +473,26 @@ it('keeps an empty reply thread available after collapse', async () => {
   await view.findByText('View replies'); await fireEvent.press(view.getByText('View replies'));
   expect(view.getByText('No replies yet.')).toBeTruthy(); await fireEvent.press(view.getByText('Hide replies'));
   expect(view.getByText('View replies')).toBeTruthy();
+});
+
+
+describe('comment draft recovery',()=>{
+ beforeEach(async()=>{await AsyncStorage.clear();mockListComments.mockResolvedValue([]);mockListReplies.mockResolvedValue([]);});
+ it('recovers an unsent comment after restart, retains failed submission, and clears only acknowledged success',async()=>{
+  const first=await renderSection();const input=first.getByPlaceholderText('Add a comment…');
+  await act(async()=>{fireEvent.changeText(input,'Only on this device');});await first.unmount();
+  const second=await renderSection();await waitFor(()=>expect(second.getByPlaceholderText('Add a comment…').props.value).toBe('Only on this device'));
+  (addComment as jest.Mock).mockResolvedValueOnce(null);
+  await act(async()=>{fireEvent.press(second.getByLabelText('Send comment'));});
+  expect(second.getByPlaceholderText('Add a comment…').props.value).toBe('Only on this device');
+  (addComment as jest.Mock).mockResolvedValueOnce({comment:makeComment({body:'Only on this device'}),commentCount:1});
+  await act(async()=>{fireEvent.press(second.getByLabelText('Send comment'));});
+  await waitFor(()=>expect(second.getByPlaceholderText('Add a comment…').props.value).toBe(''));
+  expect(await AsyncStorage.getItem('rumazi.composer-draft.v1:user-owner:comment_inline%3Apost-xyz')).toBeNull();
+ });
+ it('explicit discard clears recovery without submitting input',async()=>{
+  const first=await renderSection();await act(async()=>{fireEvent.changeText(first.getByPlaceholderText('Add a comment…'),'Discard me');});
+  await act(async()=>{fireEvent.press(first.getByLabelText('Discard comment draft'));});await first.unmount();
+  const second=await renderSection();expect(second.getByPlaceholderText('Add a comment…').props.value).toBe('');expect(addComment).not.toHaveBeenCalled();
+ });
 });

@@ -12,9 +12,8 @@
  * POST /api/admin/media/:id/moderate         — approve | reject | flag | delete
  *
  * `reject` HIDES (status flip, reversible, leaves Storage untouched).
- * `delete` DESTROYS (removes the Storage object and its thumbnail, then the
- * row) and is available for target='post_media' only. They are separate verbs
- * on purpose — see the note above moderateSchema.
+ * `delete` withdraws and retains post_media with an atomic admin audit.
+ * Permanent erasure requires separate explicit admin authorization.
  *
  * Schema notes (live DB):
  *   reports: target_type, target_id, reason_code, reason_detail, moderation_notes,
@@ -30,12 +29,40 @@ import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { sendError } from "../lib/http.js";
 import { requireAdmin } from "../lib/requireAdmin.js";
+import { listMemoryMediaBindings, reconcileMemoryMediaBinding, MemoryMediaBindingConflict } from "../services/memory/memoryMediaBinding.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
 import { resolveContentOwnerDetailed, type ContentOwnerOutcome } from "../lib/contentOwner.js";
-import { logModerationAction, checkContentReportLink, reportLinkColumnId } from "../lib/moderationAudit.js"; import { UNRESOLVED_REPORT_STATUSES, exactListCount, listTotalRefusal, parseLegacyReportStatusFilter, parseListPage } from "../lib/moderationCounts.js"; import { moveLegacyReport, LEGACY_REPORT_CLOSE_READ } from "../lib/legacyReportClose.js";
+import { logModerationAction, checkContentReportLink } from "../lib/moderationAudit.js"; import { UNRESOLVED_REPORT_STATUSES, exactListCount, listTotalRefusal, parseLegacyReportStatusFilter, parseListPage } from "../lib/moderationCounts.js"; import { moveLegacyReport, LEGACY_REPORT_CLOSE_READ } from "../lib/legacyReportClose.js";
 import { affectedRows } from "../lib/affectedRows.js"; import { applyCanonicalModerationDecision, type CanonicalModerationOutcome } from "../services/media/MediaModerationService.js";
 
 const router = Router();
+
+const memoryBindingPage = z.object({ after: z.string().uuid().optional(), memoryId: z.string().uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(50).optional() }).strict();
+const memoryBindingReview = z.object({ assetId: z.string().uuid(), reviewedUrlHash: z.string().regex(/^[a-f0-9]{64}$/),
+  reason: z.string().trim().min(1).max(1000) }).strict();
+
+router.get("/admin/media/memory-bindings", asyncHandler(async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  const page = memoryBindingPage.safeParse(req.query);
+  if (!page.success) { sendError(res, "invalid_payload", "Invalid Memory reference page"); return; }
+  res.setHeader("Cache-Control", "no-store");
+  try { res.json(await listMemoryMediaBindings(admin.sc, page.data)); }
+  catch { sendError(res, "degraded_unavailable", "Memory references could not be verified. Refresh before reviewing."); }
+}));
+
+router.post("/admin/media/memory-bindings/:itemId/reconcile", asyncHandler(async (req, res) => {
+  const admin = await requireAdmin(req, res); if (!admin) return;
+  const item = z.string().uuid().safeParse(req.params.itemId), review = memoryBindingReview.safeParse(req.body);
+  if (!item.success || !review.success) { sendError(res, "invalid_payload", "A reviewed source and reason are required"); return; }
+  res.setHeader("Cache-Control", "no-store");
+  try { res.json({ ok: true, ...await reconcileMemoryMediaBinding(admin.sc, admin.userId, item.data,
+    review.data.assetId, review.data.reason, review.data.reviewedUrlHash) }); }
+  catch (error) {
+    if (error instanceof MemoryMediaBindingConflict) { sendError(res, "conflict", "The Memory reference changed or cannot be reconciled. Refresh the review."); return; }
+    sendError(res, "degraded_unavailable", "Reconciliation could not be confirmed. Refresh before retrying.");
+  }
+}));
 
 // ── Image dimension parsers ───────────────────────────────────────────────────
 // Each parser takes a Buffer containing the first 64 KB of the file and returns
@@ -623,16 +650,11 @@ router.post("/admin/media/backfill-dimensions", asyncHandler(async (req, res) =>
  *
  * `reject` remains what it was: a status flip to `moderation_status='rejected'`
  * that hides the media and can be undone by approving again. It does NOT touch
- * Storage. Overloading it to also destroy the object would make every
- * mis-click permanently unrecoverable, and this codebase has nothing to
- * recover with — moderation_actions records a target USER, never which object
- * was removed or where it lived (see docs/admin/moderation-coverage.md §F), so
- * a wrongly deleted file could not even be identified afterwards, let alone
- * restored.
+ * Storage. A withdrawn source requires the dedicated recovery flow; ordinary
+ * approval must not reactivate it or bypass its retained state.
  *
- * `delete` is the irreversible one: it removes the Storage object(s) and the
- * row. Making it a distinct verb keeps triage reversible and forces the
- * destructive path to be chosen on purpose.
+ * `delete` withdraws the source and retains bytes for recovery. Its audit
+ * commits with that transition; it does not authorize permanent erasure.
  */
 const moderateSchema = z.object({
   action: z.enum(["approve", "reject", "flag", "delete"]),
@@ -676,7 +698,7 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
    * different: there the audit genuinely precedes the destruction, so a failed
    * lookup refuses before any bytes are removed (see that branch).
    */
-  const link = await checkContentReportLink(sc, (req.body as any)?.report_id, target, id); if (!link.ok) { sendError(res, link.code, link.message); return; } const linkColumn = await reportLinkColumnId(sc, link.metadata); // TV-4a: the moderation report this answers, checked against the content OWNER before anything is written
+  const link = await checkContentReportLink(sc, (req.body as any)?.report_id, target, id); if (!link.ok) { sendError(res, link.code, link.message); return; } // TV-4a: the moderation report this answers, checked against the content OWNER before anything is written
   type AuditOutcome = "recorded" | "skipped_no_owner" | "skipped_owner_lookup_failed" | "not_applicable";
   let auditOutcome: AuditOutcome = "not_applicable"; let canonicalOutcome: CanonicalModerationOutcome | null = null; let postcardSync: PostcardModerationSync | null = null; // census-media §37.9
 
@@ -748,97 +770,29 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
     }
 
   } else if (target === "post_media" && action === "delete") {
-    // The only path in this file that actually removes bytes. Everything else
-    // is a status flip; this route previously had no Storage call at all,
-    // despite already selecting storage_path/storage_bucket for its listings.
-    const { data: row, error: readErr } = await sc
-      .from("post_media")
-      .select("id, user_id, storage_path, storage_bucket, thumbnail_storage_path, post_id, processing_status, moderation_status, public_url") // census-media §37.9: the file as it was, for the postcard step (was: .select("id, user_id, storage_path, storage_bucket, thumbnail_storage_path"))
-      .eq("id", id)
-      .maybeSingle();
-
+    const { data: row, error: readErr } = await sc.from("post_media")
+      .select("id,user_id,post_id,processing_status,moderation_status,public_url,deleted_at,recovery_snapshot")
+      .eq("id", id).maybeSingle();
     if (readErr) { sendError(res, "db_error", readErr.message); return; }
-    if (!row) { res.status(404).json({ error: "not_found", message: "Media item not found" }); return; }
-
-    const bucket = (row as any).storage_bucket as string | null;
-    const ref = resolveStoragePath((row as any).storage_path, bucket ?? "");
-    // The thumbnail is a second object. Deleting only the original leaves it
-    // behind, still fetchable — the exact orphan this change exists to stop.
-    const thumbRef = resolveStoragePath((row as any).thumbnail_storage_path, bucket ?? "");
-
-    if (!bucket || ref.kind === "unresolvable" || thumbRef.kind === "unresolvable") {
-      sendError(
-        res, "db_error",
-        `Cannot derive a storage path for media ${id} ` +
-        `(bucket=${bucket ?? "null"}, path=${String((row as any).storage_path)}). ` +
-        `Refusing to delete the row, because doing so would orphan the object.`,
-        { exposeDetail: true },
-      );
-      return;
-    }
-
-    // Audit BEFORE destroying anything, and fail closed — matching the
-    // convention in admin.ts. target_user_id is the media OWNER: that column is
-    // `REFERENCES profiles(id)`, so writing a media id there would violate the
-    // FK and abort the whole action.
-    //
-    // Resolved through the shared rule rather than reading post_media.user_id
-    // inline, so this and the report paths cannot drift apart. The row is
-    // already loaded above, so the lookup is the only extra cost.
-    //
-    // THIS BRANCH CAN STILL FAIL CLOSED, and now does. The audit here genuinely
-    // precedes the destruction, so an owner lookup that could not RUN is
-    // refused outright rather than deleting bytes that moderation_actions would
-    // then hold no record of — and this file's own comment (§F) says a wrongly
-    // deleted object cannot even be identified afterwards. Content that is
-    // genuinely unowned (`not_found` / `unowned`) still deletes, skipping the
-    // user-scoped row: refusing there would make orphaned media undeletable,
-    // which is exactly the media most likely to need removing.
+    if (!row) { sendError(res, "not_found", "Media item not found"); return; }
     const { ownerId, outcome } = await resolveOwnerLoudly("post_media");
-    if (outcome === "lookup_failed") {
-      sendError(
-        res,
-        "degraded_unavailable",
-        "Could not determine the media owner, so this deletion cannot be audited. Please try again.",
-      );
-      return;
+    if (outcome === "lookup_failed") { sendError(res, "degraded_unavailable", "The media owner could not be verified. Nothing was changed."); return; }
+    if (!ownerId || ownerId !== row.user_id) { sendError(res, "conflict", "This media needs an ownership review before removal."); return; }
+    const { data: withdrawn, error: withdrawalError } = await sc.rpc("withdraw_postcard_media", {
+      p_actor: userId, p_post: row.post_id, p_media: id, p_expected_moderation: row.moderation_status,
+      p_admin_reason: reason?.trim() || "Administrator removed media", p_report_id: link.reportId,
+    });
+    if (withdrawalError) { sendError(res, "db_error", "Media withdrawal and its audit could not be confirmed."); return; }
+    if (withdrawn !== true) { sendError(res, "conflict", "The media or report changed. Refresh before trying again."); return; }
+    // The same transaction retains the source, audits the admin and retires any
+    // uniquely owned canonical asset. Shared canonical assets remain shared.
+    const { data: retained, error: retainedError } = await sc.from("post_media")
+      .select("post_id,user_id,deleted_at,recovery_snapshot").eq("id", id).maybeSingle();
+    if (retainedError || !retained?.deleted_at || !retained.recovery_snapshot || typeof retained.recovery_snapshot !== "object") {
+      sendError(res, "db_error", "Withdrawal committed, but its retained state could not be confirmed. Refresh before retrying."); return;
     }
-    if (ownerId) {
-      const { error: auditErr } = await sc.from("moderation_actions").insert({
-        target_user_id: ownerId,
-        action_type: "content_removed",
-        reason: reason ?? `post_media ${id} deleted by admin`,
-        performed_by: userId,
-        created_at: now, ...(linkColumn ? { report_id: linkColumn } : {}), // the 3705 column when present; metadata is set below
-        // metadata is the only place the specific object can be recorded;
-        // moderation_actions has no content-target column.
-        metadata: { target: "post_media", media_id: id, bucket, path: ref.kind === "path" ? ref.path : null, ...link.metadata },
-      });
-      if (auditErr) { sendError(res, "db_error", `Audit write failed: ${auditErr.message}`, { exposeDetail: true }); return; }
-      auditOutcome = "recorded";
-    }
-
-    const paths = [ref, thumbRef]
-      .filter((r): r is { kind: "path"; path: string } => r.kind === "path")
-      .map((r) => r.path);
-
-    if (paths.length > 0) {
-      const { error: storageErr } = await sc.storage.from(bucket).remove(paths);
-      if (storageErr) {
-        // Do NOT delete the row: it is the only remaining pointer to the object.
-        sendError(
-          res, "db_error",
-          `Storage removal failed for media ${id}: ${storageErr.message}. Row left intact.`,
-          { exposeDetail: true },
-        );
-        return;
-      }
-    }
-
-    const { data: deletedRows, error: delErr } = await sc.from("post_media").delete().eq("id", id).select("post_id, user_id, processing_status, moderation_status, public_url"); // census-media §37.10 item 4: RETURNING — the row as the delete found it, whatever another moderator did after the read above (was: const { error: delErr } = await sc.from("post_media").delete().eq("id", id);)
-    if (delErr) { sendError(res, "db_error", delErr.message); return; }
-    const postcardDel = await syncPostcardAfterModeration(sc, { postId: (row as any).post_id, ownerUserId: (row as any).user_id ?? ownerId, before: ((deletedRows as any[] | null)?.[0] ?? row) as any, after: null }, req); // census-media §37.9: a removed file that counted leaves the count, and the passport cover (§37.10: decided from the deleted row itself)
-    res.json({ ok: true, id, action, target, deleted: true, objectsRemoved: paths.length, postcard: postcardDel, canonical: await applyCanonicalModerationDecision(sc, { bucket, path: ref.kind === "path" ? ref.path : null, decision: "remove" }) });
+    const postcardDel = await syncPostcardAfterModeration(sc, { postId: retained.post_id, ownerUserId: retained.user_id, before: retained.recovery_snapshot, after: null }, req);
+    res.json({ ok: true, id, action, target, deleted: true, retained: true, objectsRemoved: 0, audit: "recorded", postcard: postcardDel });
     return;
 
   } else if (target === "post_media") {

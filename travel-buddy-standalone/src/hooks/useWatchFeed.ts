@@ -11,8 +11,11 @@
  * base URL on all platforms.
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
+import { newClientEventId } from '../services/clientEventId.ts';
+import { captureMessagingOwnerRequest } from '../services/messagingOwnerRequest.ts';
 import { fetchWatchFeed } from '../services/mediaFeed.ts';
+import { fetchOwnedApi } from '../services/ownedApiRequest.ts';
 import type { MediaFeedItem, WatchFeedType } from '../types/media.ts';
 
 // ── Per-feed state ────────────────────────────────────────────────────────────
@@ -37,7 +40,7 @@ const newSlot = (sessionId: string): FeedSlot => ({
 });
 
 function genSessionId(): string {
-  return `sess_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  return newClientEventId();
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
@@ -47,6 +50,7 @@ export interface WatchFeedState {
   setFeedType: (t: WatchFeedType) => void;
 
   items: MediaFeedItem[];
+  sessionId: string;
   loading: boolean;
   error: string | null;
   activeIndex: number;
@@ -63,6 +67,12 @@ export interface WatchFeedState {
 
 export function useWatchFeed(): WatchFeedState {
   const [feedType, setFeedTypeState] = useState<WatchFeedType>('for_you');
+  const mounted = useRef(true);
+  const requests = useRef(new Map<WatchFeedType, AbortController>());
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; for (const controller of requests.current.values()) controller.abort(); requests.current.clear(); };
+  }, []);
 
   // Per-feed slots — keep state for both feeds simultaneously.
   const slotsRef = useRef<Record<WatchFeedType, FeedSlot>>({
@@ -82,6 +92,12 @@ export function useWatchFeed(): WatchFeedState {
     async (type: WatchFeedType, cursor: string | null): Promise<void> => {
       const s = slotsRef.current[type];
       if (s.loading) return;
+      const owner = captureMessagingOwnerRequest();
+      if (!owner?.isCurrent() || !mounted.current) return;
+      const controller = new AbortController();
+      requests.current.get(type)?.abort();
+      requests.current.set(type, controller);
+      const isCurrent = () => mounted.current && owner.isCurrent() && slotsRef.current[type].sessionId === s.sessionId;
 
       slotsRef.current[type] = { ...s, loading: true, error: null };
       rerender();
@@ -90,7 +106,10 @@ export function useWatchFeed(): WatchFeedState {
         feedType: type,           // 'for_you' | 'following' — matches API contract
         cursor: cursor ?? undefined,
         sessionId: s.sessionId,
-      });
+        owner, signal: controller.signal, isCurrent,
+      }, fetchOwnedApi);
+      if (requests.current.get(type) === controller) requests.current.delete(type);
+      if (!isCurrent()) return;
 
       if (result.ok && result.data) {
         const data = result.data;
@@ -179,6 +198,7 @@ export function useWatchFeed(): WatchFeedState {
     feedType,
     setFeedType,
     items: slot.items,
+    sessionId: slot.sessionId,
     loading: slot.loading,
     error: slot.error,
     activeIndex: slot.activeIndex,

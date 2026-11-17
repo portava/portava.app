@@ -264,6 +264,44 @@ test("POST /api/route-plans — rejects fewer than 2 stops", async () => {
   } finally { await srv.close(); }
 });
 
+test("POST /api/route-plans — invalid coordinates reject before any route writes", async () => {
+  const store: Store = { route_plans: [], route_stops: [], route_legs: [] };
+  const srv = await startServer(store);
+  const stops = [{ title: 'A', lat: 0, lng: 0 }, { title: 'B', lat: 1, lng: 1 }];
+  try {
+    for (const point of [
+      { lat: 90.001, lng: 0 }, { lat: -90.001, lng: 0 },
+      { lat: 0, lng: 180.001 }, { lat: 0, lng: -180.001 },
+      { lat: null, lng: 0 }, { lat: 0, lng: 'NaN' },
+    ]) {
+      for (const payload of [
+        { stops: [{ title: 'Invalid', ...point }, stops[1]] },
+        { stops, startLocation: point }, { stops, endLocation: point },
+      ]) {
+        const response = await req(srv.port, 'POST', '/api/route-plans', payload);
+        assert.equal(response.status, 400);
+        assert.equal(response.body.error, 'invalid_payload');
+        assert.deepEqual(store, { route_plans: [], route_stops: [], route_legs: [] });
+      }
+    }
+  } finally { await srv.close(); }
+});
+
+test("POST /api/route-plans — WGS84 boundaries and zero are accepted", async () => {
+  const store: Store = { route_plans: [], route_stops: [], route_legs: [] };
+  const srv = await startServer(store);
+  try {
+    const response = await req(srv.port, 'POST', '/api/route-plans', {
+      stops: [{ title: 'Origin', lat: 0, lng: 0 }, { title: 'Antimeridian', lat: 0, lng: 180 }],
+      startLocation: { lat: -90, lng: -180 }, endLocation: { lat: 90, lng: 180 },
+    });
+    assert.equal(response.status, 201);
+    assert.equal(response.body.plan.isApproximated, true);
+    assert.equal(store.route_stops.length, 4);
+    assert.ok(store.route_legs.every(leg => Number.isFinite(leg.distance_meters) && Number.isFinite(leg.duration_seconds)));
+  } finally { await srv.close(); }
+});
+
 test("PATCH /api/route-plans/:id/stops/:stopId — checkpoint arrived", async () => {
   const store: Store = {
     route_plans: [{ id: PLAN_ID, owner_user_id: "user-001", trip_id: null, title: "T", route_style: "custom", status: "draft", is_approximated: true }],

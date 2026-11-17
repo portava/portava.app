@@ -22,9 +22,9 @@ export default function Settings() {
   const { signOut, isAuthed, configured } = useSession();
   const [isAdmin, setIsAdmin] = useState(false);
   const [accountStatus, setAccountStatus] = useState<string | null>(null);
-  // A pending deletion request: the account is hidden and is deleted on this
-  // date unless cancelled. Read from the server so it survives a restart.
+  // Retained deletion state and the owner recovery deadline come from the server.
   const [deletionScheduledAt, setDeletionScheduledAt] = useState<string | null>(null);
+  const [selfRecoverableUntil, setSelfRecoverableUntil] = useState<string | null>(null);
   const { enabled: rentBuddyEnabled } = useRentABuddyFlag();
   const [killSwitchCount, setKillSwitchCount] = useState(0);
 
@@ -37,7 +37,7 @@ export default function Settings() {
         setAccountStatus((p as any)?.account_status ?? null);
       });
       getAccountDeletionRequest().then((r) => {
-        if (r.ok && r.data?.pending) setDeletionScheduledAt(r.data.scheduledAt ?? '');
+        if (r.ok && r.data?.pending) { setDeletionScheduledAt(r.data.scheduledAt ?? ''); setSelfRecoverableUntil(r.data.selfRecoverableUntil); }
       });
     });
   }, []);
@@ -115,7 +115,7 @@ export default function Settings() {
   async function handleDeactivate() {
     Alert.alert(
       'Deactivate account?',
-      'Your profile will be hidden from other users. You can reactivate by signing back in.',
+      'Your profile will be hidden. You can sign in and choose Reactivate account within one year of deactivating. After that, contact an admin for help.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -147,7 +147,7 @@ export default function Settings() {
             const directive = applyReactivateResult(res);
             if (directive.type === 'success') {
               setAccountStatus(directive.nextStatus);
-              Alert.alert('Account reactivated', 'Your profile is now visible to other users.');
+              Alert.alert('Account reactivated', 'Your account is active again. Your privacy settings still apply.');
             } else {
               Alert.alert('Error', directive.message);
             }
@@ -160,7 +160,7 @@ export default function Settings() {
   async function handleRequestDeletion() {
     Alert.alert(
       'Request account deletion?',
-      'Your account will be permanently deleted within 30 days. This cannot be undone.',
+      'Your profile will be hidden. You can recover it for 90 days, unless an admin permanently deletes it. Admin recovery remains available after 90 days until permanent deletion.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -172,9 +172,10 @@ export default function Settings() {
               // The server hides the account while the deletion is pending.
               setAccountStatus('deactivated');
               setDeletionScheduledAt(scheduledAt ?? '');
+              setSelfRecoverableUntil(res.data?.selfRecoverableUntil ?? null);
               Alert.alert(
-                'Deletion scheduled',
-                `Your account is hidden now and will be deleted${scheduledAt ? ` on ${formatDeletionDate(scheduledAt)}` : ' within 30 days'}. You can cancel any time before then here in Settings.`,
+                'Profile deleted',
+                'Your profile is hidden. You can recover it here for 90 days while it remains available. It is retained until an admin permanently deletes it.',
               );
             } else {
               Alert.alert('Error', res.message ?? 'Could not submit request. Try again.');
@@ -187,18 +188,19 @@ export default function Settings() {
 
   async function handleCancelDeletion() {
     Alert.alert(
-      'Cancel account deletion?',
-      'Your account will stay, and your profile will be visible to other users again.',
+      'Recover your profile?',
+      'Restore your profile to its previous state. Existing moderation restrictions still apply.',
       [
         { text: 'Keep deletion', style: 'cancel' },
         {
-          text: 'Cancel deletion',
+          text: 'Recover profile',
           onPress: async () => {
             const res = await cancelAccountDeletion();
             if (res.ok) {
               setDeletionScheduledAt(null);
-              setAccountStatus('active');
-              Alert.alert('Deletion cancelled', 'Your account is active again.');
+              setAccountStatus(res.data?.accountStatus ?? 'deactivated');
+              setSelfRecoverableUntil(null);
+              Alert.alert('Profile recovered', 'Your profile has been restored to its previous state.');
             } else {
               Alert.alert('Error', res.message ?? 'Could not cancel the deletion. Try again.');
             }
@@ -652,14 +654,15 @@ export default function Settings() {
                 <Pressable
                   style={({ pressed }) => [styles.row, pressed && { opacity: layout.pressedOpacity }]}
                   onPress={handleCancelDeletion}
+                  disabled={!selfRecoverableUntil || Date.parse(selfRecoverableUntil) <= Date.now()}
                   accessibilityRole="button"
-                  accessibilityLabel="Cancel account deletion"
+                  accessibilityLabel="Recover deleted profile"
                 >
-                  <Text style={[styles.item, { color: color.success }]}>Cancel account deletion</Text>
+                  <Text style={[styles.item, { color: color.success }]}>Recover deleted profile</Text>
                   <Text style={styles.sectionDesc}>
-                    {deletionScheduledAt
-                      ? `Your account is hidden and will be deleted on ${formatDeletionDate(deletionScheduledAt)}.`
-                      : 'Your account is hidden and scheduled for deletion.'}
+                    {selfRecoverableUntil && Date.parse(selfRecoverableUntil) > Date.now()
+                      ? `Recover your profile until ${formatDeletionDate(selfRecoverableUntil)}, unless it is permanently deleted by an admin.`
+                      : 'Contact an admin about recovery. Only an admin can permanently delete your retained profile.'}
                   </Text>
                 </Pressable>
               ) : (

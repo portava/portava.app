@@ -6,7 +6,7 @@
  *
  * Shared between StampButton and any custom stamp surface.
  */
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { stampEntity, unstampEntity } from '../services/stamps.ts'; import { stepCount } from '../lib/unreadCount.ts';
 
 export interface UseStampOptions {
@@ -41,42 +41,51 @@ export function useStamp({
   const [isStamped, setIsStamped] = useState(initialIsStamped);
   const [isLoading, setIsLoading] = useState(false);
 
-  const toggle = useCallback(async () => {
-    if (isLoading) return { isStamped, count };
-    setIsLoading(true);
+  const key = `${entityType}:${entityId}`;
+  const active = useRef({ key, generation: 0 });
+  const inFlight = useRef<Promise<{ isStamped: boolean; count: number | null }> | null>(null);
+  if (active.current.key !== key) {
+    active.current = { key, generation: active.current.generation + 1 };
+    inFlight.current = null;
+  }
+  useEffect(() => {
+    setCount(initialCount); setIsStamped(initialIsStamped); setIsLoading(false);
+    // Reset only when the entity changes; an optimistic count owns this entity until settled.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  useEffect(() => () => { active.current.generation += 1; inFlight.current = null; }, []);
 
+  const toggle = useCallback(() => {
+    // The ref closes the same-render double-tap gap before React commits loading.
+    if (inFlight.current) return inFlight.current;
+    const generation = active.current.generation;
+    const current = () => active.current.key === key && active.current.generation === generation;
     const wasStamped = isStamped;
-    const prevCount  = count;
-    const optimisticIsStamped = !wasStamped;
-    const optimisticCount = stepCount(prevCount, !wasStamped);
-
-    // Optimistic update
-    setIsStamped(optimisticIsStamped);
-    setCount(optimisticCount);
-
-    try {
-      const result = wasStamped
-        ? await unstampEntity(entityType, entityId)
-        : await stampEntity(entityType, entityId);
-
-      if (result.ok) {
-        setIsStamped(result.data.isStamped);
-        setCount(result.data.count);
-        return result.data;
-      } else {
-        // Server rejected — roll back silently
-        setIsStamped(wasStamped);
-        setCount(prevCount);
+    const prevCount = count;
+    setIsLoading(true);
+    setIsStamped(!wasStamped);
+    setCount(stepCount(prevCount, !wasStamped));
+    const work = (async () => {
+      try {
+        const result = wasStamped
+          ? await unstampEntity(entityType, entityId)
+          : await stampEntity(entityType, entityId);
+        if (result.ok) {
+          if (current()) { setIsStamped(result.data.isStamped); setCount(result.data.count); }
+          return result.data;
+        }
+        if (current()) { setIsStamped(wasStamped); setCount(prevCount); }
         return { isStamped: wasStamped, count: prevCount };
+      } catch {
+        if (current()) { setIsStamped(wasStamped); setCount(prevCount); }
+        return { isStamped: wasStamped, count: prevCount };
+      } finally {
+        if (current()) { setIsLoading(false); inFlight.current = null; }
       }
-    } catch {
-      setIsStamped(wasStamped);
-      setCount(prevCount);
-      return { isStamped: wasStamped, count: prevCount };
-    } finally {
-      setIsLoading(false);
-    }
-  }, [isLoading, isStamped, count, entityType, entityId]);
+    })();
+    inFlight.current = work;
+    return work;
+  }, [isStamped, count, entityType, entityId, key]);
 
   return { count, isStamped, isLoading, toggle };
 }

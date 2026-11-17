@@ -1993,7 +1993,7 @@
     },
     {
       "file": "src/services/airport/LayoverCompassAssistant.ts",
-      "line": 1475,
+      "line": 1476,
       "via": null,
       "kind": "table",
       "method": "from",
@@ -2002,7 +2002,7 @@
     },
     {
       "file": "src/services/airport/LayoverCompassAssistant.ts",
-      "line": 1475,
+      "line": 1476,
       "via": null,
       "kind": "select",
       "method": "select",
@@ -2011,7 +2011,7 @@
     },
     {
       "file": "src/services/airport/LayoverCompassAssistant.ts",
-      "line": 1475,
+      "line": 1476,
       "via": null,
       "kind": "select",
       "method": "select",
@@ -2020,7 +2020,7 @@
     },
     {
       "file": "src/services/airport/LayoverCompassAssistant.ts",
-      "line": 1475,
+      "line": 1476,
       "via": null,
       "kind": "select",
       "method": "select",
@@ -2029,7 +2029,7 @@
     },
     {
       "file": "src/services/airport/LayoverCompassAssistant.ts",
-      "line": 1475,
+      "line": 1476,
       "via": null,
       "kind": "select",
       "method": "select",
@@ -12397,7 +12397,7 @@
     },
     {
       "file": "src/services/airport/LayoverCompassAssistant.ts",
-      "line": 1475,
+      "line": 1476,
       "via": null,
       "kind": "filter",
       "method": "order",
@@ -12406,7 +12406,7 @@
     },
     {
       "file": "src/services/airport/LayoverCompassAssistant.ts",
-      "line": 1475,
+      "line": 1476,
       "via": null,
       "kind": "filter",
       "method": "eq",
@@ -12415,7 +12415,7 @@
     },
     {
       "file": "src/services/airport/LayoverCompassAssistant.ts",
-      "line": 1475,
+      "line": 1476,
       "via": null,
       "kind": "filter",
       "method": "eq",
@@ -12424,7 +12424,7 @@
     },
     {
       "file": "src/services/airport/LayoverCompassAssistant.ts",
-      "line": 1475,
+      "line": 1476,
       "via": null,
       "kind": "filter",
       "method": "eq",
@@ -19842,7 +19842,7 @@
     },
     {
       "file": "src/services/airport/LayoverCompassAssistant.ts",
-      "line": 1475,
+      "line": 1476,
       "via": null,
       "table": "notifications",
       "variants": [

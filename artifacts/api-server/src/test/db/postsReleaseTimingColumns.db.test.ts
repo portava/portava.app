@@ -37,19 +37,23 @@
  *   R6  the precondition refuses states nobody wrote down (a client grant by a
  *       non-owner grantor included), and a second apply.
  */
-import { describe, it, before, after } from "node:test";
+import { describe, it, before, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HAVE_DB, exec, psql, rows, scalar, seedUser, deleteUser } from "./localDb.js";
+import { HAVE_DB, exec, psql, rows, scalar, seedUser, deleteUser, cleanupSyntheticMedia } from "./localDb.js";
 import { isAssertionOnlyDoBlock, isPreconditionDoBlock, topLevelStatements } from "../../scripts/lib/migrationSqlBlocks.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 // The historical migrations deliberately reject any column they have never
 // classified. Replay them on their original table shape inside ROLLBACK.
-const HISTORICAL_POSTS = "ALTER TABLE public.posts DROP COLUMN IF EXISTS post_reference_id;";
+const POSTCARD_PRIVATE_COLUMNS = ["postcard_draft_state", "postcard_requested_visibility", "postcard_draft_operation_id", "postcard_publish_on_complete", "postcard_cleanup_pending", "composer_upload_operation_id", "composer_publication_operation_id"];
+// 4038's update trigger depends on a later column. Remove it only within
+// the historical transaction; afterEach proves the complete catalog returns.
+const HISTORICAL_POSTS = "DROP TRIGGER IF EXISTS postcard_assets_withdrawn ON public.posts;\n" + ["post_reference_id", ...POSTCARD_PRIVATE_COLUMNS]
+  .map(column => `ALTER TABLE public.posts DROP COLUMN IF EXISTS ${column};`).join("\n");
 const MIGRATION = resolve(__dir, "../../migrations/3801_posts_release_timing_columns_withheld.sql");
 const ROLLBACK = resolve(__dir, "../../../../../db/rollback/2026-10-08-3801-posts-release-timing-columns-withheld-rollback.sql");
 const M3362 = resolve(__dir, "../../migrations/3362_posts_client_column_grants.sql");
@@ -148,6 +152,7 @@ function precondition(path: string): string {
 }
 
 const SNAPSHOT = `SELECT json_build_object(
+  'triggers', (SELECT json_agg(json_build_array(tgname, tgenabled, pg_get_triggerdef(oid)) ORDER BY tgname) FROM pg_trigger WHERE tgrelid='public.posts'::regclass AND NOT tgisinternal),
   'relacl', (SELECT relacl::text FROM pg_class WHERE oid = 'public.posts'::regclass),
   'attacl', (SELECT json_object_agg(attname, attacl::text ORDER BY attnum) FROM pg_attribute
               WHERE attrelid = 'public.posts'::regclass AND attnum > 0 AND NOT attisdropped),
@@ -157,7 +162,10 @@ const SNAPSHOT = `SELECT json_build_object(
 const snaps = (out: string[]) => out.filter((l) => l.startsWith("{")).map((l) => JSON.parse(l));
 
 describe("census-media §50.16 — 3801: no client role reads when a post was released", { skip: !HAVE_DB }, () => {
+  let originalCatalog: string;
+  afterEach(() => assert.equal(exec(SNAPSHOT)[0], originalCatalog, 'historical rehearsal must restore current columns, grants, policies and enabled triggers'));
   before(() => {
+    originalCatalog = exec(SNAPSHOT)[0]!;
     A = seedUser("n2bauthor");
     S = seedUser("n2bstranger");
     DELAYED = randomUUID();
@@ -183,8 +191,8 @@ describe("census-media §50.16 — 3801: no client role reads when a post was re
 
   after(() => {
     if (!A) return;
-    exec(`DELETE FROM public.post_media WHERE user_id IN ('${A}', '${S}');
-          DELETE FROM public.posts WHERE author_id IN ('${A}', '${S}');`);
+    cleanupSyntheticMedia([A, S].filter(Boolean));
+    exec(`DELETE FROM public.posts WHERE author_id IN ('${A}', '${S}');`);
     for (const u of [A, S]) if (u) deleteUser(u);
   });
 
@@ -330,7 +338,7 @@ describe("census-media §50.16 — 3801: no client role reads when a post was re
     refuse(`${unwrapped(ROLLBACK)}\n${unwrapped(RB3362)}\nREVOKE SELECT ON TABLE public.posts FROM anon;\nGRANT SELECT ON TABLE public.posts TO anon WITH GRANT OPTION;`, /anon:SELECT\+grant/);
     // A client grant made by a role other than the table owner: this file's REVOKE would not remove it.
     const g = `n2b_grantor_${randomUUID().slice(0, 8)}`;
-    refuse(`${unwrapped(ROLLBACK)}\nCREATE ROLE ${g};\nGRANT SELECT ON TABLE public.posts TO ${g} WITH GRANT OPTION;\nSET LOCAL ROLE ${g};\nGRANT SELECT (content) ON TABLE public.posts TO anon;\nRESET ROLE;`,
+    refuse(`${unwrapped(ROLLBACK)}\nCREATE ROLE ${g};\nGRANT USAGE ON SCHEMA public TO ${g};\nGRANT SELECT ON TABLE public.posts TO ${g} WITH GRANT OPTION;\nSET LOCAL ROLE ${g};\nGRANT SELECT (content) ON TABLE public.posts TO anon;\nRESET ROLE;`,
       new RegExp(`a client privilege on posts was granted by ${g} rather than the table owner`));
     // And from 3362's exact end state, the precondition passes (control).
     const ok = psql(`BEGIN;\n${HISTORICAL_POSTS}\n${unwrapped(ROLLBACK)}\n${pre}\nROLLBACK;`);

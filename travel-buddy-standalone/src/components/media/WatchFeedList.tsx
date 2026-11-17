@@ -48,6 +48,8 @@ import type { MediaFeedItem } from '../../types/media.ts';
 import { color, radius, avatar, dot} from '../../theme/tokens.ts';
 import { usePlanPicker } from '../PlanPickerController.tsx';
 import { Share } from 'react-native';
+import { isPrivateMediaRefOf } from '../../services/playbackUri.ts';
+import { hydratedMediaSource } from '../../services/mediaRequestSource.ts';
 
 const { height: SCREEN_H, width: SCREEN_W } = Dimensions.get('window');
 const MUTE_KEY = 'media:muted';
@@ -62,6 +64,7 @@ const VIEWABILITY_CONFIG = {
 // ── Per-cell gesture + progress wrapper ───────────────────────────────────────
 
 interface CellWrapperProps {
+  sessionId?: string;
   item: MediaFeedItem;
   isActive: boolean;
   playbackEligible: boolean;
@@ -78,6 +81,7 @@ interface CellWrapperProps {
 }
 
 const CellWrapper = React.memo(function CellWrapper({
+  sessionId,
   item,
   isActive,
   playbackEligible,
@@ -362,6 +366,8 @@ const CellWrapper = React.memo(function CellWrapper({
       <WatchVideoCell
         ref={cellVideoHandle}
         id={item.id}
+        sessionId={sessionId}
+        observationEligible={!isScrubbing}
         videoUrl={item.videoUrl}
         posterUrl={item.posterUrl}
         isActive={effectiveActive}
@@ -464,6 +470,7 @@ const CellWrapper = React.memo(function CellWrapper({
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 export interface WatchFeedListProps {
+  sessionId?: string;
   /** Roam plays the current video as soon as it becomes visible. */
   autoplayOnView?: boolean;
   items: MediaFeedItem[];
@@ -481,6 +488,7 @@ export interface WatchFeedListProps {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function WatchFeedList({
+  sessionId,
   autoplayOnView = false,
   items,
   activeIndex,
@@ -525,7 +533,7 @@ export function WatchFeedList({
     // Prefetch poster images for the next 2 items whenever the active item changes.
     const nextItems = items.slice(activeIndex + 1, activeIndex + 3);
     for (const ni of nextItems) {
-      if (ni.posterUrl) {
+      if (ni.posterUrl && !isPrivateMediaRefOf(ni.posterUrl) && hydratedMediaSource(ni.posterUrl)) {
         Image.prefetch(ni.posterUrl).catch(() => {});
       }
     }
@@ -561,6 +569,7 @@ export function WatchFeedList({
   const renderItem = useCallback(
     ({ item, index }: { item: MediaFeedItem; index: number }) => (
       <CellWrapper
+        sessionId={sessionId}
         item={item}
         isActive={hasVisibleItem && index === activeIndex}
         playbackEligible={playback.playbackEligible}
@@ -575,7 +584,7 @@ export function WatchFeedList({
         showSwipeHint={showSwipeHint} tapToPlay={tapToPlay}
       />
     ),
-    [activeIndex, hasVisibleItem, isMuted, currentUserId, onComment, onSave, onMore,
+    [sessionId, activeIndex, hasVisibleItem, isMuted, currentUserId, onComment, onSave, onMore,
       playback.registerRef, playback.unregisterRef, playback.playbackEligible, savedSet,
       showSwipeHint, tapToPlay],
   );

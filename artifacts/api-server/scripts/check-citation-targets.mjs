@@ -647,7 +647,7 @@ import {
  * vocabulary) had drifted the same way and were anchored onto their claims
  * too. Every other line of the list is the same pointer at a shifted line.
  * Same rule as above. */
-export const MAX_DEAD_TARGETS = 150; // RATCHETED 2026-10-19 152 -> 150: six reviewed Layover citations now name the actual declaration/decision and its semantic anchor.
+export const MAX_DEAD_TARGETS = 145; // RATCHETED 2026-11-14 149 -> 145: reviewed Media playback, seek, mute, endpoint and rank-event writer citations now carry their current semantic anchors.
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set([

@@ -1,33 +1,25 @@
-/**
- * MD385 / D-26j — a Memory item made from the caller's OWN post: migration 3999
- * executed in PGlite, and POST /api/memories/:id/items/from-post over it.
- *
- * census-media MD385 ("Memory / Postcard created"); lead ruling D-26j: "from
- * their own media only. The server checks that the person owns the source post."
- *
- * The database is real SQL (3999 applied to PGlite, every statement as
- * service_role with BYPASSRLS, as on Supabase). `memory_kernel_execute` is a
- * stub of 2711's ADD_MEDIA / REMOVE_MEDIA arms — the five columns it writes and
- * nothing else — so the kernel-on path's link-or-remove is exercised against
- * the real trigger.
- *
- * Run (from artifacts/api-server):
- *   DISCOVERY_PGLITE_MODULE=<repo>/node_modules/.pnpm/@electric-sql+pglite@0.2.17/node_modules/@electric-sql/pglite/dist/index.js \
- *   node --import tsx/esm --test src/test/memoryFromOwnMedia.pglite.test.ts
+/** MD385 / D-26j historical migration contract and incomplete-schema refusal.
+ * The live writer and HTTP successes are verified in memoryCaptureUpload.db.test.ts.
+ * Historical guard, uniqueness, cascade, and split/merge behavior use unchanged
+ * migration bodies on the designated reusable PostgreSQL database, with savepoints.
+ * Run through test:memory-own-media-sql; no PGlite or database clones are created.
  */
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { readFileSync } from "node:fs";
 import http from "node:http";
-import { pathToFileURL } from "node:url";
+import { Client } from "pg";
+import { openSnapshotLease } from "./db/pressedSnapshot.js";
+import { pressedPostgresServer } from "./db/pressedPostgres.js";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import memoriesRouter from "../routes/memories.js";
-import { gateMemoryFromOwnMedia, memoryItemMediaTypeFor } from "../services/memory/memoryFromOwnMedia.js";
+import { gateMemoryFromOwnMedia, resolveOwnPostMedia } from "../services/memory/memoryFromOwnMedia.js";
 
-const modulePath = process.env.DISCOVERY_PGLITE_MODULE ?? import.meta.resolve("@electric-sql/pglite");
+const reusableTarget = process.env.LOCAL_DB_URL;
 const migration = readFileSync(new URL("../migrations/3999_memory_items_source_post.sql", import.meta.url), "utf8");
 
+describe("MD385 own-media historical SQL and deployment contract", {skip:!reusableTarget,concurrency:1},()=>{
 const ME = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const OTHER = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const MY_MEMORY = "10000000-0000-4000-8000-000000000001";
@@ -52,7 +44,7 @@ const ident = (s: string) => { assert.match(s, IDENT, s); return s; };
 const cols = (s?: string) => (!s || s.trim() === "*" ? "*"
   : s.replace(/[a-z_]+(![a-z_]+)?\([^)]*\)/g, "").split(",").map((c) => c.trim()).filter(Boolean).map(ident).join(", "));
 
-/** A PostgREST-shaped client over PGlite, as service_role. */
+/** Historical partial-schema transport, as service_role. */
 function pgClient(db: Database) {
   async function asService<T>(fn: () => Promise<T>): Promise<T> {
     await db.exec("SET ROLE service_role");
@@ -118,7 +110,6 @@ function pgClient(db: Database) {
 }
 
 const BASE_SCHEMA = `
-  CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;
   CREATE TABLE public.feature_flags (flag text PRIMARY KEY, enabled boolean NOT NULL DEFAULT false, description text);
   CREATE TABLE public.memories (id uuid PRIMARY KEY, owner_id uuid NOT NULL, state text NOT NULL DEFAULT 'published',
     visibility text NOT NULL DEFAULT 'only_me', trip_id uuid, allowed_user_ids uuid[] NOT NULL DEFAULT '{}',
@@ -126,7 +117,7 @@ const BASE_SCHEMA = `
   CREATE TABLE public.posts (id uuid PRIMARY KEY, author_id uuid NOT NULL, status text NOT NULL DEFAULT 'active',
     deleted_at timestamptz, media_urls text[] NOT NULL DEFAULT '{}', media_type text);
   CREATE TABLE public.media_assets (id uuid PRIMARY KEY, owner_user_id uuid, storage_bucket text, storage_path text, moderation_status text, deleted_at timestamptz);
-  CREATE TABLE public.post_media (post_id uuid, storage_path text, moderation_status text, processing_status text);
+  CREATE TABLE public.post_media (post_id uuid, storage_path text, moderation_status text, processing_status text, deleted_at timestamptz);
   CREATE TABLE public.post_media_moderation_ledger (storage_path text, verdict text);
   CREATE TABLE public.stories (owner_id uuid, media_url text, state text, expires_at timestamptz, deleted_at timestamptz, saved_to_highlight_id uuid);
   CREATE TABLE public.memory_items (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), memory_id uuid NOT NULL REFERENCES public.memories(id) ON DELETE CASCADE,
@@ -140,38 +131,50 @@ const BASE_SCHEMA = `
   GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
 `;
 
-/** 2711's ADD_MEDIA and REMOVE_MEDIA arms, reduced to what they write: no source link. */
-const KERNEL_STUB = `
-  CREATE OR REPLACE FUNCTION public.memory_kernel_execute(p_command jsonb) RETURNS jsonb LANGUAGE plpgsql AS $k$
-  DECLARE v_item public.memory_items; v_write jsonb := p_command->'payload'->'write';
-  BEGIN
-    IF p_command->>'type' = 'ADD_MEDIA' THEN
-      INSERT INTO public.memory_items (memory_id, media_url, media_type, caption, position)
-      VALUES ((p_command->>'memory_id')::uuid, v_write->>'media_url', coalesce(v_write->>'media_type', 'image/jpeg'),
-              v_write->>'caption', coalesce((v_write->>'position')::integer, 0))
-      RETURNING * INTO v_item;
-      RETURN jsonb_build_object('ok', true, 'memory_id', p_command->>'memory_id', 'event_id', gen_random_uuid(),
-        'event_type', 'memory.corrected', 'result', to_jsonb(v_item), 'contract_version', 1);
-    ELSIF p_command->>'type' = 'REMOVE_MEDIA' THEN
-      DELETE FROM public.memory_items WHERE id = (p_command->'payload'->>'item_id')::uuid AND memory_id = (p_command->>'memory_id')::uuid;
-      RETURN jsonb_build_object('ok', true, 'memory_id', p_command->>'memory_id', 'event_id', gen_random_uuid(),
-        'event_type', 'memory.corrected', 'result', jsonb_build_object('id', p_command->'payload'->>'item_id'), 'contract_version', 1);
-    END IF;
-    RETURN jsonb_build_object('ok', false, 'reason', 'UNSUPPORTED');
-  END $k$;
-  GRANT EXECUTE ON FUNCTION public.memory_kernel_execute(jsonb) TO service_role;
-`;
-
-async function newDb(withMigration: boolean): Promise<Database> {
-  const runtime = await import(modulePath.startsWith("file:") ? modulePath : pathToFileURL(modulePath).href);
-  const db = new runtime.PGlite() as Database;
-  await db.exec(BASE_SCHEMA);
-  if (withMigration) await db.exec(migration);
-  await db.exec(KERNEL_STUB);
-  return db;
+// All historical schemas run on the one designated database under its existing
+// verified snapshot lease. Nested fixtures use savepoints, not database clones.
+let connection:Client,lease:Awaited<ReturnType<typeof openSnapshotLease>>|undefined;
+let fixtureSequence=0,statementSequence=0;
+let requests:Promise<unknown>=Promise.resolve();
+before(async()=>{
+  if(!reusableTarget)return;
+  const target=pressedPostgresServer(reusableTarget);connection=new Client({connectionString:target.toString()});
+  await connection.connect();
+  try{lease=await openSnapshotLease(connection,target);await lease.clear();await connection.query('BEGIN');}
+  catch(error){try{await lease?.restore();}finally{await connection.end();}throw error;}
+});
+after(async()=>{
+  if(!lease)return;
+  _setTestClient(null,false);
+  try{await requests;await connection.query('ROLLBACK');await lease.restore();}finally{await connection.end();}
+});
+function query(sql:string,parameters:unknown[]=[]):Promise<{rows:Record<string,unknown>[]}>{
+  const request=requests.then(async()=>{
+    const savepoint=`own_media_statement_${++statementSequence}`;
+    await connection.query(`SAVEPOINT ${savepoint}`);
+    try{const result=await connection.query(sql,parameters);await connection.query(`RELEASE SAVEPOINT ${savepoint}`);
+      return Array.isArray(result)?result[result.length-1]! : result;
+    }catch(error){await connection.query(`ROLLBACK TO SAVEPOINT ${savepoint}; RELEASE SAVEPOINT ${savepoint}`);throw error;}
+  });
+  requests=request.catch(()=>{});return request;
+}
+async function newDb(withMigration:boolean):Promise<Database>{
+  await requests;
+  const savepoint=`own_media_fixture_${++fixtureSequence}`;
+  await connection.query(`SAVEPOINT ${savepoint}`);
+  const db:Database={
+    // These historical migrations are exercised inside the fixture transaction;
+    // only their top-level transaction delimiters are removed. Their SQL bodies
+    // and postconditions remain unchanged.
+    exec:sql=>query(sql.replace(/^(?:BEGIN|COMMIT);[ \t]*$/gm,'')),
+    query:async<Row=Record<string,unknown>>(sql:string,parameters:unknown[]=[])=>({rows:(await query(sql,parameters)).rows as Row[]}),
+    close:async()=>{await requests;await connection.query(`ROLLBACK TO SAVEPOINT ${savepoint}; RELEASE SAVEPOINT ${savepoint}`);},
+  };
+  await db.exec('DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public AUTHORIZATION postgres');
+  await db.exec(BASE_SCHEMA);if(withMigration)await db.exec(migration);return db;
 }
 
-describe("MD385 — migration 3999 in PGlite, and POST /memories/:id/items/from-post over it", { concurrency: 1 }, () => {
+describe("MD385 historical source-post guards and incomplete-deployment refusal (reusable PostgreSQL)", { concurrency: 1, skip: !reusableTarget }, () => {
   let db: Database;
   let base = "";
   let server: http.Server;
@@ -277,13 +280,15 @@ describe("MD385 — migration 3999 in PGlite, and POST /memories/:id/items/from-
 
   it("terminally removed canonical or legacy media cannot be newly copied into a Memory", async () => {
     const path = `${ME}/a.jpg`;
+    const available=await resolveOwnPostMedia(pgClient(db),{viewerId:ME,postId:MY_POST,mediaIndex:0});
+    assert.equal(available.ok,true,JSON.stringify(available)); // paired live source: a missing reader column cannot make the refusals pass
     for (const status of ['removed', 'owner_deleted', 'rejected']) {
       await db.query(`INSERT INTO public.media_assets VALUES (gen_random_uuid(), $1, 'post-media', $2, $3, NULL)`, [ME, path, status]);
       const r = await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: MY_POST });
       assert.equal(r.status, 404, JSON.stringify(r.body));
       await db.exec('TRUNCATE public.media_assets');
     }
-    await db.query(`INSERT INTO public.post_media VALUES ($1, $2, 'rejected', 'ready')`, [MY_POST, path]);
+    await db.query(`INSERT INTO public.post_media(post_id,storage_path,moderation_status,processing_status) VALUES ($1, $2, 'rejected', 'ready')`, [MY_POST, path]);
     assert.equal((await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: MY_POST })).status, 404);
     await db.exec('TRUNCATE public.post_media');
     await db.query(`INSERT INTO public.post_media_moderation_ledger VALUES ($1, 'rejected')`, [path]);
@@ -300,17 +305,14 @@ describe("MD385 — migration 3999 in PGlite, and POST /memories/:id/items/from-
     assert.equal((await rows("SELECT count(*)::int AS n FROM public.memory_items"))[0].n, 0);
   });
 
-  it("my own post: the item is written WITH its source link, the post's own URL, and the §44 signal", async () => {
-    const r = await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: MY_POST, mediaIndex: 1, caption: "rooftop" });
-    assert.equal(r.status, 201, JSON.stringify(r.body));
-    assert.equal(r.body.item.mediaUrl, MY_URL_1);
-    assert.equal(r.body.item.sourcePostId, MY_POST);
-    const stored = await rows(`SELECT memory_id, media_url, media_type, caption, source_post_id FROM public.memory_items`);
-    assert.deepEqual(stored, [{ memory_id: MY_MEMORY, media_url: MY_URL_1, media_type: "image/jpeg", caption: "rooftop", source_post_id: MY_POST }]);
-    await new Promise((res) => setTimeout(res, 50));
-    const events = await rows(`SELECT event_type, payload FROM public.media_events`);
-    assert.deepEqual(events.map((e) => [e.event_type, e.payload.media_id, e.payload.post_id, e.payload.viewer_id, "memory_id" in e.payload]),
-      [["memory_create", MY_POST, MY_POST, ME, false]]);
+  for(const kernel of [false,true]) it(`incomplete deployment refuses own-post creation with kernel ${kernel}`,async()=>{
+    await setFlag('memory_kernel_enabled',kernel);
+    // An external own-post URL reaches the writer prerequisite without invoking
+    // storage reads that this deliberately historical schema does not provide.
+    const r=await post(`/memories/${MY_MEMORY}/items/from-post`,ME,{postId:MY_VIDEO_POST,caption:'rooftop'});
+    assert.equal(r.status,503,JSON.stringify(r.body));assert.equal(r.body.error,'degraded_unavailable');
+    assert.deepEqual(await rows('SELECT * FROM memory_items'),[]);
+    assert.deepEqual(await rows('SELECT * FROM media_events'),[]);
   });
 
   it("someone else's post is refused, as not_found, and nothing is written or signalled", async () => {
@@ -331,37 +333,8 @@ describe("MD385 — migration 3999 in PGlite, and POST /memories/:id/items/from-
     assert.equal((await rows("SELECT count(*)::int AS n FROM public.memory_items"))[0].n, 0);
   });
 
-  it("a video post becomes a video item; the same photo twice is a conflict", async () => {
-    assert.equal((await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: MY_VIDEO_POST })).status, 201);
-    assert.equal(memoryItemMediaTypeFor("video"), "video/mp4");
-    assert.equal((await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: MY_POST })).status, 201);
-    assert.equal((await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: MY_POST })).status, 409);
-    assert.deepEqual((await rows(`SELECT media_type FROM public.memory_items ORDER BY media_type`)).map((r) => r.media_type), ["image/jpeg", "video/mp4"]);
-  });
-
-  it("kernel on: the kernel's item is linked after it is written", async () => {
-    await setFlag("memory_kernel_enabled", true);
-    const r = await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: MY_POST }, { "Idempotency-Key": "k-1" });
-    assert.equal(r.status, 201, JSON.stringify(r.body));
-    assert.deepEqual(await rows(`SELECT source_post_id FROM public.memory_items`), [{ source_post_id: MY_POST }]);
-  });
-
-  it("kernel on, and the link cannot be written: the item is removed and the request refused", async () => {
-    await setFlag("memory_kernel_enabled", true);
-    // The post's media changes between the route's read and the link write: the
-    // trigger refuses the link, so the route must not leave an unlinked copy.
-    await db.exec(`CREATE OR REPLACE FUNCTION public.zz_race() RETURNS trigger LANGUAGE plpgsql AS $r$
-      BEGIN UPDATE public.posts SET media_urls = '{}' WHERE id = NEW.source_post_id; RETURN NEW; END $r$;
-      CREATE TRIGGER aa_zz_race BEFORE UPDATE OF source_post_id ON public.memory_items FOR EACH ROW EXECUTE FUNCTION public.zz_race();`);
-    try {
-      const r = await post(`/memories/${MY_MEMORY}/items/from-post`, ME, { postId: MY_POST }, { "Idempotency-Key": "k-2" });
-      assert.equal(r.status, 503, JSON.stringify(r.body));
-      assert.equal((await rows("SELECT count(*)::int AS n FROM public.memory_items"))[0].n, 0, "no unlinked copy is left");
-    } finally {
-      await db.exec(`DROP TRIGGER aa_zz_race ON public.memory_items; DROP FUNCTION public.zz_race();`);
-    }
-  });
-
+  // Current success, media types, uniqueness, atomic source-link failure and
+  // signals are covered with the actual writer in db/memoryCaptureUpload.db.test.ts.
   it("flag ON over a database without 3999: refused before anything is read, never an unlinked write", async () => {
     const bare = await newDb(false);
     try {
@@ -423,7 +396,7 @@ const GRAPH_SCHEMA = `
   GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
 `;
 
-describe("3999's guard under re-parenting, and 3676's real split / merge applied after it", { concurrency: 1 }, () => {
+describe("3999's guard under re-parenting, and 3676's real split / merge applied after it", { concurrency: 1, skip: !reusableTarget }, () => {
   let db: Database;
   const rows = async (text: string, p: unknown[] = []) => (await db.query<any>(text, p)).rows;
   const asService = async (text: string, p: unknown[] = []) => {
@@ -545,4 +518,6 @@ describe("3999's guard under re-parenting, and 3676's real split / merge applied
     assert.equal((await item(mine)).memory_id, MY_MEMORY);
     assert.equal((await item(theirs)).memory_id, OTHER_MEMORY);
   });
+});
+
 });

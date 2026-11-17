@@ -1,3 +1,4 @@
+import './composerDraftTestRuntime.ts';
 /**
  * PulseCreate — the location-privacy choices say what the server actually does
  * (§33/§34, census-media MD321 §22).
@@ -22,7 +23,7 @@ jest.mock('../../hooks/usePosts.ts', () => ({
 
 // NOTE: intentionally exhaustive — signOut is the only session field the composer reads.
 jest.mock('../../context/SessionContext.tsx', () => ({
-  useSession: () => ({ signOut: jest.fn() }),
+  useSession: () => ({ userId: 'draft-owner', signOut: jest.fn() }),
 }));
 
 // NOTE: intentionally exhaustive — useSafeAreaInsets is the only export used.

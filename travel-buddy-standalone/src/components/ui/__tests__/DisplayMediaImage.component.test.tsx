@@ -22,6 +22,17 @@ import { Text, View } from 'react-native';
 import TestRenderer, { act } from 'react-test-renderer';
 import { DisplayMediaImage, AvatarImage } from '../DisplayMediaImage.tsx';
 
+const activeRenderers = new Set<TestRenderer.ReactTestRenderer>();
+function trackedCreate(element: React.ReactElement) {
+  const renderer = TestRenderer.create(element);
+  activeRenderers.add(renderer);
+  return renderer;
+}
+afterEach(async () => {
+  await act(async () => { for (const renderer of activeRenderers) renderer.unmount(); });
+  activeRenderers.clear();
+});
+
 // ── mediaUrl mock ─────────────────────────────────────────────────────────────
 // useHydratedMedia is re-implemented here using mockHydrateMediaUrls so tests
 // can override the resolved URL per-test without live network access.
@@ -131,7 +142,7 @@ function fireOnLoad(root: TestRenderer.ReactTestInstance) {
 
 function create(el: React.ReactElement) {
   let tr!: TestRenderer.ReactTestRenderer;
-  act(() => { tr = TestRenderer.create(el); });
+  act(() => { tr = trackedCreate(el); });
   return tr;
 }
 
@@ -317,7 +328,7 @@ describe('AvatarImage', () => {
 
     let tr!: TestRenderer.ReactTestRenderer;
     await act(async () => {
-      tr = TestRenderer.create(
+      tr = trackedCreate(
         <AvatarImage
           uri={originalUrl}
           user={{ displayName: 'Alex Kim' }}
@@ -353,7 +364,7 @@ describe('AvatarImage', () => {
 
     // Mount with URI A.
     await act(async () => {
-      tr = TestRenderer.create(<AvatarImage uri={uriA} size={40} />);
+      tr = trackedCreate(<AvatarImage uri={uriA} size={40} />);
     });
 
     // Update to URI B before A's promise resolves.
@@ -367,10 +378,9 @@ describe('AvatarImage', () => {
       await Promise.resolve();
     });
 
-    const imgs = findExpoImages(tr.root);
-    expect(imgs.length).toBeGreaterThan(0);
-    const srcAfterA = JSON.parse(imgs[0].props['data-source'] ?? 'null') as { uri: string } | null;
-    expect(srcAfterA?.uri).not.toBe(signedA);
+    // A private avatar waits for B's authorization; neither A nor an unsigned
+    // B URL may be mounted while the second request is pending.
+    expect(findExpoImages(tr.root)).toHaveLength(0);
 
     // Resolve B — should be applied.
     await act(async () => {
@@ -392,7 +402,7 @@ describe('AvatarImage', () => {
 
     let tr!: TestRenderer.ReactTestRenderer;
     await act(async () => {
-      tr = TestRenderer.create(
+      tr = trackedCreate(
         <AvatarImage
           uri={url}
           user={{ displayName: 'Sam Rivera' }}
@@ -430,7 +440,7 @@ describe('DisplayMediaImage — 403 re-hydrate sequence', () => {
 
     let tr!: TestRenderer.ReactTestRenderer;
     await act(async () => {
-      tr = TestRenderer.create(
+      tr = trackedCreate(
         <DisplayMediaImage
           uri={originalUrl}
           width={200}
@@ -480,7 +490,7 @@ describe('DisplayMediaImage — 403 re-hydrate sequence', () => {
 
     let tr!: TestRenderer.ReactTestRenderer;
     await act(async () => {
-      tr = TestRenderer.create(
+      tr = trackedCreate(
         <DisplayMediaImage
           uri={originalUrl}
           width={200}
@@ -574,5 +584,90 @@ describe('DisplayMediaImage — hydrateMediaUrls loading (auth-window)', () => {
     expect(textContent(tr.root)).toContain('Load failed');
     // ExpoImage is unmounted (error phase) — no broken-image box
     expect(findExpoImages(tr.root).length).toBe(0);
+  });
+});
+
+// Races exercise the real source/viewer lifecycle; only signing and native image
+// events are substituted. No old request may set a recycled tile's source.
+import { _resetDiscoveryViewerScopeForTests, setDiscoveryViewerFromSession } from '../../../services/discoveryViewerScope.ts';
+
+describe('media render ownership and bounded recovery', () => {
+  let tree: TestRenderer.ReactTestRenderer | null = null;
+  const uriA = 'post-media/alice/a.jpg';
+  const uriB = 'post-media/alice/b.jpg';
+  beforeEach(() => { jest.useFakeTimers(); _resetDiscoveryViewerScopeForTests(); });
+  afterEach(async () => {
+    await act(async () => { tree?.unmount(); }); tree = null;
+    jest.useRealTimers();
+  });
+  const mount = async (uri: string, onError = jest.fn()) => {
+    await act(async () => { tree = trackedCreate(<DisplayMediaImage uri={uri} width={180} height={180} onError={onError} />); });
+  };
+
+  it('waits for private media authorization instead of mounting an unsigned path', async () => {
+    let resolve!: (value: Record<string, string | null>) => void;
+    mockHydrateMediaUrls.mockImplementationOnce(() => new Promise(r => { resolve = r; }));
+    await mount(uriA);
+    expect(findExpoImages(tree!.root)).toHaveLength(0);
+    await act(async () => { resolve({ [uriA]: 'https://storage.test/authorized' }); });
+    expect(findExpoImages(tree!.root)[0].props['data-source']).toContain('authorized');
+  });
+
+  it('late re-signing and native load events from A cannot change recycled tile B', async () => {
+    let resolveA!: (value: Record<string, string | null>) => void;
+    mockHydrateMediaUrls.mockResolvedValueOnce({ [uriA]: 'https://storage.test/old-a' })
+      .mockImplementationOnce(() => new Promise(r => { resolveA = r; }))
+      .mockResolvedValueOnce({ [uriB]: 'https://storage.test/current-b' });
+    const onLoad = jest.fn();
+    await act(async () => { tree = trackedCreate(<DisplayMediaImage uri={uriA} width={180} height={180} onLoad={onLoad} />); });
+    const old = findExpoImages(tree!.root)[0].props;
+    await act(async () => { old['data-on-error'](); });
+    await act(async () => { tree!.update(<DisplayMediaImage uri={uriB} width={180} height={180} onLoad={onLoad} />); });
+    await act(async () => { resolveA({ [uriA]: 'https://storage.test/late-a' }); old['data-on-load'](); });
+    expect(findExpoImages(tree!.root)[0].props['data-source']).toContain('current-b');
+    expect(onLoad).not.toHaveBeenCalled();
+  });
+
+  it('account replacement removes the old private image and ignores its pending retry', async () => {
+    let resolveA!: (value: Record<string, string | null>) => void;
+    let resolveB!: (value: Record<string, string | null>) => void;
+    mockHydrateMediaUrls.mockResolvedValueOnce({ [uriA]: 'https://storage.test/alice' })
+      .mockImplementationOnce(() => new Promise(r => { resolveA = r; }))
+      .mockImplementationOnce(() => new Promise(r => { resolveB = r; }));
+    await mount(uriA);
+    await act(async () => { findExpoImages(tree!.root)[0].props['data-on-error'](); });
+    await act(async () => { setDiscoveryViewerFromSession('bob'); });
+    expect(findExpoImages(tree!.root)).toHaveLength(0);
+    await act(async () => { resolveA({ [uriA]: 'https://storage.test/late-alice' }); });
+    expect(findExpoImages(tree!.root)).toHaveLength(0);
+    await act(async () => { resolveB({ [uriA]: null }); });
+    expect(textContent(tree!.root)).toContain('Image unavailable');
+  });
+
+  it('a stalled image becomes retryable after 12 seconds and an explicit retry can recover', async () => {
+    let resolveOld!: (value: Record<string, string | null>) => void;
+    const onError = jest.fn();
+    mockHydrateMediaUrls.mockImplementationOnce(() => new Promise(r => { resolveOld = r; }))
+      .mockResolvedValueOnce({ [uriA]: 'https://storage.test/retry' });
+    await mount(uriA, onError);
+    await act(async () => { await jest.advanceTimersByTimeAsync(12_000); });
+    expect(textContent(tree!.root)).toContain('Image unavailable');
+    expect(onError).toHaveBeenCalledTimes(1);
+    await act(async () => { resolveOld({ [uriA]: 'https://storage.test/too-late' }); });
+    expect(findExpoImages(tree!.root)).toHaveLength(0);
+    await act(async () => { tree!.root.findAllByProps({ accessibilityLabel: 'Retry image' })[0].props.onPress(); });
+    expect(findExpoImages(tree!.root)[0].props['data-source']).toContain('retry');
+    await act(async () => { findExpoImages(tree!.root)[0].props['data-on-load'](); });
+    expect(textContent(tree!.root)).not.toContain('Image unavailable');
+  });
+
+  it('a rejected re-sign promise is handled once and cannot leave a skeleton indefinitely', async () => {
+    const onError = jest.fn();
+    mockHydrateMediaUrls.mockResolvedValueOnce({ [uriA]: 'https://storage.test/expired' })
+      .mockRejectedValueOnce(new Error('network reset'));
+    await mount(uriA, onError);
+    await act(async () => { findExpoImages(tree!.root)[0].props['data-on-error'](); });
+    expect(textContent(tree!.root)).toContain('Image unavailable');
+    expect(onError).toHaveBeenCalledTimes(1);
   });
 });

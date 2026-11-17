@@ -5,6 +5,9 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
+  expo-image-picker@17.0.11:
+    hash: ce25bed405ffc149f7033f628134152819ff40ba4aa9d0f8384e8d6dd8371282
+    path: patches/expo-image-picker@17.0.11.patch
   react-native-reanimated@4.1.7:
     hash: 346aeddf48600d37f004bc5b45801b8cd506cd23115341a76c0c88bbed2e1e4a
     path: patches/react-native-reanimated@4.1.7.patch
@@ -105,7 +108,7 @@ importers:
         version: 14.0.8(expo@54.0.35)
       expo-image-picker:
         specifier: ~17.0.9
-        version: 17.0.11(expo@54.0.35)
+        version: 17.0.11(patch_hash=ce25bed405ffc149f7033f628134152819ff40ba4aa9d0f8384e8d6dd8371282)(expo@54.0.35)
       expo-linear-gradient:
         specifier: ~15.0.8
         version: 15.0.8(expo@54.0.35)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
@@ -8871,7 +8874,7 @@ snapshots:
       expo: 54.0.35(@babel/core@7.29.7)(@expo/metro-runtime@6.1.2)(expo-router@6.0.24)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)(typescript@5.9.3)
       expo-image-loader: 6.0.0(expo@54.0.35)
 
-  expo-image-picker@17.0.11(expo@54.0.35):
+  expo-image-picker@17.0.11(patch_hash=ce25bed405ffc149f7033f628134152819ff40ba4aa9d0f8384e8d6dd8371282)(expo@54.0.35):
     dependencies:
       expo: 54.0.35(@babel/core@7.29.7)(@expo/metro-runtime@6.1.2)(expo-router@6.0.24)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)(typescript@5.9.3)
       expo-image-loader: 6.0.0(expo@54.0.35)

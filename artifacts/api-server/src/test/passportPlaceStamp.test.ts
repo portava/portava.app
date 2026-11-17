@@ -33,7 +33,7 @@ const BAR = "place-bar";
 const AT = { lat: 16.0544, lng: 108.2497 };
 
 type Row = Record<string, any>;
-interface Opts { flag?: boolean; zones?: Row[] | "fail"; pref?: Row | null | "fail"; stamps?: Row[] }
+interface Opts { flag?: boolean; zones?: Row[] | "fail"; pref?: Row | null | "fail"; stamps?: Row[]; personalZones?: Row[] | "fail"; personalCount?: number }
 
 function fakeDb(o: Opts = {}) {
   const tables: Record<string, Row[]> = {
@@ -41,6 +41,7 @@ function fakeDb(o: Opts = {}) {
     protected_zones: o.zones === "fail" ? [] : (o.zones ?? []),
     passport_visibility_preferences: o.pref && o.pref !== "fail" ? [{ user_id: USER, ...o.pref }] : [],
     passport_stamps: o.stamps ?? [],
+    map_personal_protected_places: Array.isArray(o.personalZones) ? o.personalZones : [],
   };
   const inserts: Array<{ table: string; row: Row }> = [];
   const reads: string[] = [];
@@ -57,8 +58,9 @@ function fakeDb(o: Opts = {}) {
       reads.push(table);
       if (table === "protected_zones" && o.zones === "fail") return { data: null, error: { message: "timeout" } };
       if (table === "passport_visibility_preferences" && o.pref === "fail") return { data: null, error: { message: "timeout" } };
+      if (table === "map_personal_protected_places" && o.personalZones === "fail") return { data: null, error: { message: "timeout" } };
       const rows = (tables[table] ?? []).filter((r) => filters.every((f) => f(r)));
-      return { data: single ? rows[0] ?? null : rows, error: null };
+      return { data: single ? rows[0] ?? null : rows, error: null, count: table === "map_personal_protected_places" ? (o.personalCount ?? rows.length) : rows.length };
     };
     const b: any = {
       select() { return b; },
@@ -66,7 +68,7 @@ function fakeDb(o: Opts = {}) {
       update() { return b; },
       eq(c: string, v: any) { filters.push((r) => r[c] === v); return b; },
       is(c: string, v: any) { filters.push((r) => (r[c] ?? null) === v); return b; },
-      in() { return b; }, order() { return b; }, limit() { return b; },
+      in(c: string, values: any[]) { filters.push((r) => values.includes(r[c])); return b; }, order() { return b; }, limit() { return b; },
       maybeSingle() { return Promise.resolve(run(true)); },
       single() { return Promise.resolve(run(true)); },
       then(onF: any, onR: any) { return Promise.resolve(run(false)).then(onF, onR); },
@@ -270,3 +272,33 @@ describe("G. verifier N1 — guardStamp keeps a Place stamp's venue from everyon
   });
 });
 
+
+
+describe("I. existing owner-designated protections govern Place stamps", () => {
+  const home = { id: 'home', owner_user_id: USER, category: 'home', center_lat: AT.lat, center_lng: AT.lng, radius_meters: 1500 };
+  it("refuses an owner's protected point and ignores another owner's designation", async () => {
+    const protectedDb = fakeDb({ flag: true, personalZones: [home] });
+    assert.equal(await awardPlaceStampForCheckin(protectedDb.client, checkin(CAFE)), 'protected_zone');
+    assert.equal(placeInserts(protectedDb).length, 0);
+    const other = fakeDb({ flag: true, personalZones: [{ ...home, owner_user_id: 'another-owner' }] });
+    assert.equal(await awardPlaceStampForCheckin(other.client, checkin(CAFE)), 'awarded');
+  });
+  it("refuses unreadable, incomplete and malformed personal policy before writing", async () => {
+    for (const options of [
+      { personalZones: 'fail' as const, expected: 'zone_policy_unreadable' },
+      { personalZones: [] as Row[], personalCount: 1, expected: 'zone_policy_unreadable' },
+      { personalZones: [{ ...home, radius_meters: 'broken' }], expected: 'protected_zone' },
+    ]) {
+      const db = fakeDb({ flag: true, ...options });
+      assert.equal(await awardPlaceStampForCheckin(db.client, checkin(CAFE)), options.expected);
+      assert.equal(placeInserts(db).length, 0);
+    }
+  });
+  it("an existing policy outside the visit permits it, and a new designation affects the next award", async () => {
+    const db = fakeDb({ flag: true, personalZones: [{ ...home, center_lat: AT.lat + 1 }] });
+    assert.equal(await awardPlaceStampForCheckin(db.client, checkin(CAFE)), 'awarded');
+    db.tables.map_personal_protected_places = [home];
+    assert.equal(await awardPlaceStampForCheckin(db.client, checkin(BAR)), 'protected_zone');
+    assert.deepEqual(placeInserts(db).map(i => i.row.place_id), [CAFE]);
+  });
+});

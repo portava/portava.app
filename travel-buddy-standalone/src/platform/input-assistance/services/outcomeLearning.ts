@@ -11,7 +11,7 @@
  * WHAT THIS MODULE HOLDS
  *   - the DISCLOSURE the person reads before opting in, and its version (the
  *     server refuses a grant whose displayed version is not the stamped one);
- *   - the CONSENT GATE: one bit, bound to the account it was read for, FALSE
+ *   - the CONSENT GATE: a current account/grant scope, closed
  *     until the server says otherwise and reset on every account change;
  *   - `reportInputTaskOutcome`, the one call a screen that completes a task
  *     makes. Without consent it does NOTHING — no event, no request;
@@ -101,43 +101,85 @@ export function parseOutcomeConsentState(body: unknown): OutcomeConsentState | n
 
 /** Does this state license sending outcomes? Offered AND opted in. */
 export function stateGrantsOutcomes(s: OutcomeConsentState | null): boolean {
-  return !!s && s.available && s.enabled;
+  return !!s && s.available && s.enabled && s.withdrawnAt === null
+    && s.consentVersion === OUTCOME_DISCLOSURE_VERSION && validGrant(s.consentedAt);
 }
 
 // ── The gate ──────────────────────────────────────────────────────────────────
 
-let gate: { account: string | null; consented: boolean } = { account: null, consented: false };
-
-/** A new account (or signed out): the gate closes until THIS account's consent is read. */
+export interface OutcomeScope {
+  readonly account: string | null;
+  readonly consented: boolean;
+  readonly consentedAt: string | null;
+}
+let gate: OutcomeScope = { account: null, consented: false, consentedAt: null };
+const withdrawalHolds = new Set<string>();
+const listeners = new Set<() => void>();
+const authorizations = new WeakMap<object, OutcomeScope>();
+function validGrant(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= 40
+    && /^\d{4}-\d{2}-\d{2}T.+(?:Z|[+-]\d{2}:\d{2})$/.test(value)
+    && Number.isFinite(Date.parse(value));
+}
+function replaceGate(next: OutcomeScope): void {
+  gate = next;
+  for (const listener of listeners) { try { listener(); } catch { /* isolated observer */ } }
+}
+export function currentOutcomeScope(): OutcomeScope { return gate; }
+export function isCurrentOutcomeScope(scope: OutcomeScope): boolean { return scope === gate; }
+export function subscribeOutcomeScope(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+/** Account/session transitions invalidate queued work even for A → B → A. */
 export function beginOutcomeAccount(accountId: string | null): void {
-  gate = { account: accountId, consented: false };
+  replaceGate({ account: accountId, consented: false, consentedAt: null });
 }
-
-/**
- * Apply a consent answer — only if it is for the CURRENT account. A slow read
- * for the previous account must never open the gate for the next one.
- */
-export function applyOutcomeConsent(accountId: string | null, granted: boolean): void {
+/** Missing grant provenance can never open the gate. */
+export function applyOutcomeConsent(accountId: string | null, granted: boolean, consentedAt?: string | null): void {
   if (accountId === null || accountId !== gate.account) return;
-  gate = { account: accountId, consented: granted === true };
+  const allowed = granted === true && validGrant(consentedAt) && !withdrawalHolds.has(accountId);
+  const at = allowed ? consentedAt! : null;
+  if (gate.consented === allowed && gate.consentedAt === at) return;
+  replaceGate({ account: accountId, consented: allowed, consentedAt: at });
 }
-
-export function currentOutcomeAccount(): string | null {
-  return gate.account;
+/** A failed remote withdrawal still disables collection on this device. */
+export function holdOutcomeWithdrawal(accountId: string): void {
+  if (withdrawalHolds.has(accountId)) return;
+  withdrawalHolds.add(accountId);
+  if (gate.account === accountId) replaceGate({ account: accountId, consented: false, consentedAt: null });
 }
+/** Only an explicitly requested, acknowledged grant may release the hold. */
+export function clearOutcomeWithdrawal(accountId: string): void { withdrawalHolds.delete(accountId); }
+export function hasOutcomeWithdrawalHold(accountId: string | null): boolean { return !!accountId && withdrawalHolds.has(accountId); }
+export function currentOutcomeAccount(): string | null { return gate.account; }
+export function outcomeLearningConsented(): boolean { return gate.consented; }
 
-export function outcomeLearningConsented(): boolean {
-  return gate.consented;
+/** Local sidecar proof is never serialized. The timestamp is admission metadata. */
+export function copyOutcomeAuthorization(source: object, target: object): string | null {
+  const scope = authorizations.get(source);
+  if (!scope || !scope.consented || !isCurrentOutcomeScope(scope)) return null;
+  authorizations.set(target, scope);
+  return scope.consentedAt;
 }
-
-/**
- * The per-name filter in front of the §44 sink. Every event passes except
- * `downstream_task_completed` without consent.
- */
+export function isCurrentOutcomeAuthorization(value: object): boolean {
+  const scope = authorizations.get(value);
+  return !!scope && scope.consented && isCurrentOutcomeScope(scope);
+}
+export function outcomeAuthorizationSignal(values: readonly object[]) {
+  const controller = new AbortController();
+  const check = () => { if (values.some(value => !isCurrentOutcomeAuthorization(value))) controller.abort(); };
+  const stop = subscribeOutcomeScope(check);
+  check();
+  return { signal: controller.signal, dispose: stop, accountId: values.length ? authorizations.get(values[0]!)?.account ?? null : undefined };
+}
 export function gateOutcomeEvents(sink: TelemetrySink): TelemetrySink {
   return (e: InputTelemetryEvent) => {
-    if (e.name === 'downstream_task_completed' && !outcomeLearningConsented()) return;
-    sink(e);
+    if (e.name !== 'downstream_task_completed') { sink(e); return; }
+    if (!outcomeLearningConsented()) return;
+    const bound = { ...e };
+    authorizations.set(bound, gate);
+    sink(bound);
   };
 }
 
@@ -149,6 +191,7 @@ export interface OutcomeEntity {
 }
 
 export interface TaskOutcomeBody {
+  outcomeConsentedAt: string;
   context: InputContext;
   fieldId: string;
   task: InputOutcomeTask;
@@ -194,6 +237,7 @@ export function reportInputTaskOutcome(
   deps: { post?: OutcomePoster | null } = {},
 ): TaskOutcomeResult {
   if (!outcomeLearningConsented()) return 'not_consented';
+  const scope = currentOutcomeScope();
   try {
     emitDownstreamTaskCompleted(
       { fieldId: field.fieldId, context: field.context, policy: field.policy, requestId: field.requestId },
@@ -204,8 +248,11 @@ export function reportInputTaskOutcome(
     const credited = entities
       .filter((e) => typeof e.entityType === 'string' && typeof e.entityId === 'string' && e.entityId.length > 0)
       .slice(0, MAX_OUTCOME_ENTITIES);
-    if (ok && credited.length > 0 && post) {
-      void post({ context: field.context, fieldId: field.fieldId, task, ok, entities: credited }).catch(() => false);
+    if (ok && credited.length > 0 && post && isCurrentOutcomeScope(scope)) {
+      const body: TaskOutcomeBody = { context: field.context, fieldId: field.fieldId, task, ok, entities: credited,
+        outcomeConsentedAt: scope.consentedAt! };
+      authorizations.set(body, scope);
+      void post(body).catch(() => false);
     }
   } catch {
     // best-effort — an outcome report must never surface to the user
@@ -229,28 +276,28 @@ export interface OutcomeConsentSyncDeps {
  */
 export function createOutcomeConsentSync(deps: OutcomeConsentSyncDeps): () => void {
   setOutcomePoster(deps.post);
+  let disposed = false;
+  let revision = 0;
   const onAccount = (userId: string | null): void => {
+    if (disposed) return;
+    revision += 1;
     beginOutcomeAccount(userId);
     if (userId == null) return;
-    void deps
-      .fetchConsent()
-      .then((state) => applyOutcomeConsent(userId, stateGrantsOutcomes(state)))
-      .catch(() => undefined);
+    const scope = currentOutcomeScope();
+    void deps.fetchConsent().then(state => {
+      if (!disposed && isCurrentOutcomeScope(scope)) {
+        applyOutcomeConsent(userId, stateGrantsOutcomes(state), state?.consentedAt);
+      }
+    }).catch(() => undefined);
   };
+  const initialRevision = revision;
   const unsubscribe = deps.subscribeAuth(onAccount);
-  void (async () => {
-    try {
-      onAccount(await deps.currentUserId());
-    } catch {
-      onAccount(null);
-    }
-  })();
+  void deps.currentUserId().then(userId => {
+    if (!disposed && revision === initialRevision) onAccount(userId);
+  }).catch(() => { if (!disposed && revision === initialRevision) onAccount(null); });
   return () => {
-    try {
-      unsubscribe();
-    } catch {
-      /* never throw out of teardown */
-    }
+    disposed = true;
+    try { unsubscribe(); } catch { /* teardown must remain safe */ }
     setOutcomePoster(null);
     beginOutcomeAccount(null);
   };

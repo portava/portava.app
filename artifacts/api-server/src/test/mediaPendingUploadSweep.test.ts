@@ -1,3 +1,4 @@
+import {activeMediaAccountRead} from './helpers/mediaAccountReadFixture.js';
 /**
  * census-discovery DV-77, §56 — no unstripped original persists because a
  * completion handler never ran.
@@ -93,6 +94,7 @@ function client() {
     let limitN: number | null = null;
     let order: { col: string; asc: boolean } | null = null;
     const b: any = {
+      contains() { return b; },
       select(_c?: string, o?: { count?: string; head?: boolean }) { selected = true; countMode = !!o?.count; head = !!o?.head; return b; },
       insert(p: any) { op = "insert"; payload = p; return b; },
       update(p: any) { op = "update"; payload = p; return b; },
@@ -168,7 +170,14 @@ function client() {
       getUser: async (t: string) =>
         t === TOKEN ? { data: { user: { id: OWNER } }, error: null } : { data: { user: null }, error: { message: "bad token" } },
     },
-    rpc: async () => ({ data: null, error: null }),
+    rpc: async (name: string, args: any) => {
+      if (name === "account_recovery_status") return activeMediaAccountRead(name, args);
+      if (name !== 'withdraw_postcard_media') return { data: null, error: null };
+      const row = tables.post_media?.find(r => r.id === args.p_media && r.user_id === args.p_actor && r.post_id === args.p_post);
+      if (!row || row.processing_status !== 'pending' || [row.created_at, row.updated_at].some(t => t && Date.parse(t) >= Date.parse(args.p_before))) return { data: false, error: null };
+      row.deleted_at ??= new Date(fakeNowMs).toISOString();
+      return { data: true, error: null };
+    },
   };
 }
 
@@ -180,7 +189,7 @@ function baseTables(flagOn: boolean | null = true): Record<string, Row[]> {
       { flag: "disable_media_uploads", enabled: false },
       ...(flagOn === null ? [] : [{ flag: FLAG, enabled: flagOn }]),
     ],
-    profiles: [{ id: OWNER, account_status: "active" }],
+    profiles: [{ id: OWNER, account_status: "active", is_private: false, user_account_states: [] }],
     posts: [{ id: POST, author_id: OWNER, status: "active", visibility: "public", post_status: "published", trip_id: null }],
     post_media: [],
     blocks: [],
@@ -310,10 +319,13 @@ describe("§56 DV-77 — NEVER SERVED while it waits: the relay refuses a row th
     assert.equal(await authorizeMediaAccess(sc, OWNER, "post-media", path), true, "the owner must still reach their own upload");
   });
 
-  it("POSITIVE CONTROL: the same object is served once its row is ready", async () => {
+  it("POSITIVE CONTROL: ready bytes stay private until publication, then become readable", async () => {
     const { mediaId, path } = await abandonedUpload();
     rowOf(mediaId)!.processing_status = "ready";
     rowOf(mediaId)!.moderation_status = "approved";
+    Object.assign(tables.posts[0], { postcard_draft_state: "draft", post_status: "draft", visibility: "private" });
+    assert.equal(await authorizeMediaAccess(sc, STRANGER, "post-media", path), false, "ready is not published");
+    Object.assign(tables.posts[0], { postcard_draft_state: "published", post_status: "published", visibility: "public" });
     assert.equal(await authorizeMediaAccess(sc, STRANGER, "post-media", path), true);
   });
 });
@@ -419,7 +431,7 @@ describe("§56 DV-77 — partial failure, retry, and the rows a blind sweep woul
 // ─────────────────────────────────────────────────────────────────────────────
 describe("§56 DV-77 — at ingest, and the two ways the pass is reached", () => {
   it("upload-url REFUSES to mint a URL for a slot whose path did not record", async () => {
-    failures["post_media:update"] = { message: "update rejected" };
+    failures["post_media:insert"] = { message: "reservation rejected" };
     const r = await call("POST", `/api/postcards/${POST}/media/upload-url`,
       { mimeType: "image/jpeg", fileSizeBytes: 1000 }, { authorization: `Bearer ${TOKEN}` });
     assert.notEqual(r.status, 200);

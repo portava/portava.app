@@ -1,3 +1,4 @@
+import { memoryItemWriterFake } from "./helpers/memoryItemWriterFake.js";
 /**
  * H182 (census-highlights-memories), wave 5 lane 5 — the image ladder is
  * ENQUEUED where a Memory photo is stored, and LIST covers select renditions.
@@ -199,7 +200,7 @@ function client(db: Record<string, any[]>) {
   }
   return {
     from: (t: string) => chain(t),
-    rpc: async () => ({ data: null, error: { message: "no rpc" } }),
+    rpc: async(name:string,args:unknown)=>(await memoryItemWriterFake({from:chain},name,args))??{data:null,error:{message:"no rpc"}},
     auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },
   };
 }
@@ -331,7 +332,8 @@ describe("both Memory photo writers call the enqueue (static pin)", () => {
     assert.match(items, /if \(!outcome\.ok\) \{ sendCommandFailure\(req, res, outcome\); return; \}\n\n  void enqueueMemoryItemRenditions\(sc, \{ mediaUrl: parsed\.data\.mediaUrl, mediaType: parsed\.data\.mediaType, ownerId: user\.id \}/);
     const fromPost = src.slice(src.indexOf('router.post("/memories/:id/items/from-post"'));
     assert.match(fromPost, /recordMemoryCreatedFromMediaSignal\(sc, \{ userId: user\.id, postId \}\); void enqueueMemoryItemRenditions\(sc, \{ mediaUrl, mediaType, ownerId: user\.id \}/);
-    // Exactly those two writers, so a third Memory photo writer must decide too.
-    assert.equal((src.match(/\.from\("memory_items"\)\s*\n\s*\.insert\(/g) ?? []).length, 2);
+    // Both routes dispatch through the shared SQL writer; no direct item insert remains.
+    assert.equal((src.match(/\.from\("memory_items"\)\s*\n\s*\.insert\(/g) ?? []).length, 0);
+    assert.equal((src.match(/commandType: "ADD_MEDIA"/g) ?? []).length, 2);
   });
 });

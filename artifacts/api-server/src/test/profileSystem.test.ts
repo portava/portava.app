@@ -36,6 +36,7 @@ const ANON_TOK  = null; // no token
 // ── Universal fake client ─────────────────────────────────────────────────────
 
 type FakeState = {
+  rpcResponses?: Record<string, { data: unknown; error: unknown }>;
   users:                    Record<string, { id: string }>;
   profiles:                 any[];
   user_account_states?:     any[];
@@ -65,6 +66,7 @@ type FakeState = {
 type InsertRecord = { table: string; row: any };
 
 function makeClient(state: FakeState) {
+  const rpcCalls: Array<{name: string; args: unknown}> = [];
   const inserted: InsertRecord[] = [];
 
   function tableRows(table: string): any[] {
@@ -170,6 +172,8 @@ function makeClient(state: FakeState) {
       },
     },
     from: (table: string) => makeBuilder(table),
+    rpc: async (name: string, args: unknown) => { rpcCalls.push({name,args}); return state.rpcResponses?.[name] ?? {data:null,error:{code:"PGRST202",message:"RPC transport response not configured"}}; },
+    __rpcCalls: rpcCalls,
     storage: { createBucket: async () => ({ error: null }), from: () => ({ upload: async () => ({ error: null }), getPublicUrl: () => ({ data: { publicUrl: "" } }) }) },
     __inserted: inserted,
   };
@@ -222,6 +226,12 @@ function req(path: string, opts: { tok?: string | null; method?: string; body?: 
 
 function baseState(): FakeState {
   return {
+    // Transport receipts only. Atomic writes, expiry and races are proved by
+    // the actual PostgreSQL accountRecovery suite, not reimplemented here.
+    rpcResponses: {
+      set_account_self_deactivation: {data:{ok:true,reactivateUntil:'2027-11-16T00:00:00.000Z'},error:null},
+      request_recoverable_account_deletion: {data:{ok:true,generation:'11111111-1111-4111-8111-111111111111',selfRecoverableUntil:'2027-02-14T00:00:00.000Z'},error:null},
+    },
     users: {
       "tok-me":    { id: ME },
       "tok-alice": { id: ALICE },
@@ -693,17 +703,15 @@ describe("POST /api/me/deactivate", () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("POST /api/me/delete-request", () => {
-  it("returns { deletionScheduled: true, scheduledAt } on success", async () => {
+  it("returns the recovery receipt with no automatic permanent-deletion schedule", async () => {
     setup(baseState());
     const r = await req("/me/delete-request", { method: "POST" });
     assert.equal(r.status, 200);
     const body = await r.json() as any;
     assert.equal(body.deletionScheduled, true);
-    assert.ok(body.scheduledAt, "scheduledAt must be present");
-    // scheduledAt should be ~30 days in the future
-    const scheduled = new Date(body.scheduledAt).getTime();
-    const diff = scheduled - Date.now();
-    assert.ok(diff > 28 * 24 * 60 * 60 * 1000, "scheduledAt should be ~30 days out");
+    assert.equal(body.scheduledAt, null, "only an explicit admin command may permanently delete");
+    assert.equal(body.recoveryGeneration, '11111111-1111-4111-8111-111111111111');
+    assert.equal(body.selfRecoverableUntil, '2027-02-14T00:00:00.000Z');
   });
 
   it("requires authentication", async () => {
@@ -1171,22 +1179,22 @@ describe("account_status fast-path + unauthenticated viewer privacy controls", (
     assert.equal(body.viewer?.can_message, false, "allow_messages_from=friends should block unauthenticated message");
   });
 
-  it("deactivation updates profiles.account_status", async () => {
-    setup(baseState());
+  it("deactivation forwards the authenticated owner to the canonical command", async () => {
+    const client = setup(baseState());
     const r = await req("/me/deactivate", { method: "POST" });
     assert.equal(r.status, 200);
     const body = await r.json() as any;
     assert.equal(body.deactivated, true);
-    // The fake client records the profiles.update call
-    // (we verify the deactivate endpoint returns success, meaning await didn't throw)
+    assert.deepEqual(client.__rpcCalls, [{name:"set_account_self_deactivation",args:{p_user:ME}}]);
   });
 
-  it("delete-request updates profiles.account_status", async () => {
-    setup(baseState());
+  it("delete-request uses the canonical recovery command", async () => {
+    const client = setup(baseState());
     const r = await req("/me/delete-request", { method: "POST" });
     assert.equal(r.status, 200);
     const body = await r.json() as any;
     assert.equal(body.deletionScheduled, true);
+    assert.deepEqual(client.__rpcCalls, [{name:"request_recoverable_account_deletion",args:{p_user:ME}}]);
   });
 
   it("GET /me/privacy seeds defaults on first access", async () => {
@@ -1211,6 +1219,7 @@ describe("POST /api/me/reactivate", () => {
     state.profiles = state.profiles.map((p) =>
       p.id === ME ? { ...p, account_status: "deactivated" } : p
     );
+    state.rpcResponses!.reactivate_self_deactivated_account = {data:{ok:true,alreadyReactivated:false},error:null};
     setup(state);
     const r = await req("/me/reactivate", { method: "POST" });
     assert.equal(r.status, 200);
@@ -1221,8 +1230,10 @@ describe("POST /api/me/reactivate", () => {
   it("suspended account cannot self-reactivate → 403 forbidden", async () => {
     const state = baseState();
     state.profiles = state.profiles.map((p) =>
-      p.id === ME ? { ...p, account_status: "suspended" } : p
+      p.id === ME ? { ...p, account_status: "deactivated" } : p
     );
+    state.rpcResponses!.reactivate_self_deactivated_account = {data:{ok:false,error:'recovery_forbidden'},error:null};
+    state.user_account_states = [{ user_id: ME, state: "suspended", expires_at: null }];
     setup(state);
     const r = await req("/me/reactivate", { method: "POST" });
     assert.equal(r.status, 403);
@@ -1233,8 +1244,10 @@ describe("POST /api/me/reactivate", () => {
   it("banned account cannot self-reactivate → 403 forbidden", async () => {
     const state = baseState();
     state.profiles = state.profiles.map((p) =>
-      p.id === ME ? { ...p, account_status: "banned" } : p
+      p.id === ME ? { ...p, account_status: "deactivated" } : p
     );
+    state.rpcResponses!.reactivate_self_deactivated_account = {data:{ok:false,error:'recovery_forbidden'},error:null};
+    state.user_account_states = [{ user_id: ME, state: "banned", expires_at: null }];
     setup(state);
     const r = await req("/me/reactivate", { method: "POST" });
     assert.equal(r.status, 403);
@@ -1242,21 +1255,23 @@ describe("POST /api/me/reactivate", () => {
     assert.equal(body.error, "forbidden", "banned account must not self-reactivate");
   });
 
-  it("already-active account cannot reactivate → 403 (nothing to reactivate)", async () => {
+  it("already-active reactivation is an idempotent success", async () => {
     const state = baseState();
     state.profiles = state.profiles.map((p) =>
       p.id === ME ? { ...p, account_status: "active" } : p
     );
+    state.rpcResponses!.reactivate_self_deactivated_account = {data:{ok:true,alreadyReactivated:true},error:null};
     setup(state);
     const r = await req("/me/reactivate", { method: "POST" });
-    assert.equal(r.status, 403);
+    assert.equal(r.status, 200);
     const body = await r.json() as any;
-    assert.equal(body.error, "forbidden");
+    assert.equal(body.reactivated, true); assert.equal(body.alreadyReactivated, true);
   });
 
   it("missing profile returns 404", async () => {
     const state = baseState();
     state.profiles = state.profiles.filter((p) => p.id !== ME);
+    state.rpcResponses!.reactivate_self_deactivated_account = {data:{ok:false,error:'profile_unavailable'},error:null};
     setup(state);
     const r = await req("/me/reactivate", { method: "POST" });
     assert.equal(r.status, 404);
@@ -1378,22 +1393,25 @@ describe("pending_deletion account_status → unavailable on public endpoints", 
 // 18. POST /me/delete-request — duplicate upsert succeeds (not 409)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe("POST /api/me/delete-request — duplicate upsert", () => {
-  it("second call to delete-request succeeds via upsert, not 409", async () => {
+describe("POST /api/me/delete-request — duplicate canonical receipt", () => {
+  it("duplicate delete-request returns the original recovery generation and deadline", async () => {
     const state = baseState();
     // Seed an existing pending deletion request for ME
     state.user_deletion_requests = [
-      { user_id: ME, status: "pending", requested_at: new Date().toISOString(), scheduled_at: new Date().toISOString() },
+      { user_id: ME, status: "pending", requested_at: "2026-11-16T00:00:00.000Z", scheduled_at: null, recovery_verified: true, recovery_generation: "11111111-1111-4111-8111-111111111111" },
     ];
-    setup(state);
+    const client = setup(state);
     const r = await req("/me/delete-request", { method: "POST" });
-    assert.equal(r.status, 200, "duplicate delete-request must return 200 via upsert, not 409");
+    assert.equal(r.status, 200, "duplicate delete-request must return the existing canonical receipt");
     const body = await r.json() as any;
     assert.equal(body.deletionScheduled, true);
-    assert.ok(body.scheduledAt, "scheduledAt must be present on duplicate call");
-    const scheduled = new Date(body.scheduledAt).getTime();
-    const diff = scheduled - Date.now();
-    assert.ok(diff > 28 * 24 * 60 * 60 * 1000, "scheduledAt must still be ~30 days in future on duplicate call");
+    assert.equal(body.scheduledAt, null);
+    assert.equal(body.recoveryGeneration, '11111111-1111-4111-8111-111111111111');
+    assert.equal(body.selfRecoverableUntil, '2027-02-14T00:00:00.000Z');
+    const again = await req("/me/delete-request", { method: "POST" });
+    assert.equal(again.status, 200); assert.deepEqual(await again.json(), body, "duplicate requests must not invent a new recovery clock or generation");
+    assert.deepEqual(client.__rpcCalls, [1,2].map(() => ({name:"request_recoverable_account_deletion",args:{p_user:ME}})));
+    assert.equal(client.__inserted.length,0,"the transport must not independently upsert another request");
   });
 });
 

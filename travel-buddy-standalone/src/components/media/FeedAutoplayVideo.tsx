@@ -22,6 +22,7 @@ import { Platform, View, StyleSheet } from 'react-native';
 import { Video, ResizeMode } from 'expo-av';
 import { VolumeX } from 'lucide-react-native';
 import { useHydratedMedia } from '../../services/mediaUrl.ts';
+import { hydratedMediaSource } from '../../services/mediaRequestSource.ts';
 import { playbackUriState } from '../../services/playbackUri.ts';
 import { avatar } from '../../theme/tokens.ts';
 
@@ -48,7 +49,7 @@ const FeedVideoDecoder = forwardRef<FeedAutoplayVideoHandle, FeedVideoProps>(fun
     const status = await player.current?.pauseAsync();
     if (mounted.current && status?.isLoaded) onPositionChange?.(status.positionMillis);
   } }), [onPositionChange]);
-  const { resolved } = useHydratedMedia([uri]);
+  const { resolved, sources } = useHydratedMedia([uri]);
   const source = playbackUriState(uri, resolved);
   const [shownFor, setShownFor] = useState<string | null>(null);
   const [failedFor, setFailedFor] = useState<string | null>(null);
@@ -66,7 +67,7 @@ const FeedVideoDecoder = forwardRef<FeedAutoplayVideoHandle, FeedVideoProps>(fun
       <Video
         ref={player}
         key={playbackUri}
-        source={{ uri: playbackUri }}
+        source={hydratedMediaSource(playbackUri, sources) ?? undefined}
         style={StyleSheet.absoluteFill}
         resizeMode={ResizeMode.COVER}
         shouldPlay={!resuming}

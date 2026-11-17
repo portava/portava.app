@@ -480,7 +480,7 @@ describe("§79 A07 — the fail-closed rule, as pure functions", () => {
 });
 
 describe("§79 Z0 — flags FALSE is byte-identical to the tree before them", () => {
-  it("Z0. 3455, 3456 and 2850 present and FALSE: the eleven legacy scenarios replay the 709b7b800 golden exactly", async () => {
+  it("Z0. flags FALSE preserves the eleven legacy scenarios except the explicit unknown-hours correction", async () => {
     const golden = JSON.parse(readFileSync(new URL("./fixtures/discoveryLegacyGolden.json", import.meta.url), "utf8"));
     const now = await runLegacyScenarios([
       flag("discovery_for_you_pde_enabled", false),
@@ -488,6 +488,13 @@ describe("§79 Z0 — flags FALSE is byte-identical to the tree before them", ()
       flag("discovery_live_rank_enabled", false),
     ]);
     assert.deepEqual(Object.keys(now), Object.keys(golden));
-    for (const k of Object.keys(golden)) assert.deepEqual(now[k], golden[k], `output moved for "${k}" with the flags FALSE`);
+    for (const k of Object.keys(golden)) {
+      // Preserve the historical fixture. Open now must exclude unknown hours,
+      // including the legacy path while all three ranking flags are disabled.
+      const expected = k === 'S3 signed-in cache-A hit, popular + openNow'
+        ? { ...golden[k], body: { ...golden[k].body, places: [], total: 0 } }
+        : golden[k];
+      assert.deepEqual(now[k], expected, `output moved for "${k}" with the flags FALSE`);
+    }
   });
 });

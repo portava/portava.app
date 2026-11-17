@@ -37,7 +37,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HAVE_DB, exec, psql, rows, scalar, seedUser, deleteUser } from "./localDb.js";
+import { HAVE_DB, exec, psql, rows, scalar, seedUser, deleteUser, cleanupSyntheticMedia } from "./localDb.js";
 import { amendBlock, postconditionBlocks } from "../../scripts/lib/migrationSqlBlocks.js";
 import { POSTCONDITION_AMENDMENTS } from "../../scripts/lib/postconditionAmendments.js";
 
@@ -122,8 +122,8 @@ describe("3909 — production's 2098 post_media moderation design, codified", { 
 
   after(() => {
     if (!OWNER) return;
-    exec(`DELETE FROM public.post_media WHERE user_id IN ('${OWNER}', '${OTHER}');
-          DELETE FROM public.post_media_moderation_ledger WHERE subject_user_id IN ('${OWNER}', '${OTHER}');
+    cleanupSyntheticMedia([OWNER, OTHER].filter(Boolean));
+    exec(`DELETE FROM public.post_media_moderation_ledger WHERE subject_user_id IN ('${OWNER}', '${OTHER}');
           DELETE FROM public.posts WHERE author_id IN ('${OWNER}', '${OTHER}');`);
     for (const u of [OWNER, OTHER]) if (u) deleteUser(u);
   });
@@ -206,4 +206,53 @@ describe("3909 — production's 2098 post_media moderation design, codified", { 
       assert.equal(scalar(`SELECT has_table_privilege('${role}', 'public.post_media_moderation_ledger', 'SELECT')`), "f", `${role} reads no ledger`);
     }
   });
+});
+
+// 4034 keeps the existing client grants and serializes late inserts with discard.
+import { Client } from 'pg';
+import { currentDatabaseUrl } from './localDb.js';
+describe('4034 cancellation serialization', { skip: !HAVE_DB }, () => { it('a client upload waiting behind cancellation cannot resurrect draft media', async () => {
+  const owner = seedUser('draftRace');
+  const post = randomUUID();
+  const cancel = new Client({ connectionString: currentDatabaseUrl() });
+  const upload = new Client({ connectionString: currentDatabaseUrl() });
+  const observer = new Client({ connectionString: currentDatabaseUrl() });
+  let pending: Promise<unknown> | undefined;
+  try {
+    exec(`INSERT INTO public.posts(id,author_id,content,visibility,status,post_status,postcard_draft_state,postcard_requested_visibility)
+      VALUES('${post}','${owner}','race fixture','private','active','draft','draft','public');`);
+    await Promise.all([cancel.connect(), upload.connect(), observer.connect()]);
+    await cancel.query('BEGIN');
+    await cancel.query('SELECT public.cancel_postcard_draft($1,$2)', [owner,post]);
+    await upload.query('BEGIN');
+    await upload.query("SELECT set_config('request.jwt.claim.sub',$1,true)", [owner]);
+    await upload.query('SET LOCAL ROLE authenticated');
+    const pid = (await upload.query('SELECT pg_backend_pid() AS pid')).rows[0].pid as number;
+    pending = upload.query(`INSERT INTO public.post_media(post_id,user_id,media_type,mime_type,storage_path)
+      VALUES($1,$2,'image','image/jpeg',$3)`, [post,owner,`${owner}/draft-race.jpg`])
+      .then(() => null, (error: unknown) => error);
+    let waiting = false;
+    for (let attempt=0; attempt<100; attempt++) {
+      const locks = await observer.query("SELECT 1 FROM pg_locks WHERE pid=$1 AND locktype='advisory' AND NOT granted", [pid]);
+      if (locks.rowCount) { waiting=true; break; }
+      await new Promise(resolve => setTimeout(resolve,25));
+    }
+    assert.equal(waiting,true,'the upload must wait on the cancellation lock, not race a stale read');
+    await cancel.query('COMMIT');
+    const failure = await pending;
+    assert.ok(failure instanceof Error);
+    assert.match(failure.message,/post_unavailable|row-level security/);
+    await upload.query('ROLLBACK');
+    assert.equal((await observer.query('SELECT count(*)::int AS n FROM public.post_media WHERE post_id=$1',[post])).rows[0].n,0);
+    assert.equal((await observer.query('SELECT postcard_draft_state FROM public.posts WHERE id=$1',[post])).rows[0].postcard_draft_state,'cancelled');
+  } finally {
+    await cancel.query('ROLLBACK').catch(() => {});
+    await pending;
+    await upload.query('ROLLBACK').catch(() => {});
+    await Promise.all([cancel.end(),upload.end(),observer.end()]);
+    cleanupSyntheticMedia([owner]);
+    exec(`DELETE FROM public.posts WHERE id='${post}';`);
+    deleteUser(owner);
+  }
+});
 });

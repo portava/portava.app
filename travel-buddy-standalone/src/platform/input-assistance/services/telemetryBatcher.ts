@@ -41,15 +41,19 @@
  *    because dropping the newest would silently truncate the arm the user is in
  *    right now.
  *
- * 3. THE BATCHER MANUFACTURES NOTHING. It copies six fields off the event and
- *    adds none. `inputTelemetry.ts`'s scrub is only worth something if the
+ * 3. THE BATCHER COPIES NAMED FIELDS. Ordinary events have six fields.
+ *    A consented outcome also carries its checked grant timestamp, solely for
+ *    admission; the account/session proof stays in a local WeakMap. `inputTelemetry.ts`'s scrub is only worth something if the
  *    transport does not helpfully put a label back on the way out, so the wire
  *    shape is fixed here and asserted in the test.
  */
 import type { InputTelemetryEvent, TelemetrySink } from './inputTelemetry.ts';
+import { copyOutcomeAuthorization, isCurrentOutcomeAuthorization } from './outcomeLearning.ts';
 
 /** One event, exactly as the ingest route's allow-list expects to read it. */
 export interface WireTelemetryEvent {
+  /** Only for consented outcomes; not stored as an event or ranking property. */
+  outcomeConsentedAt?: string;
   name: string;
   context: string;
   fieldId: string;
@@ -134,7 +138,7 @@ export function createTelemetryBatcher(opts: TelemetryBatcherOptions): Telemetry
     // SIX FIELDS, COPIED BY NAME. Not a spread: a spread would carry whatever a
     // future caller decided to hang on the event, which is the leak this layer
     // spends three other mechanisms preventing.
-    return {
+    const wire: WireTelemetryEvent = {
       name: e.name,
       context: e.context,
       fieldId: e.fieldId,
@@ -142,14 +146,22 @@ export function createTelemetryBatcher(opts: TelemetryBatcherOptions): Telemetry
       requestId: e.requestId ?? null,
       props: e.props,
     };
+    if (e.name === 'downstream_task_completed') {
+      const grant = copyOutcomeAuthorization(e, wire);
+      if (grant) wire.outcomeConsentedAt = grant;
+    }
+    return wire;
   }
 
   async function send(): Promise<void> {
     if (inFlight || buffer.length === 0) return;
-    const batch: TelemetryBatch = { sessionId: opts.sessionId, events: buffer };
+    const authorized = buffer.filter(event => event.name !== 'downstream_task_completed' || isCurrentOutcomeAuthorization(event));
+    droppedCount += buffer.length - authorized.length;
+    const batch: TelemetryBatch = { sessionId: opts.sessionId, events: authorized };
     // Taken off the buffer BEFORE the await: a keystroke landing mid-flight
     // belongs to the next batch, not to this one, and must not be sent twice.
     buffer = [];
+    if (batch.events.length === 0) return;
     inFlight = true;
     try {
       const res = await opts.post(batch);

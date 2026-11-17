@@ -1,3 +1,4 @@
+import { mediaObjectPurgeFixture } from './helpers/mediaObjectPurgeFixture.js';
 /**
  * Account deletion cascade + scheduled worker (audit P1 item 7)
  *
@@ -22,6 +23,8 @@ import { _setTestServiceClient } from "../lib/supabase.js";
 import profileRouter from "../routes/profile.js";
 import { accountMediaFixture, accountId, otherId, source, translation } from "./helpers/accountMediaDeletionFixture.js";
 
+import { accountDeletionAuthorizationFixture, PERMANENT_DELETION_TEST_OPTIONS } from "./helpers/accountDeletionAuthorizationFixture.js";
+
 const USER_ID = "11111111-1111-1111-1111-111111111111";
 
 // ── Fake supabase client ──────────────────────────────────────────────────────
@@ -41,6 +44,9 @@ function makeClient(opts: {
   // user's posts and decides per post — tombstone if others have contributed,
   // delete otherwise — so a fixture with no posts exercises neither branch.
   const rows: Record<string, any[]> = { posts: [{ id: "post-1" }], ...structuredClone(opts.rows ?? {}) };
+  const purge = mediaObjectPurgeFixture(id => rows.media_assets?.find(row => row.id === id), rows.media_asset_lifecycle_events ??= [], () => 3);
+  const objects = new Set((rows.media_assets ?? []).flatMap(row => [row.storage_path,row.thumbnail_path].filter(Boolean).map(path => `${row.storage_bucket}/${path}`)));
+  const authorization = accountDeletionAuthorizationFixture(rows, USER_ID);
   const fail = opts.fail ?? {};
   const ops: Op[] = [];
   const storageRemoved: Array<{ bucket: string; paths: string[] }> = [];
@@ -133,13 +139,19 @@ function makeClient(opts: {
     rpc: async (fn: string, args: Record<string, unknown>) => {
       ops.push({ table: `rpc:${fn}`, op: "rpc", args } as never);
       const failing = opts.rpcError && opts.rpcError === fn;
-      return failing ? { data: null, error: { message: opts.rpcError } } : { data: null, error: null };
+      if (!failing && fn === 'postcard_canonical_lifecycle_ready') return {data:true,error:null};
+      if (!failing && fn === 'advance_media_object_purge') return purge(args);
+      if (!failing && fn === 'settle_account_auth_deletion' && !authDeleted.includes(USER_ID)) return {data:{ok:false,error:'auth_deletion_unsettled'},error:null};
+      if (!failing) { const receipt = authorization(fn, args); if (receipt) return receipt; }
+      return failing ? { data: null, error: { message: opts.rpcError } } : { data: fn === 'erase_media_events_for_actor' ? { deleted: 0, more: false } : null, error: null };
     },
     storage: {
       from: (bucket: string) => ({
+        info: async (path: string) => objects.has(`${bucket}/${path}`) ? {data:{id:USER_ID,version:'synthetic',bucketId:bucket,name:path,size:128},error:null} : {data:null,error:{status:404,statusCode:'NoSuchKey'}},
         remove: async (paths: string[]) => {
           if (opts.storageError) return { data: null, error: { message: opts.storageError } };
           storageRemoved.push({ bucket, paths });
+          for(const path of paths)objects.delete(`${bucket}/${path}`);
           return { data: paths.map((p) => ({ name: p })), error: null };
         },
       }),
@@ -159,6 +171,26 @@ function makeClient(opts: {
 const opFor = (c: any, table: string, op: string) =>
   c._ops.find((o: Op) => o.table === table && o.op === op);
 
+describe("media event erasure boundary", () => {
+  it("confirms event erasure before canonical content reads and records its deletion receipt", async () => {
+    const client = makeClient();
+    const outcome = await executeAccountDeletion(client, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
+    assert.equal(outcome.ok, true, JSON.stringify(outcome.steps));
+    assert.equal(client._ops[0]?.table, "rpc:account_deletion_terminal_ready");
+    assert.equal(client._ops[1]?.table, "rpc:claim_account_permanent_deletion");
+    assert.equal(client._ops[2]?.table, "rpc:erase_media_events_for_actor");
+    assert.equal(outcome.steps[0]?.step, "erase_account_media_events");
+    assert.equal(outcome.deletedCounts.media_events, 0);
+    assert.ok(opFor(client, "media_assets", "select"));
+    assert.equal(client._rows.user_deletion_requests[0].deleted_counts.media_events, 0);
+  });
+  it("content-only deletion does not permanently fence an active account's telemetry", async () => {
+    const client = makeClient();
+    await executeAccountDeletion(client, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS, contentOnly: true });
+    assert.equal(client._ops.some(op => op.table === "rpc:erase_media_events_for_actor"), false);
+  });
+});
+
 describe("private map controls account erasure", () => {
   it("erases only the deleting owner's protections and navigation despite the profile tombstone", async () => {
     const other = "22222222-2222-2222-2222-222222222222";
@@ -166,7 +198,7 @@ describe("private map controls account erasure", () => {
       map_personal_protected_places: [{ owner_user_id: USER_ID }, { owner_user_id: other }],
       map_navigation_contributions: [{ user_id: USER_ID }, { user_id: other }],
     } });
-    const outcome = await executeAccountDeletion(client, USER_ID, { actorId: null });
+    const outcome = await executeAccountDeletion(client, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
     assert.equal(outcome.ok, true, JSON.stringify(outcome.steps));
     assert.deepEqual(client._rows.map_personal_protected_places, [{ owner_user_id: other }]);
     assert.deepEqual(client._rows.map_navigation_contributions, [{ user_id: other }]);
@@ -176,7 +208,7 @@ describe("private map controls account erasure", () => {
   for (const table of ["map_personal_protected_places", "map_navigation_contributions"]) {
     it(`keeps deletion pending when ${table} cannot be erased`, async () => {
       const client = makeClient({ fail: { [`${table}.delete`]: "unavailable" } });
-      const outcome = await executeAccountDeletion(client, USER_ID, { actorId: null });
+      const outcome = await executeAccountDeletion(client, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
       assert.equal(outcome.ok, false);
       assert.equal(outcome.steps.find(step => step.step === "erase_private_map_controls")?.ok, false);
       assert.equal(opFor(client, "profiles", "update"), undefined);
@@ -189,7 +221,7 @@ describe("account Media fixture integration — truthful retained-source contrac
   it("preserves exact original and thumbnail cleanup with full source rows and returned versions", async () => {
     const original = source(USER_ID, USER_ID);
     const client = makeClient({ rows: { media_assets: [original], user_deletion_requests: [{ user_id: USER_ID, status: "pending" }] } });
-    const outcome = await executeAccountDeletion(client, USER_ID, { actorId: null });
+    const outcome = await executeAccountDeletion(client, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
     assert.equal(outcome.ok, true, JSON.stringify(outcome.steps));
     assert.deepEqual(client._storageRemoved.flatMap(entry => entry.paths).sort(), [original.storage_path, original.thumbnail_path].sort());
     assert.deepEqual(client._rows.media_assets, []);
@@ -203,7 +235,7 @@ describe("account Media fixture integration — truthful retained-source contrac
 
   it("withdraws an uploader-associated source but preserves its canonical owner and retry identity while a dispatched receipt survives", async () => {
     const fixture = accountMediaFixture({ media_assets: [source(otherId, accountId)], media_caption_translation_artifacts: [translation("dispatched", otherId)] });
-    const outcome = await executeAccountDeletion(fixture.client, accountId, { actorId: null });
+    const outcome = await executeAccountDeletion(fixture.client, accountId, { ...PERMANENT_DELETION_TEST_OPTIONS });
     assert.equal(outcome.ok, false);
     assert.equal(fixture.rows.media_assets!.length, 1);
     assert.equal(fixture.rows.media_assets![0].owner_user_id, otherId);
@@ -212,7 +244,7 @@ describe("account Media fixture integration — truthful retained-source contrac
     assert.equal(fixture.rows.media_assets![0].moderation_status, "owner_deleted");
     assert.ok(fixture.rows.media_assets![0].deleted_at);
     assert.equal(fixture.rows.media_caption_translation_artifacts![0].write_state, "dispatched");
-    assert.equal(fixture.rows.user_deletion_requests![0].status, "pending");
+    assert.equal(fixture.rows.user_deletion_requests![0].status, "failed");
     assert.equal(fixture.rows.user_deletion_requests![0].user_id, accountId);
     assert.equal(fixture.rows.profiles![0].account_status, "active");
     assert.deepEqual(fixture.authDeleted, []);
@@ -278,7 +310,7 @@ describe("executeAccountDeletion — full cascade", () => {
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: "admin-1" });
+    const out = await executeAccountDeletion(c, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
 
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
@@ -313,16 +345,15 @@ describe("executeAccountDeletion — full cascade", () => {
     assert.equal(upd.values.full_name, null);
 
     // Request closed out.
-    const reqUpd = opFor(c, "user_deletion_requests", "update")!;
-    assert.equal(reqUpd.values.status, "completed");
-    assert.ok(reqUpd.values.executed_at);
+    assert.equal(c._rows.user_deletion_requests[0].status, "completed");
+    assert.ok(opFor(c, "rpc:settle_account_auth_deletion", "rpc"));
   });
 
   it("collects storage paths BEFORE deleting the rows that hold them", async () => {
     const c = makeClient({
       rows: { post_media: [{ storage_bucket: "post-media", storage_path: "p/1.jpg" }] },
     });
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
 
     const idxCollect = c._ops.findIndex((o: Op) => o.table === "post_media" && o.op === "select");
     const idxDelete = c._ops.findIndex((o: Op) => o.table === "posts" && o.op === "delete");
@@ -337,7 +368,7 @@ describe("executeAccountDeletion — full cascade", () => {
   it("aborts before touching the auth user when profile anonymisation fails", async () => {
     const c = makeClient({ fail: { "profiles.update": "permission denied" } });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: "admin-1" });
+    const out = await executeAccountDeletion(c, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
 
     assert.equal(out.ok, false);
     assert.deepEqual(c._authDeleted, [], "must not delete the auth user if the tombstone failed");
@@ -345,17 +376,17 @@ describe("executeAccountDeletion — full cascade", () => {
     assert.ok(out.steps.some((s) => s.step === "anonymise_profile" && !s.ok));
   });
 
-  it("returns not-ok and leaves the request pending when the auth user cannot be deleted", async () => {
+  it("returns not-ok and holds the executing request when the Auth result is unconfirmed", async () => {
     const c = makeClient({ authDeleteError: "user not found" });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
 
-    // The email address is still on file — the deletion is NOT complete, so
-    // callers must leave the request retryable instead of marking it done.
+    // Presence does not prove the dispatched operation has terminated. Hold
+    // the existing claim; only authoritative absence can settle completion.
     assert.equal(out.ok, false, "auth-user failure must fail the outcome");
     assert.ok(
-      out.warnings.some((w) => w.includes("email address still on file")),
-      "email retention must be surfaced: " + JSON.stringify(out.warnings),
+      out.warnings.some((w) => w.includes("outcome is unconfirmed")),
+      "uncertain outcome must be surfaced: " + JSON.stringify(out.warnings),
     );
     assert.equal(
       opFor(c, "user_deletion_requests", "update"),
@@ -371,7 +402,7 @@ describe("executeAccountDeletion — full cascade", () => {
       storageError: "bucket unavailable",
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
 
     assert.equal(out.ok, true);
     assert.ok(out.warnings.some((w) => w.includes("storage objects")));
@@ -385,7 +416,7 @@ describe("executeAccountDeletion — full cascade", () => {
     // so a profiles-keyed cascade can never fire there. Migration 2187 assumed it
     // would; 2190 replaced that with this explicit step. Assert the step runs.
     const c = makeClient();
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
 
     assert.equal(out.ok, true);
     const step = out.steps.find((s) => s.step === "erase_derived_memory");
@@ -404,7 +435,7 @@ describe("executeAccountDeletion — full cascade", () => {
     // orphaned personal data. It is not append-only, so it is cleared with a
     // direct scoped delete (not the erasure RPC), keyed by user_id.
     const c = makeClient();
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     const del = opFor(c, "intel_contribution_consent", "delete");
@@ -424,7 +455,7 @@ describe("executeAccountDeletion — full cascade", () => {
     // is append-only by GRANT (no DELETE-blocking trigger), so it is cleared with a
     // direct scoped delete keyed by actor_id (migration 2204 grants the DELETE).
     const c = makeClient();
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     const del = opFor(c, "intel_reward_ledger", "delete");
@@ -444,7 +475,7 @@ describe("executeAccountDeletion — full cascade", () => {
     // as orphaned personal data. None is append-only, so each is cleared with a
     // direct scoped delete keyed by user_id.
     const c = makeClient();
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     for (const [table, step] of [
@@ -467,7 +498,7 @@ describe("executeAccountDeletion — full cascade", () => {
     // must fail loudly and stay retryable, rather than reporting success with the
     // user's remembered places, people and inferred preferences still stored.
     const c = makeClient({ rpcError: "erase_memory_for_user" });
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
 
     assert.equal(out.ok, false, "a failed memory purge must fail the run");
     const step = out.steps.find((s) => s.step === "erase_derived_memory");
@@ -481,7 +512,7 @@ describe("executeAccountDeletion — full cascade", () => {
 
   it("contentOnly leaves the tombstone and the auth user alone", async () => {
     const c = makeClient();
-    await executeAccountDeletion(c, USER_ID, { actorId: null, contentOnly: true });
+    await executeAccountDeletion(c, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS, contentOnly: true });
 
     assert.ok(opFor(c, "posts", "delete"));
     assert.equal(opFor(c, "profiles", "update"), undefined);
@@ -508,7 +539,7 @@ describe("executeAccountDeletion — memory UGC (MEM·H2)", () => {
       },
     });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     // The item's media object was removed from the post-media bucket.
@@ -533,7 +564,7 @@ describe("executeAccountDeletion — memory UGC (MEM·H2)", () => {
 
   it("also clears the footprint the user left on OTHER people's memories", async () => {
     const c = makeClient();
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     const likeOps = c._ops.filter((o: Op) => o.table === "memory_likes" && o.op === "delete");
@@ -556,7 +587,7 @@ describe("executeAccountDeletion — memory UGC (MEM·H2)", () => {
         memory_items: [{ media_url: OWN }, { media_url: FOREIGN }],
       },
     });
-    await executeAccountDeletion(c, USER_ID, { actorId: null });
+    await executeAccountDeletion(c, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
 
     const removed = c._storageRemoved.flatMap((r) => r.paths);
     assert.ok(removed.includes(`memories/${USER_ID}/a.jpg`), "the user's own object is removed");
@@ -566,7 +597,7 @@ describe("executeAccountDeletion — memory UGC (MEM·H2)", () => {
 
   it("skips the owned-children sweep when the user has no memories", async () => {
     const c = makeClient(); // no memory fixtures → memories select returns []
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
     assert.equal(out.ok, true, JSON.stringify(out.steps));
     assert.equal(opFor(c, "memory_items", "delete"), undefined,
       "no owned-child sweep without any memory ids");
@@ -580,7 +611,7 @@ describe("executeAccountDeletion — merged legacy cascade steps", () => {
   it("clears stories, reviews, gems, saves, follows, notifications and search history", async () => {
     const c = makeClient();
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     // Stories + engagement rows, scoped to the right column each time.
@@ -622,7 +653,7 @@ describe("executeAccountDeletion — merged legacy cascade steps", () => {
 
   it("clears compass personal content, a projection source, and gem-visit coordinates (audit MEM·H1/C1, TRAIL·F3)", async () => {
     const c = makeClient();
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
     assert.equal(out.ok, true, JSON.stringify(out.steps));
     // Gem-visit check-ins carry raw lat/lng and survived deletion (TRAIL·F3).
     assert.deepEqual(opFor(c, "hidden_gem_visits", "delete")!.filters, [["eq", "user_id", USER_ID]]);
@@ -636,7 +667,7 @@ describe("executeAccountDeletion — merged legacy cascade steps", () => {
   it("deletes key_packages by device_id BEFORE deleting the devices rows", async () => {
     const c = makeClient({ rows: { devices: [{ id: "dev-1" }, { id: "dev-2" }] } });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     const kp = opFor(c, "key_packages", "delete")!;
@@ -651,19 +682,19 @@ describe("executeAccountDeletion — merged legacy cascade steps", () => {
   it("one failing content table records its step but never aborts the rest", async () => {
     const c = makeClient({ fail: { "reviews.delete": "permission denied" } });
 
-    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS });
 
     assert.ok(out.steps.some((s) => s.step === "delete_reviews" && !s.ok));
     assert.ok(out.warnings.some((w) => w.includes("reviews")));
     // Everything after reviews still ran, up to and including the auth user.
     assert.ok(opFor(c, "search_history", "delete"), "later steps still execute");
     assert.deepEqual(c._authDeleted, [USER_ID]);
-    assert.equal(opFor(c, "user_deletion_requests", "update")!.values.status, "completed");
+    assert.equal(c._rows.user_deletion_requests[0].status, "completed");
   });
 
   it("contentOnly also runs the merged content steps", async () => {
     const c = makeClient();
-    await executeAccountDeletion(c, USER_ID, { actorId: null, contentOnly: true });
+    await executeAccountDeletion(c, USER_ID, { ...PERMANENT_DELETION_TEST_OPTIONS, contentOnly: true });
 
     assert.ok(opFor(c, "stories", "delete"));
     assert.ok(opFor(c, "user_follows", "delete"));
@@ -675,75 +706,14 @@ describe("executeAccountDeletion — merged legacy cascade steps", () => {
 
 // ── The scheduler ────────────────────────────────────────────────────────────
 
-describe("accountDeletionScheduler — fails closed", () => {
+describe('retired accountDeletionScheduler', () => {
   beforeEach(() => _setTestServiceClient(null as any));
-
-  it("does nothing when the feature flag is off", async () => {
-    const c = makeClient({ rows: { feature_flags: [{ flag: "account_deletion_worker_enabled", enabled: false }] } });
-    _setTestServiceClient(c as any);
-
-    const r = await processDueDeletions();
-
-    assert.equal(r.skipped, true);
-    assert.equal(r.executed, 0);
-    assert.equal(opFor(c, "user_deletion_requests", "select"), undefined, "must not even query for due rows");
-  });
-
-  it("does nothing when the flag row is missing", async () => {
-    const c = makeClient({ rows: { feature_flags: [] } });
-    _setTestServiceClient(c as any);
-
-    const r = await processDueDeletions();
-    assert.equal(r.skipped, true);
-    assert.deepEqual(c._authDeleted, []);
-  });
-
-  it("does nothing when the flag lookup errors", async () => {
-    const c = makeClient({ fail: { feature_flags: "relation does not exist" } });
-    _setTestServiceClient(c as any);
-
-    const r = await processDueDeletions();
-    assert.equal(r.skipped, true);
-  });
-
-  it("executes due requests when enabled, filtering on pending + scheduled_at", async () => {
-    const c = makeClient({
-      rows: {
-        feature_flags: [{ flag: "account_deletion_worker_enabled", enabled: true }],
-        user_deletion_requests: [{ user_id: USER_ID, status: "pending", scheduled_at: "2020-01-01T00:00:00Z" }],
-      },
-    });
-    _setTestServiceClient(c as any);
-
-    const r = await processDueDeletions();
-
-    assert.equal(r.skipped, false);
-    assert.equal(r.considered, 1);
-    assert.equal(r.executed, 1);
-    assert.equal(r.failed, 0);
-
-    const q = opFor(c, "user_deletion_requests", "select")!;
-    assert.ok(q.filters.some((f: any[]) => f[0] === "eq" && f[1] === "status" && f[2] === "pending"));
-    assert.ok(q.filters.some((f: any[]) => f[0] === "lte" && f[1] === "scheduled_at"));
-
-    assert.deepEqual(c._authDeleted, [USER_ID], "the due account is actually deleted");
-  });
-
-  it("reports a failure instead of marking the request done", async () => {
-    const c = makeClient({
-      rows: {
-        feature_flags: [{ flag: "account_deletion_worker_enabled", enabled: true }],
-        user_deletion_requests: [{ user_id: USER_ID, status: "pending", scheduled_at: "2020-01-01T00:00:00Z" }],
-      },
-      fail: { "profiles.update": "db down" },
-    });
-    _setTestServiceClient(c as any);
-
-    const r = await processDueDeletions();
-
-    assert.equal(r.executed, 0);
-    assert.equal(r.failed, 1);
-    assert.deepEqual(c._authDeleted, []);
+  for (const condition of ['flag off', 'flag on', 'flag missing', 'database unavailable', 'service unconfigured']) it(`does not read or erase any account: ${condition}`, async () => {
+    let calls = 0;
+    if (condition !== 'service unconfigured') _setTestServiceClient(new Proxy({}, { get() { calls++; throw new Error('Retired worker accessed a data store'); } }) as any);
+    const result = await processDueDeletions();
+    assert.deepEqual(result, { considered: 0, executed: 0, failed: 0, skipped: true, reason: 'admin_permanent_deletion_required' });
+    assert.equal(calls, 0);
   });
 });
 
@@ -809,63 +779,16 @@ describe("POST /internal/deletion-requests/execute-due", () => {
     assert.equal(badSecret.status, 401);
   });
 
-  it("responds 503/skipped and touches nothing when the feature flag is off", async () => {
-    const c = makeClient({
-      rows: {
-        feature_flags: [{ flag: "account_deletion_worker_enabled", enabled: false }],
-        user_deletion_requests: [{ user_id: USER_ID, status: "pending", scheduled_at: "2020-01-01T00:00:00Z" }],
-      },
-    });
+  for (const enabled of [false, true]) it(`returns410 without accessing due requests when old flag=${enabled}`, async () => {
+    const c = makeClient({ rows: { feature_flags: [{ flag: 'account_deletion_worker_enabled', enabled }],
+      user_deletion_requests: [{ user_id: USER_ID, status: 'pending', scheduled_at: '2020-01-01T00:00:00Z' }] } });
     _setTestServiceClient(c as any);
-
-    const { status, body } = await post({ "x-internal-secret": SECRET });
-
-    assert.equal(status, 503);
-    assert.equal(body.skipped, true);
-    assert.equal(opFor(c, "user_deletion_requests", "select"), undefined, "must not even query for due rows");
-    assert.deepEqual(c._authDeleted, []);
+    const { status, body } = await post({ 'x-internal-secret': SECRET });
+    assert.equal(status, 410); assert.equal(body.skipped, true); assert.equal(body.error, 'admin_permanent_deletion_required');
+    assert.deepEqual(c._ops, []); assert.deepEqual(c._authDeleted, []);
   });
-
-  it("executes due requests through the unified cascade when enabled", async () => {
-    const c = makeClient({
-      rows: {
-        feature_flags: [{ flag: "account_deletion_worker_enabled", enabled: true }],
-        user_deletion_requests: [{ user_id: USER_ID, status: "pending", scheduled_at: "2020-01-01T00:00:00Z" }],
-      },
-    });
-    _setTestServiceClient(c as any);
-
-    const { status, body } = await post({ "x-internal-secret": SECRET });
-
-    assert.equal(status, 200, JSON.stringify(body));
-    assert.equal(body.processed, 1);
-    assert.equal(body.executed, 1);
-    assert.deepEqual(body.failed, []);
-    assert.deepEqual(c._authDeleted, [USER_ID], "cascade actually ran (auth user removed)");
-    assert.equal(opFor(c, "user_deletion_requests", "update")!.values.status, "completed");
-  });
-
-  it("leaves a failed request pending and reports it in `failed`", async () => {
-    const c = makeClient({
-      rows: {
-        feature_flags: [{ flag: "account_deletion_worker_enabled", enabled: true }],
-        user_deletion_requests: [{ user_id: USER_ID, status: "pending", scheduled_at: "2020-01-01T00:00:00Z" }],
-      },
-      authDeleteError: "auth API down",
-    });
-    _setTestServiceClient(c as any);
-
-    const { status, body } = await post({ "x-internal-secret": SECRET });
-
-    assert.equal(status, 200);
-    assert.equal(body.executed, 0);
-    assert.equal(body.failed.length, 1);
-    assert.equal(body.failed[0].userId, USER_ID);
-    assert.ok(body.failed[0].failedSteps.some((s: any) => s.step === "auth_delete_user"));
-    assert.equal(
-      opFor(c, "user_deletion_requests", "update"),
-      undefined,
-      "request must NOT be marked completed on a failed cascade",
-    );
+  it('does not access a failing service after an authenticated cron call', async () => {
+    let access = 0; _setTestServiceClient(new Proxy({}, { get() { access++; throw new Error('Retired worker accessed a data store'); } }) as any);
+    const { status } = await post({ 'x-internal-secret': SECRET }); assert.equal(status, 410); assert.equal(access, 0);
   });
 });

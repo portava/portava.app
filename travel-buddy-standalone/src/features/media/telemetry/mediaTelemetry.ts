@@ -5,7 +5,7 @@
  * ============
  * A thin, pure, privacy-scrubbed mapping from a *media-originated action* to the
  * ONE §45 north-star transition it represents. It is the single place that knows
- * "tapping this media action == this real-world outcome", and it reuses the
+ * "this completed media action == this outcome", and it reuses the
  * EXISTING media analytics helper (hooks/useMediaAnalytics.ts) as its transport —
  * it introduces NO new provider, queue, or endpoint of its own.
  *
@@ -64,7 +64,7 @@ import type { MediaEventType, MediaEventPayload } from '../../../hooks/useMediaA
  * records it for a route saved from media); `media_contribution` and
  * `media_arrival` are recorded by the SERVER when the contribution or the
  * traveller's own check-in is committed (census-media §21) — the client never
- * claims them. Every name here now has a producer.
+ * claims them. A declared outcome is not proof of a connected producer.
  */
 export type MediaNorthStarEvent =
   | 'media_place_open' // Media → Place Open
@@ -98,16 +98,17 @@ export const MEDIA_NORTH_STAR_EVENTS: readonly MediaNorthStarEvent[] = [
  * Mapped (a real-world transition):
  *   • show_on_map / view_experience / view_event / follow_this_night →
  *     media_place_open (open the entity behind the media)
- *   • ask_compass / find_quieter / find_cheaper / find_busier / remix → media_compass
+ *   • ask_compass / create_plan / find_quieter / find_cheaper / find_busier / remix → media_compass
  *   • directions → media_route, emitted once directions OPEN (NORTH_STAR_ON_COMPLETION)
- *   • create_plan / do_this_experience → media_plan; add_to_trip → media_trip_add
- *   • report                        → media_correction  (user-supplied correction)
+ *   • do_this_experience → media_plan; add_to_trip → media_trip_add, only after
+ *     committed additions, never when a picker or a draft is opened.
  *
  * NOT mapped (returns null — deliberately NOT north-star):
  *   • see_nearby / find_similar — in-app discovery, not a real-world outcome.
  *   • save — its own `save` event; "save" is not one of §45's eight.
  *   • meet_here — outside the §45 set. i_want_this — a want SIGNAL (§15.1).
  *   • share_telegraph — a share (§2/§26); view_passport — a navigation.
+ *   • report — currently submits not_interested, not a useful factual correction.
  *   • save_route / invite_people / contribute_gem — the SERVER records these
  *     outcomes when they are committed (media_route keyed by the plan id,
  *     invite_sent, contribution_submit / media_contribution); a tap is not one.
@@ -118,17 +119,14 @@ export function mediaActionToNorthStar(actionId: string): MediaNorthStarEvent | 
   switch (actionId) {
     case 'show_on_map': case 'view_experience': case 'view_event': case 'follow_this_night':
       return 'media_place_open';
-    case 'ask_compass': case 'find_quieter': case 'find_cheaper': case 'find_busier': case 'remix':
+    case 'ask_compass': case 'create_plan': case 'find_quieter': case 'find_cheaper': case 'find_busier': case 'remix':
       return 'media_compass';
     case 'directions':
       return 'media_route';
-    case 'create_plan':
     case 'do_this_experience':
       return 'media_plan';
     case 'add_to_trip':
       return 'media_trip_add';
-    case 'report':
-      return 'media_correction';
     default:
       return null;
   }
@@ -248,11 +246,11 @@ export function emitMediaNorthStar(
  * can fail (no directions for the place, no maps app) — a tap is not a start.
  * The rail emits these itself after the action succeeds.
  */
-export const NORTH_STAR_ON_COMPLETION: ReadonlySet<string> = new Set(['directions']);
+export const NORTH_STAR_ON_COMPLETION: ReadonlySet<string> = new Set(['directions', 'do_this_experience', 'add_to_trip']);
 
 /** True when the rail should emit this action's north-star event at tap time. */
 export function emitsNorthStarOnTap(actionId: string): boolean {
-  return !NORTH_STAR_ON_COMPLETION.has(actionId);
+  return mediaActionToNorthStar(actionId) !== null && !NORTH_STAR_ON_COMPLETION.has(actionId);
 }
 
 // ── §44 client outcome / navigation signals (census-media §21) ────────────────

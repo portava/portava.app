@@ -435,6 +435,43 @@ describe("POST /api/wall/telemetry", () => {
     assert.equal(res.json.accepted, 0);
   });
 
+  it("refuses legacy outcomes without grant provenance while preserving ordinary events", async () => {
+    _setTestClient(fakeClient({ wall_enabled: true }, inserted), true);
+    const result = await post("/api/wall/telemetry", { events: [
+      { type: "wall_feed_open", mode: "for_you" },
+      { type: "wall_real_world_outcome", objectId: "place", objectType: "place", outcome: "see_place" },
+    ] });
+    assert.equal(result.json.accepted, 1); assert.equal(result.json.dropped, 1);
+    assert.equal(inserted[0].rows.length, 1);
+    assert.equal(inserted[0].rows[0].event_name, "wall_feed_open");
+  });
+
+  it("uses atomic consent admission with the token actor and sanitized outcome", async () => {
+    const client = fakeClient({ wall_enabled: true }, inserted);
+    const calls: any[] = [];
+    _setTestClient({ ...client, rpc: async (name: string, args: any) => { calls.push({ name, args }); return { data: 1, error: null }; } }, true);
+    const at = "2026-11-13T12:00:00.000Z";
+    const result = await post("/api/wall/telemetry", { meta: { outcomeConsentAt: at }, events: [
+      { type: "wall_real_world_outcome", objectId: "place", objectType: "place", outcome: "see_place", viewer_id: "other", text: "PRIVATE" },
+    ] });
+    assert.equal(result.json.accepted, 1); assert.equal(result.json.dropped, 0);
+    assert.equal(inserted.length, 0); assert.equal(calls[0].name, "insert_wall_telemetry_outcomes");
+    assert.equal(calls[0].args.p_actor, VIEWER); assert.equal(calls[0].args.p_consent_at, at);
+    assert.deepEqual(calls[0].args.p_rows[0].payload, { objectId: "place", objectType: "place", outcome: "see_place" });
+    assert.ok(!JSON.stringify(calls).includes("PRIVATE"));
+  });
+
+  it("reports zero admitted outcomes on revocation, missing RPC, invalid receipt or storage failure", async () => {
+    for (const result of [{ data: 0, error: null }, { data: 99, error: null }, { data: null, error: { code: "missing_function" } }, new Error("offline")]) {
+      _setTestClient({ ...fakeClient({ wall_enabled: true }, inserted), rpc: async () => { if (result instanceof Error) throw result; return result; } }, true);
+      const response = await post("/api/wall/telemetry", { meta: { outcomeConsentAt: "2026-11-13T12:00:00Z" }, events: [
+        { type: "wall_real_world_outcome", objectId: "place", objectType: "place", outcome: "see_place" },
+      ] });
+      assert.equal(response.status, 200); assert.equal(response.json.accepted, 0); assert.equal(response.json.dropped, 1);
+    }
+    assert.equal(inserted.length, 0, "must never fall through to a direct insert");
+  });
+
   it("requires authentication", async () => {
     _setTestClient(fakeClient({ wall_enabled: true }, inserted), true);
     const res = await post(

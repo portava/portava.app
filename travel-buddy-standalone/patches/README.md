@@ -19,3 +19,11 @@ Primary upstream context: [Reanimated4.1.7 CMake source](https://github.com/soft
 Validation is recorded in `docs/media/completion-work-20261105.md` at the repository
 root. Remove this patch only after an upstream version resolves the same linking
 path and a clean native build passes without it.
+
+`expo-image-picker@17.0.11.patch` adds `OffsetTimeOriginal` to Android's existing
+EXIF field allowlist. The picker already returns `DateTimeOriginal`; without its
+offset a travel photo's wall clock cannot be converted to UTC honestly. The app
+requests EXIF for a selected photo, retains only a validated capture instant,
+and discards the EXIF object. This patch adds no permission, SDK or upload path.
+A native Android build/device check remains required. Retire it when the pinned
+upstream picker exports the same offset and the capture-time tests pass unpatched.

@@ -557,37 +557,30 @@ describe("MediaLifecycleService — owner-only deletion and retry", () => {
     return client;
   }
 
-  it("refuses a stranger and a missing asset, and writes nothing in either case", async () => {
-    const owned = assetClient({ id: ASSET, owner_user_id: OWNER, purge_status: "not_requested" });
-    assert.deepEqual(
-      await softDeleteMediaAsset(owned, ASSET, STRANGER),
-      { ok: false, alreadyDeleted: false, purgeScheduled: false },
-    );
-    assert.deepEqual(owned.writes, [], "a refused delete must not write");
-
-    const missing = assetClient(null);
-    assert.deepEqual(
-      await softDeleteMediaAsset(missing, ASSET, OWNER),
-      { ok: false, alreadyDeleted: false, purgeScheduled: false },
-    );
-    assert.deepEqual(missing.writes, []);
-
-    assert.deepEqual(
-      await retryMediaProcessing(assetClient({ id: ASSET, owner_user_id: OWNER }), ASSET, STRANGER),
-      { ok: false, alreadyQueued: false },
-    );
+  it("forwards identity to the atomic retirement owner and never falls back to application writes", async () => {
+    for (const response of [
+      { data: { ok: false, alreadyDeleted: false, purgeScheduled: false }, error: null },
+      { data: null, error: { code: "PGRST202" } },
+      { data: { ok: true }, error: null },
+      { data: { ok: true, alreadyDeleted: true, purgeScheduled: true }, error: null },
+    ]) {
+      const calls: unknown[] = [];
+      const client = { rpc: async (name: string, args: unknown) => { calls.push({ name, args }); return response; }, from: () => { throw new Error("No compensating writes"); } };
+      assert.deepEqual(await softDeleteMediaAsset(client as never, ASSET, STRANGER), { ok: false, alreadyDeleted: false, purgeScheduled: false });
+      assert.deepEqual(calls, [{ name: "retire_media_asset", args: { p_asset: ASSET, p_actor: STRANGER } }]);
+    }
+    assert.deepEqual(await retryMediaProcessing(assetClient({ id: ASSET, owner_user_id: OWNER }), ASSET, STRANGER), { ok: false, alreadyQueued: false });
   });
 
-  it("is idempotent: an already owner_deleted asset reports alreadyDeleted and re-writes nothing", async () => {
-    const client = assetClient({
-      id: ASSET, owner_user_id: OWNER,
-      moderation_status: "owner_deleted", purge_status: "pending",
-    });
-    assert.deepEqual(
-      await softDeleteMediaAsset(client, ASSET, OWNER),
-      { ok: true, alreadyDeleted: true, purgeScheduled: false },
-    );
-    assert.deepEqual(client.writes, []);
+  it("a new retained deletion never starts Storage cleanup", async () => {
+    const client = { rpc: async () => ({ data: { ok: true, alreadyDeleted: false, purgeScheduled: false }, error: null }),
+      from: () => { throw new Error("No cleanup or compensating write"); }, storage: { from: () => { throw new Error("No storage deletion"); } } };
+    assert.deepEqual(await softDeleteMediaAsset(client as never, ASSET, OWNER), { ok: true, alreadyDeleted: false, purgeScheduled: false });
+  });
+
+  it("a repeated atomic retirement returns without scheduling another purge", async () => {
+    const client = { rpc: async () => ({ data: { ok: true, alreadyDeleted: true, purgeScheduled: false }, error: null }), from: () => { throw new Error("No second purge"); } };
+    assert.deepEqual(await softDeleteMediaAsset(client as never, ASSET, OWNER), { ok: true, alreadyDeleted: true, purgeScheduled: false });
   });
 
   it("does not re-queue an asset already queued or in flight, and never revives a purged one", async () => {
@@ -603,7 +596,7 @@ describe("MediaLifecycleService — owner-only deletion and retry", () => {
     assert.deepEqual(purged.writes, [], "a purged asset has no bytes left to process");
   });
 
-  it("uses only CHECK-legal status values when it does transition", async () => {
+  it("uses only CHECK-legal status values when processing is retried", async () => {
     // 0191 processing_status vocabulary + the §36 moderation vocabulary that
     // 2250 lays down (re-asserted by 2470). A value outside either set would be
     // rejected by Postgres at runtime, where no unit test would see it.
@@ -615,15 +608,9 @@ describe("MediaLifecycleService — owner-only deletion and retry", () => {
       "processing", "active", "limited", "rejected", "removed", "owner_deleted",
       "pending", "approved", "flagged",
     ]);
-    const client = assetClient({
-      id: ASSET, owner_user_id: OWNER, moderation_status: "approved", purge_status: "not_requested",
-    });
-    const result = await softDeleteMediaAsset(client, ASSET, OWNER);
-    assert.equal(result.ok, true);
-    await result.purge;
     const retryClient = assetClient({ id: ASSET, owner_user_id: OWNER, processing_status: "failed" });
     await retryMediaProcessing(retryClient, ASSET, OWNER); assert.ok(retryClient.writes.some((w: any) => typeof w.row?.processing_status === "string"), "the retry must write, or this case checks nothing (census-media §30.12)");
-    for (const w of [...client.writes, ...retryClient.writes]) {
+    for (const w of retryClient.writes) {
       if (typeof w.row?.processing_status === "string") {
         assert.ok(PROCESSING.has(w.row.processing_status), `illegal processing_status ${w.row.processing_status}`);
       }

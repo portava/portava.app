@@ -1092,3 +1092,20 @@ describe("Media provider contracts — malformed attestations and stateful failu
     assert.deepEqual(await similarMediaFor(adapters.vision, { mediaId: SEED, storageKey: null }, 10), { ok: true, value: { ids: [], dropped: 0 } });
   });
 });
+
+
+describe("composer publication boundary", () => {
+ afterEach(() => resetCanonicalSchemaMemo());
+ it("prepublication runs the existing safety gate without indexing, captions, transcoding, or derivative uploads",async()=>{
+  const asset=ASSET_ROW(),store=makeStore({[MEDIA_MODERATION_STAGE_FLAG]:true,[MEDIA_VISION_STAGE_FLAG]:true,[MEDIA_TRANSCODE_STAGE_FLAG]:true,[MEDIA_CAPTIONS_STAGE_FLAG]:true},[asset]);
+  const {adapters,calls}=spyAdapters();
+  await runMediaVendorIngest(store.sc,{sourceVersion:1,assetId:A,bucket:"post-media",path:"u/1.mp4",mediaType:"video",durationMs:3000},adapters,{prePublication:true});
+  assert.deepEqual(calls,["classify:file"]);assert.equal(asset.moderation_status,"active");assert.deepEqual(store.uploads,[]);
+ });
+ it("publication can run enabled media stages against the approved generation without repeating moderation",async()=>{
+  const asset=ASSET_ROW("active"),store=makeStore({[MEDIA_MODERATION_STAGE_FLAG]:true,[MEDIA_VISION_STAGE_FLAG]:true},[asset]);
+  const {adapters,calls}=spyAdapters();
+  await runMediaVendorIngest(store.sc,{sourceVersion:1,assetId:A,bucket:"post-media",path:"u/1.mp4",mediaType:"video",durationMs:3000},adapters,{skipModeration:true});
+  assert.deepEqual(calls,["ingest:u/1.mp4"]);assert.equal(asset.moderation_status,"active");assert.deepEqual(store.updates,[]);
+ });
+});

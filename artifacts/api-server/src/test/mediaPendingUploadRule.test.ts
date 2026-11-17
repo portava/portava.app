@@ -61,12 +61,13 @@ function world(opts: { reservedMinAgo: number; renewedMinAgo?: number; partMinAg
   if (opts.partMinAgo !== undefined) objects.set(`${PATH}.parts/00000`, new Date(NOW - opts.partMinAgo * MIN).toISOString());
 
   function from(table: string) {
-    assert.equal(table, "post_media");
+    assert.ok(["post_media", "composer_upload_intents"].includes(table));
+    const source = table === "post_media" ? rows : [];
     const preds: Array<(r: Row) => boolean> = [];
     let op: { kind: "select" } | { kind: "delete" } | { kind: "update"; patch: Row } = { kind: "select" };
     let single = false;
     const run = () => {
-      const hit = rows.filter((r) => preds.every((p) => p(r)));
+      const hit = source.filter((r) => preds.every((p) => p(r)));
       if (op.kind === "delete") { for (const r of hit) rows.splice(rows.indexOf(r), 1); return { data: null, error: null }; }
       if (op.kind === "update") { for (const r of hit) Object.assign(r, op.patch); return { data: null, error: null }; }
       return single ? { data: hit[0] ?? null, error: null } : { data: hit, error: null };
@@ -76,6 +77,7 @@ function world(opts: { reservedMinAgo: number; renewedMinAgo?: number; partMinAg
       delete: () => { op = { kind: "delete" }; return b; },
       update: (patch: Row) => { op = { kind: "update", patch }; return b; },
       eq: (c: string, v: unknown) => { preds.push((r) => r[c] === v); return b; },
+      is: (c: string, v: unknown) => { preds.push((r) => (r[c] ?? null) === v); return b; },
       lt: (c: string, v: string) => { preds.push((r) => String(r[c]) < v); return b; },
       order: () => b,
       limit: () => b,
@@ -98,7 +100,19 @@ function world(opts: { reservedMinAgo: number; renewedMinAgo?: number; partMinAg
       },
     }),
   };
-  return { sc: { from, storage } as never, rows, objects };
+  const rpc = async (name: string, args: { p_media: string; p_before?: string }) => {
+    const row = rows.find(r => r.id === args.p_media);
+    if (!row || row.processing_status !== 'pending') return { data: false, error: null };
+    if (name === 'renew_postcard_upload') {
+      if (row.deleted_at) return { data: false, error: null };
+      row.updated_at = new Date(NOW).toISOString();
+    } else if (name === 'withdraw_postcard_media') {
+      if ([row.created_at, row.updated_at].some(t => Date.parse(String(t)) >= Date.parse(args.p_before!))) return { data: false, error: null };
+      row.deleted_at ??= new Date(NOW).toISOString();
+    } else return { data: null, error: { message: 'unhandled RPC' } };
+    return { data: true, error: null };
+  };
+  return { sc: { from, storage, rpc } as never, rows, objects };
 }
 
 async function pass(w: ReturnType<typeof world>) {
@@ -176,11 +190,11 @@ describe("R6 — the constants are derived, not chosen", () => {
 describe("R7 — renewal", () => {
   it("stamps a pending row, and never a ready one", async () => {
     const w = world({ reservedMinAgo: 600 });
-    assert.ok((await renewPendingSlot(w.sc, MEDIA, NOW)).ok);
+    assert.ok((await renewPendingSlot(w.sc, MEDIA)).ok);
     assert.equal(w.rows[0]!.updated_at, new Date(NOW).toISOString());
     w.rows[0]!.processing_status = "ready";
     w.rows[0]!.updated_at = "2026-01-01T00:00:00.000Z";
-    assert.ok((await renewPendingSlot(w.sc, MEDIA, NOW)).ok);
+    assert.equal((await renewPendingSlot(w.sc, MEDIA)).ok, false);
     assert.equal(w.rows[0]!.updated_at, "2026-01-01T00:00:00.000Z");
   });
 });

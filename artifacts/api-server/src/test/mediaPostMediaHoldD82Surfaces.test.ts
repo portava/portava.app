@@ -1,3 +1,4 @@
+import { activeMediaAccountRead } from "./helpers/mediaAccountReadFixture.js";
 /**
  * census-media MD269 (a), lead ruling D-82: the same hold on the two other
  * writers of a post's media. Only `POST /posts` and `PATCH /posts/:id` were gated
@@ -97,7 +98,8 @@ function fakeClient(opts: { stageOn: boolean; assetsFail?: boolean }) {
   }
   const client: any = {
     from,
-    rpc: async (name: string, args: { p_actor_id: string; p_upload_paths: string[] }) => {
+    rpc: async (name: string, args: { p_actor_id: string; p_upload_paths: string[]; p_user?: unknown }) => {
+      if (name === "account_recovery_status") return activeMediaAccountRead(name,args);
       if (name !== "create_official_post_with_media") throw new Error(`Unexpected RPC: ${name}`);
       if (args.p_actor_id !== ADMIN || args.p_upload_paths.some(path => !path.startsWith(`${ADMIN}/`))) {
         return { data: null, error: { message: "official_media_not_owned" } };

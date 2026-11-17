@@ -52,6 +52,7 @@ export const MAX_IMAGE_BYTES = IMAGE_MAX_SIZE_BYTES;
 export const MAX_VIDEO_BYTES = VIDEO_MAX_SIZE_BYTES;
 
 export interface PickedMedia {
+  photoCapturedAt?: string | null;
   uri: string;
   mimeType?: string | null;
   fileName?: string | null;
@@ -99,6 +100,7 @@ function apiBase(): string {
 }
 
 export interface ValidateMediaOptions {
+  composerOperationId?: string;
   signal?: AbortSignal;
   recording?: CameraRecording;
   /**
@@ -199,7 +201,7 @@ export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMed
     // A stamped recording must send the unmodified camera file.
     const uploadUri = recording ? media.uri : await videoUriForUpload(media.uri, media.type === 'video', media.fileSize);
     apiRes = await postLocalBinary(`${base}/api/media/upload`, uploadUri,
-      { 'Content-Type': mime, Authorization: `Bearer ${token}`, ...(recording ? { 'X-Portava-Capture-Token': recording.session.captureToken } : {}) }, { isCurrent: owner?.isCurrent, signal: validateOpts?.signal });
+      { 'Content-Type': mime, Authorization: `Bearer ${token}`, ...(mime.startsWith('image/') && media.photoCapturedAt ? { 'X-Photo-Captured-At': media.photoCapturedAt } : {}), ...(validateOpts?.composerOperationId ? { 'X-Composer-Operation': validateOpts.composerOperationId } : {}), ...(recording ? { 'X-Portava-Capture-Token': recording.session.captureToken } : {}) }, { isCurrent: owner?.isCurrent, signal: validateOpts?.signal });
   } catch (error) {
     if (owner && !owner.isCurrent()) return staleOwner();
     return { ok: false, url: null, mediaType: null, errorKind: error instanceof LocalMediaReadError ? 'read_failed' : 'upload_failed',
@@ -346,6 +348,7 @@ export async function uploadMediaResumable(
     mime, uploadId, deviceResumableTransport(),
     { sleep: (ms) => new Promise((r) => setTimeout(r, ms)), random: Math.random, isCancelled },
     onProgress,
+    mime.startsWith('image/') ? media.photoCapturedAt : null,
   );
   if (out.kind === 'unsupported') return uploadMedia(media, validateOpts);
   if (out.kind === 'failed') {

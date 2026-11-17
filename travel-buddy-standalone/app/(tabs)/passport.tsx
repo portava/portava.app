@@ -1,3 +1,4 @@
+import { PassportDisclosure } from '../../src/components/passport/PassportDisclosure.tsx';
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert, RefreshControl } from 'react-native';
 import Animated from 'react-native-reanimated';
@@ -657,9 +658,7 @@ function PassportContent({
   );
 
   const renderDossierSection = () => (
-    <>
-      {/* ── Passport dossier sections ── */}
-      <PassportDivider label="DOSSIER" />
+    <PassportDisclosure key={profile.id} title="About & travel details" summary="Your bio, verification and travel information" testID="passport-about-details">
       <PassportAboutSection
         profile={profile}
         isOwner
@@ -681,7 +680,7 @@ function PassportContent({
       />
       <PassportTravelInfoSection trips={trips} />
       <View style={{ height: 24 }} />
-    </>
+    </PassportDisclosure>
   );
 
   return (
@@ -770,13 +769,6 @@ function PassportContent({
           }}
         />
 
-        {/* ── §3 high-priority previews (recent stamps / Featured Journey /
-             next Trip / memories) read from the /passport/:userId/projection
-             aggregate. Additive + fail-soft: renders nothing until the
-             aggregate loads, so the existing owner sections below are
-             unaffected. Owner context → no viewer Make-a-Plan / Shared Context. */}
-        <PassportHomePreviews userId={profile.id} isOwner hookOverride={projection} />
-
         {/* ── Pending posts ── */}
         {pendingCount > 0 && (
           <Pressable
@@ -798,6 +790,8 @@ function PassportContent({
           </Pressable>
         )}
 
+        <PassportDisclosure key={profile.id} title="Profile tools" summary="Travel overview, Compass, availability and more" testID="passport-profile-tools">
+        <PassportHomePreviews userId={profile.id} isOwner hookOverride={projection} />
         {/* ── Owner utility cards ── */}
         <ProfileCompletionCard profile={profile} onOpenSettings={() => openSettings('profile')} />
         <CompassStatusCard />
@@ -850,19 +844,21 @@ function PassportContent({
             </View>
           </Pressable>
         )}
+        </PassportDisclosure>
               </>
             )}
 
-            {sectionKey === 'stamps' && (
+            {sectionKey === 'stamps' && tab !== 'stamps' && (
               <>
         {/* ── Stamps section ── */}
-        <PassportDivider label="MY STAMPS" />
+        <PassportDisclosure key={profile.id} title="Stamp collection" summary="Your earned travel stamps" testID="passport-stamp-collection">
         <PassportStampCollection
           stamps={stamps}
           isOwner
           onViewAll={() => setStampsViewOpen(true)}
           onStampPress={() => setStampsViewOpen(true)}
         />
+        </PassportDisclosure>
               </>
             )}
 
