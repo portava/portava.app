@@ -83,6 +83,12 @@ const FOOD_CATEGORIES      = new Set(['restaurant', 'cafe', 'food', 'dining', 'b
 
 // ── Haversine ─────────────────────────────────────────────────────────────────
 
+/** WGS84 bounds, shared by the route API and the pure optimizer. */
+export function isValidRouteCoordinates(position: { lat: number; lng: number }): boolean {
+  return Number.isFinite(position.lat) && Math.abs(position.lat) <= 90
+    && Number.isFinite(position.lng) && Math.abs(position.lng) <= 180;
+}
+
 function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R    = 6_371_000;
   const toRad = (d: number) => (d * Math.PI) / 180;
@@ -91,7 +97,8 @@ function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number)
   const a     =
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(a));
+  // Floating point rounding near antipodes can put a fraction above one.
+  return 2 * R * Math.asin(Math.sqrt(Math.min(1, Math.max(0, a))));
 }
 
 function routeDistance(stops: CandidateStop[]): number {
@@ -362,11 +369,23 @@ export function optimizeRoute(
 ): OptimizeResult {
   const warnings: string[] = [];
 
+  // An explicit endpoint cannot be replaced with a different origin/destination.
+  // Callers outside the HTTP boundary must also refuse an invalid route request.
+  for (const [name, point] of [['Start', opts.startLocation], ['End', opts.endLocation]] as const) {
+    if (point != null && !isValidRouteCoordinates(point)) {
+      return {
+        stops: [], legs: [], totalDistanceMeters: 0, totalDurationSeconds: 0,
+        isApproximated: true,
+        warnings: [`${name} location has invalid coordinates; route unavailable`],
+        compassExplanation: 'Route unavailable because an endpoint has invalid coordinates.',
+      };
+    }
+  }
+
   // 1. Filter valid coordinates
   const withCoords = candidates.filter((c) => {
-    const ok = typeof c.lat === 'number' && typeof c.lng === 'number'
-      && isFinite(c.lat) && isFinite(c.lng);
-    if (!ok) warnings.push(`Stop "${c.title}" has no coordinates and was skipped`);
+    const ok = isValidRouteCoordinates(c);
+    if (!ok) warnings.push(`Stop "${c.title}" has invalid or missing coordinates and was skipped`);
     return ok;
   });
 
